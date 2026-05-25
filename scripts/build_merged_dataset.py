@@ -11,7 +11,7 @@ Output: merged_variants.json — same schema as gerasimavicius_variants.json:
   + source (gerasimavicius / clinvar_g2p)
 
 Usage:
-    python build_merged_dataset.py --data_dir ../data --out ../data/merged_variants.json
+    python build_merged_dataset.py --data_dir data/raw --out data/raw/merged_variants.json
 """
 
 import argparse
@@ -21,8 +21,8 @@ import os
 from collections import Counter
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--data_dir", default="../data")
-parser.add_argument("--out", default="../data/merged_variants.json")
+parser.add_argument("--data_dir", default="data/raw")
+parser.add_argument("--out", default="data/raw/merged_variants.json")
 parser.add_argument("--pathogenic_only", action="store_true",
                     help="Restrict ClinVar variants to 'pathogenic' only (excludes likely pathogenic)")
 args = parser.parse_args()

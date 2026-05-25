@@ -331,7 +331,7 @@ def run_binary_probe(X, y, splits, probe_kind, seed=42):
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--run_dir", default="run_0")
+    p.add_argument("--run_dir", default="results/run_0")
     p.add_argument("--model", default=ESM2_MODEL_650M)
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--max_per_gene_per_class", type=int, default=20)

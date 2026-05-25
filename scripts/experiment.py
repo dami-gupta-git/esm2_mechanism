@@ -1377,7 +1377,7 @@ def run(out_dir, seed=0, model_name=ESM2_MODEL_650M, n_stability_components=10,
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--out_dir", type=str, default="run_0")
+    parser.add_argument("--out_dir", type=str, default="results/run_0")
     parser.add_argument("--model", type=str, default=ESM2_MODEL_650M,
                         choices=[ESM2_MODEL_650M, ESM2_MODEL_3B])
     parser.add_argument("--seeds", type=int, nargs="+", default=[0])

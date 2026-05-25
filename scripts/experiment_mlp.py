@@ -381,11 +381,11 @@ def run_sklearn_probe_pca(clf_fn, X, labels, genes, n_folds=5, seed=42, n_pca=50
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data_dir", type=str, default="run_0/data",
+    parser.add_argument("--data_dir", type=str, default="data/raw",
                         help="Directory with cached gerasimavicius_variants.json and sequences.json")
-    parser.add_argument("--emb_dir", type=str, default="run_0/data",
+    parser.add_argument("--emb_dir", type=str, default="data/embeddings",
                         help="Directory with cached embedding .npy files")
-    parser.add_argument("--out_dir", type=str, default="run_0")
+    parser.add_argument("--out_dir", type=str, default="results/run_0")
     parser.add_argument("--model", type=str, default=ESM2_MODEL_650M)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--family_split", action="store_true",

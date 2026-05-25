@@ -13,7 +13,7 @@ Outputs:
   merged_valid_variants.json      — filtered variant list aligned with embeddings
 
 Usage (requires GPU):
-    python extract_merged_embeddings.py --data_dir run_0/data --batch_size 32
+    python extract_merged_embeddings.py --data_dir data/raw --emb_dir data/embeddings --batch_size 32
 """
 
 import argparse
@@ -26,7 +26,8 @@ import urllib.request
 import numpy as np
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--data_dir", default="run_0/data")
+parser.add_argument("--data_dir", default="data/raw")
+parser.add_argument("--emb_dir", default="data/embeddings")
 parser.add_argument("--model", default="esm2_t33_650M_UR50D")
 parser.add_argument("--batch_size", type=int, default=32)
 args = parser.parse_args()
@@ -96,16 +97,17 @@ labels = Counter(v["label_3class"] for v in valid)
 print(f"3-class distribution: {dict(labels)}")
 
 # Check for partial resume: if checkpoint exists and covers all variants, skip extraction
-ckpt_valid = os.path.join(args.data_dir, "merged_valid_variants.json")
-ckpt_wt = os.path.join(args.data_dir, "merged_embeddings_wt_mean.npy")
+os.makedirs(args.emb_dir, exist_ok=True)
+ckpt_valid = os.path.join(args.emb_dir, "merged_valid_variants.json")
+ckpt_wt = os.path.join(args.emb_dir, "merged_embeddings_wt_mean.npy")
 if (os.path.exists(ckpt_wt) and os.path.exists(ckpt_valid)):
     prev = json.load(open(ckpt_valid))
     if len(prev) == len(valid):
         print("Embeddings already complete — loading from cache.")
-        wt_mean  = np.load(os.path.join(args.data_dir, "merged_embeddings_wt_mean.npy"))
-        mut_mean = np.load(os.path.join(args.data_dir, "merged_embeddings_mut_mean.npy"))
-        wt_pos   = np.load(os.path.join(args.data_dir, "merged_embeddings_wt_pos.npy"))
-        mut_pos  = np.load(os.path.join(args.data_dir, "merged_embeddings_mut_pos.npy"))
+        wt_mean  = np.load(os.path.join(args.emb_dir, "merged_embeddings_wt_mean.npy"))
+        mut_mean = np.load(os.path.join(args.emb_dir, "merged_embeddings_mut_mean.npy"))
+        wt_pos   = np.load(os.path.join(args.emb_dir, "merged_embeddings_wt_pos.npy"))
+        mut_pos  = np.load(os.path.join(args.emb_dir, "merged_embeddings_mut_pos.npy"))
         print(f"Loaded embeddings: {wt_mean.shape}")
         print("Done.")
         sys.exit(0)
@@ -123,10 +125,10 @@ wt_mean, mut_mean, wt_pos, mut_pos = get_esm2_embeddings_for_pairs(
 # Save atomically: write valid_variants first so partial runs are detectable
 with open(ckpt_valid, "w") as f:
     json.dump(valid, f)
-np.save(os.path.join(args.data_dir, "merged_embeddings_wt_mean.npy"), wt_mean)
-np.save(os.path.join(args.data_dir, "merged_embeddings_mut_mean.npy"), mut_mean)
-np.save(os.path.join(args.data_dir, "merged_embeddings_wt_pos.npy"), wt_pos)
-np.save(os.path.join(args.data_dir, "merged_embeddings_mut_pos.npy"), mut_pos)
+np.save(os.path.join(args.emb_dir, "merged_embeddings_wt_mean.npy"), wt_mean)
+np.save(os.path.join(args.emb_dir, "merged_embeddings_mut_mean.npy"), mut_mean)
+np.save(os.path.join(args.emb_dir, "merged_embeddings_wt_pos.npy"), wt_pos)
+np.save(os.path.join(args.emb_dir, "merged_embeddings_mut_pos.npy"), mut_pos)
 
 print(f"\nSaved embeddings: {wt_mean.shape}")
 print("Done.")

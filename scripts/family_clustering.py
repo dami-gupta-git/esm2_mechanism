@@ -159,7 +159,7 @@ def family_probe(gene_emb, gene_families, gene_names, seed=42, min_family_size=3
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--run_dir", type=str, default="run_0")
+    parser.add_argument("--run_dir", type=str, default="results/run_0")
     parser.add_argument("--model", type=str, default=ESM2_MODEL_650M)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--out", type=str, default="family_clustering.json")
