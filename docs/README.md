@@ -1,6 +1,6 @@
 # esm2_mechanism — results index
 
-**This is a standalone research project, not an AI Scientist run.** All experiments were designed and executed manually. The code lives in `esm2_mechanism/scripts/` and was run directly on RunPod (A100 80GB). The project will likely move to its own repository.
+**This is a standalone research project, not an AI Scientist run.** All experiments were designed and executed manually. The code lives in `scripts/` and was run directly on RunPod (A100 80GB).
 
 Seven `result_*.md` files written across May 23–25, 2026. Read in the order below for the coherent narrative arc. Results 3 and 5 are superseded by result 7.
 
@@ -69,7 +69,7 @@ Seven `result_*.md` files written across May 23–25, 2026. Read in the order be
 - `PUBLISH.md` — Publication plan: v1/v2/v3 versioned bioRxiv strategy
 - `explain.txt` — Plain-English explanation of the experiment design
 - `progress_notes.md` — Running log of decisions, bugs fixed, observations
-- `scripts/README.md` — What each script does and when to use it
+- `../scripts/README.md` — What each script does and when to use it
 
 ---
 

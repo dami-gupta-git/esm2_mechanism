@@ -133,7 +133,7 @@ def plot_variance_explained(run_dir, out_path):
 
 
 if __name__ == "__main__":
-    run_dir = sys.argv[1] if len(sys.argv) > 1 else "run_0"
+    run_dir = sys.argv[1] if len(sys.argv) > 1 else "results/run_0"
 
     plot_auroc_bars([run_dir], ["ESM-2 650M"],
                     os.path.join(run_dir, "auroc_bars.png"))
