@@ -203,6 +203,12 @@ cython_debug/
 # Temporary file for partial code execution
 tempCodeRunnerFile.py
 
+# Large data files — SCP to pods rather than committing
+*.npy
+*.xlsx
+data/raw/
+data/embeddings/
+
 # Ruff stuff:
 .ruff_cache/
 
@@ -216,3 +222,4 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+docs/connnect_runpod.md

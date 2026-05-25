@@ -1,0 +1,124 @@
+{
+  "description": "Within-family mechanism classification, Gerasimavicius dataset, linear probe (gene-split CV within each Pfam family)",
+  "dataset": "Gerasimavicius (948 genes, 10,231 variants)",
+  "model": "ESM-2 650M",
+  "seed": 42,
+  "note": "All families have small sample sizes (6-12 genes). High variance throughout. Directional only \u2014 not publishable at single seed.",
+  "families": {
+    "PF00069": {
+      "name": "Protein kinase",
+      "n_genes": 12,
+      "n_variants": 106,
+      "classes": {
+        "GOF": 58,
+        "DN": 11,
+        "LOF": 37
+      },
+      "chance": 0.333,
+      "always_lof_baseline": 0.547,
+      "wt_gene_split": {
+        "macro_f1": 0.269,
+        "macro_f1_std": 0.159,
+        "mean_auroc": 0.657
+      },
+      "delta_gene_split": {
+        "macro_f1": 0.221,
+        "macro_f1_std": 0.116,
+        "mean_auroc": 0.519
+      },
+      "note": "Both probes at or below chance F1. No signal."
+    },
+    "PF00168": {
+      "name": "C2 domain",
+      "n_genes": 12,
+      "n_variants": 52,
+      "classes": {
+        "GOF": 7,
+        "DN": 7,
+        "LOF": 38
+      },
+      "chance": 0.333,
+      "always_lof_baseline": 0.731,
+      "wt_gene_split": {
+        "macro_f1": 0.81,
+        "macro_f1_std": 0.234,
+        "mean_auroc": 0.736
+      },
+      "delta_gene_split": {
+        "macro_f1": 0.598,
+        "macro_f1_std": 0.333,
+        "mean_auroc": 0.526
+      },
+      "note": "WT F1=0.810 looks strong but always-LOF baseline is 0.731 and std=0.234 is very high. Marginal gain over baseline. Not convincing."
+    },
+    "PF00046": {
+      "name": "Homeodomain",
+      "n_genes": 11,
+      "n_variants": 68,
+      "classes": {
+        "GOF": 4,
+        "DN": 14,
+        "LOF": 50
+      },
+      "chance": 0.333,
+      "always_lof_baseline": 0.735,
+      "wt_gene_split": {
+        "macro_f1": 0.161,
+        "macro_f1_std": 0.094,
+        "mean_auroc": 0.313
+      },
+      "delta_gene_split": {
+        "macro_f1": 0.266,
+        "macro_f1_std": 0.112,
+        "mean_auroc": 0.498
+      },
+      "note": "Both probes below chance. Delta AUROC=0.498 is essentially random."
+    },
+    "PF00071": {
+      "name": "Ras GTPase",
+      "n_genes": 11,
+      "n_variants": 150,
+      "classes": {
+        "GOF": 138,
+        "DN": 2,
+        "LOF": 10
+      },
+      "chance": 0.333,
+      "always_lof_baseline": 0.92,
+      "wt_gene_split": {
+        "macro_f1": 0.414,
+        "macro_f1_std": 0.064,
+        "mean_auroc": 0.59
+      },
+      "delta_gene_split": {
+        "macro_f1": 0.419,
+        "macro_f1_std": 0.083,
+        "mean_auroc": 0.818
+      },
+      "note": "Delta AUROC=0.818 is striking but GOF=92% makes classification near-trivial. DN has only 2 genes \u2014 folds are degenerate. Treat with extreme caution."
+    },
+    "PF00520": {
+      "name": "Ion channel (voltage-gated)",
+      "n_genes": 9,
+      "n_variants": 812,
+      "classes": {
+        "GOF": 576,
+        "DN": 236
+      },
+      "chance": 0.5,
+      "always_lof_baseline": 0.709,
+      "wt_gene_split": {
+        "macro_f1": 0.325,
+        "macro_f1_std": 0.117,
+        "mean_auroc": 0.396
+      },
+      "delta_gene_split": {
+        "macro_f1": 0.407,
+        "macro_f1_std": 0.05,
+        "mean_auroc": 0.659
+      },
+      "note": "Most interpretable result: 2-class GOF vs DN on 9 ion channel genes. Delta clearly better than WT (AUROC 0.659 vs 0.396). Low std (0.050) on delta F1. Directional positive signal for within-family GOF/DN separation."
+    }
+  },
+  "summary": "Within-family signal is present in isolated cases (PF00520 ion channel delta AUROC=0.659, PF00071 Ras delta AUROC=0.818) but sample sizes are too small (6-12 genes per family) for reliable estimation. PF00520 is the most interpretable: 2-class GOF vs DN on 9 ion channel genes, delta F1=0.407 vs WT F1=0.325. All results single-seed only \u2014 high variance throughout. Directional finding, not a publishable claim."
+}

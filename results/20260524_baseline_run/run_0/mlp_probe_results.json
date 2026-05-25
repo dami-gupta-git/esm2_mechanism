@@ -1,0 +1,30 @@
+{
+  "delta_mean_gene_split": {
+    "macro_f1": 0.3479307309317216,
+    "auroc_GOF": 0.5657490397233496,
+    "auroc_DN": 0.5156396224899437,
+    "auroc_LOF": 0.5599086147375518,
+    "n_folds": 5
+  },
+  "delta_mean_family_split": {
+    "macro_f1": 0.3248384220647522,
+    "auroc_GOF": 0.542347927937155,
+    "auroc_DN": 0.5126744980339435,
+    "auroc_LOF": 0.5399257442138672,
+    "n_folds": 5
+  },
+  "wt_only_gene_split": {
+    "macro_f1": 0.31301225297797625,
+    "auroc_GOF": 0.5155520033301311,
+    "auroc_DN": 0.4789435893338501,
+    "auroc_LOF": 0.5120237488942031,
+    "n_folds": 5
+  },
+  "wt_only_family_split": {
+    "macro_f1": 0.3096944640584892,
+    "auroc_GOF": 0.5349702959201494,
+    "auroc_DN": 0.5048404346474826,
+    "auroc_LOF": 0.5168473828427417,
+    "n_folds": 5
+  }
+}

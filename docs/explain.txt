@@ -1,0 +1,101 @@
+When a single amino acid in a protein is mutated and causes disease, the mutation can break the protein in different ways:
+
+LOF (loss of function) — the protein stops working
+GOF (gain of function) — the protein does something new/extra it shouldn't
+DN (dominant negative) — the broken protein actively interferes with the good copies
+This script asks: does ESM-2 (a big AI model trained on protein sequences) "see" the difference between these three kinds of breakage — even after you subtract out the obvious "this mutation makes the protein floppy" signal?
+
+The trick
+Most disease mutations destabilize proteins (make them less stable). That's the loudest signal in the data and it can drown out everything else. So the experiment:
+
+Takes each mutation, runs both the original and mutated protein through ESM-2, and looks at the difference in what ESM-2 "thinks" about them (a "delta embedding").
+Learns what the "destabilization" direction looks like using a separate dataset (Megascale) where stability was measured directly.
+Subtracts that direction out of the delta embeddings.
+Then asks: can a simple classifier still tell GOF from DN from LOF? If yes, ESM-2 is picking up on mechanism, not just stability.
+The safeguards (why this isn't just hype)
+Gene-split testing: never train and test on mutations in the same gene — otherwise the model can cheat by memorizing genes.
+Family-split testing: even stricter — never train and test on related proteins.
+Baselines: compare against simpler things (just the amino acid identity, just the stability score, just AlphaMissense). The fancy approach has to actually beat these.
+Negative controls: shuffle the labels and confirm the signal vanishes.
+Pre-registered thresholds: decision rules written in advance (lines 52–56) so the conclusions can't be massaged after seeing the data.
+What you get out
+A JSON file with numbers like:
+
+"After removing stability, how well can we still classify GOF/DN/LOF?" (macro-F1, AUROC per class)
+"Does GOF really show less stability signal than LOF?" (the variance asymmetry test)
+"Are the three mechanism classes pointing in geometrically different directions in ESM-2's representation space?" (the cosine similarity test)
+Why it matters
+If it works, it means a general-purpose protein language model has implicitly learned something about disease mechanism without ever being told — which would be useful for predicting mechanism for genes where we don't have clinical data yet. If it doesn't work, it tells you ESM-2 deltas are basically a stability detector and you need something else for mechanism prediction.
+
+----
+
+
+The setup
+You're trying to use an AI model (ESM-2) to predict how a disease mutation breaks a protein — does it kill the protein's function (LOF), give it new harmful function (GOF), or jam up the healthy copies (DN).
+
+You feed the model a protein sequence, it spits out a numeric "fingerprint." Then a simple classifier looks at the fingerprint and guesses the mechanism.
+
+The four things being measured
+1. WT-only
+WT = wild-type = the healthy protein, before the mutation.
+
+The "WT-only" classifier only looks at the healthy protein's fingerprint and tries to guess the mechanism — completely ignoring what the mutation actually is. It's basically asking: "Just by looking at this protein, can you guess what kind of disease its mutations tend to cause?"
+
+You'd expect this to fail, because the mutation is the whole point. But it works surprisingly well (~58% accuracy when you'd expect 33% by chance). That's the puzzle.
+
+2. MLP delta
+Delta = the difference between the mutant protein's fingerprint and the healthy protein's fingerprint. The mutation-specific signal.
+
+MLP = a small neural network classifier (more flexible than a straight line).
+
+So "MLP delta" = using a smart classifier on the mutation-specific signal to guess the mechanism. This is what should work if the AI model encodes mechanism. With a simple linear classifier, delta is at chance (28%). With the MLP, it lifts to ~41%. The question is: why does the MLP do better — real mechanism signal, or something else?
+
+3. Family-split
+A way of testing the classifier honestly.
+
+The problem: proteins come in families. Hemoglobin alpha and hemoglobin beta are cousins — they look very similar. If the AI model has seen one during training, it can recognize the other by similarity, without actually learning anything about disease mechanism.
+
+Two test designs:
+
+Gene-split: don't put the exact same gene in both train and test. Easy test. But hemoglobin alpha in training and hemoglobin beta in test is allowed — the model can cheat by recognizing the family.
+Family-split: don't put any cousins in both train and test. Stricter. If the model has only learned family-recognition, this breaks the cheat and accuracy drops.
+So family-split is the truth-detector. Real signal survives it. Cheating signal collapses under it.
+
+4. The "drops" (gene-split → family-split)
+These tell you which signals are real.
+
+Feature	Gene-split	Family-split	Interpretation
+WT-only	0.58	0.39	Big drop = the apparent signal was cheating
+MLP delta	0.41	~0.36	Smaller drop, but most of the above-chance signal vanishes
+What the numbers actually mean
+Chance is 0.333 (three classes, random guessing).
+
+WT-only loses two-thirds of its above-chance signal under the honest test — almost all of what looked like "the AI knows mechanism" was actually "the AI knows what kind of protein this is, and certain kinds of proteins tend toward certain mechanisms." Family recognition wearing a mechanism costume.
+MLP delta loses about two-thirds of its smaller above-chance signal too. Same story but at a smaller scale: the MLP was nonlinearly recovering tiny residual family hints in the delta, not learning real mechanism.
+Why this matters
+Two competing claims about what ESM-2 "knows":
+
+Claim	Story
+"ESM-2 encodes disease mechanism"	Would explain the gene-split accuracy. Would mean PLMs are useful clinical tools for predicting how mutations act.
+"ESM-2 just recognizes protein families, and families correlate with mechanism"	Also explains the gene-split accuracy. Would mean PLMs can't tell you how a mutation acts — only what kind of protein it is.
+Family-split is the experiment that distinguishes these. So far, family-split says claim 2 is right.
+
+What pathogenicity adds (positive control)
+Same exact pipeline, different question: "Is this mutation damaging at all (vs harmless)?"
+
+That gets AUROC 0.88 (excellent) — and stays at 0.88 under family-split (no drop). So:
+
+The pipeline works
+The model genuinely encodes whether a mutation matters
+The model does not encode how a mutation acts
+That asymmetry is the central finding.
+
+The G2P run that's happening now
+G2P is a second mechanism dataset, about twice as big, especially for the rare DN class (894 → 1,716 variants).
+
+The question this answers: "Is the 'mechanism is unlearnable' finding because mechanism really isn't there, or because we just didn't have enough data?"
+
+If the bigger dataset gives the same null result → really not there. If suddenly DN becomes learnable → it was data-limited and the original null was wrong.
+
+One-sentence summary
+You're testing whether an AI model genuinely understands disease mechanism, and you've designed two clever controls (family-split + a positive-control task) that together show it doesn't — it just recognizes protein families. The G2P run will tell you whether that conclusion holds at twice the scale.

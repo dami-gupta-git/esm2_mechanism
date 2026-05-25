@@ -1,0 +1,33 @@
+{
+  "description": "Option B: gene-level WT mean embeddings, merged dataset (19100 variants, 1985 genes)",
+  "dataset": "merged (Gerasimavicius + G2P/ClinVar pathogenic-only)",
+  "n_variants": 19100,
+  "n_genes": 1985,
+  "pfam_annotated_genes": 1950,
+  "pfam_families": 1146,
+  "class_distribution": {
+    "GOF": 2825,
+    "DN": 1716,
+    "LOF": 14559
+  },
+  "gene_level_distribution": {
+    "LOF": 1732,
+    "GOF": 146,
+    "DN": 107
+  },
+  "gene_split": {
+    "macro_f1": 0.469,
+    "auroc_GOF": 0.784,
+    "auroc_DN": 0.7,
+    "auroc_LOF": 0.765
+  },
+  "family_split": {
+    "macro_f1": 0.393,
+    "auroc_GOF": 0.728,
+    "auroc_DN": 0.634,
+    "auroc_LOF": 0.691
+  },
+  "leakage_delta": 0.077,
+  "comparison_gerasimavicius_leakage": 0.191,
+  "note": "Leakage delta +0.077 vs original Gerasimavicius +0.191. Merged dataset reduces but does not eliminate family leakage. Family-split F1=0.393, GOF AUROC=0.728 \u2014 above chance and meaningful."
+}
