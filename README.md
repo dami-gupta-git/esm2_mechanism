@@ -1,8 +1,8 @@
 # esm2_mechanism
 
-Does ESM-2 encode mutant disease mechanism?
+Does ESM-2 encode disease mechanism?
 
-A manual research project testing whether frozen ESM-2 650M delta-embeddings (mutant − wildtype) encode gene-level dominant disease mechanism class (GOF / DN / LOF) beyond protein stability, evaluated with gene-split and family-split cross-validation.
+A research project testing whether frozen ESM-2 650M delta-embeddings (mutant − wildtype) encode gene-level dominant disease mechanism class (GOF / DN / LOF) beyond protein stability, evaluated with gene-split and family-split cross-validation.
 
 **Headline finding:** ESM-2 encodes pathogenicity strongly (delta MLP AUROC 0.88, family-split-stable) but mechanism weakly (family-split macro-F1 ~0.36–0.39). 62% of apparent gene-split mechanism signal is family-recognition leakage. GOF AUROC 0.63–0.80 is the strongest surviving signal under family-split.
 
