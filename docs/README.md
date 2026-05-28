@@ -1,8 +1,22 @@
 # esm2_mechanism — results index
 
-**This is a standalone research project, not an AI Scientist run.** All experiments were designed and executed manually. The code lives in `scripts/` and was run directly on RunPod (A100 80GB).
+**This is a standalone research project, not an AI Scientist run.** All experiments were designed and executed manually. The code lives in `esm2_mechanism/scripts/` and was run directly on RunPod (A100 80GB) or local CPU. The project will likely move to its own repository.
 
-Seven `result_*.md` files written across May 23–25, 2026. Read in the order below for the coherent narrative arc. Results 3 and 5 are superseded by result 7.
+Sixteen `result_*.md` files written across May 23–26, 2026. Read in the order below for the coherent narrative arc. Results 3 and 5 are superseded by result 7.
+
+---
+
+## Current state (as of result 16, 2026-05-26)
+
+The project has three connected arcs:
+
+1. **Results 1–10 — frozen ESM-2 characterisation.** Mechanism floor under family-split CV is **F1 = 0.385 ± 0.018 (merged, 5-seed) / 0.299 ± 0.034 (Gerasimavicius, 5-seed)** — see result_6 Part 2 for the multi-seed correction. Clan-holdout shows ~half the family-split signal is fold memorisation (result 10). Pathogenicity positive control AUROC 0.74–0.88 across replications, family-split-stable (gene→family Δ ≈ 0 reproducibly; result 6) — confirms pipeline soundness and establishes the pathogenicity–mechanism dissociation. 62.8% of gene-split mechanism signal is family-recognition leakage on Gerasimavicius (exact, seed-invariant — structural property of the dataset; result 7 + result 6 Part 2).
+
+2. **Results 11–14 — gene-level proteome features.** A 4-feature pilot (result 11) hits macro-F1 0.417 family-split. The 37-feature matrix (result 12, sources: gnomAD, paralogs, HPA, PaxDb, BioPlex, ClinGen) gives V2 macro-F1 = 0.462 ± 0.025 — outperforming frozen ESM-2 delta (V1, 0.382) by +0.080 (result 13). Per-gene scoring lifts the V2 advantage to +0.101. Combining ESM-2 + proteome (V3) does not reliably improve over V2 alone (Gate 2 fails 3/5 seeds). Feature ablation (T4) shows constraint + dosage are load-bearing; the proteome-biology features (PPI, paralogs, abundance) contribute little to aggregate F1 but matter per-class. Clinical utility (result 14) collapses to a single column: paralog count alone achieves AUROC 0.746 within ClinGen HI=3, beating the full 37-feature model (0.650). Calibration is poor; operating-point performance is weak.
+
+3. **Results 15–16 — Badonyi structural priors + within-family.** Badonyi 2024's SVM probabilities (3 features) beat ESM-2 (+0.104 macro-F1) and proteome (+0.022). V2+bad reaches macro-F1 = 0.511 and DN AUROC = 0.827 — the project's high-water mark (result 15). ESM-2 is the dispensable modality (V1+bad < V_bad). Robustness analyses (result 15 Appendix A: leakage triage; Appendix B: MMseqs2-20 cluster-holdout) confirm the lift is real and survives a stricter sequence-similarity holdout matched to Saadat & Fellay 2025. Within families (result 16), residual proteome features (gene minus family-mean) achieve F1 = 0.514 in LOGO CV across 24 Pfam families. Badonyi residuals add nothing within-family — the structural prior carries only cross-family signal. Homeodomains (n=30, F1=0.633) are the anchor example. The result 16 addendum tests Badonyi's *raw published model* under family-split: it passes the leakage-free criterion but shows a per-gene training-set fit effect (LOF AUROC 0.625 in-training vs 0.472 never-seen) — does not affect V_bad/V2+bad validity, but affects how Badonyi's published numbers should be cited.
+
+The experimental work is essentially done. Remaining: writeup consolidation, one master figure, optional rigour (bootstrap CIs, calibration on V2+bad), optional Path B (raw structural features de novo).
 
 ---
 
@@ -28,7 +42,7 @@ Seven `result_*.md` files written across May 23–25, 2026. Read in the order be
 ### 4. `result_4.md` — Family clustering: the causal explanation
 **Script:** `family_clustering.py` · Pfam clustering analysis on WT, mut, delta embeddings
 **Headline numbers:** k=5 family purity = **26× chance** (z = +78). 50-way family probe = **27× majority baseline**. **74.8%** of genes share their family's majority mechanism.
-**What it concludes:** WT-only signal explained by family recognition × family-mechanism correlation. Includes novelty assessment (2/5 — folk wisdom, but not yet demonstrated as a controlled comparison).
+**What it concludes:** WT-only signal explained by family recognition × family-mechanism correlation. The causal explanation for why frozen ESM-2 looks like a mechanism predictor under gene-split.
 
 ### 5. `result_5.md` — Nonlinear probes (MLP/kNN/GBM/RF) ⚠ PARTIALLY SUPERSEDED BY RESULT 7
 **Script:** `experiment_mlp.py` extended · 4 probes on delta_mean and delta_pos, gene-split only
@@ -37,64 +51,177 @@ Seven `result_*.md` files written across May 23–25, 2026. Read in the order be
 
 ### 6. `result_6.md` — Pathogenicity positive control
 **Script:** `pathogenicity_control.py` · 17,236 ClinVar pathogenic/benign variants, 944 genes
-**Headline numbers:** Pathogenicity MLP AUROC = **0.878**, family-split Δ = **0.002**.
-**What it concludes:** Pipeline is sound. Pathogenicity AUROC 0.88 (family-split-stable) vs mechanism floor ~0.39 (family-split) — **the dissociation is sharper than originally framed** (see result 7 for correction).
+**Headline numbers:** Pathogenicity MLP AUROC = **0.878 (seed 0, RunPod variant set) / 0.742 ± 0.006 (seeds 1–4, locally-truncated variant set)**. Family-split Δ ≈ 0 reproducibly across all seeds and both variant sets (family-split stability is the robust claim). Clean 5-seed mean on a consistent variant set is pending due to provenance issue.
+**What it concludes:** Pipeline is sound. Pathogenicity AUROC in the 0.74–0.88 range across replications (family-split-stable in all) vs mechanism floor 0.30–0.39 (family-split) — the controlled dissociation under identical pipeline holds.
 
 ### 7. `result_7.md` — Full calibration: all numbers, honest framing
 **Scripts:** `experiment_mlp.py` with family-split, `build_merged_dataset.py`, Option B gene-level WT
-**Headline numbers:**
-- MLP delta gene-split **0.415**, family-split **0.364** (+0.031 above chance; 62% of lift is leakage)
-- Gene-level WT merged dataset family-split **0.393**, GOF AUROC **0.728**
+**Headline numbers (single-seed in this file; see result_6 Part 2 for multi-seed correction):**
+- MLP delta gene-split **0.415**, family-split **0.364** seed 0 → **0.299 ± 0.034 5-seed** (Gerasimavicius)
+- Merged dataset family-split **0.352** seed 0 → **0.385 ± 0.018 5-seed**
 - Always-predict-LOF baseline: **0.279** (Gerasimavicius), **0.311** (gene-level merged)
-- Family-split floor **~0.39** consistent across 3 different setups (per-variant/gene-level, 2 datasets, linear/MLP)
-**What it concludes:** The ~0.39 floor is real but small. The pathogenicity-mechanism dissociation is sharper than result 6 suggested. The GOF AUROC (0.73–0.80 family-split) is the strongest individual signal. See PUBLISH.md for v1 paper plan built around this.
+- Family-split floor under multi-seed: **F1 = 0.30 (Gerasimavicius) / 0.39 (merged)** — merged is the more reliable headline
+**What it concludes:** The floor is real but lower than the single-seed numbers in this file. The pathogenicity-mechanism dissociation holds (pathogenicity 0.74–0.88 vs mechanism 0.30–0.39, both family-split-stable). The GOF AUROC (0.557 ± 0.036 Geras / 0.655 ± 0.014 merged delta MLP) is the strongest mechanism-class signal that survives family-split, distinct from the WT-only GOF AUROC of 0.73–0.80 which captures gene identity rather than mutation effect. See PUBLISH.md for v1/v2/v3 paper plan.
+
+### 8. `result_8.md` — Within-family mechanism (first pass)
+**Script:** ad-hoc analysis on cached Gerasimavicius embeddings · Local CPU, seed=42
+**Headline numbers:** Within-family gene-split CV on the 5 largest Pfam families. **PF00520 (ion channel) delta F1=0.407, AUROC=0.659 (2-class GOF/DN)** — the most interpretable result. Other families largely at chance due to tiny sample sizes (6–12 genes).
+**What it concludes:** Directional signal that mechanism is partially learnable within a homologous subfamily; consistent with MissION-style findings. Not publishable at single seed + small N; result 16 follows up.
+
+### 9. `result_9.md` — Contrastive metric learning recovers cross-family signal
+**Script:** `contrastive_mechanism.py` · A100 80GB, seed=0
+**Headline numbers:** Supervised contrastive projection head (1280→256→64, TripletMarginLoss, positives = same mechanism / different family) pushes family-split macro-F1 from MLP's 0.364 to **0.397** on Gerasimavicius (+0.033) and to **0.387** on merged (+0.035 above MLP floor). Lift is equal under gene-split (+0.060) and family-split (+0.059) — the critical diagnostic that the recovered signal is *not* leakage. LOF benefits most; **DN stays flat (+0.012 Geras, −0.025 merged)**.
+**What it concludes:** Frozen ESM-2 delta does encode small cross-family mechanism signal not accessible to a standard MLP — but only for LOF. DN remains essentially absent.
+
+### 10. `result_10.md` — Clan-level holdout: partial generalisation, not pure memorisation
+**Script:** `clan_holdout.py` · Local CPU, seed=0
+**Headline numbers:** Leave-one-Pfam-clan-out evaluation across 21 qualifying clans gives MLP macro-F1 = **0.299 ± 0.076** — below family-split floor (0.352) but above majority (0.254). Per-class AUROCs (GOF 0.597 / DN 0.575 / LOF 0.636) confirm real cross-fold signal. **Approximately half the family-split mechanism signal is clan-level memorisation; the remainder is genuine cross-fold generalisation.** Heterogeneous across clans (Cupin F1=0.536; Ion_channel F1=0.190).
+**What it concludes:** The ~0.36 family-split floor is roughly half real, half fold-memorisation. Mechanism is more readable from sequence in architectures with stereotyped structural mechanisms (cupins, death domains, GPCRs) and unreadable in plastic repeat proteins (ankyrins, EF-hands).
+**Reconciliation note:** Result_10's interpretation ("DN biology in complex-assembly context") is partly contradicted by result_13 T4's feature ablation, which finds PPI_degree contributes nothing to V2 aggregate F1. Result_16 reconciles: PPI signal is within-family, not cross-family.
+
+### 11. `result_11.md` — Stage 0 pilot: 4 gene-level features predict mechanism under family-split CV
+**Script:** `proteome_pilot.py` · Local CPU, seeds 0–4 (5-seed replication)
+**Headline numbers:** Logistic regression on 4 public gene-level features (pLI, LOEUF, mis_z, paralog_count) under family-split CV on 1,234 genes / 725 families achieves macro-F1 = **0.417 ± 0.009** (+0.122 above majority 0.295). Per-class AUROCs (mean ± std): GOF **0.686 ± 0.011**, **DN 0.687 ± 0.009**, LOF **0.735 ± 0.001** — balanced and tight across seeds.
+**What it concludes:** Stage 0 sanity check passes. Public gene-level features carry meaningful mechanism signal under the project's family-split CV, robust to seed choice. 5/5 seeds returned STRONG_SIGNAL by the pre-registered rule. Proceeded to Phase 1.
+
+### 12. `result_12.md` — Proteome feature matrix assembled (data collection only)
+**Script:** `build_proteome_features.py` · No model run
+**Output:** 2,424 × 37 float32 matrix at `data/proteome_features_aligned.npy`. Sources: gnomAD constraint (93%), Ensembl paralogs (100%), HPA tissue specificity (99%, mapped from categorical), PaxDb abundance (98%, manual download — automated 403'd), BioPlex 3.0 PPI degree (75%), ClinGen HI/TS (19%/37%). HPA n_tissues failed; Mathieson half-life and PhosphoSitePlus PTM not pursued. Family-mean-centred residuals and binary missingness indicators included.
+**What it concludes:** Feature collection complete with documented coverage. Proceeded to Phase 3 modelling.
+
+### 13. `result_13.md` — Phase 3 modelling: proteome features outperform ESM-2
+**Script:** `proteome_mechanism.py`, `per_gene_ablation.py` · 5 seeds, family-split CV
+**Headline numbers:**
+- V1 (ESM-2 delta, 1280-dim) macro-F1 = **0.382 ± 0.007**
+- V2 (proteome, 37-dim) macro-F1 = **0.462 ± 0.025**, DN AUROC = **0.727 ± 0.017**
+- V3 (concat 1317-dim) macro-F1 = **0.447 ± 0.020** — Gate 2 (V3 ≥ max+0.02) fails 3/5 seeds
+- V4 (contrastive on V3) macro-F1 = **0.424** — underperforms V3
+- **T2 per-gene scoring:** V1 = 0.359, V2 = 0.460, V3 = 0.413. V2 advantage grows to **+0.101 per-gene** vs V1; V3 now actively below V2
+- **T4 feature ablation:** dropping constraint costs ΔF1 = +0.040 (the most important class); dropping dosage costs +0.043; dropping PPI_degree gives ΔF1 = −0.002 (contributes nothing). DN AUROC is *hurt* by constraint features (they conflate DN with LOF in the multi-class model)
+**What it concludes:** Frozen ESM-2 delta is dominated by 37 gene-level features. Combining doesn't help; ESM-2 is dispensable. The mechanistic interpretation differs from the original hypothesis (PPI/paralogs were expected to drive DN; they don't — constraint and dosage do, but they *hurt* DN specifically).
+
+### 14. `result_14.md` — Clinical utility: paralog count alone beats the multi-feature model
+**Script:** `clinical_utility.py` · Family-split CV, 5 seeds, two feature sets
+**Headline numbers:** Within ClinGen HI=3 genes (n=369), under family-split CV:
+- LR FULL (37 features) GOF-vs-LOF AUROC = **0.650 ± 0.020** (marginally above INFORMATIVE threshold 0.65; 2/5 seeds below)
+- LR NO-MISS (18 features, missingness indicators dropped) = **0.679 ± 0.016**
+- **paralog_count alone = 0.746** — beats every multi-feature model
+- Operating point P_GOF > 0.4: recall 0.235, precision 0.160 — not clinically useful
+- ECE = 0.148 — model is miscalibrated
+**What it concludes:** The clinical utility case reduces to one signal: paralog count predicts GOF direction within haploinsufficient genes. Biologically interpretable via the gene balance hypothesis (paralog-rich genes survive dominant mutations better; when ClinGen still calls them HI, mechanism is more likely activating). Multi-feature model adds noise rather than signal in this evaluation subset. Honest framing: narrow ranking signal, not a clinical predictor.
+
+### 15. `result_15.md` — Badonyi 2024 priors as a third modality (project high-water mark)
+**Script:** `badonyi_mechanism.py` · 5-fold family-split, 5 seeds
+**Headline numbers:**
+- V_bad (Badonyi pDN/pGOF/pLOF, 3 features, LogReg) macro-F1 = **0.484 ± 0.021** — beats V1 (+0.104) and V2 (+0.022)
+- **V2+bad** (proteome + Badonyi, 40 features) = **0.511 ± 0.021**, DN AUROC = **0.827 ± 0.015** — project high-water mark
+- V1+bad (ESM-2 + Badonyi, 1283 features) = 0.441 — *underperforms* V_bad alone
+- V_all (all three modalities, 1320 features) = 0.481 — underperforms V2+bad
+**What it concludes:** Modality ordering is Badonyi structural priors > proteome > ESM-2. ESM-2 is the dispensable modality. Three Badonyi features beat 1280-dim ESM-2 delta. The combination of structural prior + cellular features is genuinely additive (+0.049 F1, +0.100 DN AUROC over V2 alone).
+
+**Appendix A — Leakage triage of V_bad.** Pre-registered concern: V_bad uses Badonyi predictions for genes that were in Badonyi's training set (621/1,699 labeled = 37% overlap, concentrated in minority classes — 73% of GOF and 72% of DN). Stratified evaluation under family-split CV finds V_bad performs *better* on out-of-Badonyi-training genes than in-training ones (DN AUROC 0.814 OUT vs 0.745 IN). No leakage signature. V_bad's headline is real, not artifact.
+
+**Appendix B — MMseqs2-20 cluster-holdout.** Re-evaluated all variants under sequence-similarity clusters at 20% identity / 20% coverage (matching Saadat & Fellay 2025). All numbers within ±0.03 of family-split. V_bad DN AUROC = 0.776; V2+bad = 0.816. Result 15 conclusions hold under a stricter homology block.
+
+### 16. `result_16.md` — Within-family mechanism + Badonyi raw-model holdout
+**Script:** `within_family_mechanism.py`, `badonyi_holdout_survival.py` · LOGO CV across 24 families
+**Headline numbers (within-family):**
+- Residual proteome (family-mean-centred) macro-F1 = **0.514** — beats raw proteome (0.484), Badonyi residuals (0.449), and combined residuals (0.516)
+- **Badonyi raw = Badonyi residual = 0.449** — structural prior carries no within-family variation
+- PF00046 (homeodomain, n=30): residual proteome F1 = **0.633**, GOF AUROC 0.852, DN AUROC 0.857 — the anchor example
+- PF00520 (ion channel, n=16): residual proteome F1 = 0.417 (near majority) — within-family signal lives in ESM-2 mutation context (result 8) for this family, not gene-level features
+
+**Addendum — Badonyi's raw published model under family-split holdout.** Tests whether Badonyi's *published* SVM (not V_bad's re-fit LogReg) survives the project's strict CV. Pre-registered decision rule (ΔAUROC ≥ −0.03 robust, ≤ −0.10 mostly leakage):
+- Pfam family-split: all three classifiers in ROBUST band
+- MMseqs2-20 cluster-split: all three classifiers in ROBUST band
+- **But:** stratified by Badonyi-training-set membership without any holdout shows a per-gene training-set fit effect — DN AUROC 0.677 in-training vs 0.620 never-seen; GOF 0.713 vs 0.694; **LOF 0.625 in-training vs 0.472 never-seen** (15-point gap, never-seen at chance)
+**What it concludes:** Badonyi's model is family-recognition-robust (good) but his published LOF numbers reflect per-gene training-set fit (concern). Does not affect V_bad/V2+bad validity — the LogReg-on-top averages out per-gene memorisation per fold. Affects how Badonyi's published numbers should be cited.
 
 ---
 
-## The coherent story across all 7
+## The coherent story across all 16
 
-1. **(1)** Linear probe at chance on delta; WT-only at 0.58 — suspicious.
-2. **(2)** Family-split: WT-only collapses (0.58→0.39). Delta stays flat. GOF AUROC 0.80 survives.
-3. **(4)** Family clustering explains the collapse: ESM-2 encodes family identity, family correlates with mechanism.
-4. **(6)** Positive control: pathogenicity AUROC 0.88, family-split-stable. Pipeline works when signal is there.
-5. **(7)** Full calibration: ~0.39 family-split floor across all setups. 62% of gene-split signal is leakage. Dissociation with pathogenicity is **sharper** than originally thought, not narrower.
+1. **(1–2)** Linear probes are at chance on delta. WT-only F1=0.58 collapses to 0.39 under family-split — most apparent mechanism signal is family identity.
+2. **(4)** ESM-2 strongly clusters by Pfam (26× purity) and 74.8% of genes share their family's modal mechanism — the causal explanation.
+3. **(6)** Pathogenicity positive control AUROC 0.74–0.88 across replications, family-split-stable (Δ ≈ 0 reproducibly) — pipeline works; mechanism null is real, not methodological. Multi-seed update in result 6 Part 2.
+4. **(7)** Full calibration: mechanism family-split floor F1 = 0.385 ± 0.018 (merged, 5-seed) / 0.299 ± 0.034 (Gerasimavicius, 5-seed). 62.8% of gene-split signal is family-recognition leakage (exact, seed-invariant on Gerasimavicius). Pathogenicity–mechanism dissociation is the central finding of the ESM-2 arc.
+5. **(8)** Within ion-channel family, ESM-2 delta has within-family signal (AUROC 0.659 GOF/DN) — directional, small N.
+6. **(9)** Contrastive metric learning lifts cross-family floor from 0.364 → 0.397 with equal gene-/family-split deltas (real signal, not leakage). LOF benefits; DN doesn't.
+7. **(10)** Clan-holdout: ~half family-split signal is fold memorisation, ~half real. Heterogeneous across protein architectures (cupins generalise; ion channels collapse).
+8. **(11)** Stage 0 pilot for proteome thread: 4 gene-level features hit F1=0.417 — STRONG_SIGNAL, proceed to full pull.
+9. **(12)** 37-feature proteome matrix assembled. PaxDb and HPA partially limited; family-mean-centred residuals included.
+10. **(13)** V2 (proteome) outperforms V1 (ESM-2) by +0.10 per-gene F1. V3 (combination) doesn't help. Constraint + dosage are load-bearing; PPI/paralogs/abundance contribute little to aggregate F1.
+11. **(14)** Clinical utility reduces to paralog_count alone (AUROC 0.746 within HI=3) beating the multi-feature model. Calibration poor; operating-point performance weak.
+12. **(15)** Badonyi structural prior (3 features) beats ESM-2 (1280 dims) and proteome (37 dims). V2+bad is the high-water mark (F1=0.511, DN AUROC=0.827). Robust under leakage triage and MMseqs2-20 cluster-split.
+13. **(16)** Within-family mechanism lives in residual proteome features (F1=0.514 in LOGO across 24 families); Badonyi residuals add nothing within-family. Homeodomains are the cleanest case. Badonyi's raw published model is family-recognition-robust but shows per-gene training-set fit on LOF.
 
-**Publication plan:** See `PUBLISH.md` — v1 focuses on the GOF AUROC survival under family-split, framed as a frozen-representation interpretability result. Not AI Scientist output; manual research.
+**The narrative shape:** frozen-PLM negative result (1–10) → gene-level proteome features beat ESM-2 (11–13) → clinical utility narrows to one column (14) → structural priors beat both (15) → within-family signal lives in within-family proteome variation (16). ESM-2 is dispensable throughout. The modality ordering — structural > proteome > sequence — is consistent across family-split and MMseqs2-20 holdouts.
+
+**Publication plan:** `PUBLISH.md` (recently updated) — v1 covers results 1–10 dissociation; v2 adds results 11–16 modality comparison + clinical utility + within-family + Badonyi holdout robustness; v3 adds DDG2P + SaProt/ESM-3.
 
 ---
 
 ## Supporting docs
 
-- `EXPERIMENT.md` — Pre-registration document (original hypothesis and thresholds)
-- `PUBLISH.md` — Publication plan: v1/v2/v3 versioned bioRxiv strategy
-- `explain.txt` — Plain-English explanation of the experiment design
+- `EXPERIMENT.md` — Pre-registration document (original ESM-2 hypothesis, results 1–10 scope)
+- `PUBLISH.md` — Publication plan: v1/v2/v3 versioned bioRxiv strategy; updated 2026-05-26 to reflect results 11–16
+- `plan_experiment.md` — Experiment 11 plan: per-variant ESM-2 + gene-level proteome features (staged execution: pilot → V2 → V3 → V4)
+- `plan_esm2_proteome.md` — Detailed Phase 1+2 plan for proteome feature engineering
+- `plan_clinical.md` — Clinical utility analysis plan (result 14)
+- `plan_badonyi.md` — Pre-registration for Badonyi raw-model holdout (result 16 addendum)
+- `explain.txt` — Plain-English explanation of the original experiment design (result 1–2 era)
 - `progress_notes.md` — Running log of decisions, bugs fixed, observations
-- `../scripts/README.md` — What each script does and when to use it
+- `../scripts/README.md` — What each script does
 
 ---
 
 ## Companion data
 
-| Result | JSON file |
+| Result | Primary JSON file |
 |---|---|
 | 1 | `results/20260524_baseline_run/run_0/final_info_seed0.json` |
 | 2 | `results/20260524_baseline_run/run_0/family_split_baselines.json` |
 | 3, 5 | `results/20260524_baseline_run/run_0/mlp_results_seed0.json` |
 | 4 | `results/20260524_baseline_run/run_0/family_clustering.json` |
 | 6 | `results/20260524_baseline_run/run_0/pathogenicity_control.json` |
-| 7 | `results/20260524_baseline_run/run_0/option_b_gene_level_wt_merged.json` + merged dataset MLP (pending) |
+| 7 | `results/20260524_baseline_run/run_0/option_b_gene_level_wt_merged.json` + merged MLP |
+| 8 | `results/20260524_baseline_run/run_0/within_family_analysis.json` |
+| 9 | `results/20260524_baseline_run/run_0/contrastive_results_{geras,merged}_seed0.json` |
+| 10 | `results/20260524_baseline_run/run_0/clan_holdout_results_seed0.json` |
+| 11 | `results/proteome_pilot/pilot_results_summary_5seed.json` |
+| 12 | `data/gene_proteome_features.tsv`, `data/proteome_features_aligned.npy`, `data/proteome_feature_columns.json` |
+| 13 | `results/proteome_mechanism/proteome_mechanism_summary.json`, `per_gene_summary.json`, `v2_ablation_summary.json` |
+| 14 | `results/clinical_utility/hi3_family_split_summary.json` |
+| 15 | `results/badonyi_mechanism/badonyi_mechanism_summary.json` |
+| 15-AppA | `results/badonyi_leakage/leakage_summary.json` |
+| 15-AppB | `results/mmseqs_cluster_holdout/cluster_summary.json` |
+| 16 | `results/within_family/within_family_summary.json` |
+| 16-addendum | `results/badonyi_survival/badonyi_survival_summary.json` |
 
-Embeddings under `data/embeddings/`:
-- `embeddings_{wt,mut}{,_pos}_esm2_t33_650M_UR50D.npy` — Gerasimavicius (results 1–5, 7)
-- `merged_embeddings_{wt,mut}_{mean,pos}.npy` — merged 1,985-gene dataset (result 7)
-- `emb_{wt,mut}_mean_pathogenicity_*.npy` — ClinVar pathogenicity set (result 6)
+ESM-2 embeddings under `data/embeddings/`:
+- `embeddings_{wt,mut}{,_pos}_esm2_t33_650M_UR50D.npy` — Gerasimavicius 10,231 variants (results 1–5, 7)
+- `merged_embeddings_{wt,mut}_{mean,pos}.npy` — merged 1,985-gene / 19,100-variant dataset (results 7, 9, 13–15)
+- `emb_{wt,mut}_mean_pathogenicity_*.npy` — ClinVar 17,236 pathogenicity variants (result 6)
+
+Feature matrices:
+- `data/proteome_features_aligned.npy` (2,424 × 37) — gnomAD + paralogs + HPA + PaxDb + BioPlex + ClinGen (result 12)
+- `data/badonyi_features_aligned.npy` (2,424 × 13) — pDN/pGOF/pLOF + residuals + missingness (result 15)
+- `data/mmseqs_clusters.json` — gene → MMseqs2-20 cluster_rep mapping (result 15 Appendix B)
 
 ---
 
-## Highest-priority next experiments
+## Remaining work
 
-1. **MLP delta on merged dataset** — **running on RunPod now** (19,100 variants, 1,985 genes, 1,146 families). Result will fill in the merged-dataset family-split floor for delta.
-2. **Multi-seed replication** — all numbers seed=0 only. 5 seeds needed before posting.
-3. **The figure** — bar chart: per-class AUROC × CV scheme × dataset (see PUBLISH.md).
-4. **Within-family analysis** — is mechanism learnable within a single Pfam family? (potential positive flip side for v2)
-5. **DDG2P / SaProt replication** — generalisation evidence for v2/v3.
+The experimental matrix is essentially complete. What's left:
+
+1. **One master figure** — bar chart of macro-F1 / per-class AUROC × modality (V1/V2/V_bad/V2+bad) × holdout (family-split / MMseqs2-20). Referenced from PUBLISH.md v2 plan. ~half day.
+2. **Bootstrap CIs on headline numbers** — V_bad and V2+bad DN AUROC have seed std but not within-seed CIs. ~2 hours.
+3. **Calibration analysis on V2+bad** — reliability diagram and ECE. ~1 hour.
+4. **Path B (raw structural features de novo)** — compute FoldX ΔΔG, SASA, SCRIBER, RSA on AF2 structures for the merged gene set; re-evaluate V_struct vs V_bad. Optional rigour upgrade; ~several days including FoldX runtime. Skip unless reviewer specifically pushes back.
+5. **Writeup polish** — update `scripts/README.md` to reflect all current scripts; possibly write a short `OVERVIEW.md` for first-time readers.
+
+Scope expansions deliberately not pursued (per the staged plan's pre-registered gates):
+- Fine-tuning ESM-2 (LoRA contrastive) — V3 ≯ V2, so the pre-registered "skip" rule fires
+- Per-variant mechanism labels — different problem; requires MAVE/DMS data pull
+- DDG2P replication — deferred to v3 of the publication plan
+- SaProt / ESM-3 — deferred to v3

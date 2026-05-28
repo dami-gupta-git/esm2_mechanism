@@ -1,0 +1,8 @@
+{
+  "baseline_f1_mean": 0.3715241835918102,
+  "baseline_f1_std": 0.005746671900708718,
+  "projected_f1_mean": 0.3719701793277491,
+  "projected_f1_std": 0.005869395578231457,
+  "delta_f1": 0.00044599573593889774,
+  "h3_passes": true
+}

@@ -21,20 +21,20 @@ delta_mean MLP family-split F1 = 0.364 / 0.352 published in result_7.
 
 Usage:
     # Gerasimavicius (default)
-    python scripts/mut_only_mlp.py \\
-        --data_dir results/20260524_baseline_run/run_0/data \\
-        --emb_dir data/embeddings \\
+    python mut_only_mlp.py \\
+        --data_dir ../results/20260524_baseline_run/run_0/data \\
+        --emb_dir ../data/embeddings \\
         --family_split \\
-        --out results/20260524_baseline_run/run_0/mut_only_mlp_seed0.json
+        --out ../results/20260524_baseline_run/run_0/mut_only_mlp_seed0.json
 
     # Merged dataset
-    python scripts/mut_only_mlp.py \\
-        --data_dir data/raw \\
-        --emb_dir data/embeddings \\
+    python mut_only_mlp.py \\
+        --data_dir ../data \\
+        --emb_dir ../data/embeddings \\
         --emb_prefix merged_ \\
-        --variants_file data/embeddings/merged_valid_variants.json \\
+        --variants_file ../data/merged_valid_variants.json \\
         --family_split \\
-        --out results/20260524_baseline_run/run_0/mut_only_mlp_merged_seed0.json
+        --out ../results/20260524_baseline_run/run_0/mut_only_mlp_merged_seed0.json
 """
 
 import argparse
@@ -47,6 +47,8 @@ import numpy as np
 # Reuse helpers from experiment_mlp.py to guarantee identical methodology
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from experiment_mlp import (
+import functools
+print = functools.partial(print, flush=True)
     load_variants_and_labels,
     gene_split_cv,
     make_family_splits,

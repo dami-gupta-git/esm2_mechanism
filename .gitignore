@@ -206,8 +206,11 @@ tempCodeRunnerFile.py
 # Large data files — SCP to pods rather than committing
 *.npy
 *.xlsx
-data/raw/
+data/cache/
 data/embeddings/
+data/megascale/
+data/ll_scores.json
+papers/
 
 # Ruff stuff:
 .ruff_cache/

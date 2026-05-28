@@ -1,0 +1,970 @@
+{
+  "design": "family-split CV (5-fold), out-of-sample probabilities",
+  "n_labeled_genes": 1699,
+  "class_distribution": {
+    "GOF": 158,
+    "DN": 118,
+    "LOF": 1423
+  },
+  "feature_sets": {
+    "FULL": 37,
+    "NO_MISS": 18
+  },
+  "hi3": {
+    "n_hi3_total": 369,
+    "n_hi3_GOF": 17,
+    "n_hi3_DN": 19,
+    "n_hi3_LOF": 333,
+    "H1_GOF_vs_LOF_AUROC_LR_FULL": 0.6749690867337926,
+    "H1_GOF_vs_LOF_CI95_LR_FULL": [
+      0.5206005761564123,
+      0.8295125581446746
+    ],
+    "H1_GOF_vs_LOF_AUROC_LR_NOMISS": 0.694930224341989,
+    "H1_GOF_vs_LOF_CI95_LR_NOMISS": [
+      0.5403972030428938,
+      0.8315915044910179
+    ],
+    "H1_GOF_vs_LOF_AUROC_MLP_FULL": 0.4108814697049991,
+    "H1_GOF_vs_LOF_CI95_MLP_FULL": [
+      0.2590397055519387,
+      0.5780076963054579
+    ],
+    "H1_baseline_mis_z_AUROC": 0.5913223140495868,
+    "H1_baseline_mis_z_CI95": [
+      0.40938055092272435,
+      0.7551038319984312
+    ],
+    "H1_baseline_paralog_count_AUROC": 0.7455396573043632,
+    "H1_baseline_paralog_count_CI95": [
+      0.6451501212703218,
+      0.848095453853183
+    ],
+    "H1_baseline_PPI_degree_AUROC": 0.3491016282987086,
+    "H1_baseline_PPI_degree_CI95": [
+      0.18837661360901434,
+      0.5348743664402028
+    ],
+    "H1_baseline_pLI_AUROC": 0.49586776859504134,
+    "H1_baseline_pLI_CI95": [
+      0.32987267832444184,
+      0.6346314682718193
+    ],
+    "H1_baseline_LOEUF_AUROC": 0.4859504132231405,
+    "H1_baseline_LOEUF_CI95": [
+      0.31070514420999695,
+      0.6508365912008403
+    ],
+    "H2_DN_vs_LOF_AUROC_LR_FULL": 0.6513355460723881,
+    "H2_DN_vs_LOF_CI95_LR_FULL": [
+      0.5128729401699987,
+      0.782198125692238
+    ],
+    "H2_DN_vs_LOF_AUROC_LR_NOMISS": 0.6660344555081397,
+    "H2_DN_vs_LOF_CI95_LR_NOMISS": [
+      0.5488686975717604,
+      0.7806235479068779
+    ],
+    "H2_DN_vs_LOF_AUROC_MLP_FULL": 0.6541804962857595,
+    "H2_DN_vs_LOF_CI95_MLP_FULL": [
+      0.5463617098682145,
+      0.759783433349867
+    ],
+    "H3_missingness_ablation_delta_GOF": -0.0199611376081964,
+    "H3_missingness_ablation_delta_DN": -0.014698909435751584,
+    "calibration_ECE_GOF_LR_FULL": 0.14787142207447806,
+    "outlier_genes": [
+      {
+        "gene": "SPTAN1",
+        "mechanism_3class": "DN",
+        "P_GOF_lr_full": 0.46231280148713594,
+        "P_DN_lr_full": 0.49039524771720305,
+        "P_GOF_lr_nomiss": 0.43408126963667526,
+        "P_DN_lr_nomiss": 0.5127824102485656,
+        "P_GOF_mlp_full": 0.020367374643683434,
+        "P_DN_mlp_full": 0.10723690688610077
+      },
+      {
+        "gene": "KCNQ2",
+        "mechanism_3class": "DN",
+        "P_GOF_lr_full": 0.4457705865246336,
+        "P_DN_lr_full": 0.36573811983149024,
+        "P_GOF_lr_nomiss": 0.4708334358330724,
+        "P_DN_lr_nomiss": 0.4249190714619368,
+        "P_GOF_mlp_full": 0.00462732370942831,
+        "P_DN_mlp_full": 0.303024023771286
+      },
+      {
+        "gene": "GRIN2A",
+        "mechanism_3class": "DN",
+        "P_GOF_lr_full": 0.42111526397661936,
+        "P_DN_lr_full": 0.31819748575000634,
+        "P_GOF_lr_nomiss": 0.43275102038856106,
+        "P_DN_lr_nomiss": 0.40373528624609056,
+        "P_GOF_mlp_full": 0.00010012947313953191,
+        "P_DN_mlp_full": 0.0019786679185926914
+      },
+      {
+        "gene": "COL3A1",
+        "mechanism_3class": "DN",
+        "P_GOF_lr_full": 0.36897852440374224,
+        "P_DN_lr_full": 0.40287329465954497,
+        "P_GOF_lr_nomiss": 0.3906074100063243,
+        "P_DN_lr_nomiss": 0.4415189671805433,
+        "P_GOF_mlp_full": 0.24404847621917725,
+        "P_DN_mlp_full": 0.13413554430007935
+      },
+      {
+        "gene": "COL2A1",
+        "mechanism_3class": "DN",
+        "P_GOF_lr_full": 0.3672625873915865,
+        "P_DN_lr_full": 0.37926301102062987,
+        "P_GOF_lr_nomiss": 0.37645035573925606,
+        "P_DN_lr_nomiss": 0.4278039235476925,
+        "P_GOF_mlp_full": 0.1191888153553009,
+        "P_DN_mlp_full": 0.32957443594932556
+      },
+      {
+        "gene": "NR3C2",
+        "mechanism_3class": "DN",
+        "P_GOF_lr_full": 0.33700373504985465,
+        "P_DN_lr_full": 0.2075645087662984,
+        "P_GOF_lr_nomiss": 0.355080117343022,
+        "P_DN_lr_nomiss": 0.25044708576071123,
+        "P_GOF_mlp_full": 0.09345768392086029,
+        "P_DN_mlp_full": 0.04895816743373871
+      },
+      {
+        "gene": "NKX2-5",
+        "mechanism_3class": "DN",
+        "P_GOF_lr_full": 0.30980887007171554,
+        "P_DN_lr_full": 0.1939894891543955,
+        "P_GOF_lr_nomiss": 0.3680753889075698,
+        "P_DN_lr_nomiss": 0.23835069699901687,
+        "P_GOF_mlp_full": 0.002454036381095648,
+        "P_DN_mlp_full": 0.001638309913687408
+      },
+      {
+        "gene": "BMPR2",
+        "mechanism_3class": "DN",
+        "P_GOF_lr_full": 0.306894873297194,
+        "P_DN_lr_full": 0.16480779787892152,
+        "P_GOF_lr_nomiss": 0.3709443219860512,
+        "P_DN_lr_nomiss": 0.22828789772258354,
+        "P_GOF_mlp_full": 0.0013305488973855972,
+        "P_DN_mlp_full": 0.0007604961283504963
+      },
+      {
+        "gene": "FOXP1",
+        "mechanism_3class": "DN",
+        "P_GOF_lr_full": 0.25497180242312845,
+        "P_DN_lr_full": 0.41495820401134187,
+        "P_GOF_lr_nomiss": 0.2987736038587198,
+        "P_DN_lr_nomiss": 0.4521516755499773,
+        "P_GOF_mlp_full": 0.3508092761039734,
+        "P_DN_mlp_full": 0.0011719245230779052
+      },
+      {
+        "gene": "NR5A1",
+        "mechanism_3class": "DN",
+        "P_GOF_lr_full": 0.25072493978284227,
+        "P_DN_lr_full": 0.19732171171106344,
+        "P_GOF_lr_nomiss": 0.36547586357490996,
+        "P_DN_lr_nomiss": 0.20346192108523875,
+        "P_GOF_mlp_full": 0.0004394621355459094,
+        "P_DN_mlp_full": 0.024446500465273857
+      },
+      {
+        "gene": "KCNH2",
+        "mechanism_3class": "DN",
+        "P_GOF_lr_full": 0.21020666148628048,
+        "P_DN_lr_full": 0.16297383893996073,
+        "P_GOF_lr_nomiss": 0.23691803195161432,
+        "P_DN_lr_nomiss": 0.20279999773911206,
+        "P_GOF_mlp_full": 0.000984127284027636,
+        "P_DN_mlp_full": 0.005021687597036362
+      },
+      {
+        "gene": "OTX2",
+        "mechanism_3class": "DN",
+        "P_GOF_lr_full": 0.19077286242170594,
+        "P_DN_lr_full": 0.4894935954169139,
+        "P_GOF_lr_nomiss": 0.23794946293706365,
+        "P_DN_lr_nomiss": 0.5037624541545797,
+        "P_GOF_mlp_full": 0.13298600912094116,
+        "P_DN_mlp_full": 0.014679505489766598
+      },
+      {
+        "gene": "ETV6",
+        "mechanism_3class": "DN",
+        "P_GOF_lr_full": 0.1822868578090385,
+        "P_DN_lr_full": 0.3351937414598776,
+        "P_GOF_lr_nomiss": 0.24502656874262488,
+        "P_DN_lr_nomiss": 0.40818195774855776,
+        "P_GOF_mlp_full": 0.020290516316890717,
+        "P_DN_mlp_full": 0.0023885793052613735
+      },
+      {
+        "gene": "SRCAP",
+        "mechanism_3class": "DN",
+        "P_GOF_lr_full": 0.1821551397293606,
+        "P_DN_lr_full": 0.03633195284763438,
+        "P_GOF_lr_nomiss": 0.37773299382241626,
+        "P_DN_lr_nomiss": 0.27161497714255967,
+        "P_GOF_mlp_full": 0.01190132088959217,
+        "P_DN_mlp_full": 6.30414069746621e-05
+      },
+      {
+        "gene": "SHH",
+        "mechanism_3class": "DN",
+        "P_GOF_lr_full": 0.17714455607016175,
+        "P_DN_lr_full": 0.39469101575119403,
+        "P_GOF_lr_nomiss": 0.28916746187630243,
+        "P_DN_lr_nomiss": 0.35816276554661847,
+        "P_GOF_mlp_full": 0.012489957734942436,
+        "P_DN_mlp_full": 0.1978255808353424
+      },
+      {
+        "gene": "AR",
+        "mechanism_3class": "DN",
+        "P_GOF_lr_full": 0.11679390464918037,
+        "P_DN_lr_full": 0.0012601337576657499,
+        "P_GOF_lr_nomiss": 0.2835372962963478,
+        "P_DN_lr_nomiss": 0.36572749793867293,
+        "P_GOF_mlp_full": 0.004885187838226557,
+        "P_DN_mlp_full": 1.5973322220474984e-08
+      },
+      {
+        "gene": "PHOX2B",
+        "mechanism_3class": "DN",
+        "P_GOF_lr_full": 0.11483387174677381,
+        "P_DN_lr_full": 0.5023250125829622,
+        "P_GOF_lr_nomiss": 0.23299221328630254,
+        "P_DN_lr_nomiss": 0.4955016201115672,
+        "P_GOF_mlp_full": 0.00014119796105660498,
+        "P_DN_mlp_full": 0.04617868736386299
+      },
+      {
+        "gene": "APOB",
+        "mechanism_3class": "DN",
+        "P_GOF_lr_full": 0.05513763201453945,
+        "P_DN_lr_full": 0.3745048088070978,
+        "P_GOF_lr_nomiss": 0.18920987168474498,
+        "P_DN_lr_nomiss": 0.40879536902038355,
+        "P_GOF_mlp_full": 1.6224379351115203e-06,
+        "P_DN_mlp_full": 7.535940085290349e-07
+      },
+      {
+        "gene": "WT1",
+        "mechanism_3class": "DN",
+        "P_GOF_lr_full": 0.014688400040073993,
+        "P_DN_lr_full": 0.008057686035589385,
+        "P_GOF_lr_nomiss": 0.2375573848060608,
+        "P_DN_lr_nomiss": 0.2774822018279815,
+        "P_GOF_mlp_full": 7.982564420672134e-05,
+        "P_DN_mlp_full": 0.000119051881483756
+      },
+      {
+        "gene": "CACNA1A",
+        "mechanism_3class": "GOF",
+        "P_GOF_lr_full": 0.5255471647157454,
+        "P_DN_lr_full": 0.31590300386224024,
+        "P_GOF_lr_nomiss": 0.5135564703645767,
+        "P_DN_lr_nomiss": 0.410867285926798,
+        "P_GOF_mlp_full": 0.23123325407505035,
+        "P_DN_mlp_full": 0.008910461328923702
+      },
+      {
+        "gene": "PRKAR1A",
+        "mechanism_3class": "GOF",
+        "P_GOF_lr_full": 0.4936427311271982,
+        "P_DN_lr_full": 0.3967479539730478,
+        "P_GOF_lr_nomiss": 0.505794912960198,
+        "P_DN_lr_nomiss": 0.40328570020860666,
+        "P_GOF_mlp_full": 0.003266293089836836,
+        "P_DN_mlp_full": 0.13669244945049286
+      },
+      {
+        "gene": "TRIO",
+        "mechanism_3class": "GOF",
+        "P_GOF_lr_full": 0.46877418354059197,
+        "P_DN_lr_full": 0.32998573815889776,
+        "P_GOF_lr_nomiss": 0.5067411807727741,
+        "P_DN_lr_nomiss": 0.39152121429796194,
+        "P_GOF_mlp_full": 0.9069495797157288,
+        "P_DN_mlp_full": 0.028081199154257774
+      },
+      {
+        "gene": "GRIN2B",
+        "mechanism_3class": "GOF",
+        "P_GOF_lr_full": 0.4324419084075143,
+        "P_DN_lr_full": 0.3743156729489266,
+        "P_GOF_lr_nomiss": 0.4561025936796081,
+        "P_DN_lr_nomiss": 0.4375215981012658,
+        "P_GOF_mlp_full": 1.7632744857110083e-05,
+        "P_DN_mlp_full": 3.2135213245965133e-07
+      },
+      {
+        "gene": "FGFR1",
+        "mechanism_3class": "GOF",
+        "P_GOF_lr_full": 0.3919908999791722,
+        "P_DN_lr_full": 0.5498181195204497,
+        "P_GOF_lr_nomiss": 0.40908562668944626,
+        "P_DN_lr_nomiss": 0.5425080405971323,
+        "P_GOF_mlp_full": 1.7081798475704346e-10,
+        "P_DN_mlp_full": 0.9957429766654968
+      },
+      {
+        "gene": "SCN2A",
+        "mechanism_3class": "GOF",
+        "P_GOF_lr_full": 0.37935579345442655,
+        "P_DN_lr_full": 0.4298354762686598,
+        "P_GOF_lr_nomiss": 0.48891390697511067,
+        "P_DN_lr_nomiss": 0.4174120171887467,
+        "P_GOF_mlp_full": 8.879820256879611e-07,
+        "P_DN_mlp_full": 1.0204642421740573e-05
+      },
+      {
+        "gene": "SCN1A",
+        "mechanism_3class": "GOF",
+        "P_GOF_lr_full": 0.3322086080533801,
+        "P_DN_lr_full": 0.47281880206296173,
+        "P_GOF_lr_nomiss": 0.46471370304637927,
+        "P_DN_lr_nomiss": 0.43964282952759975,
+        "P_GOF_mlp_full": 1.1774499398597982e-05,
+        "P_DN_mlp_full": 3.1460262107430026e-05
+      },
+      {
+        "gene": "DNMT3A",
+        "mechanism_3class": "GOF",
+        "P_GOF_lr_full": 0.3293844583184198,
+        "P_DN_lr_full": 0.1449573430543696,
+        "P_GOF_lr_nomiss": 0.41742422362661635,
+        "P_DN_lr_nomiss": 0.3031790440458514,
+        "P_GOF_mlp_full": 0.6518036723136902,
+        "P_DN_mlp_full": 0.0006607673713006079
+      },
+      {
+        "gene": "TGFBR1",
+        "mechanism_3class": "GOF",
+        "P_GOF_lr_full": 0.3010551578678266,
+        "P_DN_lr_full": 0.13785851708772068,
+        "P_GOF_lr_nomiss": 0.3584347235314624,
+        "P_DN_lr_nomiss": 0.2015193529817831,
+        "P_GOF_mlp_full": 0.005249250680208206,
+        "P_DN_mlp_full": 0.00040990454726852477
+      },
+      {
+        "gene": "LMNA",
+        "mechanism_3class": "GOF",
+        "P_GOF_lr_full": 0.29284812669923255,
+        "P_DN_lr_full": 0.6105280957738309,
+        "P_GOF_lr_nomiss": 0.4258947764589563,
+        "P_DN_lr_nomiss": 0.536598468058632,
+        "P_GOF_mlp_full": 0.018148085102438927,
+        "P_DN_mlp_full": 0.9784485101699829
+      },
+      {
+        "gene": "PTPN11",
+        "mechanism_3class": "GOF",
+        "P_GOF_lr_full": 0.2754167868269067,
+        "P_DN_lr_full": 0.5205509329105207,
+        "P_GOF_lr_nomiss": 0.35234546241493453,
+        "P_DN_lr_nomiss": 0.5295635506909325,
+        "P_GOF_mlp_full": 0.0009595763985998929,
+        "P_DN_mlp_full": 0.04283342510461807
+      },
+      {
+        "gene": "PAK3",
+        "mechanism_3class": "GOF",
+        "P_GOF_lr_full": 0.21944392338078048,
+        "P_DN_lr_full": 0.2977576964492516,
+        "P_GOF_lr_nomiss": 0.260060433470682,
+        "P_DN_lr_nomiss": 0.5223881971442657,
+        "P_GOF_mlp_full": 8.686432011018042e-06,
+        "P_DN_mlp_full": 0.000597533246036619
+      },
+      {
+        "gene": "GATA6",
+        "mechanism_3class": "GOF",
+        "P_GOF_lr_full": 0.1050791070706226,
+        "P_DN_lr_full": 0.31386220902337625,
+        "P_GOF_lr_nomiss": 0.1455120943656859,
+        "P_DN_lr_nomiss": 0.3422885090343547,
+        "P_GOF_mlp_full": 0.00016899793990887702,
+        "P_DN_mlp_full": 0.010488312691450119
+      },
+      {
+        "gene": "SPAST",
+        "mechanism_3class": "GOF",
+        "P_GOF_lr_full": 0.09545120027917174,
+        "P_DN_lr_full": 0.14938571167348721,
+        "P_GOF_lr_nomiss": 0.1823478820202774,
+        "P_DN_lr_nomiss": 0.20673120653459784,
+        "P_GOF_mlp_full": 0.00023597179097123444,
+        "P_DN_mlp_full": 1.6903357391129248e-05
+      },
+      {
+        "gene": "FOXC2",
+        "mechanism_3class": "GOF",
+        "P_GOF_lr_full": 0.08889278016930138,
+        "P_DN_lr_full": 0.2711671641810217,
+        "P_GOF_lr_nomiss": 0.2584252946469449,
+        "P_DN_lr_nomiss": 0.35036196001918396,
+        "P_GOF_mlp_full": 0.002994928741827607,
+        "P_DN_mlp_full": 0.6945838332176208
+      },
+      {
+        "gene": "FMR1",
+        "mechanism_3class": "GOF",
+        "P_GOF_lr_full": 0.032416233320910356,
+        "P_DN_lr_full": 0.028246925503709018,
+        "P_GOF_lr_nomiss": 0.09751650905317368,
+        "P_DN_lr_nomiss": 0.11899625306284055,
+        "P_GOF_mlp_full": 3.771784662376376e-08,
+        "P_DN_mlp_full": 4.815083229914308e-07
+      },
+      {
+        "gene": "SETBP1",
+        "mechanism_3class": "GOF",
+        "P_GOF_lr_full": 0.007758975173698883,
+        "P_DN_lr_full": 0.0015670763703837765,
+        "P_GOF_lr_nomiss": 0.18917793115299553,
+        "P_DN_lr_nomiss": 0.0831558513103012,
+        "P_GOF_mlp_full": 0.00033380050444975495,
+        "P_DN_mlp_full": 2.171760115743382e-06
+      }
+    ],
+    "GOF_recall_at_0.4_LR_FULL": 0.23529411764705882,
+    "GOF_precision_at_0.4_LR_FULL": 0.16,
+    "GOF_flagged_at_0.4_LR_FULL": 25,
+    "GOF_recall_at_0.4_LR_NOMISS": 0.5294117647058824,
+    "GOF_precision_at_0.4_LR_NOMISS": 0.140625,
+    "GOF_flagged_at_0.4_LR_NOMISS": 64
+  },
+  "unannotated": {
+    "n_unannotated_total": 2052,
+    "n_unannotated_HI0": 93,
+    "n_unannotated_NaN": 1959,
+    "n_unannotated_labeled": 1330,
+    "H4_predicted_distribution_LogReg": {
+      "GOF": 271,
+      "DN": 239,
+      "LOF": 820
+    },
+    "H4_top20_GOF": [
+      {
+        "gene": "NDUFA1",
+        "mechanism_3class": "LOF",
+        "P_GOF_lr": 0.8277690966095443,
+        "P_DN_lr": 0.0015676224653351247,
+        "P_LOF_lr": 0.17066328092512062,
+        "HI_score": 0.0
+      },
+      {
+        "gene": "SNRPN",
+        "mechanism_3class": "LOF",
+        "P_GOF_lr": 0.7993111030059438,
+        "P_DN_lr": 0.1146454088503188,
+        "P_LOF_lr": 0.08604348814373741,
+        "HI_score": 0.0
+      },
+      {
+        "gene": "PDGFRA",
+        "mechanism_3class": "GOF",
+        "P_GOF_lr": 0.7722033839444022,
+        "P_DN_lr": 0.17971753725344095,
+        "P_LOF_lr": 0.04807907880215681,
+        "HI_score": 0.0
+      },
+      {
+        "gene": "SIX6",
+        "mechanism_3class": "LOF",
+        "P_GOF_lr": 0.7697870830542872,
+        "P_DN_lr": 0.16078459557547184,
+        "P_LOF_lr": 0.06942832137024099,
+        "HI_score": 0.0
+      },
+      {
+        "gene": "COL9A1",
+        "mechanism_3class": "LOF",
+        "P_GOF_lr": 0.7149758422535736,
+        "P_DN_lr": 0.09059852135602527,
+        "P_LOF_lr": 0.19442563639040114,
+        "HI_score": 0.0
+      },
+      {
+        "gene": "TP73",
+        "mechanism_3class": "LOF",
+        "P_GOF_lr": 0.7047738754170133,
+        "P_DN_lr": 0.18892592663423885,
+        "P_LOF_lr": 0.1063001979487477,
+        "HI_score": 0.0
+      },
+      {
+        "gene": "ANKH",
+        "mechanism_3class": "LOF",
+        "P_GOF_lr": 0.7025568732571355,
+        "P_DN_lr": 0.22509086035706222,
+        "P_LOF_lr": 0.07235226638580232,
+        "HI_score": 0.0
+      },
+      {
+        "gene": "NLGN3",
+        "mechanism_3class": "LOF",
+        "P_GOF_lr": 0.6885488636110925,
+        "P_DN_lr": 0.05262373630594642,
+        "P_LOF_lr": 0.2588274000829612,
+        "HI_score": 0.0
+      },
+      {
+        "gene": "ZIC1",
+        "mechanism_3class": "GOF",
+        "P_GOF_lr": 0.6859768799472218,
+        "P_DN_lr": 0.11152703171279696,
+        "P_LOF_lr": 0.20249608833998137,
+        "HI_score": 0.0
+      },
+      {
+        "gene": "ASXL2",
+        "mechanism_3class": "LOF",
+        "P_GOF_lr": 0.6852955783446879,
+        "P_DN_lr": 0.02993981065286232,
+        "P_LOF_lr": 0.2847646110024497,
+        "HI_score": 0.0
+      },
+      {
+        "gene": "CHRNA4",
+        "mechanism_3class": "GOF",
+        "P_GOF_lr": 0.6792064026202352,
+        "P_DN_lr": 0.2549592182072085,
+        "P_LOF_lr": 0.06583437917255623,
+        "HI_score": 0.0
+      },
+      {
+        "gene": "NOTCH2",
+        "mechanism_3class": "GOF",
+        "P_GOF_lr": 0.6723590637244347,
+        "P_DN_lr": 0.2619086071737037,
+        "P_LOF_lr": 0.06573232910186161,
+        "HI_score": 0.0
+      },
+      {
+        "gene": "GUCY2C",
+        "mechanism_3class": "LOF",
+        "P_GOF_lr": 0.6707902304447765,
+        "P_DN_lr": 0.24402513137615,
+        "P_LOF_lr": 0.08518463817907346,
+        "HI_score": 0.0
+      },
+      {
+        "gene": "NR2F2",
+        "mechanism_3class": "LOF",
+        "P_GOF_lr": 0.6608783360993007,
+        "P_DN_lr": 0.3195999583232487,
+        "P_LOF_lr": 0.019521705577450546,
+        "HI_score": 0.0
+      },
+      {
+        "gene": "TGFBR2",
+        "mechanism_3class": "LOF",
+        "P_GOF_lr": 0.659551256413343,
+        "P_DN_lr": 0.25542547253627457,
+        "P_LOF_lr": 0.08502327105038233,
+        "HI_score": 0.0
+      },
+      {
+        "gene": "PACS1",
+        "mechanism_3class": "GOF",
+        "P_GOF_lr": 0.6429062637107062,
+        "P_DN_lr": 0.30478796688968746,
+        "P_LOF_lr": 0.05230576939960641,
+        "HI_score": 0.0
+      },
+      {
+        "gene": "CNOT3",
+        "mechanism_3class": "LOF",
+        "P_GOF_lr": 0.6402305697471145,
+        "P_DN_lr": 0.2813627240064276,
+        "P_LOF_lr": 0.07840670624645796,
+        "HI_score": 0.0
+      },
+      {
+        "gene": "CIB2",
+        "mechanism_3class": "LOF",
+        "P_GOF_lr": 0.6378781191462445,
+        "P_DN_lr": 0.18670498058144946,
+        "P_LOF_lr": 0.17541690027230614,
+        "HI_score": NaN
+      },
+      {
+        "gene": "BFSP1",
+        "mechanism_3class": "LOF",
+        "P_GOF_lr": 0.6218165576237711,
+        "P_DN_lr": 0.06422111195933254,
+        "P_LOF_lr": 0.31396233041689636,
+        "HI_score": NaN
+      },
+      {
+        "gene": "SAMD9",
+        "mechanism_3class": "GOF",
+        "P_GOF_lr": 0.6163145420197107,
+        "P_DN_lr": 0.34419868049849445,
+        "P_LOF_lr": 0.03948677748179491,
+        "HI_score": 0.0
+      }
+    ],
+    "H4_top20_DN": [
+      {
+        "gene": "RBP4",
+        "mechanism_3class": "DN",
+        "P_GOF_lr": 0.27658772941132026,
+        "P_DN_lr": 0.6442104969726395,
+        "P_LOF_lr": 0.07920177361604012,
+        "HI_score": NaN
+      },
+      {
+        "gene": "MRAS",
+        "mechanism_3class": "GOF",
+        "P_GOF_lr": 0.26370635394658115,
+        "P_DN_lr": 0.6219254932224884,
+        "P_LOF_lr": 0.11436815283093048,
+        "HI_score": NaN
+      },
+      {
+        "gene": "KRT12",
+        "mechanism_3class": "DN",
+        "P_GOF_lr": 0.26855237548081107,
+        "P_DN_lr": 0.6206884617368602,
+        "P_LOF_lr": 0.11075916278232875,
+        "HI_score": NaN
+      },
+      {
+        "gene": "APOC2",
+        "mechanism_3class": "LOF",
+        "P_GOF_lr": 0.22795110893153056,
+        "P_DN_lr": 0.6198151538227956,
+        "P_LOF_lr": 0.15223373724567382,
+        "HI_score": NaN
+      },
+      {
+        "gene": "APOA1",
+        "mechanism_3class": "LOF",
+        "P_GOF_lr": 0.28676297733977696,
+        "P_DN_lr": 0.6143713570727755,
+        "P_LOF_lr": 0.09886566558744761,
+        "HI_score": NaN
+      },
+      {
+        "gene": "KRT6A",
+        "mechanism_3class": "DN",
+        "P_GOF_lr": 0.2866700810963193,
+        "P_DN_lr": 0.612604714348116,
+        "P_LOF_lr": 0.10072520455556465,
+        "HI_score": NaN
+      },
+      {
+        "gene": "KRT17",
+        "mechanism_3class": "LOF",
+        "P_GOF_lr": 0.2957611472489257,
+        "P_DN_lr": 0.6015479949926484,
+        "P_LOF_lr": 0.10269085775842583,
+        "HI_score": NaN
+      },
+      {
+        "gene": "KRT13",
+        "mechanism_3class": "DN",
+        "P_GOF_lr": 0.2935303076310602,
+        "P_DN_lr": 0.5984170075985495,
+        "P_LOF_lr": 0.10805268477039032,
+        "HI_score": NaN
+      },
+      {
+        "gene": "KRT6B",
+        "mechanism_3class": "DN",
+        "P_GOF_lr": 0.3036474578042877,
+        "P_DN_lr": 0.5959835946065662,
+        "P_LOF_lr": 0.10036894758914605,
+        "HI_score": NaN
+      },
+      {
+        "gene": "KRT10",
+        "mechanism_3class": "DN",
+        "P_GOF_lr": 0.31826565244055993,
+        "P_DN_lr": 0.5910500957913231,
+        "P_LOF_lr": 0.090684251768117,
+        "HI_score": NaN
+      },
+      {
+        "gene": "KRT9",
+        "mechanism_3class": "DN",
+        "P_GOF_lr": 0.32370215484590975,
+        "P_DN_lr": 0.5903116303315016,
+        "P_LOF_lr": 0.08598621482258868,
+        "HI_score": NaN
+      },
+      {
+        "gene": "SLC25A1",
+        "mechanism_3class": "LOF",
+        "P_GOF_lr": 0.275900815944019,
+        "P_DN_lr": 0.578403865471179,
+        "P_LOF_lr": 0.14569531858480203,
+        "HI_score": NaN
+      },
+      {
+        "gene": "KRT5",
+        "mechanism_3class": "LOF",
+        "P_GOF_lr": 0.38986850277279134,
+        "P_DN_lr": 0.5714276422358837,
+        "P_LOF_lr": 0.038703854991324824,
+        "HI_score": NaN
+      },
+      {
+        "gene": "SNCA",
+        "mechanism_3class": "GOF",
+        "P_GOF_lr": 0.3115870355358252,
+        "P_DN_lr": 0.5697736995931248,
+        "P_LOF_lr": 0.11863926487105,
+        "HI_score": NaN
+      },
+      {
+        "gene": "MYO15A",
+        "mechanism_3class": "LOF",
+        "P_GOF_lr": 0.20204970534685798,
+        "P_DN_lr": 0.5648585029943233,
+        "P_LOF_lr": 0.2330917916588187,
+        "HI_score": NaN
+      },
+      {
+        "gene": "COL17A1",
+        "mechanism_3class": "LOF",
+        "P_GOF_lr": 0.1678849659577753,
+        "P_DN_lr": 0.560133483996891,
+        "P_LOF_lr": 0.27198155004533386,
+        "HI_score": NaN
+      },
+      {
+        "gene": "KRAS",
+        "mechanism_3class": "GOF",
+        "P_GOF_lr": 0.3693232402734794,
+        "P_DN_lr": 0.5599322994611652,
+        "P_LOF_lr": 0.07074446026535529,
+        "HI_score": NaN
+      },
+      {
+        "gene": "VAMP2",
+        "mechanism_3class": "DN",
+        "P_GOF_lr": 0.3132219487079091,
+        "P_DN_lr": 0.5540762142408009,
+        "P_LOF_lr": 0.13270183705128996,
+        "HI_score": NaN
+      },
+      {
+        "gene": "CRX",
+        "mechanism_3class": "LOF",
+        "P_GOF_lr": 0.26802890361214005,
+        "P_DN_lr": 0.5523779003496472,
+        "P_LOF_lr": 0.1795931960382128,
+        "HI_score": NaN
+      },
+      {
+        "gene": "RAB11B",
+        "mechanism_3class": "DN",
+        "P_GOF_lr": 0.4195351856649297,
+        "P_DN_lr": 0.5506343637654109,
+        "P_LOF_lr": 0.02983045056965946,
+        "HI_score": NaN
+      }
+    ],
+    "n_LOF_predicted_GOF_or_DN": 316
+  },
+  "feature_importance": {
+    "top_features_DN": [
+      {
+        "feature": "pLI",
+        "coefficient": 0.7648291022329587
+      },
+      {
+        "feature": "tissue_specificity_tau",
+        "coefficient": 0.7551000710331309
+      },
+      {
+        "feature": "log_abundance_ppm",
+        "coefficient": 0.6036667594430932
+      },
+      {
+        "feature": "TS_score",
+        "coefficient": -0.5671380612868306
+      },
+      {
+        "feature": "LOEUF_familyresid",
+        "coefficient": -0.46293606882579097
+      },
+      {
+        "feature": "LOEUF",
+        "coefficient": 0.39983676048398537
+      },
+      {
+        "feature": "paralog_count",
+        "coefficient": 0.3778103605482365
+      },
+      {
+        "feature": "tissue_specificity_tau_familyresid",
+        "coefficient": -0.30917094432323833
+      },
+      {
+        "feature": "mis_z",
+        "coefficient": 0.2559510130045483
+      },
+      {
+        "feature": "pLI_familyresid",
+        "coefficient": -0.2291583899039503
+      },
+      {
+        "feature": "mis_z_familyresid",
+        "coefficient": -0.17292330213719598
+      },
+      {
+        "feature": "log_abundance_ppm_familyresid",
+        "coefficient": -0.16550909246530043
+      },
+      {
+        "feature": "paralog_count_familyresid",
+        "coefficient": 0.14613128251617244
+      },
+      {
+        "feature": "TS_score_familyresid",
+        "coefficient": 0.11154104587268392
+      },
+      {
+        "feature": "PPI_degree_familyresid",
+        "coefficient": -0.09116808039915562
+      }
+    ],
+    "top_features_GOF": [
+      {
+        "feature": "mis_z",
+        "coefficient": 1.2035322177103516
+      },
+      {
+        "feature": "LOEUF",
+        "coefficient": 0.648541615171416
+      },
+      {
+        "feature": "mis_z_familyresid",
+        "coefficient": -0.6164690143942745
+      },
+      {
+        "feature": "tissue_specificity_tau",
+        "coefficient": 0.47740505649464393
+      },
+      {
+        "feature": "TS_score",
+        "coefficient": -0.4671440588694512
+      },
+      {
+        "feature": "HI_score",
+        "coefficient": -0.4176219852608309
+      },
+      {
+        "feature": "pLI",
+        "coefficient": 0.4158599908527737
+      },
+      {
+        "feature": "paralog_count",
+        "coefficient": 0.2967808000232317
+      },
+      {
+        "feature": "TS_score_familyresid",
+        "coefficient": 0.2964775324450548
+      },
+      {
+        "feature": "tissue_specificity_tau_familyresid",
+        "coefficient": -0.28492949007799756
+      },
+      {
+        "feature": "LOEUF_familyresid",
+        "coefficient": -0.19909696044373948
+      },
+      {
+        "feature": "paralog_count_familyresid",
+        "coefficient": -0.18832666770870918
+      },
+      {
+        "feature": "PPI_degree",
+        "coefficient": 0.09833096129661649
+      },
+      {
+        "feature": "HI_score_familyresid",
+        "coefficient": -0.09028378467210127
+      },
+      {
+        "feature": "log_abundance_ppm_familyresid",
+        "coefficient": 0.0900294158379851
+      }
+    ],
+    "top_features_LOF": [
+      {
+        "feature": "mis_z",
+        "coefficient": -0.9200646222438974
+      },
+      {
+        "feature": "tissue_specificity_tau",
+        "coefficient": -0.6605036280078393
+      },
+      {
+        "feature": "LOEUF",
+        "coefficient": -0.6338296529385548
+      },
+      {
+        "feature": "pLI",
+        "coefficient": -0.6132362308559854
+      },
+      {
+        "feature": "mis_z_familyresid",
+        "coefficient": 0.48240005193138946
+      },
+      {
+        "feature": "TS_score",
+        "coefficient": 0.4724719696994943
+      },
+      {
+        "feature": "paralog_count",
+        "coefficient": -0.4269202021316856
+      },
+      {
+        "feature": "HI_score",
+        "coefficient": 0.33850819859974995
+      },
+      {
+        "feature": "LOEUF_familyresid",
+        "coefficient": 0.33365062462537576
+      },
+      {
+        "feature": "tissue_specificity_tau_familyresid",
+        "coefficient": 0.32220733376947236
+      },
+      {
+        "feature": "log_abundance_ppm",
+        "coefficient": -0.2959311891506005
+      },
+      {
+        "feature": "TS_score_familyresid",
+        "coefficient": -0.29327179672758047
+      },
+      {
+        "feature": "pLI_familyresid",
+        "coefficient": 0.10474959076548905
+      },
+      {
+        "feature": "PPI_degree",
+        "coefficient": -0.08986943424678843
+      },
+      {
+        "feature": "paralog_count_familyresid",
+        "coefficient": 0.08104144858418523
+      }
+    ]
+  },
+  "decision_rule": "INFORMATIVE: GOF AUROC within HI=3 = 0.675 [95% CI 0.521\u20130.830] \u2265 0.65"
+}

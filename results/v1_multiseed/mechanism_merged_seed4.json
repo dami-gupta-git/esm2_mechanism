@@ -1,0 +1,22 @@
+{
+  "mlp_delta_mean_gene": {
+    "macro_f1_mean": 0.40985699835699707,
+    "macro_f1_std": 0.047073129391824904,
+    "auroc_LOF_mean": 0.6915992558242878,
+    "auroc_LOF_std": 0.06323593386672761,
+    "auroc_DN_mean": 0.5919606951415386,
+    "auroc_DN_std": 0.03176124751074435,
+    "auroc_GOF_mean": 0.6907017344311811,
+    "auroc_GOF_std": 0.06851868864061512
+  },
+  "mlp_delta_mean_family": {
+    "macro_f1_mean": 0.40458481614655667,
+    "macro_f1_std": 0.021539529473581082,
+    "auroc_LOF_mean": 0.6919494954260171,
+    "auroc_LOF_std": 0.016250855703039416,
+    "auroc_DN_mean": 0.6001782924426009,
+    "auroc_DN_std": 0.06851064740808818,
+    "auroc_GOF_mean": 0.6783023546108341,
+    "auroc_GOF_std": 0.012838842774588065
+  }
+}

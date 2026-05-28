@@ -21,6 +21,8 @@ import logging
 import requests
 from pathlib import Path
 from typing import Optional
+import functools
+print = functools.partial(print, flush=True)
 
 logging.basicConfig(
     level=logging.INFO,

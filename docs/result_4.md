@@ -1,9 +1,9 @@
 # Result 4 — ESM-2 embeddings cluster strongly by Pfam family, explaining apparent mechanism signal
 
 **Date:** 2026-05-24
-**Run:** `results/20260524_baseline_run/run_0/`, model `esm2_t33_650M_UR50D`
-**Script:** `scripts/family_clustering.py`
-**Output:** `results/20260524_baseline_run/run_0/family_clustering.json`
+**Run:** `../results/20260524_baseline_run/run_0/`, model `esm2_t33_650M_UR50D`
+**Script:** `../scripts/family_clustering.py`
+**Output:** `../results/20260524_baseline_run/run_0/family_clustering.json`
 
 ## TL;DR
 
@@ -176,8 +176,8 @@ With all four, the contribution moves from "methodological cleanup" to "field-le
 
 ## Files
 
-- `scripts/family_clustering.py` — analysis script (~310 lines, reuses `experiment.py` helpers)
-- `results/20260524_baseline_run/run_0/family_clustering.json` — full metric output, all three views
+- `../scripts/family_clustering.py` — analysis script (~310 lines, reuses `experiment.py` helpers)
+- `../results/20260524_baseline_run/run_0/family_clustering.json` — full metric output, all three views
 
 ## Caveat on the script's printed headline
 

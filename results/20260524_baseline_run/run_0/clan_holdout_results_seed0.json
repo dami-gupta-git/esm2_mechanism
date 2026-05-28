@@ -1,0 +1,551 @@
+{
+  "description": "Leave-one-clan-out evaluation. Train on all variants except clan X, test on clan X. Tests whether ESM-2 delta mechanism signal generalises to completely unseen protein clans (lookup vs real signal).",
+  "seed": 0,
+  "aggregate": {
+    "n_clans": 21,
+    "mlp_macro_f1_mean": 0.29936552652957443,
+    "mlp_macro_f1_std": 0.075833556689609,
+    "mlp_macro_f1_weighted": 0.28151396857720173,
+    "knn_macro_f1_mean": 0.2744303685182881,
+    "majority_macro_f1_mean": 0.2543768774902591,
+    "per_class_auroc_mean": {
+      "GOF": 0.5972878004243608,
+      "DN": 0.5745029229565707,
+      "LOF": 0.6356112499181493
+    }
+  },
+  "per_clan": [
+    {
+      "clan": "CL0030",
+      "clan_name": "Ion_channel",
+      "n_train": 18019,
+      "n_test": 1081,
+      "n_genes_test": 21,
+      "test_mechs": {
+        "GOF": 642,
+        "DN": 321,
+        "LOF": 118
+      },
+      "mlp": {
+        "macro_f1": 0.1897916484091735,
+        "n_test": 1081,
+        "class_dist_test": {
+          "1": 642,
+          "0": 321,
+          "2": 118
+        },
+        "auroc_DN": 0.5356984751598622,
+        "auroc_GOF": 0.5355949162284717,
+        "auroc_LOF": 0.5864661984969288
+      },
+      "knn_macro_f1": 0.1447814485593832,
+      "majority_macro_f1": 0.06561023074784543
+    },
+    {
+      "clan": "CL0023",
+      "clan_name": "P-loop_NTPase",
+      "n_train": 18408,
+      "n_test": 692,
+      "n_genes_test": 85,
+      "test_mechs": {
+        "LOF": 368,
+        "GOF": 247,
+        "DN": 77
+      },
+      "mlp": {
+        "macro_f1": 0.2641530032273692,
+        "n_test": 692,
+        "class_dist_test": {
+          "2": 368,
+          "1": 247,
+          "0": 77
+        },
+        "auroc_DN": 0.6332805405976139,
+        "auroc_GOF": 0.42723923031433375,
+        "auroc_LOF": 0.5025077160493827
+      },
+      "knn_macro_f1": 0.2370447392086331,
+      "majority_macro_f1": 0.23144654088050312
+    },
+    {
+      "clan": "CL0001",
+      "clan_name": "EGF",
+      "n_train": 18481,
+      "n_test": 619,
+      "n_genes_test": 41,
+      "test_mechs": {
+        "LOF": 569,
+        "GOF": 27,
+        "DN": 23
+      },
+      "mlp": {
+        "macro_f1": 0.29108478105612773,
+        "n_test": 619,
+        "class_dist_test": {
+          "2": 569,
+          "1": 27,
+          "0": 23
+        },
+        "auroc_DN": 0.6722351911292677,
+        "auroc_GOF": 0.3791291291291291,
+        "auroc_LOF": 0.5452899824253076
+      },
+      "knn_macro_f1": 0.30383291036684895,
+      "majority_macro_f1": 0.31930415263748596
+    },
+    {
+      "clan": "CL0422",
+      "clan_name": "Fibrinogen_C",
+      "n_train": 18491,
+      "n_test": 609,
+      "n_genes_test": 10,
+      "test_mechs": {
+        "LOF": 368,
+        "DN": 241
+      },
+      "mlp": {
+        "macro_f1": 0.25519034971226207,
+        "n_test": 609,
+        "class_dist_test": {
+          "2": 368,
+          "0": 241
+        },
+        "auroc_DN": 0.5108582897348006,
+        "auroc_LOF": 0.5008569366768898
+      },
+      "knn_macro_f1": 0.2593713298791019,
+      "majority_macro_f1": 0.3766632548618219
+    },
+    {
+      "clan": "CL0123",
+      "clan_name": "HTH",
+      "n_train": 18560,
+      "n_test": 540,
+      "n_genes_test": 80,
+      "test_mechs": {
+        "LOF": 487,
+        "DN": 44,
+        "GOF": 9
+      },
+      "mlp": {
+        "macro_f1": 0.31632006846384253,
+        "n_test": 540,
+        "class_dist_test": {
+          "2": 487,
+          "0": 44,
+          "1": 9
+        },
+        "auroc_DN": 0.43190982404692074,
+        "auroc_GOF": 0.4331450094161958,
+        "auroc_LOF": 0.42983611638448727
+      },
+      "knn_macro_f1": 0.30118443316412863,
+      "majority_macro_f1": 0.3161311262577085
+    },
+    {
+      "clan": "CL0063",
+      "clan_name": "NADP_Rossmann",
+      "n_train": 18596,
+      "n_test": 504,
+      "n_genes_test": 55,
+      "test_mechs": {
+        "LOF": 458,
+        "DN": 27,
+        "GOF": 19
+      },
+      "mlp": {
+        "macro_f1": 0.3121468926553672,
+        "n_test": 504,
+        "class_dist_test": {
+          "2": 458,
+          "0": 27,
+          "1": 19
+        },
+        "auroc_DN": 0.6331236897274632,
+        "auroc_GOF": 0.729028757460662,
+        "auroc_LOF": 0.6446743876969813
+      },
+      "knn_macro_f1": 0.3099787685774947,
+      "majority_macro_f1": 0.3173943173943174
+    },
+    {
+      "clan": "CL0159",
+      "clan_name": "E-set",
+      "n_train": 18642,
+      "n_test": 458,
+      "n_genes_test": 60,
+      "test_mechs": {
+        "LOF": 298,
+        "GOF": 148,
+        "DN": 12
+      },
+      "mlp": {
+        "macro_f1": 0.36582784655487127,
+        "n_test": 458,
+        "class_dist_test": {
+          "2": 298,
+          "1": 148,
+          "0": 12
+        },
+        "auroc_DN": 0.46674140508221224,
+        "auroc_GOF": 0.723823016564952,
+        "auroc_LOF": 0.6877097315436242
+      },
+      "knn_macro_f1": 0.34100137985412976,
+      "majority_macro_f1": 0.26278659611992944
+    },
+    {
+      "clan": "CL0016",
+      "clan_name": "PKinase",
+      "n_train": 18702,
+      "n_test": 398,
+      "n_genes_test": 37,
+      "test_mechs": {
+        "LOF": 258,
+        "GOF": 129,
+        "DN": 11
+      },
+      "mlp": {
+        "macro_f1": 0.3172664194833767,
+        "n_test": 398,
+        "class_dist_test": {
+          "2": 258,
+          "1": 129,
+          "0": 11
+        },
+        "auroc_DN": 0.7082452431289641,
+        "auroc_GOF": 0.5769574363851186,
+        "auroc_LOF": 0.5572674418604651
+      },
+      "knn_macro_f1": 0.2819637478201131,
+      "majority_macro_f1": 0.2621951219512195
+    },
+    {
+      "clan": "CL0056",
+      "clan_name": "C_Lectin",
+      "n_train": 18785,
+      "n_test": 315,
+      "n_genes_test": 7,
+      "test_mechs": {
+        "LOF": 241,
+        "DN": 74
+      },
+      "mlp": {
+        "macro_f1": 0.3054513237440067,
+        "n_test": 315,
+        "class_dist_test": {
+          "2": 241,
+          "0": 74
+        },
+        "auroc_DN": 0.516092856341819,
+        "auroc_LOF": 0.511438824716833
+      },
+      "knn_macro_f1": 0.29635854341736695,
+      "majority_macro_f1": 0.43345323741007197
+    },
+    {
+      "clan": "CL0020",
+      "clan_name": "TPR",
+      "n_train": 18808,
+      "n_test": 292,
+      "n_genes_test": 53,
+      "test_mechs": {
+        "LOF": 230,
+        "GOF": 40,
+        "DN": 22
+      },
+      "mlp": {
+        "macro_f1": 0.31456006270821085,
+        "n_test": 292,
+        "class_dist_test": {
+          "2": 230,
+          "1": 40,
+          "0": 22
+        },
+        "auroc_DN": 0.4095959595959596,
+        "auroc_GOF": 0.546031746031746,
+        "auroc_LOF": 0.5327840112201964
+      },
+      "knn_macro_f1": 0.32441490570324927,
+      "majority_macro_f1": 0.2937420178799489
+    },
+    {
+      "clan": "CL0465",
+      "clan_name": "Ank",
+      "n_train": 18829,
+      "n_test": 271,
+      "n_genes_test": 23,
+      "test_mechs": {
+        "LOF": 90,
+        "GOF": 181
+      },
+      "mlp": {
+        "macro_f1": 0.22584044844282203,
+        "n_test": 271,
+        "class_dist_test": {
+          "2": 90,
+          "1": 181
+        },
+        "auroc_GOF": 0.43075506445672196,
+        "auroc_LOF": 0.5285144260282382
+      },
+      "knn_macro_f1": 0.20019151355556886,
+      "majority_macro_f1": 0.24930747922437674
+    },
+    {
+      "clan": "CL0144",
+      "clan_name": "Periplas_BP",
+      "n_train": 18888,
+      "n_test": 212,
+      "n_genes_test": 10,
+      "test_mechs": {
+        "DN": 47,
+        "LOF": 89,
+        "GOF": 76
+      },
+      "mlp": {
+        "macro_f1": 0.27272824631860776,
+        "n_test": 212,
+        "class_dist_test": {
+          "0": 47,
+          "2": 89,
+          "1": 76
+        },
+        "auroc_DN": 0.4588007736943907,
+        "auroc_GOF": 0.47900541795665635,
+        "auroc_LOF": 0.4872567826801864
+      },
+      "knn_macro_f1": 0.2571428571428571,
+      "majority_macro_f1": 0.19712070874861573
+    },
+    {
+      "clan": "CL0229",
+      "clan_name": "RING",
+      "n_train": 18899,
+      "n_test": 201,
+      "n_genes_test": 20,
+      "test_mechs": {
+        "GOF": 121,
+        "LOF": 80
+      },
+      "mlp": {
+        "macro_f1": 0.3517626729121163,
+        "n_test": 201,
+        "class_dist_test": {
+          "1": 121,
+          "2": 80
+        },
+        "auroc_GOF": 0.797210743801653,
+        "auroc_LOF": 0.7805268595041324
+      },
+      "knn_macro_f1": 0.2340598148762769,
+      "majority_macro_f1": 0.2846975088967972
+    },
+    {
+      "clan": "CL0220",
+      "clan_name": "EF_hand",
+      "n_train": 18900,
+      "n_test": 200,
+      "n_genes_test": 15,
+      "test_mechs": {
+        "GOF": 159,
+        "DN": 24,
+        "LOF": 17
+      },
+      "mlp": {
+        "macro_f1": 0.1626342318650011,
+        "n_test": 200,
+        "class_dist_test": {
+          "1": 159,
+          "0": 24,
+          "2": 17
+        },
+        "auroc_DN": 0.3939393939393939,
+        "auroc_GOF": 0.5833716827734315,
+        "auroc_LOF": 0.676470588235294
+      },
+      "knn_macro_f1": 0.14739642062046435,
+      "majority_macro_f1": 0.05222734254992319
+    },
+    {
+      "clan": "CL0137",
+      "clan_name": "HAD",
+      "n_train": 18904,
+      "n_test": 196,
+      "n_genes_test": 13,
+      "test_mechs": {
+        "LOF": 65,
+        "GOF": 131
+      },
+      "mlp": {
+        "macro_f1": 0.25408861135890576,
+        "n_test": 196,
+        "class_dist_test": {
+          "2": 65,
+          "1": 131
+        },
+        "auroc_GOF": 0.8824427480916031,
+        "auroc_LOF": 0.8839107457428069
+      },
+      "knn_macro_f1": 0.25179485739425084,
+      "majority_macro_f1": 0.24904214559386972
+    },
+    {
+      "clan": "CL0192",
+      "clan_name": "GPCR_A",
+      "n_train": 18919,
+      "n_test": 181,
+      "n_genes_test": 24,
+      "test_mechs": {
+        "DN": 7,
+        "LOF": 153,
+        "GOF": 21
+      },
+      "mlp": {
+        "macro_f1": 0.37042904290429046,
+        "n_test": 181,
+        "class_dist_test": {
+          "0": 7,
+          "2": 153,
+          "1": 21
+        },
+        "auroc_DN": 0.8004926108374384,
+        "auroc_GOF": 0.694047619047619,
+        "auroc_LOF": 0.7203548085901027
+      },
+      "knn_macro_f1": 0.34547988849064115,
+      "majority_macro_f1": 0.30538922155688625
+    },
+    {
+      "clan": "CL0117",
+      "clan_name": "uPAR_Ly6_toxin",
+      "n_train": 18934,
+      "n_test": 166,
+      "n_genes_test": 9,
+      "test_mechs": {
+        "DN": 79,
+        "LOF": 63,
+        "GOF": 24
+      },
+      "mlp": {
+        "macro_f1": 0.2719628960068398,
+        "n_test": 166,
+        "class_dist_test": {
+          "0": 79,
+          "2": 63,
+          "1": 24
+        },
+        "auroc_DN": 0.63785828604685,
+        "auroc_GOF": 0.5360915492957746,
+        "auroc_LOF": 0.6924795808290954
+      },
+      "knn_macro_f1": 0.18017309205350118,
+      "majority_macro_f1": 0.1834061135371179
+    },
+    {
+      "clan": "CL0029",
+      "clan_name": "Cupin",
+      "n_train": 18988,
+      "n_test": 112,
+      "n_genes_test": 19,
+      "test_mechs": {
+        "DN": 26,
+        "LOF": 61,
+        "GOF": 25
+      },
+      "mlp": {
+        "macro_f1": 0.5357658214801072,
+        "n_test": 112,
+        "class_dist_test": {
+          "0": 26,
+          "2": 61,
+          "1": 25
+        },
+        "auroc_DN": 0.8389982110912344,
+        "auroc_GOF": 0.7563218390804597,
+        "auroc_LOF": 0.8751205400192864
+      },
+      "knn_macro_f1": 0.4972870597870598,
+      "majority_macro_f1": 0.2350674373795761
+    },
+    {
+      "clan": "CL0033",
+      "clan_name": "POZ",
+      "n_train": 19002,
+      "n_test": 98,
+      "n_genes_test": 14,
+      "test_mechs": {
+        "LOF": 55,
+        "DN": 42,
+        "GOF": 1
+      },
+      "mlp": {
+        "macro_f1": 0.275894538606403,
+        "n_test": 98,
+        "class_dist_test": {
+          "2": 55,
+          "0": 42,
+          "1": 1
+        },
+        "auroc_DN": 0.641156462585034,
+        "auroc_GOF": 0.3917525773195877,
+        "auroc_LOF": 0.642706131078224
+      },
+      "knn_macro_f1": 0.22705314009661837,
+      "majority_macro_f1": 0.23965141612200436
+    },
+    {
+      "clan": "CL0041",
+      "clan_name": "Death",
+      "n_train": 19010,
+      "n_test": 90,
+      "n_genes_test": 13,
+      "test_mechs": {
+        "GOF": 43,
+        "DN": 13,
+        "LOF": 34
+      },
+      "mlp": {
+        "macro_f1": 0.37847222222222215,
+        "n_test": 90,
+        "class_dist_test": {
+          "1": 43,
+          "0": 13,
+          "2": 34
+        },
+        "auroc_DN": 0.47752247752247756,
+        "auroc_GOF": 0.8119742701632855,
+        "auroc_LOF": 0.9025735294117647
+      },
+      "knn_macro_f1": 0.3225943646996278,
+      "majority_macro_f1": 0.18279569892473116
+    },
+    {
+      "clan": "CL0108",
+      "clan_name": "Actin_ATPase",
+      "n_train": 19017,
+      "n_test": 83,
+      "n_genes_test": 6,
+      "test_mechs": {
+        "LOF": 33,
+        "GOF": 50
+      },
+      "mlp": {
+        "macro_f1": 0.25530492898913953,
+        "n_test": 83,
+        "class_dist_test": {
+          "2": 33,
+          "1": 50
+        },
+        "auroc_GOF": 0.6345454545454545,
+        "auroc_LOF": 0.6590909090909091
+      },
+      "knn_macro_f1": 0.2999325236167341,
+      "majority_macro_f1": 0.28448275862068967
+    }
+  ],
+  "references": {
+    "family_split_mlp_f1_result7": 0.352,
+    "family_split_contrastive_f1_result9": 0.387
+  }
+}

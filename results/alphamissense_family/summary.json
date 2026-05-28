@@ -1,0 +1,14 @@
+{
+  "n_families": 182,
+  "overall_auroc": 0.9404470413603538,
+  "per_family_mean": 0.9476957015226195,
+  "per_family_std": 0.04575475213961192,
+  "per_family_min": 0.7619047619047619,
+  "per_family_q25": 0.9233823529411764,
+  "per_family_median": 0.9601709401709402,
+  "per_family_q75": 0.9828044871794872,
+  "per_family_max": 1.0,
+  "per_family_iqr": 0.059422134238310775,
+  "frac_below_0_8": 0.005494505494505495,
+  "frac_below_0_7": 0.0
+}

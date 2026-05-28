@@ -1,0 +1,90 @@
+{
+  "seed": 3,
+  "n_variants_with_family": 18985,
+  "n_total_variants": 19100,
+  "n_families": 1146,
+  "V1_family_split": {
+    "macro_f1_mean": 0.39036744879287366,
+    "macro_f1_std": 0.02034188704403345,
+    "auroc_GOF_mean": 0.6298269972539835,
+    "auroc_GOF_std": 0.027857578282010034,
+    "auroc_DN_mean": 0.6633182485840512,
+    "auroc_DN_std": 0.038103294814027085,
+    "auroc_LOF_mean": 0.675831813577403,
+    "auroc_LOF_std": 0.0504612685723335,
+    "n_folds": 5
+  },
+  "V2_logreg_family_split": {
+    "macro_f1_mean": 0.4987626239950571,
+    "macro_f1_std": 0.09770853998363895,
+    "auroc_GOF_mean": 0.7080850040134935,
+    "auroc_GOF_std": 0.09226733700137625,
+    "auroc_DN_mean": 0.7368330218101627,
+    "auroc_DN_std": 0.14943485680324156,
+    "auroc_LOF_mean": 0.8054344260728425,
+    "auroc_LOF_std": 0.10875541316541235,
+    "n_folds": 5
+  },
+  "V2_lgbm_family_split": {
+    "macro_f1_mean": 0.4179821898956895,
+    "macro_f1_std": 0.08210731831951071,
+    "auroc_GOF_mean": 0.7608990839123867,
+    "auroc_GOF_std": 0.03930974707315197,
+    "auroc_DN_mean": 0.7976640033929561,
+    "auroc_DN_std": 0.09038369424300151,
+    "auroc_LOF_mean": 0.8037147733676194,
+    "auroc_LOF_std": 0.06887580160875002,
+    "n_folds": 5
+  },
+  "V2_mlp_family_split": {
+    "macro_f1_mean": 0.37624795312383896,
+    "macro_f1_std": 0.06009106731617143,
+    "auroc_GOF_mean": 0.6341948822690213,
+    "auroc_GOF_std": 0.052152015958904736,
+    "auroc_DN_mean": 0.7026717735554311,
+    "auroc_DN_std": 0.08904225672444531,
+    "auroc_LOF_mean": 0.6707542053997545,
+    "auroc_LOF_std": 0.10730301776534903,
+    "n_folds": 5
+  },
+  "V2_best_macro_f1_mean": 0.4987626239950571,
+  "V2_best_model": "LogReg",
+  "gate_1": {
+    "passed": true,
+    "v2_f1": 0.4987626239950571,
+    "threshold": 0.35
+  },
+  "V3_family_split": {
+    "macro_f1_mean": 0.4530464451678379,
+    "macro_f1_std": 0.0707464846534155,
+    "auroc_GOF_mean": 0.7028154542029863,
+    "auroc_GOF_std": 0.05364035855222449,
+    "auroc_DN_mean": 0.7617943528739122,
+    "auroc_DN_std": 0.05703344259746313,
+    "auroc_LOF_mean": 0.7723074297647374,
+    "auroc_LOF_std": 0.050579749366541076,
+    "n_folds": 5
+  },
+  "V3_gene_split": {
+    "macro_f1_mean": 0.44901767597330944,
+    "macro_f1_std": 0.050579910772348566,
+    "auroc_GOF_mean": 0.7163905230207899,
+    "auroc_GOF_std": 0.053325447987360344,
+    "auroc_DN_mean": 0.7436550112384717,
+    "auroc_DN_std": 0.059697384982783666,
+    "auroc_LOF_mean": 0.7687337833264164,
+    "auroc_LOF_std": 0.042185777784606825,
+    "n_folds": 5
+  },
+  "V3_leakage_delta": -0.0040287691945284365,
+  "gate_2": {
+    "passed": false,
+    "v3_f1": 0.4530464451678379,
+    "max_v1_v2": 0.4987626239950571,
+    "threshold": 0.5187626239950571
+  },
+  "V4_family_split": {
+    "skipped": true,
+    "reason": "Gate 2 failed"
+  }
+}

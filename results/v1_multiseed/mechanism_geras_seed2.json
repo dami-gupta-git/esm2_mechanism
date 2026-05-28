@@ -1,0 +1,42 @@
+{
+  "mlp_delta_mean_gene": {
+    "macro_f1_mean": 0.29260752027598624,
+    "macro_f1_std": 0.037545119010060704,
+    "auroc_GOF_mean": 0.5467926955482204,
+    "auroc_GOF_std": 0.007331252571475322,
+    "auroc_DN_mean": 0.4898938768283553,
+    "auroc_DN_std": 0.018382578127898244,
+    "auroc_LOF_mean": 0.5320831677747666,
+    "auroc_LOF_std": 0.013806710107232814
+  },
+  "mlp_delta_mean_family": {
+    "macro_f1_mean": 0.2950016469914594,
+    "macro_f1_std": 0.03818479913016045,
+    "auroc_GOF_mean": 0.539852498922528,
+    "auroc_GOF_std": 0.013036959716205653,
+    "auroc_DN_mean": 0.4914868659481148,
+    "auroc_DN_std": 0.022610806011214755,
+    "auroc_LOF_mean": 0.5310808905936676,
+    "auroc_LOF_std": 0.021824711574152656
+  },
+  "mlp_delta_pos_gene": {
+    "macro_f1_mean": 0.2968409095361898,
+    "macro_f1_std": 0.043740636164113327,
+    "auroc_GOF_mean": 0.5693627061299524,
+    "auroc_GOF_std": 0.013132358215245532,
+    "auroc_DN_mean": 0.49724533797977993,
+    "auroc_DN_std": 0.030554516783109602,
+    "auroc_LOF_mean": 0.5453886823082281,
+    "auroc_LOF_std": 0.0324516816552787
+  },
+  "mlp_delta_pos_family": {
+    "macro_f1_mean": 0.28309118254177246,
+    "macro_f1_std": 0.037492173477290426,
+    "auroc_GOF_mean": 0.5397511881745765,
+    "auroc_GOF_std": 0.021136321665081396,
+    "auroc_DN_mean": 0.5028695609876056,
+    "auroc_DN_std": 0.051765790725319366,
+    "auroc_LOF_mean": 0.5387778349021055,
+    "auroc_LOF_std": 0.014620150020784031
+  }
+}

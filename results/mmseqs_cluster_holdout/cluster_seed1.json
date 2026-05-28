@@ -1,0 +1,75 @@
+{
+  "seed": 1,
+  "n_variants": 19100,
+  "n_clusters": 1230,
+  "class_dist": {
+    "LOF": 14559,
+    "DN": 2825,
+    "GOF": 1716
+  },
+  "V1": {
+    "n_folds": 5,
+    "macro_f1_mean": 0.3784395699080294,
+    "macro_f1_std": 0.018571432649080392,
+    "auroc_GOF_mean": 0.6100577939475649,
+    "auroc_GOF_std": 0.03878160993864707,
+    "auroc_DN_mean": 0.6710205590388892,
+    "auroc_DN_std": 0.02156933000192813,
+    "auroc_LOF_mean": 0.6653744941386593,
+    "auroc_LOF_std": 0.03376559532774458,
+    "per_gene_f1_mean": 0.3269879424538313,
+    "per_gene_f1_std": 0.02871443502719765
+  },
+  "V2": {
+    "n_folds": 5,
+    "macro_f1_mean": 0.4659870638992329,
+    "macro_f1_std": 0.048180701800279155,
+    "auroc_GOF_mean": 0.623754040434714,
+    "auroc_GOF_std": 0.05825479168209439,
+    "auroc_DN_mean": 0.7163339124974619,
+    "auroc_DN_std": 0.10280218625361039,
+    "auroc_LOF_mean": 0.7838405742129475,
+    "auroc_LOF_std": 0.03927382877044301,
+    "per_gene_f1_mean": 0.413023822762655,
+    "per_gene_f1_std": 0.046061012925730005
+  },
+  "V_bad": {
+    "n_folds": 5,
+    "macro_f1_mean": 0.481887385801797,
+    "macro_f1_std": 0.06945619327493424,
+    "auroc_GOF_mean": 0.7120394527752919,
+    "auroc_GOF_std": 0.04597635089432413,
+    "auroc_DN_mean": 0.7692416813780051,
+    "auroc_DN_std": 0.09545336786642243,
+    "auroc_LOF_mean": 0.7792145917805262,
+    "auroc_LOF_std": 0.08050810205754821,
+    "per_gene_f1_mean": 0.44637478364010263,
+    "per_gene_f1_std": 0.03528381457923357
+  },
+  "V2_bad": {
+    "n_folds": 5,
+    "macro_f1_mean": 0.4783092067873718,
+    "macro_f1_std": 0.08573623064439424,
+    "auroc_GOF_mean": 0.6480943648495202,
+    "auroc_GOF_std": 0.14735527654952416,
+    "auroc_DN_mean": 0.808220624078863,
+    "auroc_DN_std": 0.06700808079661742,
+    "auroc_LOF_mean": 0.8006695929398937,
+    "auroc_LOF_std": 0.08801989124662418,
+    "per_gene_f1_mean": 0.4279043411280251,
+    "per_gene_f1_std": 0.03046300397561737
+  },
+  "V_all": {
+    "n_folds": 5,
+    "macro_f1_mean": 0.46256857945221286,
+    "macro_f1_std": 0.04083420643896279,
+    "auroc_GOF_mean": 0.6697135124698628,
+    "auroc_GOF_std": 0.06792375759232036,
+    "auroc_DN_mean": 0.7787417751853081,
+    "auroc_DN_std": 0.03694951305780931,
+    "auroc_LOF_mean": 0.7625718748681516,
+    "auroc_LOF_std": 0.05461221605602736,
+    "per_gene_f1_mean": 0.4040318072025345,
+    "per_gene_f1_std": 0.04368196494193218
+  }
+}

@@ -1,0 +1,55 @@
+{
+  "settings": {
+    "gene_list": "merged_gene_list.tsv",
+    "n_genes": 1234,
+    "n_families": 725,
+    "features": [
+      "pLI",
+      "LOEUF",
+      "mis_z",
+      "paralog_count"
+    ],
+    "n_folds": 5,
+    "seed": 2,
+    "label_collapse": "GOF / DN / LOF (HI\u2192LOF, AR dropped)"
+  },
+  "class_distribution": {
+    "GOF": 145,
+    "DN": 107,
+    "LOF": 982
+  },
+  "models": {
+    "majority": {
+      "macro_f1": 0.2954271961492178
+    },
+    "logreg": {
+      "macro_f1": 0.4140296523402007,
+      "per_class_auroc": {
+        "GOF": 0.6836230645008075,
+        "DN": 0.6879649055884036,
+        "LOF": 0.7350139818317007
+      },
+      "n_test": 1234,
+      "class_distribution_test": {
+        "GOF": 145,
+        "DN": 107,
+        "LOF": 982
+      }
+    },
+    "mlp": {
+      "macro_f1": 0.3063491694498041,
+      "per_class_auroc": {
+        "GOF": 0.635543523004338,
+        "DN": 0.6190614400981848,
+        "LOF": 0.6466132447547928
+      },
+      "n_test": 1234,
+      "class_distribution_test": {
+        "GOF": 145,
+        "DN": 107,
+        "LOF": 982
+      }
+    }
+  },
+  "decision": "STRONG_SIGNAL: proceed to full Phase 1"
+}

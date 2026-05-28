@@ -37,6 +37,10 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.neural_network import MLPClassifier
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import roc_auc_score, f1_score, precision_recall_curve, auc
+from utils_probes import gene_split_cv, family_split_cv
+
+import functools
+print = functools.partial(print, flush=True)
 
 from experiment import (
     build_sequence_cache,
@@ -261,34 +265,6 @@ def get_or_extract_embeddings(variants, seq_cache, data_dir, model_name,
 # Phase 3: probes                                                              #
 # --------------------------------------------------------------------------- #
 
-def gene_split_cv(genes, n_folds=5, seed=42):
-    u = np.array(sorted(set(genes)))
-    np.random.RandomState(seed).shuffle(u)
-    splits = []
-    for f in np.array_split(u, n_folds):
-        tr = np.where(~np.isin(genes, f))[0]
-        te = np.where( np.isin(genes, f))[0]
-        if tr.sum() >= 10 and te.sum() >= 5:
-            splits.append((tr, te))
-    return splits
-
-
-def family_split_cv(genes, pfam_map, n_folds=5, seed=42):
-    g2p = {g: pfam_map[g] for g in np.unique(genes) if pfam_map.get(g)}
-    fams = np.array(sorted(set(g2p.values())))
-    np.random.RandomState(seed).shuffle(fams)
-    n = len(genes)
-    splits = []
-    for fold_fams in np.array_split(fams, n_folds):
-        fs = set(fold_fams)
-        te = np.array([genes[i] in g2p and g2p[genes[i]] in fs
-                        for i in range(n)])
-        tr = np.array([genes[i] in g2p and g2p[genes[i]] not in fs
-                        for i in range(n)])
-        if tr.sum() >= 10 and te.sum() >= 5:
-            splits.append((np.where(tr)[0], np.where(te)[0]))
-    return splits, len(fams)
-
 
 def run_binary_probe(X, y, splits, probe_kind, seed=42):
     """probe_kind: 'logreg' or 'mlp'. y is binary 0/1."""
@@ -331,7 +307,7 @@ def run_binary_probe(X, y, splits, probe_kind, seed=42):
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--run_dir", default="results/run_0")
+    p.add_argument("--run_dir", default="run_0")
     p.add_argument("--model", default=ESM2_MODEL_650M)
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--max_per_gene_per_class", type=int, default=20)
@@ -382,9 +358,8 @@ def main():
         seq_cache, data_dir,
     )
     gs = gene_split_cv(genes, seed=args.seed)
-    fs, n_fams = family_split_cv(genes, pfam_map, seed=args.seed)
-    print(f"  Gene-split folds: {len(gs)}  Family-split folds: {len(fs)}  "
-          f"(unique families: {n_fams})")
+    fs = family_split_cv(genes, pfam_map, seed=args.seed)
+    print(f"  Gene-split folds: {len(gs)}  Family-split folds: {len(fs)}")
 
     features = {
         "delta_mean": deltas,

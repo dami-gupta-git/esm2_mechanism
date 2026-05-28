@@ -1,0 +1,67 @@
+[
+  {
+    "name": "pDN",
+    "kind": "raw",
+    "source": "badonyi_2024_plosone"
+  },
+  {
+    "name": "pGOF",
+    "kind": "raw",
+    "source": "badonyi_2024_plosone"
+  },
+  {
+    "name": "pLOF",
+    "kind": "raw",
+    "source": "badonyi_2024_plosone"
+  },
+  {
+    "name": "pDN_missing",
+    "kind": "missing_indicator",
+    "source": "badonyi_2024_plosone"
+  },
+  {
+    "name": "pGOF_missing",
+    "kind": "missing_indicator",
+    "source": "badonyi_2024_plosone"
+  },
+  {
+    "name": "pLOF_missing",
+    "kind": "missing_indicator",
+    "source": "badonyi_2024_plosone"
+  },
+  {
+    "name": "pDN_familyresid",
+    "kind": "familyresid",
+    "source": "badonyi_2024_plosone"
+  },
+  {
+    "name": "pGOF_familyresid",
+    "kind": "familyresid",
+    "source": "badonyi_2024_plosone"
+  },
+  {
+    "name": "pLOF_familyresid",
+    "kind": "familyresid",
+    "source": "badonyi_2024_plosone"
+  },
+  {
+    "name": "pDN_familyresid_missing",
+    "kind": "missing_indicator",
+    "source": "badonyi_2024_plosone"
+  },
+  {
+    "name": "pGOF_familyresid_missing",
+    "kind": "missing_indicator",
+    "source": "badonyi_2024_plosone"
+  },
+  {
+    "name": "pLOF_familyresid_missing",
+    "kind": "missing_indicator",
+    "source": "badonyi_2024_plosone"
+  },
+  {
+    "name": "is_singleton_family_badonyi",
+    "kind": "raw",
+    "source": "badonyi_2024_plosone"
+  }
+]

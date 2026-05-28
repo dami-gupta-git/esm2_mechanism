@@ -15,7 +15,7 @@ Full design: `EXPERIMENT.md`
 
 ### Gerasimavicius et al. 2022 (primary)
 - NatComms 13:3895, OSF: 10.17605/OSF.IO/H62FQ
-- Local copy: `data/DiseaseMech_Stability_VEPS.xlsx` (233MB, gitignored)
+- Local copy: `../data/DiseaseMech_Stability_VEPS.xlsx` (233MB, gitignored)
 - **Sheet used: `ClinVar_gene_level`** (not `HGMD_four_class` — that sheet lacks the DN class)
 - `Disease_mechanism` column: GOF / DN / HI / AR / AR, HET / AR, HOM
 - Final counts after filtering to ClinVar disease variants with valid AA notation:
@@ -89,7 +89,7 @@ Full design: `EXPERIMENT.md`
 
 ### 6. Stale embedding cache
 - **Error**: Embeddings cached from synthetic 349-variant run were used for the 618-variant real run, causing shape mismatch in stability subspace fitting
-- **Fix**: Deleted `embeddings_*.npy` and `sequences.json` from `data/` to force re-extraction
+- **Fix**: Deleted `embeddings_*.npy` and `sequences.json` from `../data/` to force re-extraction
 
 ### 7. AlphaMissense API broken
 - **Error**: `alphamissense.hegelab.org` API returning 0 results

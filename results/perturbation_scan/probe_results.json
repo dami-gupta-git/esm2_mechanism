@@ -1,0 +1,488 @@
+{
+  "summary": {
+    "baseline_delta_gene_split": {
+      "macro_f1_mean": 0.3940667932498211,
+      "macro_f1_std": 0.006500531629907535,
+      "auroc_GOF_mean": 0.689501975246653,
+      "auroc_GOF_std": 0.008770990273041634
+    },
+    "baseline_delta_family_split": {
+      "macro_f1_mean": 0.37685430209734905,
+      "macro_f1_std": 0.008265609883434,
+      "auroc_GOF_mean": 0.6648189240922723,
+      "auroc_GOF_std": 0.013039264916879439
+    },
+    "scan_only_gene_split": {
+      "macro_f1_mean": 0.2797022000173873,
+      "macro_f1_std": 0.005912233223600512,
+      "auroc_GOF_mean": 0.5417498669438652,
+      "auroc_GOF_std": 0.020689449111941118
+    },
+    "scan_only_family_split": {
+      "macro_f1_mean": 0.2724626461501516,
+      "macro_f1_std": 0.004662164694392769,
+      "auroc_GOF_mean": 0.5241253463536673,
+      "auroc_GOF_std": 0.023855766266742268
+    },
+    "scan_delta_gene_split": {
+      "macro_f1_mean": 0.3997665456881741,
+      "macro_f1_std": 0.005697115311422791,
+      "auroc_GOF_mean": 0.6825947324685423,
+      "auroc_GOF_std": 0.007454829679952897
+    },
+    "scan_delta_family_split": {
+      "macro_f1_mean": 0.37497974724377103,
+      "macro_f1_std": 0.007173521214930128,
+      "auroc_GOF_mean": 0.6577125231792378,
+      "auroc_GOF_std": 0.015758440839538274
+    },
+    "scan_proteome_gene_split": {
+      "macro_f1_mean": 0.4173064986460302,
+      "macro_f1_std": 0.007088272754283004,
+      "auroc_GOF_mean": 0.7668743633739995,
+      "auroc_GOF_std": 0.007104762552434589
+    },
+    "scan_proteome_family_split": {
+      "macro_f1_mean": 0.4129517015080314,
+      "macro_f1_std": 0.004932011392650805,
+      "auroc_GOF_mean": 0.750094103127226,
+      "auroc_GOF_std": 0.008857042670665814
+    }
+  },
+  "gate_results": {
+    "G1": {
+      "value": 0.2724626461501516,
+      "threshold": 0.368,
+      "passed": false
+    },
+    "G2": {
+      "value": 0.37497974724377103,
+      "threshold": 0.419,
+      "passed": false
+    },
+    "G3": {
+      "value": 0.4129517015080314,
+      "threshold": 0.405,
+      "passed": true
+    }
+  },
+  "per_seed": {
+    "0": {
+      "baseline_delta_gene_split": {
+        "auroc_GOF_mean": 0.7017011005334701,
+        "auroc_GOF_std": 0.0345405896607815,
+        "auroc_DN_mean": 0.6597053304194078,
+        "auroc_DN_std": 0.0388040369284442,
+        "auroc_LOF_mean": 0.6971832155910622,
+        "auroc_LOF_std": 0.027963488050136105,
+        "macro_f1_mean": 0.4025748572365015,
+        "macro_f1_std": 0.02378219519202853
+      },
+      "baseline_delta_family_split": {
+        "auroc_GOF_mean": 0.6683536478639182,
+        "auroc_GOF_std": 0.07298370402790982,
+        "auroc_DN_mean": 0.6205219743093446,
+        "auroc_DN_std": 0.05003224827260445,
+        "auroc_LOF_mean": 0.6512624923655141,
+        "auroc_LOF_std": 0.03628112942722739,
+        "macro_f1_mean": 0.38807215693804686,
+        "macro_f1_std": 0.018000522800140466
+      },
+      "scan_only_gene_split": {
+        "auroc_GOF_mean": 0.5008491401178452,
+        "auroc_GOF_std": 0.030913267857566745,
+        "auroc_DN_mean": 0.5695334909323162,
+        "auroc_DN_std": 0.035761612728324454,
+        "auroc_LOF_mean": 0.5829441737985642,
+        "auroc_LOF_std": 0.024880318860586986,
+        "macro_f1_mean": 0.27327507144462143,
+        "macro_f1_std": 0.01378513801073331
+      },
+      "scan_only_family_split": {
+        "auroc_GOF_mean": 0.48933570768145385,
+        "auroc_GOF_std": 0.031233491214232165,
+        "auroc_DN_mean": 0.5228913628983316,
+        "auroc_DN_std": 0.09694758738342796,
+        "auroc_LOF_mean": 0.5678196217280985,
+        "auroc_LOF_std": 0.023804305301876355,
+        "macro_f1_mean": 0.2731339339620952,
+        "macro_f1_std": 0.00991347665293161
+      },
+      "scan_delta_gene_split": {
+        "auroc_GOF_mean": 0.6929040464368585,
+        "auroc_GOF_std": 0.030019214012105968,
+        "auroc_DN_mean": 0.6531142324073521,
+        "auroc_DN_std": 0.03673185260853724,
+        "auroc_LOF_mean": 0.6903236048527389,
+        "auroc_LOF_std": 0.026250062531104217,
+        "macro_f1_mean": 0.4019508015295134,
+        "macro_f1_std": 0.016322739517928814
+      },
+      "scan_delta_family_split": {
+        "auroc_GOF_mean": 0.6692574222309289,
+        "auroc_GOF_std": 0.08321814458227217,
+        "auroc_DN_mean": 0.6133350833473366,
+        "auroc_DN_std": 0.06781540623019858,
+        "auroc_LOF_mean": 0.6520227547415031,
+        "auroc_LOF_std": 0.033387327750035174,
+        "macro_f1_mean": 0.3809340645555916,
+        "macro_f1_std": 0.016617326600838218
+      },
+      "scan_proteome_gene_split": {
+        "auroc_GOF_mean": 0.75754005568086,
+        "auroc_GOF_std": 0.03901708639439813,
+        "auroc_DN_mean": 0.709967149697029,
+        "auroc_DN_std": 0.06638117607232212,
+        "auroc_LOF_mean": 0.8158735853075406,
+        "auroc_LOF_std": 0.02401196756742862,
+        "macro_f1_mean": 0.42369563975325863,
+        "macro_f1_std": 0.02757268849101702
+      },
+      "scan_proteome_family_split": {
+        "auroc_GOF_mean": 0.7666477305291259,
+        "auroc_GOF_std": 0.05489858315818392,
+        "auroc_DN_mean": 0.6982385196309224,
+        "auroc_DN_std": 0.06652749411506755,
+        "auroc_LOF_mean": 0.7998161295902081,
+        "auroc_LOF_std": 0.01858513005933986,
+        "macro_f1_mean": 0.4195290787056775,
+        "macro_f1_std": 0.03889001511762343
+      }
+    },
+    "1": {
+      "baseline_delta_gene_split": {
+        "auroc_GOF_mean": 0.6848530617049835,
+        "auroc_GOF_std": 0.08812269528754989,
+        "auroc_DN_mean": 0.6675384894285288,
+        "auroc_DN_std": 0.039544797147264325,
+        "auroc_LOF_mean": 0.6914957245266603,
+        "auroc_LOF_std": 0.044533795462450246,
+        "macro_f1_mean": 0.39466690471882265,
+        "macro_f1_std": 0.02670461616847995
+      },
+      "baseline_delta_family_split": {
+        "auroc_GOF_mean": 0.6710983047083527,
+        "auroc_GOF_std": 0.0740469651660702,
+        "auroc_DN_mean": 0.6014616137405333,
+        "auroc_DN_std": 0.09782745272749602,
+        "auroc_LOF_mean": 0.6619030322425687,
+        "auroc_LOF_std": 0.03166391918040267,
+        "macro_f1_mean": 0.36332900524323797,
+        "macro_f1_std": 0.03087745070056039
+      },
+      "scan_only_gene_split": {
+        "auroc_GOF_mean": 0.5506830128478575,
+        "auroc_GOF_std": 0.043485833783981256,
+        "auroc_DN_mean": 0.5690116827990848,
+        "auroc_DN_std": 0.0431837769312974,
+        "auroc_LOF_mean": 0.5883703771956066,
+        "auroc_LOF_std": 0.038118062418600995,
+        "macro_f1_mean": 0.285314430718689,
+        "macro_f1_std": 0.01723846547922209
+      },
+      "scan_only_family_split": {
+        "auroc_GOF_mean": 0.5473434875846304,
+        "auroc_GOF_std": 0.016117065399545088,
+        "auroc_DN_mean": 0.5380854613682517,
+        "auroc_DN_std": 0.036856986754535956,
+        "auroc_LOF_mean": 0.5745935561610878,
+        "auroc_LOF_std": 0.028174487209813172,
+        "macro_f1_mean": 0.2677143286718561,
+        "macro_f1_std": 0.028668399472890668
+      },
+      "scan_delta_gene_split": {
+        "auroc_GOF_mean": 0.6770621479974717,
+        "auroc_GOF_std": 0.07977302999367697,
+        "auroc_DN_mean": 0.6714416140824404,
+        "auroc_DN_std": 0.04173569178634032,
+        "auroc_LOF_mean": 0.6898630072747524,
+        "auroc_LOF_std": 0.04813341368706933,
+        "macro_f1_mean": 0.4035300358932167,
+        "macro_f1_std": 0.03759375272321087
+      },
+      "scan_delta_family_split": {
+        "auroc_GOF_mean": 0.6615676280116304,
+        "auroc_GOF_std": 0.07452647253371121,
+        "auroc_DN_mean": 0.6067690339494852,
+        "auroc_DN_std": 0.08464288229933457,
+        "auroc_LOF_mean": 0.6636019489287746,
+        "auroc_LOF_std": 0.028251892577774353,
+        "macro_f1_mean": 0.36194232971701196,
+        "macro_f1_std": 0.03412749187297096
+      },
+      "scan_proteome_gene_split": {
+        "auroc_GOF_mean": 0.7605960384054216,
+        "auroc_GOF_std": 0.03926750608765876,
+        "auroc_DN_mean": 0.6994456375874349,
+        "auroc_DN_std": 0.031813917176298924,
+        "auroc_LOF_mean": 0.8088028344749997,
+        "auroc_LOF_std": 0.03926393528205306,
+        "macro_f1_mean": 0.40741180969368856,
+        "macro_f1_std": 0.017417063317659753
+      },
+      "scan_proteome_family_split": {
+        "auroc_GOF_mean": 0.7418657237986277,
+        "auroc_GOF_std": 0.06221851462459649,
+        "auroc_DN_mean": 0.6729968630414537,
+        "auroc_DN_std": 0.06093079255350747,
+        "auroc_LOF_mean": 0.7855831573590863,
+        "auroc_LOF_std": 0.01283386610744324,
+        "macro_f1_mean": 0.40857826723891727,
+        "macro_f1_std": 0.03986638677280363
+      }
+    },
+    "2": {
+      "baseline_delta_gene_split": {
+        "auroc_GOF_mean": 0.6892213447796974,
+        "auroc_GOF_std": 0.026263837992084524,
+        "auroc_DN_mean": 0.6498399959092562,
+        "auroc_DN_std": 0.043124502625987986,
+        "auroc_LOF_mean": 0.7081597349186489,
+        "auroc_LOF_std": 0.033076514785989934,
+        "macro_f1_mean": 0.3892418618650485,
+        "macro_f1_std": 0.010384687582659638
+      },
+      "baseline_delta_family_split": {
+        "auroc_GOF_mean": 0.6471771736705791,
+        "auroc_GOF_std": 0.021748846260704086,
+        "auroc_DN_mean": 0.611968709414611,
+        "auroc_DN_std": 0.061821550889288465,
+        "auroc_LOF_mean": 0.6841376775813232,
+        "auroc_LOF_std": 0.03794510062875652,
+        "macro_f1_mean": 0.38082244542433835,
+        "macro_f1_std": 0.019442778345186592
+      },
+      "scan_only_gene_split": {
+        "auroc_GOF_mean": 0.5495572696708042,
+        "auroc_GOF_std": 0.052515662743369246,
+        "auroc_DN_mean": 0.5989779093866543,
+        "auroc_DN_std": 0.11034974356857173,
+        "auroc_LOF_mean": 0.5948135845899498,
+        "auroc_LOF_std": 0.04545320374085892,
+        "macro_f1_mean": 0.2850810738909456,
+        "macro_f1_std": 0.017276546786225727
+      },
+      "scan_only_family_split": {
+        "auroc_GOF_mean": 0.546062469013983,
+        "auroc_GOF_std": 0.09671145782473246,
+        "auroc_DN_mean": 0.5419747063096357,
+        "auroc_DN_std": 0.04067996501789324,
+        "auroc_LOF_mean": 0.5760286157233636,
+        "auroc_LOF_std": 0.028523534495729665,
+        "macro_f1_mean": 0.27170628833695876,
+        "macro_f1_std": 0.019086429721906478
+      },
+      "scan_delta_gene_split": {
+        "auroc_GOF_mean": 0.6848314640242028,
+        "auroc_GOF_std": 0.03964772982245179,
+        "auroc_DN_mean": 0.65079466053018,
+        "auroc_DN_std": 0.04194953113130748,
+        "auroc_LOF_mean": 0.7073982380177726,
+        "auroc_LOF_std": 0.04173440873858873,
+        "macro_f1_mean": 0.3980748716735204,
+        "macro_f1_std": 0.018331134235083663
+      },
+      "scan_delta_family_split": {
+        "auroc_GOF_mean": 0.6344379341064073,
+        "auroc_GOF_std": 0.014110917979946814,
+        "auroc_DN_mean": 0.6109674497390953,
+        "auroc_DN_std": 0.054292246763276784,
+        "auroc_LOF_mean": 0.6816719354661366,
+        "auroc_LOF_std": 0.03671872782546453,
+        "macro_f1_mean": 0.3727248188731219,
+        "macro_f1_std": 0.02254874779540644
+      },
+      "scan_proteome_gene_split": {
+        "auroc_GOF_mean": 0.7756295998899614,
+        "auroc_GOF_std": 0.0609538129179584,
+        "auroc_DN_mean": 0.7147967598405346,
+        "auroc_DN_std": 0.045724950026067725,
+        "auroc_LOF_mean": 0.8085059646794275,
+        "auroc_LOF_std": 0.01890159247159748,
+        "macro_f1_mean": 0.4268751355181787,
+        "macro_f1_std": 0.018335572183675625
+      },
+      "scan_proteome_family_split": {
+        "auroc_GOF_mean": 0.7448725637264101,
+        "auroc_GOF_std": 0.053801895853366484,
+        "auroc_DN_mean": 0.6665122017408669,
+        "auroc_DN_std": 0.08251315316668471,
+        "auroc_LOF_mean": 0.7958228916835873,
+        "auroc_LOF_std": 0.04375988731030808,
+        "macro_f1_mean": 0.4064925913868492,
+        "macro_f1_std": 0.034561629856909463
+      }
+    },
+    "3": {
+      "baseline_delta_gene_split": {
+        "auroc_GOF_mean": 0.6955552736226436,
+        "auroc_GOF_std": 0.02215557187947268,
+        "auroc_DN_mean": 0.6540780568940583,
+        "auroc_DN_std": 0.017992010467746334,
+        "auroc_LOF_mean": 0.7021734831728463,
+        "auroc_LOF_std": 0.021972513553010914,
+        "macro_f1_mean": 0.39920817258836083,
+        "macro_f1_std": 0.028897567647803074
+      },
+      "baseline_delta_family_split": {
+        "auroc_GOF_mean": 0.6838377111218167,
+        "auroc_GOF_std": 0.048448593960524096,
+        "auroc_DN_mean": 0.5755360036832412,
+        "auroc_DN_std": 0.04284770924771251,
+        "auroc_LOF_mean": 0.6689221181255043,
+        "auroc_LOF_std": 0.03424008037586099,
+        "macro_f1_mean": 0.37882595836568,
+        "macro_f1_std": 0.014382113363614365
+      },
+      "scan_only_gene_split": {
+        "auroc_GOF_mean": 0.5496596245444266,
+        "auroc_GOF_std": 0.032661207640039006,
+        "auroc_DN_mean": 0.5381211670002182,
+        "auroc_DN_std": 0.049327152303615306,
+        "auroc_LOF_mean": 0.5871806728139657,
+        "auroc_LOF_std": 0.02673699052770839,
+        "macro_f1_mean": 0.27182467045656983,
+        "macro_f1_std": 0.010294927801997533
+      },
+      "scan_only_family_split": {
+        "auroc_GOF_mean": 0.5356925551769307,
+        "auroc_GOF_std": 0.030861410784344845,
+        "auroc_DN_mean": 0.5715185793096923,
+        "auroc_DN_std": 0.05837831523147273,
+        "auroc_LOF_mean": 0.5871964696418577,
+        "auroc_LOF_std": 0.05385840308027389,
+        "macro_f1_mean": 0.2809385831422523,
+        "macro_f1_std": 0.015091299460965739
+      },
+      "scan_delta_gene_split": {
+        "auroc_GOF_mean": 0.6865506990529294,
+        "auroc_GOF_std": 0.025351828208247218,
+        "auroc_DN_mean": 0.6553800081181528,
+        "auroc_DN_std": 0.02304429223151223,
+        "auroc_LOF_mean": 0.7044317167119377,
+        "auroc_LOF_std": 0.022661229424254543,
+        "macro_f1_mean": 0.4057450485981674,
+        "macro_f1_std": 0.021020017418349694
+      },
+      "scan_delta_family_split": {
+        "auroc_GOF_mean": 0.6777864932294434,
+        "auroc_GOF_std": 0.03885764609986594,
+        "auroc_DN_mean": 0.5764643380435435,
+        "auroc_DN_std": 0.03930992866831209,
+        "auroc_LOF_mean": 0.6672919578026943,
+        "auroc_LOF_std": 0.02513084393433021,
+        "macro_f1_mean": 0.38091066323618084,
+        "macro_f1_std": 0.009837438777713859
+      },
+      "scan_proteome_gene_split": {
+        "auroc_GOF_mean": 0.7667200820504274,
+        "auroc_GOF_std": 0.04529480363231497,
+        "auroc_DN_mean": 0.6900099200295078,
+        "auroc_DN_std": 0.0458382564822799,
+        "auroc_LOF_mean": 0.809716394753466,
+        "auroc_LOF_std": 0.02118593402992333,
+        "macro_f1_mean": 0.4131451922598224,
+        "macro_f1_std": 0.048440767115393926
+      },
+      "scan_proteome_family_split": {
+        "auroc_GOF_mean": 0.7515775609938409,
+        "auroc_GOF_std": 0.03398807700040329,
+        "auroc_DN_mean": 0.7069757248784947,
+        "auroc_DN_std": 0.058788451055862036,
+        "auroc_LOF_mean": 0.8020312107962451,
+        "auroc_LOF_std": 0.017947598731503457,
+        "macro_f1_mean": 0.4171361682200862,
+        "macro_f1_std": 0.021818981067741473
+      }
+    },
+    "4": {
+      "baseline_delta_gene_split": {
+        "auroc_GOF_mean": 0.6761790955924708,
+        "auroc_GOF_std": 0.030672356608477162,
+        "auroc_DN_mean": 0.6525588665626195,
+        "auroc_DN_std": 0.055141190042031406,
+        "auroc_LOF_mean": 0.6808244117424567,
+        "auroc_LOF_std": 0.011475114655910015,
+        "macro_f1_mean": 0.3846421698403718,
+        "macro_f1_std": 0.011596992802924753
+      },
+      "baseline_delta_family_split": {
+        "auroc_GOF_mean": 0.6536277830966949,
+        "auroc_GOF_std": 0.05783309462376638,
+        "auroc_DN_mean": 0.5911749451885302,
+        "auroc_DN_std": 0.05467965048916113,
+        "auroc_LOF_mean": 0.6715460377630029,
+        "auroc_LOF_std": 0.03669414151978788,
+        "macro_f1_mean": 0.3732219445154422,
+        "macro_f1_std": 0.04139536765334485
+      },
+      "scan_only_gene_split": {
+        "auroc_GOF_mean": 0.5580002875383921,
+        "auroc_GOF_std": 0.05677342825275358,
+        "auroc_DN_mean": 0.579567370393978,
+        "auroc_DN_std": 0.05553649389325765,
+        "auroc_LOF_mean": 0.5905073498954007,
+        "auroc_LOF_std": 0.030133691731171,
+        "macro_f1_mean": 0.283015753576111,
+        "macro_f1_std": 0.023692543254605736
+      },
+      "scan_only_family_split": {
+        "auroc_GOF_mean": 0.5021925123113381,
+        "auroc_GOF_std": 0.05494194354357364,
+        "auroc_DN_mean": 0.5355724876768867,
+        "auroc_DN_std": 0.04637441308415307,
+        "auroc_LOF_mean": 0.5829917126048005,
+        "auroc_LOF_std": 0.06105321558803144,
+        "macro_f1_mean": 0.26882009663759543,
+        "macro_f1_std": 0.014871382153689381
+      },
+      "scan_delta_gene_split": {
+        "auroc_GOF_mean": 0.6716253048312494,
+        "auroc_GOF_std": 0.039751767142670535,
+        "auroc_DN_mean": 0.6509268068735885,
+        "auroc_DN_std": 0.05244320148770533,
+        "auroc_LOF_mean": 0.675205053080272,
+        "auroc_LOF_std": 0.02094969410063137,
+        "macro_f1_mean": 0.38953197074645274,
+        "macro_f1_std": 0.010691015340908005
+      },
+      "scan_delta_family_split": {
+        "auroc_GOF_mean": 0.645513138317779,
+        "auroc_GOF_std": 0.05003029658134823,
+        "auroc_DN_mean": 0.5902734893523824,
+        "auroc_DN_std": 0.05251082775189378,
+        "auroc_LOF_mean": 0.673946377811078,
+        "auroc_LOF_std": 0.030515171674747356,
+        "macro_f1_mean": 0.378386859836949,
+        "macro_f1_std": 0.028576556655715953
+      },
+      "scan_proteome_gene_split": {
+        "auroc_GOF_mean": 0.7738860408433271,
+        "auroc_GOF_std": 0.03472043575552012,
+        "auroc_DN_mean": 0.7094541257783823,
+        "auroc_DN_std": 0.06141235867657371,
+        "auroc_LOF_mean": 0.8078834341093483,
+        "auroc_LOF_std": 0.0339438581989708,
+        "macro_f1_mean": 0.4154047160052028,
+        "macro_f1_std": 0.01809895558437823
+      },
+      "scan_proteome_family_split": {
+        "auroc_GOF_mean": 0.7455069365881254,
+        "auroc_GOF_std": 0.042893793954940536,
+        "auroc_DN_mean": 0.6926651953395488,
+        "auroc_DN_std": 0.06349359506262385,
+        "auroc_LOF_mean": 0.7941572610169594,
+        "auroc_LOF_std": 0.022141801950082043,
+        "macro_f1_mean": 0.4130224019886268,
+        "macro_f1_std": 0.010800642085590142
+      }
+    }
+  },
+  "n_genes": 1985,
+  "feature_combos": [
+    "baseline_delta",
+    "scan_only",
+    "scan_delta",
+    "scan_proteome"
+  ]
+}

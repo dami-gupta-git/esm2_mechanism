@@ -78,5 +78,5 @@ This is the single highest-priority next step (also listed as #1 in Result 4's n
 
 ## Data Location
 
-- Results: `results/20260524_baseline_run/run_0/mlp_results_seed0.json`
-- Embeddings: `data/embeddings/embeddings_*.npy`
+- Results: `../results/20260524_baseline_run/run_0/mlp_results_seed0.json`
+- Embeddings: `../data/embeddings/embeddings_*.npy`

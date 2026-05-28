@@ -132,7 +132,7 @@ Delta probe shows a modest AUROC drop under family-split (0.61 → 0.57 mean). T
 
 ## Data Location
 
-- Results: `results/20260524_baseline_run/run_0/final_info_seed0.json`
-- Detailed: `results/20260524_baseline_run/run_0/detailed_results_seed0.json`
+- Results: `../results/20260524_baseline_run/run_0/final_info_seed0.json`
+- Detailed: `../results/20260524_baseline_run/run_0/detailed_results_seed0.json`
 - Embeddings: on RunPod (regenerate in ~5-10 min with optimized code)
-- Cached data: `data/` — sequences.json, pfam_families.json, alphamissense_scores.json, gerasimavicius_variants.json
+- Cached data: `../data/` — sequences.json, pfam_families.json, alphamissense_scores.json, gerasimavicius_variants.json

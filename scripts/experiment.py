@@ -26,9 +26,11 @@ import time
 import warnings
 import urllib.request
 import urllib.error
+import functools
 from io import StringIO
 
 import numpy as np
+print = functools.partial(print, flush=True)
 from scipy.stats import spearmanr
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import roc_auc_score, f1_score, precision_recall_curve, auc
@@ -253,8 +255,7 @@ def apply_missense(sequence, aa_pos, aa_wt, aa_mut):
     if idx < 0 or idx >= len(sequence):
         return None
     if sequence[idx] != aa_wt:
-        # Allow if close enough (common in splice variants)
-        pass
+        return None
     seq_list = list(sequence)
     seq_list[idx] = aa_mut
     return "".join(seq_list)
@@ -343,7 +344,7 @@ def fetch_alphamissense_scores(variants, cache_dir, retries=3, delay=1.0):
         deadline = time.time() + 300  # 5 min max — AM is a non-critical baseline
         for i, v, key in to_fetch:
             if time.time() > deadline:
-                print(f"  AlphaMissense fetch timeout after 30 min — saving {fetched} fetched, continuing")
+                print(f"  AlphaMissense fetch timeout — saving {fetched} fetched, continuing")
                 break
             gene = v["gene"]
             aa_wt = v["aa_wt"]
@@ -485,8 +486,6 @@ def fit_stability_subspace_megascale(cache_dir, n_components=10,
     # Regress each delta dimension on ΔΔG, collect regression coefficients
     # Then PCA on the coefficient matrix to get the stability subspace
     from sklearn.linear_model import Ridge
-    n_dims = deltas.shape[1]
-    coefs = np.zeros(n_dims)
     reg = Ridge(alpha=1.0)
     reg.fit(ddg.reshape(-1, 1), deltas)
     coefs = np.array(reg.coef_).flatten()
@@ -496,7 +495,7 @@ def fit_stability_subspace_megascale(cache_dir, n_components=10,
 
     # PCA on residuals after regressing out ΔΔG to find additional stability axes
     deltas_res = deltas - deltas.dot(stability_dir)[:, None] * stability_dir
-    pca = PCA(n_components=min(n_components - 1, deltas_res.shape[1]))
+    pca = PCA(n_components=min(n_components - 1, deltas_res.shape[0] - 1, deltas_res.shape[1]))
     pca.fit(deltas_res)
 
     # Subspace = stability direction + top PCA components of residuals
@@ -579,9 +578,7 @@ def project_out_subspace(deltas, subspace):
     """Remove the subspace from delta embeddings."""
     if subspace is None:
         return deltas
-    # Orthonormalise subspace via QR
-    Q, _ = np.linalg.qr(subspace.T)
-    # Project out
+    Q, _ = np.linalg.qr(subspace.T, mode='reduced')
     proj = deltas.dot(Q).dot(Q.T)
     return deltas - proj
 
@@ -594,7 +591,7 @@ def variance_explained_per_class(deltas, labels_3class, subspace):
     if subspace is None:
         return {}
 
-    Q, _ = np.linalg.qr(subspace.T)
+    Q, _ = np.linalg.qr(subspace.T, mode='reduced')
     results = {}
     for cls in ["GOF", "DN", "LOF"]:
         mask = labels_3class == cls
@@ -789,53 +786,7 @@ def run_linear_probe(X, y, genes, n_folds=5, seed=42):
             agg[f"{key}_mean"] = float(np.mean(vals))
             agg[f"{key}_std"] = float(np.std(vals))
 
-    # Bootstrap CI skipped for speed — re-enable after confirming headline result
-    agg["bootstrap_cis"] = {"macro_f1_ci_low": float("nan"), "macro_f1_ci_high": float("nan")}
-
     return agg
-
-
-def _bootstrap_gene_ci(X, y, genes, splits, n_bootstrap=50, seed=42):
-    """Bootstrap CI by resampling test-fold genes."""
-    rng = np.random.RandomState(seed)
-    all_macro_f1 = []
-
-    for _ in range(n_bootstrap):
-        boot_results = []
-        for train_idx, test_idx in splits:
-            # Resample genes in test fold with replacement
-            test_genes = list(set(genes[i] for i in test_idx))
-            boot_genes = rng.choice(test_genes, size=len(test_genes), replace=True)
-            boot_gene_set = set(boot_genes)
-            boot_idx = [i for i in test_idx if genes[i] in boot_gene_set]
-            if len(boot_idx) < 5:
-                continue
-
-            X_train, X_test = X[train_idx], X[np.array(boot_idx)]
-            y_train, y_test = y[train_idx], y[np.array(boot_idx)]
-
-            if len(set(y_train)) < 2 or len(set(y_test)) < 1:
-                continue
-
-            clf = LogisticRegression(max_iter=500, C=1.0, solver="lbfgs",
-                                      random_state=seed)
-            try:
-                clf.fit(X_train, y_train)
-                pred = clf.predict(X_test)
-                boot_results.append(float(f1_score(y_test, pred, average="macro", zero_division=0)))
-            except Exception:
-                continue
-
-        if boot_results:
-            all_macro_f1.append(float(np.mean(boot_results)))
-
-    if len(all_macro_f1) < 10:
-        return {"macro_f1_ci_low": float("nan"), "macro_f1_ci_high": float("nan")}
-
-    return {
-        "macro_f1_ci_low": float(np.percentile(all_macro_f1, 2.5)),
-        "macro_f1_ci_high": float(np.percentile(all_macro_f1, 97.5)),
-    }
 
 
 # ---------------------------------------------------------------------------
@@ -1377,7 +1328,7 @@ def run(out_dir, seed=0, model_name=ESM2_MODEL_650M, n_stability_components=10,
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--out_dir", type=str, default="results/run_0")
+    parser.add_argument("--out_dir", type=str, default="run_0")
     parser.add_argument("--model", type=str, default=ESM2_MODEL_650M,
                         choices=[ESM2_MODEL_650M, ESM2_MODEL_3B])
     parser.add_argument("--seeds", type=int, nargs="+", default=[0])

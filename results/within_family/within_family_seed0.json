@@ -1,0 +1,4659 @@
+{
+  "seed": 0,
+  "raw_proteome": {
+    "aggregate": {
+      "macro_f1": 0.4836334971486285,
+      "per_class_auroc": {
+        "GOF": 0.6557337220602526,
+        "DN": 0.7349271259305862,
+        "LOF": 0.6753429736744532
+      },
+      "n": 238
+    },
+    "per_family": {
+      "PF00004": {
+        "macro_f1": 0.2962962962962963,
+        "per_class_auroc": {
+          "GOF": 0.09999999999999998,
+          "DN": 0.0,
+          "LOF": 0.8333333333333334
+        },
+        "n": 7,
+        "class_counts": {
+          "2": 4,
+          "0": 2,
+          "1": 1
+        },
+        "genes": [
+          "AFG2A",
+          "AFG3L2",
+          "ATAD3A",
+          "PEX1",
+          "PEX6",
+          "SPAST",
+          "VPS4A"
+        ],
+        "labels": [
+          "LOF",
+          "LOF",
+          "DN",
+          "LOF",
+          "LOF",
+          "GOF",
+          "DN"
+        ]
+      },
+      "PF00046": {
+        "macro_f1": 0.3686868686868687,
+        "per_class_auroc": {
+          "GOF": 0.7654320987654322,
+          "DN": 0.75,
+          "LOF": 0.8079999999999999
+        },
+        "n": 30,
+        "class_counts": {
+          "2": 25,
+          "1": 2,
+          "0": 3
+        },
+        "genes": [
+          "ALX4",
+          "ARX",
+          "CRX",
+          "HESX1",
+          "HMX1",
+          "HOXA13",
+          "LHX4",
+          "LMX1B",
+          "MNX1",
+          "MSX1",
+          "MSX2",
+          "NKX2-1",
+          "NKX2-5",
+          "NKX6-2",
+          "OTX2",
+          "PAX3",
+          "PAX6",
+          "PHOX2B",
+          "PITX1",
+          "PITX2",
+          "POU1F1",
+          "POU3F3",
+          "POU4F1",
+          "PROP1",
+          "RAX",
+          "RAX2",
+          "SHOX",
+          "SIX3",
+          "SIX6",
+          "VSX2"
+        ],
+        "labels": [
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "GOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "DN",
+          "LOF",
+          "DN",
+          "LOF",
+          "LOF",
+          "DN",
+          "LOF",
+          "LOF",
+          "LOF",
+          "GOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF"
+        ]
+      },
+      "PF00023": {
+        "macro_f1": 1.0,
+        "per_class_auroc": {
+          "GOF": null,
+          "DN": 1.0,
+          "LOF": 1.0
+        },
+        "n": 7,
+        "class_counts": {
+          "2": 2,
+          "1": 5
+        },
+        "genes": [
+          "ANK2",
+          "NOTCH1",
+          "NOTCH2",
+          "NOTCH3",
+          "TRPA1",
+          "TRPV3",
+          "TRPV4"
+        ],
+        "labels": [
+          "LOF",
+          "LOF",
+          "GOF",
+          "GOF",
+          "GOF",
+          "GOF",
+          "GOF"
+        ]
+      },
+      "PF00010": {
+        "macro_f1": 0.3333333333333333,
+        "per_class_auroc": {
+          "GOF": 0.6666666666666667,
+          "DN": null,
+          "LOF": 0.6666666666666666
+        },
+        "n": 8,
+        "class_counts": {
+          "2": 6,
+          "0": 2
+        },
+        "genes": [
+          "ATOH7",
+          "BHLHA9",
+          "MAX",
+          "MYCN",
+          "TCF12",
+          "TCF4",
+          "TWIST1",
+          "TWIST2"
+        ],
+        "labels": [
+          "LOF",
+          "DN",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "DN"
+        ]
+      },
+      "PF12796": {
+        "macro_f1": 0.42857142857142855,
+        "per_class_auroc": {
+          "GOF": null,
+          "DN": null,
+          "LOF": null
+        },
+        "n": 8,
+        "class_counts": {
+          "2": 8,
+          "1": 1
+        },
+        "genes": [
+          "BCOR",
+          "CAMTA1",
+          "EHMT1",
+          "ESPN",
+          "HACE1",
+          "RIPK4",
+          "SHANK2",
+          "SHANK3",
+          "TRPC3"
+        ],
+        "labels": [
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "GOF"
+        ]
+      },
+      "PF00038": {
+        "macro_f1": 0.4511784511784511,
+        "per_class_auroc": {
+          "GOF": 0.8181818181818182,
+          "DN": 0.6666666666666667,
+          "LOF": 0.5769230769230769
+        },
+        "n": 17,
+        "class_counts": {
+          "2": 4,
+          "1": 2,
+          "0": 11
+        },
+        "genes": [
+          "BFSP1",
+          "GFAP",
+          "KRT1",
+          "KRT10",
+          "KRT12",
+          "KRT13",
+          "KRT14",
+          "KRT16",
+          "KRT17",
+          "KRT2",
+          "KRT3",
+          "KRT4",
+          "KRT5",
+          "KRT6A",
+          "KRT6B",
+          "KRT9",
+          "LMNA"
+        ],
+        "labels": [
+          "LOF",
+          "GOF",
+          "DN",
+          "DN",
+          "DN",
+          "DN",
+          "DN",
+          "DN",
+          "LOF",
+          "LOF",
+          "DN",
+          "DN",
+          "LOF",
+          "DN",
+          "DN",
+          "DN",
+          "GOF"
+        ]
+      },
+      "PF00096": {
+        "macro_f1": 0.3333333333333333,
+        "per_class_auroc": {
+          "GOF": 0.0,
+          "DN": 0.0,
+          "LOF": 1.0
+        },
+        "n": 15,
+        "class_counts": {
+          "2": 13,
+          "0": 1,
+          "1": 1
+        },
+        "genes": [
+          "BNC2",
+          "CTCF",
+          "FEZF1",
+          "GFI1",
+          "GLI3",
+          "HIVEP2",
+          "SALL4",
+          "ZEB1",
+          "ZEB2",
+          "ZIC1",
+          "ZIC2",
+          "ZIC3",
+          "ZNF148",
+          "ZNF335",
+          "ZNF469"
+        ],
+        "labels": [
+          "LOF",
+          "LOF",
+          "LOF",
+          "DN",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "GOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF"
+        ]
+      },
+      "PF00168": {
+        "macro_f1": 0.38888888888888884,
+        "per_class_auroc": {
+          "GOF": 1.0,
+          "DN": 0.5,
+          "LOF": 0.625
+        },
+        "n": 8,
+        "class_counts": {
+          "2": 4,
+          "1": 2,
+          "0": 2
+        },
+        "genes": [
+          "C2CD3",
+          "CAPN5",
+          "OTOF",
+          "PLCG2",
+          "RASA1",
+          "SYNGAP1",
+          "SYT1",
+          "SYT2"
+        ],
+        "labels": [
+          "LOF",
+          "GOF",
+          "LOF",
+          "GOF",
+          "LOF",
+          "LOF",
+          "DN",
+          "DN"
+        ]
+      },
+      "PF00520": {
+        "macro_f1": 0.37566137566137564,
+        "per_class_auroc": {
+          "GOF": 0.5128205128205128,
+          "DN": 0.5,
+          "LOF": 0.5128205128205128
+        },
+        "n": 16,
+        "class_counts": {
+          "1": 10,
+          "2": 3,
+          "0": 3
+        },
+        "genes": [
+          "CACNA1G",
+          "KCNQ1",
+          "KCNQ2",
+          "KCNQ4",
+          "KCNQ5",
+          "NALCN",
+          "SCN10A",
+          "SCN11A",
+          "SCN1A",
+          "SCN2A",
+          "SCN3A",
+          "SCN4A",
+          "SCN5A",
+          "SCN8A",
+          "SCN9A",
+          "TRPM4"
+        ],
+        "labels": [
+          "GOF",
+          "LOF",
+          "DN",
+          "DN",
+          "GOF",
+          "LOF",
+          "GOF",
+          "GOF",
+          "GOF",
+          "GOF",
+          "GOF",
+          "GOF",
+          "LOF",
+          "DN",
+          "GOF",
+          "GOF"
+        ]
+      },
+      "PF00071": {
+        "macro_f1": 0.25641025641025644,
+        "per_class_auroc": {
+          "GOF": 0.0,
+          "DN": 0.7857142857142857,
+          "LOF": 0.0
+        },
+        "n": 9,
+        "class_counts": {
+          "1": 7,
+          "0": 1,
+          "2": 1
+        },
+        "genes": [
+          "CDC42",
+          "HRAS",
+          "KRAS",
+          "MRAS",
+          "NRAS",
+          "RAB11B",
+          "RAB39B",
+          "RIT1",
+          "RRAS2"
+        ],
+        "labels": [
+          "GOF",
+          "GOF",
+          "GOF",
+          "GOF",
+          "GOF",
+          "DN",
+          "LOF",
+          "GOF",
+          "GOF"
+        ]
+      },
+      "PF00069": {
+        "macro_f1": 0.2657952069716776,
+        "per_class_auroc": {
+          "GOF": 0.033333333333333326,
+          "DN": 0.4666666666666667,
+          "LOF": 0.4714285714285715
+        },
+        "n": 17,
+        "class_counts": {
+          "0": 2,
+          "1": 5,
+          "2": 10
+        },
+        "genes": [
+          "CDK19",
+          "CDK4",
+          "CDKL5",
+          "CSNK2A1",
+          "DYRK1A",
+          "MAK",
+          "MAP2K1",
+          "MAP2K2",
+          "MAPKAPK5",
+          "NEK1",
+          "NEK8",
+          "RPS6KA3",
+          "SCYL1",
+          "SIK1",
+          "STK11",
+          "TAOK1",
+          "TBK1"
+        ],
+        "labels": [
+          "DN",
+          "GOF",
+          "LOF",
+          "GOF",
+          "LOF",
+          "LOF",
+          "GOF",
+          "GOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "GOF",
+          "LOF",
+          "LOF",
+          "DN"
+        ]
+      },
+      "PF02931": {
+        "macro_f1": 0.4603174603174603,
+        "per_class_auroc": {
+          "GOF": 0.875,
+          "DN": 0.8125,
+          "LOF": 0.5416666666666667
+        },
+        "n": 10,
+        "class_counts": {
+          "2": 6,
+          "1": 2,
+          "0": 2
+        },
+        "genes": [
+          "CHRNA1",
+          "CHRNA4",
+          "CHRNB1",
+          "CHRNB2",
+          "CHRNG",
+          "GABRA1",
+          "GABRA5",
+          "GABRG2",
+          "GLRA1",
+          "GLRB"
+        ],
+        "labels": [
+          "LOF",
+          "GOF",
+          "LOF",
+          "GOF",
+          "LOF",
+          "DN",
+          "DN",
+          "LOF",
+          "LOF",
+          "LOF"
+        ]
+      },
+      "PF00027": {
+        "macro_f1": 0.5555555555555555,
+        "per_class_auroc": {
+          "GOF": 0.75,
+          "DN": 0.625,
+          "LOF": 1.0
+        },
+        "n": 6,
+        "class_counts": {
+          "2": 2,
+          "0": 2,
+          "1": 2
+        },
+        "genes": [
+          "CNGB1",
+          "CNGB3",
+          "HCN4",
+          "KCNH1",
+          "KCNH2",
+          "PRKAR1A"
+        ],
+        "labels": [
+          "LOF",
+          "LOF",
+          "DN",
+          "GOF",
+          "DN",
+          "GOF"
+        ]
+      },
+      "PF01410": {
+        "macro_f1": 0.1,
+        "per_class_auroc": {
+          "GOF": 0.09999999999999998,
+          "DN": null,
+          "LOF": 0.1
+        },
+        "n": 9,
+        "class_counts": {
+          "2": 5,
+          "0": 4
+        },
+        "genes": [
+          "COL11A1",
+          "COL11A2",
+          "COL1A1",
+          "COL1A2",
+          "COL27A1",
+          "COL2A1",
+          "COL3A1",
+          "COL5A1",
+          "COL5A2"
+        ],
+        "labels": [
+          "LOF",
+          "DN",
+          "LOF",
+          "LOF",
+          "LOF",
+          "DN",
+          "DN",
+          "LOF",
+          "DN"
+        ]
+      },
+      "PF00008": {
+        "macro_f1": 0.4444444444444444,
+        "per_class_auroc": {
+          "GOF": null,
+          "DN": null,
+          "LOF": null
+        },
+        "n": 5,
+        "class_counts": {
+          "2": 5,
+          "1": 1
+        },
+        "genes": [
+          "CRB1",
+          "CRB2",
+          "EYS",
+          "F12",
+          "HSPG2",
+          "LTBP2"
+        ],
+        "labels": [
+          "LOF",
+          "LOF",
+          "LOF",
+          "GOF",
+          "LOF",
+          "LOF"
+        ]
+      },
+      "PF00307": {
+        "macro_f1": 0.36363636363636365,
+        "per_class_auroc": {
+          "GOF": null,
+          "DN": null,
+          "LOF": null
+        },
+        "n": 7,
+        "class_counts": {
+          "2": 7,
+          "0": 1
+        },
+        "genes": [
+          "DMD",
+          "FLNA",
+          "FLNB",
+          "FLNC",
+          "GAS2L2",
+          "SPTBN1",
+          "SPTBN2",
+          "SPTBN4"
+        ],
+        "labels": [
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "DN",
+          "LOF"
+        ]
+      },
+      "PF00001": {
+        "macro_f1": 0.25,
+        "per_class_auroc": {
+          "GOF": null,
+          "DN": 0.25,
+          "LOF": 0.25
+        },
+        "n": 6,
+        "class_counts": {
+          "1": 2,
+          "2": 4
+        },
+        "genes": [
+          "EDNRA",
+          "EDNRB",
+          "MC2R",
+          "OPN1LW",
+          "RHO",
+          "TSHR"
+        ],
+        "labels": [
+          "GOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "GOF"
+        ]
+      },
+      "PF12662": {
+        "macro_f1": 1.0,
+        "per_class_auroc": {
+          "GOF": null,
+          "DN": null,
+          "LOF": null
+        },
+        "n": 5,
+        "class_counts": {
+          "2": 5,
+          "0": 1
+        },
+        "genes": [
+          "FBLN5",
+          "FBN1",
+          "FBN2",
+          "LRP4",
+          "LTBP3",
+          "SCUBE3"
+        ],
+        "labels": [
+          "LOF",
+          "LOF",
+          "DN",
+          "LOF",
+          "LOF",
+          "LOF"
+        ]
+      },
+      "PF00167": {
+        "macro_f1": 0.625,
+        "per_class_auroc": {
+          "GOF": null,
+          "DN": 0.75,
+          "LOF": 0.75
+        },
+        "n": 6,
+        "class_counts": {
+          "2": 4,
+          "1": 2
+        },
+        "genes": [
+          "FGF10",
+          "FGF12",
+          "FGF13",
+          "FGF14",
+          "FGF3",
+          "FGF9"
+        ],
+        "labels": [
+          "LOF",
+          "GOF",
+          "GOF",
+          "LOF",
+          "LOF",
+          "LOF"
+        ]
+      },
+      "PF00250": {
+        "macro_f1": 0.23529411764705885,
+        "per_class_auroc": {
+          "GOF": 0.0,
+          "DN": 0.0,
+          "LOF": 0.0
+        },
+        "n": 11,
+        "class_counts": {
+          "2": 9,
+          "1": 1,
+          "0": 1
+        },
+        "genes": [
+          "FOXC1",
+          "FOXC2",
+          "FOXE1",
+          "FOXE3",
+          "FOXF1",
+          "FOXG1",
+          "FOXL2",
+          "FOXN1",
+          "FOXP1",
+          "FOXP2",
+          "FOXP3"
+        ],
+        "labels": [
+          "LOF",
+          "GOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "DN",
+          "LOF",
+          "LOF"
+        ]
+      },
+      "PF00503": {
+        "macro_f1": 0.8285714285714285,
+        "per_class_auroc": {
+          "GOF": null,
+          "DN": 0.75,
+          "LOF": 0.75
+        },
+        "n": 6,
+        "class_counts": {
+          "1": 4,
+          "2": 2
+        },
+        "genes": [
+          "GNA11",
+          "GNA14",
+          "GNAO1",
+          "GNAQ",
+          "GNAT1",
+          "GNAT2"
+        ],
+        "labels": [
+          "GOF",
+          "GOF",
+          "GOF",
+          "GOF",
+          "LOF",
+          "LOF"
+        ]
+      },
+      "PF01094": {
+        "macro_f1": 0.13333333333333333,
+        "per_class_auroc": {
+          "GOF": 0.0,
+          "DN": 0.3333333333333333,
+          "LOF": 0.33333333333333337
+        },
+        "n": 8,
+        "class_counts": {
+          "2": 5,
+          "0": 1,
+          "1": 2
+        },
+        "genes": [
+          "GRIA2",
+          "GRIA3",
+          "GRIN1",
+          "GRIN2A",
+          "GRIN2B",
+          "GRIN2D",
+          "GUCY2D",
+          "NPR2"
+        ],
+        "labels": [
+          "LOF",
+          "LOF",
+          "LOF",
+          "DN",
+          "GOF",
+          "GOF",
+          "LOF",
+          "LOF"
+        ]
+      },
+      "PF00104": {
+        "macro_f1": 0.26666666666666666,
+        "per_class_auroc": {
+          "GOF": 0.25,
+          "DN": null,
+          "LOF": 0.25
+        },
+        "n": 11,
+        "class_counts": {
+          "2": 8,
+          "0": 3
+        },
+        "genes": [
+          "HNF4A",
+          "NR0B1",
+          "NR2E3",
+          "NR2F1",
+          "NR2F2",
+          "NR3C2",
+          "NR4A2",
+          "NR5A1",
+          "PPARG",
+          "RORA",
+          "THRA"
+        ],
+        "labels": [
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "DN",
+          "LOF",
+          "DN",
+          "DN",
+          "LOF",
+          "LOF"
+        ]
+      },
+      "PF02214": {
+        "macro_f1": 0.16666666666666666,
+        "per_class_auroc": {
+          "GOF": 0.25,
+          "DN": 0.0,
+          "LOF": 0.5555555555555556
+        },
+        "n": 6,
+        "class_counts": {
+          "0": 2,
+          "2": 3,
+          "1": 1
+        },
+        "genes": [
+          "KCNA1",
+          "KCNA2",
+          "KCNB1",
+          "KCNC1",
+          "KCNV2",
+          "KCTD7"
+        ],
+        "labels": [
+          "DN",
+          "LOF",
+          "DN",
+          "GOF",
+          "LOF",
+          "LOF"
+        ]
+      }
+    },
+    "n_qualifying_families": 24,
+    "n_families_run": 24,
+    "majority_accuracy": 0.7024793388429752,
+    "col_names": [
+      "pLI",
+      "LOEUF",
+      "mis_z",
+      "paralog_count",
+      "tissue_tau",
+      "log_abundance",
+      "PPI_degree",
+      "HI_score",
+      "TS_score"
+    ],
+    "label": "raw_prot"
+  },
+  "resid_proteome": {
+    "aggregate": {
+      "macro_f1": 0.5141967063279048,
+      "per_class_auroc": {
+        "GOF": 0.6534256559766763,
+        "DN": 0.7368145119010171,
+        "LOF": 0.6935113088616982
+      },
+      "n": 238
+    },
+    "per_family": {
+      "PF00004": {
+        "macro_f1": 0.2962962962962963,
+        "per_class_auroc": {
+          "GOF": 0.19999999999999996,
+          "DN": 0.0,
+          "LOF": 0.8333333333333334
+        },
+        "n": 7,
+        "class_counts": {
+          "2": 4,
+          "0": 2,
+          "1": 1
+        },
+        "genes": [
+          "AFG2A",
+          "AFG3L2",
+          "ATAD3A",
+          "PEX1",
+          "PEX6",
+          "SPAST",
+          "VPS4A"
+        ],
+        "labels": [
+          "LOF",
+          "LOF",
+          "DN",
+          "LOF",
+          "LOF",
+          "GOF",
+          "DN"
+        ]
+      },
+      "PF00046": {
+        "macro_f1": 0.6332894158981115,
+        "per_class_auroc": {
+          "GOF": 0.8518518518518519,
+          "DN": 0.8571428571428572,
+          "LOF": 0.8880000000000001
+        },
+        "n": 30,
+        "class_counts": {
+          "2": 25,
+          "1": 2,
+          "0": 3
+        },
+        "genes": [
+          "ALX4",
+          "ARX",
+          "CRX",
+          "HESX1",
+          "HMX1",
+          "HOXA13",
+          "LHX4",
+          "LMX1B",
+          "MNX1",
+          "MSX1",
+          "MSX2",
+          "NKX2-1",
+          "NKX2-5",
+          "NKX6-2",
+          "OTX2",
+          "PAX3",
+          "PAX6",
+          "PHOX2B",
+          "PITX1",
+          "PITX2",
+          "POU1F1",
+          "POU3F3",
+          "POU4F1",
+          "PROP1",
+          "RAX",
+          "RAX2",
+          "SHOX",
+          "SIX3",
+          "SIX6",
+          "VSX2"
+        ],
+        "labels": [
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "GOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "DN",
+          "LOF",
+          "DN",
+          "LOF",
+          "LOF",
+          "DN",
+          "LOF",
+          "LOF",
+          "LOF",
+          "GOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF"
+        ]
+      },
+      "PF00023": {
+        "macro_f1": 1.0,
+        "per_class_auroc": {
+          "GOF": null,
+          "DN": 1.0,
+          "LOF": 1.0
+        },
+        "n": 7,
+        "class_counts": {
+          "2": 2,
+          "1": 5
+        },
+        "genes": [
+          "ANK2",
+          "NOTCH1",
+          "NOTCH2",
+          "NOTCH3",
+          "TRPA1",
+          "TRPV3",
+          "TRPV4"
+        ],
+        "labels": [
+          "LOF",
+          "LOF",
+          "GOF",
+          "GOF",
+          "GOF",
+          "GOF",
+          "GOF"
+        ]
+      },
+      "PF00010": {
+        "macro_f1": 0.3333333333333333,
+        "per_class_auroc": {
+          "GOF": 0.5,
+          "DN": null,
+          "LOF": 0.5
+        },
+        "n": 8,
+        "class_counts": {
+          "2": 6,
+          "0": 2
+        },
+        "genes": [
+          "ATOH7",
+          "BHLHA9",
+          "MAX",
+          "MYCN",
+          "TCF12",
+          "TCF4",
+          "TWIST1",
+          "TWIST2"
+        ],
+        "labels": [
+          "LOF",
+          "DN",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "DN"
+        ]
+      },
+      "PF12796": {
+        "macro_f1": 0.42857142857142855,
+        "per_class_auroc": {
+          "GOF": null,
+          "DN": null,
+          "LOF": null
+        },
+        "n": 8,
+        "class_counts": {
+          "2": 8,
+          "1": 1
+        },
+        "genes": [
+          "BCOR",
+          "CAMTA1",
+          "EHMT1",
+          "ESPN",
+          "HACE1",
+          "RIPK4",
+          "SHANK2",
+          "SHANK3",
+          "TRPC3"
+        ],
+        "labels": [
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "GOF"
+        ]
+      },
+      "PF00038": {
+        "macro_f1": 0.4511784511784511,
+        "per_class_auroc": {
+          "GOF": 0.8484848484848485,
+          "DN": 0.6333333333333333,
+          "LOF": 0.6346153846153846
+        },
+        "n": 17,
+        "class_counts": {
+          "2": 4,
+          "1": 2,
+          "0": 11
+        },
+        "genes": [
+          "BFSP1",
+          "GFAP",
+          "KRT1",
+          "KRT10",
+          "KRT12",
+          "KRT13",
+          "KRT14",
+          "KRT16",
+          "KRT17",
+          "KRT2",
+          "KRT3",
+          "KRT4",
+          "KRT5",
+          "KRT6A",
+          "KRT6B",
+          "KRT9",
+          "LMNA"
+        ],
+        "labels": [
+          "LOF",
+          "GOF",
+          "DN",
+          "DN",
+          "DN",
+          "DN",
+          "DN",
+          "DN",
+          "LOF",
+          "LOF",
+          "DN",
+          "DN",
+          "LOF",
+          "DN",
+          "DN",
+          "DN",
+          "GOF"
+        ]
+      },
+      "PF00096": {
+        "macro_f1": 0.32,
+        "per_class_auroc": {
+          "GOF": 0.0,
+          "DN": 0.0,
+          "LOF": 0.9230769230769231
+        },
+        "n": 15,
+        "class_counts": {
+          "2": 13,
+          "0": 1,
+          "1": 1
+        },
+        "genes": [
+          "BNC2",
+          "CTCF",
+          "FEZF1",
+          "GFI1",
+          "GLI3",
+          "HIVEP2",
+          "SALL4",
+          "ZEB1",
+          "ZEB2",
+          "ZIC1",
+          "ZIC2",
+          "ZIC3",
+          "ZNF148",
+          "ZNF335",
+          "ZNF469"
+        ],
+        "labels": [
+          "LOF",
+          "LOF",
+          "LOF",
+          "DN",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "GOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF"
+        ]
+      },
+      "PF00168": {
+        "macro_f1": 0.38888888888888884,
+        "per_class_auroc": {
+          "GOF": 1.0,
+          "DN": 0.5,
+          "LOF": 0.625
+        },
+        "n": 8,
+        "class_counts": {
+          "2": 4,
+          "1": 2,
+          "0": 2
+        },
+        "genes": [
+          "C2CD3",
+          "CAPN5",
+          "OTOF",
+          "PLCG2",
+          "RASA1",
+          "SYNGAP1",
+          "SYT1",
+          "SYT2"
+        ],
+        "labels": [
+          "LOF",
+          "GOF",
+          "LOF",
+          "GOF",
+          "LOF",
+          "LOF",
+          "DN",
+          "DN"
+        ]
+      },
+      "PF00520": {
+        "macro_f1": 0.41687552213867995,
+        "per_class_auroc": {
+          "GOF": 0.48717948717948717,
+          "DN": 0.5333333333333333,
+          "LOF": 0.5128205128205128
+        },
+        "n": 16,
+        "class_counts": {
+          "1": 10,
+          "2": 3,
+          "0": 3
+        },
+        "genes": [
+          "CACNA1G",
+          "KCNQ1",
+          "KCNQ2",
+          "KCNQ4",
+          "KCNQ5",
+          "NALCN",
+          "SCN10A",
+          "SCN11A",
+          "SCN1A",
+          "SCN2A",
+          "SCN3A",
+          "SCN4A",
+          "SCN5A",
+          "SCN8A",
+          "SCN9A",
+          "TRPM4"
+        ],
+        "labels": [
+          "GOF",
+          "LOF",
+          "DN",
+          "DN",
+          "GOF",
+          "LOF",
+          "GOF",
+          "GOF",
+          "GOF",
+          "GOF",
+          "GOF",
+          "GOF",
+          "LOF",
+          "DN",
+          "GOF",
+          "GOF"
+        ]
+      },
+      "PF00071": {
+        "macro_f1": 0.3333333333333333,
+        "per_class_auroc": {
+          "GOF": 0.0,
+          "DN": 1.0,
+          "LOF": 0.0
+        },
+        "n": 9,
+        "class_counts": {
+          "1": 7,
+          "0": 1,
+          "2": 1
+        },
+        "genes": [
+          "CDC42",
+          "HRAS",
+          "KRAS",
+          "MRAS",
+          "NRAS",
+          "RAB11B",
+          "RAB39B",
+          "RIT1",
+          "RRAS2"
+        ],
+        "labels": [
+          "GOF",
+          "GOF",
+          "GOF",
+          "GOF",
+          "GOF",
+          "DN",
+          "LOF",
+          "GOF",
+          "GOF"
+        ]
+      },
+      "PF00069": {
+        "macro_f1": 0.3,
+        "per_class_auroc": {
+          "GOF": 0.0,
+          "DN": 0.43333333333333335,
+          "LOF": 0.6000000000000001
+        },
+        "n": 17,
+        "class_counts": {
+          "0": 2,
+          "1": 5,
+          "2": 10
+        },
+        "genes": [
+          "CDK19",
+          "CDK4",
+          "CDKL5",
+          "CSNK2A1",
+          "DYRK1A",
+          "MAK",
+          "MAP2K1",
+          "MAP2K2",
+          "MAPKAPK5",
+          "NEK1",
+          "NEK8",
+          "RPS6KA3",
+          "SCYL1",
+          "SIK1",
+          "STK11",
+          "TAOK1",
+          "TBK1"
+        ],
+        "labels": [
+          "DN",
+          "GOF",
+          "LOF",
+          "GOF",
+          "LOF",
+          "LOF",
+          "GOF",
+          "GOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "GOF",
+          "LOF",
+          "LOF",
+          "DN"
+        ]
+      },
+      "PF02931": {
+        "macro_f1": 0.4603174603174603,
+        "per_class_auroc": {
+          "GOF": 0.875,
+          "DN": 0.875,
+          "LOF": 0.5416666666666667
+        },
+        "n": 10,
+        "class_counts": {
+          "2": 6,
+          "1": 2,
+          "0": 2
+        },
+        "genes": [
+          "CHRNA1",
+          "CHRNA4",
+          "CHRNB1",
+          "CHRNB2",
+          "CHRNG",
+          "GABRA1",
+          "GABRA5",
+          "GABRG2",
+          "GLRA1",
+          "GLRB"
+        ],
+        "labels": [
+          "LOF",
+          "GOF",
+          "LOF",
+          "GOF",
+          "LOF",
+          "DN",
+          "DN",
+          "LOF",
+          "LOF",
+          "LOF"
+        ]
+      },
+      "PF00027": {
+        "macro_f1": 0.5333333333333333,
+        "per_class_auroc": {
+          "GOF": 0.75,
+          "DN": 0.5,
+          "LOF": 1.0
+        },
+        "n": 6,
+        "class_counts": {
+          "2": 2,
+          "0": 2,
+          "1": 2
+        },
+        "genes": [
+          "CNGB1",
+          "CNGB3",
+          "HCN4",
+          "KCNH1",
+          "KCNH2",
+          "PRKAR1A"
+        ],
+        "labels": [
+          "LOF",
+          "LOF",
+          "DN",
+          "GOF",
+          "DN",
+          "GOF"
+        ]
+      },
+      "PF01410": {
+        "macro_f1": 0.1,
+        "per_class_auroc": {
+          "GOF": 0.09999999999999998,
+          "DN": null,
+          "LOF": 0.1
+        },
+        "n": 9,
+        "class_counts": {
+          "2": 5,
+          "0": 4
+        },
+        "genes": [
+          "COL11A1",
+          "COL11A2",
+          "COL1A1",
+          "COL1A2",
+          "COL27A1",
+          "COL2A1",
+          "COL3A1",
+          "COL5A1",
+          "COL5A2"
+        ],
+        "labels": [
+          "LOF",
+          "DN",
+          "LOF",
+          "LOF",
+          "LOF",
+          "DN",
+          "DN",
+          "LOF",
+          "DN"
+        ]
+      },
+      "PF00008": {
+        "macro_f1": 0.4444444444444444,
+        "per_class_auroc": {
+          "GOF": null,
+          "DN": null,
+          "LOF": null
+        },
+        "n": 5,
+        "class_counts": {
+          "2": 5,
+          "1": 1
+        },
+        "genes": [
+          "CRB1",
+          "CRB2",
+          "EYS",
+          "F12",
+          "HSPG2",
+          "LTBP2"
+        ],
+        "labels": [
+          "LOF",
+          "LOF",
+          "LOF",
+          "GOF",
+          "LOF",
+          "LOF"
+        ]
+      },
+      "PF00307": {
+        "macro_f1": 0.3,
+        "per_class_auroc": {
+          "GOF": null,
+          "DN": null,
+          "LOF": null
+        },
+        "n": 7,
+        "class_counts": {
+          "2": 7,
+          "0": 1
+        },
+        "genes": [
+          "DMD",
+          "FLNA",
+          "FLNB",
+          "FLNC",
+          "GAS2L2",
+          "SPTBN1",
+          "SPTBN2",
+          "SPTBN4"
+        ],
+        "labels": [
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "DN",
+          "LOF"
+        ]
+      },
+      "PF00001": {
+        "macro_f1": 0.25,
+        "per_class_auroc": {
+          "GOF": null,
+          "DN": 0.125,
+          "LOF": 0.125
+        },
+        "n": 6,
+        "class_counts": {
+          "1": 2,
+          "2": 4
+        },
+        "genes": [
+          "EDNRA",
+          "EDNRB",
+          "MC2R",
+          "OPN1LW",
+          "RHO",
+          "TSHR"
+        ],
+        "labels": [
+          "GOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "GOF"
+        ]
+      },
+      "PF12662": {
+        "macro_f1": 0.4444444444444444,
+        "per_class_auroc": {
+          "GOF": null,
+          "DN": null,
+          "LOF": null
+        },
+        "n": 5,
+        "class_counts": {
+          "2": 5,
+          "0": 1
+        },
+        "genes": [
+          "FBLN5",
+          "FBN1",
+          "FBN2",
+          "LRP4",
+          "LTBP3",
+          "SCUBE3"
+        ],
+        "labels": [
+          "LOF",
+          "LOF",
+          "DN",
+          "LOF",
+          "LOF",
+          "LOF"
+        ]
+      },
+      "PF00167": {
+        "macro_f1": 0.625,
+        "per_class_auroc": {
+          "GOF": null,
+          "DN": 0.75,
+          "LOF": 0.75
+        },
+        "n": 6,
+        "class_counts": {
+          "2": 4,
+          "1": 2
+        },
+        "genes": [
+          "FGF10",
+          "FGF12",
+          "FGF13",
+          "FGF14",
+          "FGF3",
+          "FGF9"
+        ],
+        "labels": [
+          "LOF",
+          "GOF",
+          "GOF",
+          "LOF",
+          "LOF",
+          "LOF"
+        ]
+      },
+      "PF00250": {
+        "macro_f1": 0.25925925925925924,
+        "per_class_auroc": {
+          "GOF": 0.0,
+          "DN": 0.0,
+          "LOF": 0.1111111111111111
+        },
+        "n": 11,
+        "class_counts": {
+          "2": 9,
+          "1": 1,
+          "0": 1
+        },
+        "genes": [
+          "FOXC1",
+          "FOXC2",
+          "FOXE1",
+          "FOXE3",
+          "FOXF1",
+          "FOXG1",
+          "FOXL2",
+          "FOXN1",
+          "FOXP1",
+          "FOXP2",
+          "FOXP3"
+        ],
+        "labels": [
+          "LOF",
+          "GOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "DN",
+          "LOF",
+          "LOF"
+        ]
+      },
+      "PF00503": {
+        "macro_f1": 0.8285714285714285,
+        "per_class_auroc": {
+          "GOF": null,
+          "DN": 0.75,
+          "LOF": 0.75
+        },
+        "n": 6,
+        "class_counts": {
+          "1": 4,
+          "2": 2
+        },
+        "genes": [
+          "GNA11",
+          "GNA14",
+          "GNAO1",
+          "GNAQ",
+          "GNAT1",
+          "GNAT2"
+        ],
+        "labels": [
+          "GOF",
+          "GOF",
+          "GOF",
+          "GOF",
+          "LOF",
+          "LOF"
+        ]
+      },
+      "PF01094": {
+        "macro_f1": 0.13333333333333333,
+        "per_class_auroc": {
+          "GOF": 0.0,
+          "DN": 0.08333333333333331,
+          "LOF": 0.33333333333333337
+        },
+        "n": 8,
+        "class_counts": {
+          "2": 5,
+          "0": 1,
+          "1": 2
+        },
+        "genes": [
+          "GRIA2",
+          "GRIA3",
+          "GRIN1",
+          "GRIN2A",
+          "GRIN2B",
+          "GRIN2D",
+          "GUCY2D",
+          "NPR2"
+        ],
+        "labels": [
+          "LOF",
+          "LOF",
+          "LOF",
+          "DN",
+          "GOF",
+          "GOF",
+          "LOF",
+          "LOF"
+        ]
+      },
+      "PF00104": {
+        "macro_f1": 0.26666666666666666,
+        "per_class_auroc": {
+          "GOF": 0.25,
+          "DN": null,
+          "LOF": 0.25
+        },
+        "n": 11,
+        "class_counts": {
+          "2": 8,
+          "0": 3
+        },
+        "genes": [
+          "HNF4A",
+          "NR0B1",
+          "NR2E3",
+          "NR2F1",
+          "NR2F2",
+          "NR3C2",
+          "NR4A2",
+          "NR5A1",
+          "PPARG",
+          "RORA",
+          "THRA"
+        ],
+        "labels": [
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "DN",
+          "LOF",
+          "DN",
+          "DN",
+          "LOF",
+          "LOF"
+        ]
+      },
+      "PF02214": {
+        "macro_f1": 0.13333333333333333,
+        "per_class_auroc": {
+          "GOF": 0.25,
+          "DN": 0.0,
+          "LOF": 0.5555555555555556
+        },
+        "n": 6,
+        "class_counts": {
+          "0": 2,
+          "2": 3,
+          "1": 1
+        },
+        "genes": [
+          "KCNA1",
+          "KCNA2",
+          "KCNB1",
+          "KCNC1",
+          "KCNV2",
+          "KCTD7"
+        ],
+        "labels": [
+          "DN",
+          "LOF",
+          "DN",
+          "GOF",
+          "LOF",
+          "LOF"
+        ]
+      }
+    },
+    "n_qualifying_families": 24,
+    "n_families_run": 24,
+    "majority_accuracy": 0.7024793388429752,
+    "col_names": [
+      "pLI_resid",
+      "LOEUF_resid",
+      "mis_z_resid",
+      "paralog_count_resid",
+      "tissue_tau_resid",
+      "log_abundance_resid",
+      "PPI_degree_resid",
+      "HI_score_resid",
+      "TS_score_resid"
+    ],
+    "label": "resid_prot"
+  },
+  "raw_badonyi": {
+    "aggregate": {
+      "macro_f1": 0.4492997198879552,
+      "per_class_auroc": {
+        "GOF": 0.5844266277939747,
+        "DN": 0.6813463353255741,
+        "LOF": 0.6281053021876158
+      },
+      "n": 238
+    },
+    "per_family": {
+      "PF00004": {
+        "macro_f1": 0.19047619047619047,
+        "per_class_auroc": {
+          "GOF": 0.0,
+          "DN": 0.0,
+          "LOF": 0.6666666666666667
+        },
+        "n": 7,
+        "class_counts": {
+          "2": 4,
+          "0": 2,
+          "1": 1
+        },
+        "genes": [
+          "AFG2A",
+          "AFG3L2",
+          "ATAD3A",
+          "PEX1",
+          "PEX6",
+          "SPAST",
+          "VPS4A"
+        ],
+        "labels": [
+          "LOF",
+          "LOF",
+          "DN",
+          "LOF",
+          "LOF",
+          "GOF",
+          "DN"
+        ]
+      },
+      "PF00046": {
+        "macro_f1": 0.5312650312650312,
+        "per_class_auroc": {
+          "GOF": 0.8641975308641975,
+          "DN": 0.8928571428571428,
+          "LOF": 0.832
+        },
+        "n": 30,
+        "class_counts": {
+          "2": 25,
+          "1": 2,
+          "0": 3
+        },
+        "genes": [
+          "ALX4",
+          "ARX",
+          "CRX",
+          "HESX1",
+          "HMX1",
+          "HOXA13",
+          "LHX4",
+          "LMX1B",
+          "MNX1",
+          "MSX1",
+          "MSX2",
+          "NKX2-1",
+          "NKX2-5",
+          "NKX6-2",
+          "OTX2",
+          "PAX3",
+          "PAX6",
+          "PHOX2B",
+          "PITX1",
+          "PITX2",
+          "POU1F1",
+          "POU3F3",
+          "POU4F1",
+          "PROP1",
+          "RAX",
+          "RAX2",
+          "SHOX",
+          "SIX3",
+          "SIX6",
+          "VSX2"
+        ],
+        "labels": [
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "GOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "DN",
+          "LOF",
+          "DN",
+          "LOF",
+          "LOF",
+          "DN",
+          "LOF",
+          "LOF",
+          "LOF",
+          "GOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF"
+        ]
+      },
+      "PF00023": {
+        "macro_f1": 0.8444444444444444,
+        "per_class_auroc": {
+          "GOF": null,
+          "DN": 0.8,
+          "LOF": 0.8
+        },
+        "n": 7,
+        "class_counts": {
+          "2": 2,
+          "1": 5
+        },
+        "genes": [
+          "ANK2",
+          "NOTCH1",
+          "NOTCH2",
+          "NOTCH3",
+          "TRPA1",
+          "TRPV3",
+          "TRPV4"
+        ],
+        "labels": [
+          "LOF",
+          "LOF",
+          "GOF",
+          "GOF",
+          "GOF",
+          "GOF",
+          "GOF"
+        ]
+      },
+      "PF00010": {
+        "macro_f1": 0.3333333333333333,
+        "per_class_auroc": {
+          "GOF": 0.0,
+          "DN": null,
+          "LOF": 0.0
+        },
+        "n": 8,
+        "class_counts": {
+          "2": 6,
+          "0": 2
+        },
+        "genes": [
+          "ATOH7",
+          "BHLHA9",
+          "MAX",
+          "MYCN",
+          "TCF12",
+          "TCF4",
+          "TWIST1",
+          "TWIST2"
+        ],
+        "labels": [
+          "LOF",
+          "DN",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "DN"
+        ]
+      },
+      "PF12796": {
+        "macro_f1": 0.42857142857142855,
+        "per_class_auroc": {
+          "GOF": null,
+          "DN": null,
+          "LOF": null
+        },
+        "n": 8,
+        "class_counts": {
+          "2": 8,
+          "1": 1
+        },
+        "genes": [
+          "BCOR",
+          "CAMTA1",
+          "EHMT1",
+          "ESPN",
+          "HACE1",
+          "RIPK4",
+          "SHANK2",
+          "SHANK3",
+          "TRPC3"
+        ],
+        "labels": [
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "GOF"
+        ]
+      },
+      "PF00038": {
+        "macro_f1": 0.25,
+        "per_class_auroc": {
+          "GOF": 0.4090909090909091,
+          "DN": 0.0,
+          "LOF": 0.0
+        },
+        "n": 17,
+        "class_counts": {
+          "2": 4,
+          "1": 2,
+          "0": 11
+        },
+        "genes": [
+          "BFSP1",
+          "GFAP",
+          "KRT1",
+          "KRT10",
+          "KRT12",
+          "KRT13",
+          "KRT14",
+          "KRT16",
+          "KRT17",
+          "KRT2",
+          "KRT3",
+          "KRT4",
+          "KRT5",
+          "KRT6A",
+          "KRT6B",
+          "KRT9",
+          "LMNA"
+        ],
+        "labels": [
+          "LOF",
+          "GOF",
+          "DN",
+          "DN",
+          "DN",
+          "DN",
+          "DN",
+          "DN",
+          "LOF",
+          "LOF",
+          "DN",
+          "DN",
+          "LOF",
+          "DN",
+          "DN",
+          "DN",
+          "GOF"
+        ]
+      },
+      "PF00096": {
+        "macro_f1": 0.2777777777777778,
+        "per_class_auroc": {
+          "GOF": 0.0,
+          "DN": 0.0,
+          "LOF": 0.6923076923076923
+        },
+        "n": 15,
+        "class_counts": {
+          "2": 13,
+          "0": 1,
+          "1": 1
+        },
+        "genes": [
+          "BNC2",
+          "CTCF",
+          "FEZF1",
+          "GFI1",
+          "GLI3",
+          "HIVEP2",
+          "SALL4",
+          "ZEB1",
+          "ZEB2",
+          "ZIC1",
+          "ZIC2",
+          "ZIC3",
+          "ZNF148",
+          "ZNF335",
+          "ZNF469"
+        ],
+        "labels": [
+          "LOF",
+          "LOF",
+          "LOF",
+          "DN",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "GOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF"
+        ]
+      },
+      "PF00168": {
+        "macro_f1": 0.41269841269841273,
+        "per_class_auroc": {
+          "GOF": 0.9166666666666667,
+          "DN": 0.33333333333333337,
+          "LOF": 0.5625
+        },
+        "n": 8,
+        "class_counts": {
+          "2": 4,
+          "1": 2,
+          "0": 2
+        },
+        "genes": [
+          "C2CD3",
+          "CAPN5",
+          "OTOF",
+          "PLCG2",
+          "RASA1",
+          "SYNGAP1",
+          "SYT1",
+          "SYT2"
+        ],
+        "labels": [
+          "LOF",
+          "GOF",
+          "LOF",
+          "GOF",
+          "LOF",
+          "LOF",
+          "DN",
+          "DN"
+        ]
+      },
+      "PF00520": {
+        "macro_f1": 0.31746031746031744,
+        "per_class_auroc": {
+          "GOF": 0.46153846153846156,
+          "DN": 0.3666666666666667,
+          "LOF": 0.641025641025641
+        },
+        "n": 16,
+        "class_counts": {
+          "1": 10,
+          "2": 3,
+          "0": 3
+        },
+        "genes": [
+          "CACNA1G",
+          "KCNQ1",
+          "KCNQ2",
+          "KCNQ4",
+          "KCNQ5",
+          "NALCN",
+          "SCN10A",
+          "SCN11A",
+          "SCN1A",
+          "SCN2A",
+          "SCN3A",
+          "SCN4A",
+          "SCN5A",
+          "SCN8A",
+          "SCN9A",
+          "TRPM4"
+        ],
+        "labels": [
+          "GOF",
+          "LOF",
+          "DN",
+          "DN",
+          "GOF",
+          "LOF",
+          "GOF",
+          "GOF",
+          "GOF",
+          "GOF",
+          "GOF",
+          "GOF",
+          "LOF",
+          "DN",
+          "GOF",
+          "GOF"
+        ]
+      },
+      "PF00071": {
+        "macro_f1": 0.16666666666666666,
+        "per_class_auroc": {
+          "GOF": 0.0,
+          "DN": 0.14285714285714285,
+          "LOF": 0.0
+        },
+        "n": 9,
+        "class_counts": {
+          "1": 7,
+          "0": 1,
+          "2": 1
+        },
+        "genes": [
+          "CDC42",
+          "HRAS",
+          "KRAS",
+          "MRAS",
+          "NRAS",
+          "RAB11B",
+          "RAB39B",
+          "RIT1",
+          "RRAS2"
+        ],
+        "labels": [
+          "GOF",
+          "GOF",
+          "GOF",
+          "GOF",
+          "GOF",
+          "DN",
+          "LOF",
+          "GOF",
+          "GOF"
+        ]
+      },
+      "PF00069": {
+        "macro_f1": 0.2916666666666667,
+        "per_class_auroc": {
+          "GOF": 0.0,
+          "DN": 0.7666666666666666,
+          "LOF": 0.4285714285714286
+        },
+        "n": 17,
+        "class_counts": {
+          "0": 2,
+          "1": 5,
+          "2": 10
+        },
+        "genes": [
+          "CDK19",
+          "CDK4",
+          "CDKL5",
+          "CSNK2A1",
+          "DYRK1A",
+          "MAK",
+          "MAP2K1",
+          "MAP2K2",
+          "MAPKAPK5",
+          "NEK1",
+          "NEK8",
+          "RPS6KA3",
+          "SCYL1",
+          "SIK1",
+          "STK11",
+          "TAOK1",
+          "TBK1"
+        ],
+        "labels": [
+          "DN",
+          "GOF",
+          "LOF",
+          "GOF",
+          "LOF",
+          "LOF",
+          "GOF",
+          "GOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "GOF",
+          "LOF",
+          "LOF",
+          "DN"
+        ]
+      },
+      "PF02931": {
+        "macro_f1": 0.8000000000000002,
+        "per_class_auroc": {
+          "GOF": 0.9375,
+          "DN": 1.0,
+          "LOF": 0.875
+        },
+        "n": 10,
+        "class_counts": {
+          "2": 6,
+          "1": 2,
+          "0": 2
+        },
+        "genes": [
+          "CHRNA1",
+          "CHRNA4",
+          "CHRNB1",
+          "CHRNB2",
+          "CHRNG",
+          "GABRA1",
+          "GABRA5",
+          "GABRG2",
+          "GLRA1",
+          "GLRB"
+        ],
+        "labels": [
+          "LOF",
+          "GOF",
+          "LOF",
+          "GOF",
+          "LOF",
+          "DN",
+          "DN",
+          "LOF",
+          "LOF",
+          "LOF"
+        ]
+      },
+      "PF00027": {
+        "macro_f1": 0.5333333333333333,
+        "per_class_auroc": {
+          "GOF": 0.75,
+          "DN": 0.0,
+          "LOF": 0.75
+        },
+        "n": 6,
+        "class_counts": {
+          "2": 2,
+          "0": 2,
+          "1": 2
+        },
+        "genes": [
+          "CNGB1",
+          "CNGB3",
+          "HCN4",
+          "KCNH1",
+          "KCNH2",
+          "PRKAR1A"
+        ],
+        "labels": [
+          "LOF",
+          "LOF",
+          "DN",
+          "GOF",
+          "DN",
+          "GOF"
+        ]
+      },
+      "PF01410": {
+        "macro_f1": 0.4444444444444444,
+        "per_class_auroc": {
+          "GOF": 0.30000000000000004,
+          "DN": null,
+          "LOF": 0.30000000000000004
+        },
+        "n": 9,
+        "class_counts": {
+          "2": 5,
+          "0": 4
+        },
+        "genes": [
+          "COL11A1",
+          "COL11A2",
+          "COL1A1",
+          "COL1A2",
+          "COL27A1",
+          "COL2A1",
+          "COL3A1",
+          "COL5A1",
+          "COL5A2"
+        ],
+        "labels": [
+          "LOF",
+          "DN",
+          "LOF",
+          "LOF",
+          "LOF",
+          "DN",
+          "DN",
+          "LOF",
+          "DN"
+        ]
+      },
+      "PF00008": {
+        "macro_f1": 0.375,
+        "per_class_auroc": {
+          "GOF": null,
+          "DN": null,
+          "LOF": null
+        },
+        "n": 5,
+        "class_counts": {
+          "2": 5,
+          "1": 1
+        },
+        "genes": [
+          "CRB1",
+          "CRB2",
+          "EYS",
+          "F12",
+          "HSPG2",
+          "LTBP2"
+        ],
+        "labels": [
+          "LOF",
+          "LOF",
+          "LOF",
+          "GOF",
+          "LOF",
+          "LOF"
+        ]
+      },
+      "PF00307": {
+        "macro_f1": 0.36363636363636365,
+        "per_class_auroc": {
+          "GOF": null,
+          "DN": null,
+          "LOF": null
+        },
+        "n": 7,
+        "class_counts": {
+          "2": 7,
+          "0": 1
+        },
+        "genes": [
+          "DMD",
+          "FLNA",
+          "FLNB",
+          "FLNC",
+          "GAS2L2",
+          "SPTBN1",
+          "SPTBN2",
+          "SPTBN4"
+        ],
+        "labels": [
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "DN",
+          "LOF"
+        ]
+      },
+      "PF00001": {
+        "macro_f1": 0.625,
+        "per_class_auroc": {
+          "GOF": null,
+          "DN": 0.5,
+          "LOF": 0.5
+        },
+        "n": 6,
+        "class_counts": {
+          "1": 2,
+          "2": 4
+        },
+        "genes": [
+          "EDNRA",
+          "EDNRB",
+          "MC2R",
+          "OPN1LW",
+          "RHO",
+          "TSHR"
+        ],
+        "labels": [
+          "GOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "GOF"
+        ]
+      },
+      "PF12662": {
+        "macro_f1": 0.16666666666666666,
+        "per_class_auroc": {
+          "GOF": null,
+          "DN": null,
+          "LOF": null
+        },
+        "n": 5,
+        "class_counts": {
+          "2": 5,
+          "0": 1
+        },
+        "genes": [
+          "FBLN5",
+          "FBN1",
+          "FBN2",
+          "LRP4",
+          "LTBP3",
+          "SCUBE3"
+        ],
+        "labels": [
+          "LOF",
+          "LOF",
+          "DN",
+          "LOF",
+          "LOF",
+          "LOF"
+        ]
+      },
+      "PF00167": {
+        "macro_f1": 0.14285714285714285,
+        "per_class_auroc": {
+          "GOF": null,
+          "DN": 0.0,
+          "LOF": 0.0
+        },
+        "n": 6,
+        "class_counts": {
+          "2": 4,
+          "1": 2
+        },
+        "genes": [
+          "FGF10",
+          "FGF12",
+          "FGF13",
+          "FGF14",
+          "FGF3",
+          "FGF9"
+        ],
+        "labels": [
+          "LOF",
+          "GOF",
+          "GOF",
+          "LOF",
+          "LOF",
+          "LOF"
+        ]
+      },
+      "PF00250": {
+        "macro_f1": 0.06060606060606061,
+        "per_class_auroc": {
+          "GOF": 0.0,
+          "DN": 0.0,
+          "LOF": 0.3888888888888889
+        },
+        "n": 11,
+        "class_counts": {
+          "2": 9,
+          "1": 1,
+          "0": 1
+        },
+        "genes": [
+          "FOXC1",
+          "FOXC2",
+          "FOXE1",
+          "FOXE3",
+          "FOXF1",
+          "FOXG1",
+          "FOXL2",
+          "FOXN1",
+          "FOXP1",
+          "FOXP2",
+          "FOXP3"
+        ],
+        "labels": [
+          "LOF",
+          "GOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "DN",
+          "LOF",
+          "LOF"
+        ]
+      },
+      "PF00503": {
+        "macro_f1": 0.8285714285714285,
+        "per_class_auroc": {
+          "GOF": null,
+          "DN": 0.875,
+          "LOF": 0.875
+        },
+        "n": 6,
+        "class_counts": {
+          "1": 4,
+          "2": 2
+        },
+        "genes": [
+          "GNA11",
+          "GNA14",
+          "GNAO1",
+          "GNAQ",
+          "GNAT1",
+          "GNAT2"
+        ],
+        "labels": [
+          "GOF",
+          "GOF",
+          "GOF",
+          "GOF",
+          "LOF",
+          "LOF"
+        ]
+      },
+      "PF01094": {
+        "macro_f1": 0.38888888888888884,
+        "per_class_auroc": {
+          "GOF": 0.0,
+          "DN": 0.8333333333333334,
+          "LOF": 0.7333333333333334
+        },
+        "n": 8,
+        "class_counts": {
+          "2": 5,
+          "0": 1,
+          "1": 2
+        },
+        "genes": [
+          "GRIA2",
+          "GRIA3",
+          "GRIN1",
+          "GRIN2A",
+          "GRIN2B",
+          "GRIN2D",
+          "GUCY2D",
+          "NPR2"
+        ],
+        "labels": [
+          "LOF",
+          "LOF",
+          "LOF",
+          "DN",
+          "GOF",
+          "GOF",
+          "LOF",
+          "LOF"
+        ]
+      },
+      "PF00104": {
+        "macro_f1": 0.26666666666666666,
+        "per_class_auroc": {
+          "GOF": 0.125,
+          "DN": null,
+          "LOF": 0.125
+        },
+        "n": 11,
+        "class_counts": {
+          "2": 8,
+          "0": 3
+        },
+        "genes": [
+          "HNF4A",
+          "NR0B1",
+          "NR2E3",
+          "NR2F1",
+          "NR2F2",
+          "NR3C2",
+          "NR4A2",
+          "NR5A1",
+          "PPARG",
+          "RORA",
+          "THRA"
+        ],
+        "labels": [
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "DN",
+          "LOF",
+          "DN",
+          "DN",
+          "LOF",
+          "LOF"
+        ]
+      },
+      "PF02214": {
+        "macro_f1": 0.0,
+        "per_class_auroc": {
+          "GOF": 0.0,
+          "DN": 0.0,
+          "LOF": 0.22222222222222224
+        },
+        "n": 6,
+        "class_counts": {
+          "0": 2,
+          "2": 3,
+          "1": 1
+        },
+        "genes": [
+          "KCNA1",
+          "KCNA2",
+          "KCNB1",
+          "KCNC1",
+          "KCNV2",
+          "KCTD7"
+        ],
+        "labels": [
+          "DN",
+          "LOF",
+          "DN",
+          "GOF",
+          "LOF",
+          "LOF"
+        ]
+      }
+    },
+    "n_qualifying_families": 24,
+    "n_families_run": 24,
+    "majority_accuracy": 0.7024793388429752,
+    "col_names": [
+      "pDN",
+      "pGOF",
+      "pLOF"
+    ],
+    "label": "raw_bad"
+  },
+  "resid_badonyi": {
+    "aggregate": {
+      "macro_f1": 0.4492997198879552,
+      "per_class_auroc": {
+        "GOF": 0.5844266277939747,
+        "DN": 0.6813463353255741,
+        "LOF": 0.6281053021876158
+      },
+      "n": 238
+    },
+    "per_family": {
+      "PF00004": {
+        "macro_f1": 0.19047619047619047,
+        "per_class_auroc": {
+          "GOF": 0.0,
+          "DN": 0.0,
+          "LOF": 0.6666666666666667
+        },
+        "n": 7,
+        "class_counts": {
+          "2": 4,
+          "0": 2,
+          "1": 1
+        },
+        "genes": [
+          "AFG2A",
+          "AFG3L2",
+          "ATAD3A",
+          "PEX1",
+          "PEX6",
+          "SPAST",
+          "VPS4A"
+        ],
+        "labels": [
+          "LOF",
+          "LOF",
+          "DN",
+          "LOF",
+          "LOF",
+          "GOF",
+          "DN"
+        ]
+      },
+      "PF00046": {
+        "macro_f1": 0.5312650312650312,
+        "per_class_auroc": {
+          "GOF": 0.8641975308641975,
+          "DN": 0.8928571428571428,
+          "LOF": 0.832
+        },
+        "n": 30,
+        "class_counts": {
+          "2": 25,
+          "1": 2,
+          "0": 3
+        },
+        "genes": [
+          "ALX4",
+          "ARX",
+          "CRX",
+          "HESX1",
+          "HMX1",
+          "HOXA13",
+          "LHX4",
+          "LMX1B",
+          "MNX1",
+          "MSX1",
+          "MSX2",
+          "NKX2-1",
+          "NKX2-5",
+          "NKX6-2",
+          "OTX2",
+          "PAX3",
+          "PAX6",
+          "PHOX2B",
+          "PITX1",
+          "PITX2",
+          "POU1F1",
+          "POU3F3",
+          "POU4F1",
+          "PROP1",
+          "RAX",
+          "RAX2",
+          "SHOX",
+          "SIX3",
+          "SIX6",
+          "VSX2"
+        ],
+        "labels": [
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "GOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "DN",
+          "LOF",
+          "DN",
+          "LOF",
+          "LOF",
+          "DN",
+          "LOF",
+          "LOF",
+          "LOF",
+          "GOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF"
+        ]
+      },
+      "PF00023": {
+        "macro_f1": 0.8444444444444444,
+        "per_class_auroc": {
+          "GOF": null,
+          "DN": 0.8,
+          "LOF": 0.8
+        },
+        "n": 7,
+        "class_counts": {
+          "2": 2,
+          "1": 5
+        },
+        "genes": [
+          "ANK2",
+          "NOTCH1",
+          "NOTCH2",
+          "NOTCH3",
+          "TRPA1",
+          "TRPV3",
+          "TRPV4"
+        ],
+        "labels": [
+          "LOF",
+          "LOF",
+          "GOF",
+          "GOF",
+          "GOF",
+          "GOF",
+          "GOF"
+        ]
+      },
+      "PF00010": {
+        "macro_f1": 0.3333333333333333,
+        "per_class_auroc": {
+          "GOF": 0.0,
+          "DN": null,
+          "LOF": 0.0
+        },
+        "n": 8,
+        "class_counts": {
+          "2": 6,
+          "0": 2
+        },
+        "genes": [
+          "ATOH7",
+          "BHLHA9",
+          "MAX",
+          "MYCN",
+          "TCF12",
+          "TCF4",
+          "TWIST1",
+          "TWIST2"
+        ],
+        "labels": [
+          "LOF",
+          "DN",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "DN"
+        ]
+      },
+      "PF12796": {
+        "macro_f1": 0.42857142857142855,
+        "per_class_auroc": {
+          "GOF": null,
+          "DN": null,
+          "LOF": null
+        },
+        "n": 8,
+        "class_counts": {
+          "2": 8,
+          "1": 1
+        },
+        "genes": [
+          "BCOR",
+          "CAMTA1",
+          "EHMT1",
+          "ESPN",
+          "HACE1",
+          "RIPK4",
+          "SHANK2",
+          "SHANK3",
+          "TRPC3"
+        ],
+        "labels": [
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "GOF"
+        ]
+      },
+      "PF00038": {
+        "macro_f1": 0.25,
+        "per_class_auroc": {
+          "GOF": 0.4090909090909091,
+          "DN": 0.0,
+          "LOF": 0.0
+        },
+        "n": 17,
+        "class_counts": {
+          "2": 4,
+          "1": 2,
+          "0": 11
+        },
+        "genes": [
+          "BFSP1",
+          "GFAP",
+          "KRT1",
+          "KRT10",
+          "KRT12",
+          "KRT13",
+          "KRT14",
+          "KRT16",
+          "KRT17",
+          "KRT2",
+          "KRT3",
+          "KRT4",
+          "KRT5",
+          "KRT6A",
+          "KRT6B",
+          "KRT9",
+          "LMNA"
+        ],
+        "labels": [
+          "LOF",
+          "GOF",
+          "DN",
+          "DN",
+          "DN",
+          "DN",
+          "DN",
+          "DN",
+          "LOF",
+          "LOF",
+          "DN",
+          "DN",
+          "LOF",
+          "DN",
+          "DN",
+          "DN",
+          "GOF"
+        ]
+      },
+      "PF00096": {
+        "macro_f1": 0.2777777777777778,
+        "per_class_auroc": {
+          "GOF": 0.0,
+          "DN": 0.0,
+          "LOF": 0.6923076923076923
+        },
+        "n": 15,
+        "class_counts": {
+          "2": 13,
+          "0": 1,
+          "1": 1
+        },
+        "genes": [
+          "BNC2",
+          "CTCF",
+          "FEZF1",
+          "GFI1",
+          "GLI3",
+          "HIVEP2",
+          "SALL4",
+          "ZEB1",
+          "ZEB2",
+          "ZIC1",
+          "ZIC2",
+          "ZIC3",
+          "ZNF148",
+          "ZNF335",
+          "ZNF469"
+        ],
+        "labels": [
+          "LOF",
+          "LOF",
+          "LOF",
+          "DN",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "GOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF"
+        ]
+      },
+      "PF00168": {
+        "macro_f1": 0.41269841269841273,
+        "per_class_auroc": {
+          "GOF": 0.9166666666666667,
+          "DN": 0.33333333333333337,
+          "LOF": 0.5625
+        },
+        "n": 8,
+        "class_counts": {
+          "2": 4,
+          "1": 2,
+          "0": 2
+        },
+        "genes": [
+          "C2CD3",
+          "CAPN5",
+          "OTOF",
+          "PLCG2",
+          "RASA1",
+          "SYNGAP1",
+          "SYT1",
+          "SYT2"
+        ],
+        "labels": [
+          "LOF",
+          "GOF",
+          "LOF",
+          "GOF",
+          "LOF",
+          "LOF",
+          "DN",
+          "DN"
+        ]
+      },
+      "PF00520": {
+        "macro_f1": 0.31746031746031744,
+        "per_class_auroc": {
+          "GOF": 0.46153846153846156,
+          "DN": 0.3666666666666667,
+          "LOF": 0.641025641025641
+        },
+        "n": 16,
+        "class_counts": {
+          "1": 10,
+          "2": 3,
+          "0": 3
+        },
+        "genes": [
+          "CACNA1G",
+          "KCNQ1",
+          "KCNQ2",
+          "KCNQ4",
+          "KCNQ5",
+          "NALCN",
+          "SCN10A",
+          "SCN11A",
+          "SCN1A",
+          "SCN2A",
+          "SCN3A",
+          "SCN4A",
+          "SCN5A",
+          "SCN8A",
+          "SCN9A",
+          "TRPM4"
+        ],
+        "labels": [
+          "GOF",
+          "LOF",
+          "DN",
+          "DN",
+          "GOF",
+          "LOF",
+          "GOF",
+          "GOF",
+          "GOF",
+          "GOF",
+          "GOF",
+          "GOF",
+          "LOF",
+          "DN",
+          "GOF",
+          "GOF"
+        ]
+      },
+      "PF00071": {
+        "macro_f1": 0.16666666666666666,
+        "per_class_auroc": {
+          "GOF": 0.0,
+          "DN": 0.14285714285714285,
+          "LOF": 0.0
+        },
+        "n": 9,
+        "class_counts": {
+          "1": 7,
+          "0": 1,
+          "2": 1
+        },
+        "genes": [
+          "CDC42",
+          "HRAS",
+          "KRAS",
+          "MRAS",
+          "NRAS",
+          "RAB11B",
+          "RAB39B",
+          "RIT1",
+          "RRAS2"
+        ],
+        "labels": [
+          "GOF",
+          "GOF",
+          "GOF",
+          "GOF",
+          "GOF",
+          "DN",
+          "LOF",
+          "GOF",
+          "GOF"
+        ]
+      },
+      "PF00069": {
+        "macro_f1": 0.2916666666666667,
+        "per_class_auroc": {
+          "GOF": 0.0,
+          "DN": 0.7666666666666666,
+          "LOF": 0.4285714285714286
+        },
+        "n": 17,
+        "class_counts": {
+          "0": 2,
+          "1": 5,
+          "2": 10
+        },
+        "genes": [
+          "CDK19",
+          "CDK4",
+          "CDKL5",
+          "CSNK2A1",
+          "DYRK1A",
+          "MAK",
+          "MAP2K1",
+          "MAP2K2",
+          "MAPKAPK5",
+          "NEK1",
+          "NEK8",
+          "RPS6KA3",
+          "SCYL1",
+          "SIK1",
+          "STK11",
+          "TAOK1",
+          "TBK1"
+        ],
+        "labels": [
+          "DN",
+          "GOF",
+          "LOF",
+          "GOF",
+          "LOF",
+          "LOF",
+          "GOF",
+          "GOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "GOF",
+          "LOF",
+          "LOF",
+          "DN"
+        ]
+      },
+      "PF02931": {
+        "macro_f1": 0.8000000000000002,
+        "per_class_auroc": {
+          "GOF": 0.9375,
+          "DN": 1.0,
+          "LOF": 0.875
+        },
+        "n": 10,
+        "class_counts": {
+          "2": 6,
+          "1": 2,
+          "0": 2
+        },
+        "genes": [
+          "CHRNA1",
+          "CHRNA4",
+          "CHRNB1",
+          "CHRNB2",
+          "CHRNG",
+          "GABRA1",
+          "GABRA5",
+          "GABRG2",
+          "GLRA1",
+          "GLRB"
+        ],
+        "labels": [
+          "LOF",
+          "GOF",
+          "LOF",
+          "GOF",
+          "LOF",
+          "DN",
+          "DN",
+          "LOF",
+          "LOF",
+          "LOF"
+        ]
+      },
+      "PF00027": {
+        "macro_f1": 0.5333333333333333,
+        "per_class_auroc": {
+          "GOF": 0.75,
+          "DN": 0.0,
+          "LOF": 0.75
+        },
+        "n": 6,
+        "class_counts": {
+          "2": 2,
+          "0": 2,
+          "1": 2
+        },
+        "genes": [
+          "CNGB1",
+          "CNGB3",
+          "HCN4",
+          "KCNH1",
+          "KCNH2",
+          "PRKAR1A"
+        ],
+        "labels": [
+          "LOF",
+          "LOF",
+          "DN",
+          "GOF",
+          "DN",
+          "GOF"
+        ]
+      },
+      "PF01410": {
+        "macro_f1": 0.4444444444444444,
+        "per_class_auroc": {
+          "GOF": 0.30000000000000004,
+          "DN": null,
+          "LOF": 0.30000000000000004
+        },
+        "n": 9,
+        "class_counts": {
+          "2": 5,
+          "0": 4
+        },
+        "genes": [
+          "COL11A1",
+          "COL11A2",
+          "COL1A1",
+          "COL1A2",
+          "COL27A1",
+          "COL2A1",
+          "COL3A1",
+          "COL5A1",
+          "COL5A2"
+        ],
+        "labels": [
+          "LOF",
+          "DN",
+          "LOF",
+          "LOF",
+          "LOF",
+          "DN",
+          "DN",
+          "LOF",
+          "DN"
+        ]
+      },
+      "PF00008": {
+        "macro_f1": 0.375,
+        "per_class_auroc": {
+          "GOF": null,
+          "DN": null,
+          "LOF": null
+        },
+        "n": 5,
+        "class_counts": {
+          "2": 5,
+          "1": 1
+        },
+        "genes": [
+          "CRB1",
+          "CRB2",
+          "EYS",
+          "F12",
+          "HSPG2",
+          "LTBP2"
+        ],
+        "labels": [
+          "LOF",
+          "LOF",
+          "LOF",
+          "GOF",
+          "LOF",
+          "LOF"
+        ]
+      },
+      "PF00307": {
+        "macro_f1": 0.36363636363636365,
+        "per_class_auroc": {
+          "GOF": null,
+          "DN": null,
+          "LOF": null
+        },
+        "n": 7,
+        "class_counts": {
+          "2": 7,
+          "0": 1
+        },
+        "genes": [
+          "DMD",
+          "FLNA",
+          "FLNB",
+          "FLNC",
+          "GAS2L2",
+          "SPTBN1",
+          "SPTBN2",
+          "SPTBN4"
+        ],
+        "labels": [
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "DN",
+          "LOF"
+        ]
+      },
+      "PF00001": {
+        "macro_f1": 0.625,
+        "per_class_auroc": {
+          "GOF": null,
+          "DN": 0.5,
+          "LOF": 0.5
+        },
+        "n": 6,
+        "class_counts": {
+          "1": 2,
+          "2": 4
+        },
+        "genes": [
+          "EDNRA",
+          "EDNRB",
+          "MC2R",
+          "OPN1LW",
+          "RHO",
+          "TSHR"
+        ],
+        "labels": [
+          "GOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "GOF"
+        ]
+      },
+      "PF12662": {
+        "macro_f1": 0.16666666666666666,
+        "per_class_auroc": {
+          "GOF": null,
+          "DN": null,
+          "LOF": null
+        },
+        "n": 5,
+        "class_counts": {
+          "2": 5,
+          "0": 1
+        },
+        "genes": [
+          "FBLN5",
+          "FBN1",
+          "FBN2",
+          "LRP4",
+          "LTBP3",
+          "SCUBE3"
+        ],
+        "labels": [
+          "LOF",
+          "LOF",
+          "DN",
+          "LOF",
+          "LOF",
+          "LOF"
+        ]
+      },
+      "PF00167": {
+        "macro_f1": 0.14285714285714285,
+        "per_class_auroc": {
+          "GOF": null,
+          "DN": 0.0,
+          "LOF": 0.0
+        },
+        "n": 6,
+        "class_counts": {
+          "2": 4,
+          "1": 2
+        },
+        "genes": [
+          "FGF10",
+          "FGF12",
+          "FGF13",
+          "FGF14",
+          "FGF3",
+          "FGF9"
+        ],
+        "labels": [
+          "LOF",
+          "GOF",
+          "GOF",
+          "LOF",
+          "LOF",
+          "LOF"
+        ]
+      },
+      "PF00250": {
+        "macro_f1": 0.06060606060606061,
+        "per_class_auroc": {
+          "GOF": 0.0,
+          "DN": 0.0,
+          "LOF": 0.3888888888888889
+        },
+        "n": 11,
+        "class_counts": {
+          "2": 9,
+          "1": 1,
+          "0": 1
+        },
+        "genes": [
+          "FOXC1",
+          "FOXC2",
+          "FOXE1",
+          "FOXE3",
+          "FOXF1",
+          "FOXG1",
+          "FOXL2",
+          "FOXN1",
+          "FOXP1",
+          "FOXP2",
+          "FOXP3"
+        ],
+        "labels": [
+          "LOF",
+          "GOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "DN",
+          "LOF",
+          "LOF"
+        ]
+      },
+      "PF00503": {
+        "macro_f1": 0.8285714285714285,
+        "per_class_auroc": {
+          "GOF": null,
+          "DN": 0.875,
+          "LOF": 0.875
+        },
+        "n": 6,
+        "class_counts": {
+          "1": 4,
+          "2": 2
+        },
+        "genes": [
+          "GNA11",
+          "GNA14",
+          "GNAO1",
+          "GNAQ",
+          "GNAT1",
+          "GNAT2"
+        ],
+        "labels": [
+          "GOF",
+          "GOF",
+          "GOF",
+          "GOF",
+          "LOF",
+          "LOF"
+        ]
+      },
+      "PF01094": {
+        "macro_f1": 0.38888888888888884,
+        "per_class_auroc": {
+          "GOF": 0.0,
+          "DN": 0.8333333333333334,
+          "LOF": 0.7333333333333334
+        },
+        "n": 8,
+        "class_counts": {
+          "2": 5,
+          "0": 1,
+          "1": 2
+        },
+        "genes": [
+          "GRIA2",
+          "GRIA3",
+          "GRIN1",
+          "GRIN2A",
+          "GRIN2B",
+          "GRIN2D",
+          "GUCY2D",
+          "NPR2"
+        ],
+        "labels": [
+          "LOF",
+          "LOF",
+          "LOF",
+          "DN",
+          "GOF",
+          "GOF",
+          "LOF",
+          "LOF"
+        ]
+      },
+      "PF00104": {
+        "macro_f1": 0.26666666666666666,
+        "per_class_auroc": {
+          "GOF": 0.125,
+          "DN": null,
+          "LOF": 0.125
+        },
+        "n": 11,
+        "class_counts": {
+          "2": 8,
+          "0": 3
+        },
+        "genes": [
+          "HNF4A",
+          "NR0B1",
+          "NR2E3",
+          "NR2F1",
+          "NR2F2",
+          "NR3C2",
+          "NR4A2",
+          "NR5A1",
+          "PPARG",
+          "RORA",
+          "THRA"
+        ],
+        "labels": [
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "DN",
+          "LOF",
+          "DN",
+          "DN",
+          "LOF",
+          "LOF"
+        ]
+      },
+      "PF02214": {
+        "macro_f1": 0.0,
+        "per_class_auroc": {
+          "GOF": 0.0,
+          "DN": 0.0,
+          "LOF": 0.22222222222222224
+        },
+        "n": 6,
+        "class_counts": {
+          "0": 2,
+          "2": 3,
+          "1": 1
+        },
+        "genes": [
+          "KCNA1",
+          "KCNA2",
+          "KCNB1",
+          "KCNC1",
+          "KCNV2",
+          "KCTD7"
+        ],
+        "labels": [
+          "DN",
+          "LOF",
+          "DN",
+          "GOF",
+          "LOF",
+          "LOF"
+        ]
+      }
+    },
+    "n_qualifying_families": 24,
+    "n_families_run": 24,
+    "majority_accuracy": 0.7024793388429752,
+    "col_names": [
+      "pDN_resid",
+      "pGOF_resid",
+      "pLOF_resid"
+    ],
+    "label": "resid_bad"
+  },
+  "resid_combined": {
+    "aggregate": {
+      "macro_f1": 0.515685061485366,
+      "per_class_auroc": {
+        "GOF": 0.6552478134110786,
+        "DN": 0.724756212645486,
+        "LOF": 0.6920281794586578
+      },
+      "n": 238
+    },
+    "per_family": {
+      "PF00004": {
+        "macro_f1": 0.25,
+        "per_class_auroc": {
+          "GOF": 0.19999999999999996,
+          "DN": 0.0,
+          "LOF": 0.75
+        },
+        "n": 7,
+        "class_counts": {
+          "2": 4,
+          "0": 2,
+          "1": 1
+        },
+        "genes": [
+          "AFG2A",
+          "AFG3L2",
+          "ATAD3A",
+          "PEX1",
+          "PEX6",
+          "SPAST",
+          "VPS4A"
+        ],
+        "labels": [
+          "LOF",
+          "LOF",
+          "DN",
+          "LOF",
+          "LOF",
+          "GOF",
+          "DN"
+        ]
+      },
+      "PF00046": {
+        "macro_f1": 0.6212121212121212,
+        "per_class_auroc": {
+          "GOF": 0.9012345679012346,
+          "DN": 0.9107142857142858,
+          "LOF": 0.8800000000000001
+        },
+        "n": 30,
+        "class_counts": {
+          "2": 25,
+          "1": 2,
+          "0": 3
+        },
+        "genes": [
+          "ALX4",
+          "ARX",
+          "CRX",
+          "HESX1",
+          "HMX1",
+          "HOXA13",
+          "LHX4",
+          "LMX1B",
+          "MNX1",
+          "MSX1",
+          "MSX2",
+          "NKX2-1",
+          "NKX2-5",
+          "NKX6-2",
+          "OTX2",
+          "PAX3",
+          "PAX6",
+          "PHOX2B",
+          "PITX1",
+          "PITX2",
+          "POU1F1",
+          "POU3F3",
+          "POU4F1",
+          "PROP1",
+          "RAX",
+          "RAX2",
+          "SHOX",
+          "SIX3",
+          "SIX6",
+          "VSX2"
+        ],
+        "labels": [
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "GOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "DN",
+          "LOF",
+          "DN",
+          "LOF",
+          "LOF",
+          "DN",
+          "LOF",
+          "LOF",
+          "LOF",
+          "GOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF"
+        ]
+      },
+      "PF00023": {
+        "macro_f1": 1.0,
+        "per_class_auroc": {
+          "GOF": null,
+          "DN": 1.0,
+          "LOF": 1.0
+        },
+        "n": 7,
+        "class_counts": {
+          "2": 2,
+          "1": 5
+        },
+        "genes": [
+          "ANK2",
+          "NOTCH1",
+          "NOTCH2",
+          "NOTCH3",
+          "TRPA1",
+          "TRPV3",
+          "TRPV4"
+        ],
+        "labels": [
+          "LOF",
+          "LOF",
+          "GOF",
+          "GOF",
+          "GOF",
+          "GOF",
+          "GOF"
+        ]
+      },
+      "PF00010": {
+        "macro_f1": 0.6666666666666667,
+        "per_class_auroc": {
+          "GOF": 0.6666666666666667,
+          "DN": null,
+          "LOF": 0.6666666666666667
+        },
+        "n": 8,
+        "class_counts": {
+          "2": 6,
+          "0": 2
+        },
+        "genes": [
+          "ATOH7",
+          "BHLHA9",
+          "MAX",
+          "MYCN",
+          "TCF12",
+          "TCF4",
+          "TWIST1",
+          "TWIST2"
+        ],
+        "labels": [
+          "LOF",
+          "DN",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "DN"
+        ]
+      },
+      "PF12796": {
+        "macro_f1": 0.38461538461538464,
+        "per_class_auroc": {
+          "GOF": null,
+          "DN": null,
+          "LOF": null
+        },
+        "n": 8,
+        "class_counts": {
+          "2": 8,
+          "1": 1
+        },
+        "genes": [
+          "BCOR",
+          "CAMTA1",
+          "EHMT1",
+          "ESPN",
+          "HACE1",
+          "RIPK4",
+          "SHANK2",
+          "SHANK3",
+          "TRPC3"
+        ],
+        "labels": [
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "GOF"
+        ]
+      },
+      "PF00038": {
+        "macro_f1": 0.4696969696969697,
+        "per_class_auroc": {
+          "GOF": 0.8333333333333334,
+          "DN": 0.4666666666666667,
+          "LOF": 0.5961538461538463
+        },
+        "n": 17,
+        "class_counts": {
+          "2": 4,
+          "1": 2,
+          "0": 11
+        },
+        "genes": [
+          "BFSP1",
+          "GFAP",
+          "KRT1",
+          "KRT10",
+          "KRT12",
+          "KRT13",
+          "KRT14",
+          "KRT16",
+          "KRT17",
+          "KRT2",
+          "KRT3",
+          "KRT4",
+          "KRT5",
+          "KRT6A",
+          "KRT6B",
+          "KRT9",
+          "LMNA"
+        ],
+        "labels": [
+          "LOF",
+          "GOF",
+          "DN",
+          "DN",
+          "DN",
+          "DN",
+          "DN",
+          "DN",
+          "LOF",
+          "LOF",
+          "DN",
+          "DN",
+          "LOF",
+          "DN",
+          "DN",
+          "DN",
+          "GOF"
+        ]
+      },
+      "PF00096": {
+        "macro_f1": 0.32,
+        "per_class_auroc": {
+          "GOF": 0.0,
+          "DN": 0.0,
+          "LOF": 0.9230769230769231
+        },
+        "n": 15,
+        "class_counts": {
+          "2": 13,
+          "0": 1,
+          "1": 1
+        },
+        "genes": [
+          "BNC2",
+          "CTCF",
+          "FEZF1",
+          "GFI1",
+          "GLI3",
+          "HIVEP2",
+          "SALL4",
+          "ZEB1",
+          "ZEB2",
+          "ZIC1",
+          "ZIC2",
+          "ZIC3",
+          "ZNF148",
+          "ZNF335",
+          "ZNF469"
+        ],
+        "labels": [
+          "LOF",
+          "LOF",
+          "LOF",
+          "DN",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "GOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF"
+        ]
+      },
+      "PF00168": {
+        "macro_f1": 0.5238095238095238,
+        "per_class_auroc": {
+          "GOF": 1.0,
+          "DN": 0.5833333333333334,
+          "LOF": 0.625
+        },
+        "n": 8,
+        "class_counts": {
+          "2": 4,
+          "1": 2,
+          "0": 2
+        },
+        "genes": [
+          "C2CD3",
+          "CAPN5",
+          "OTOF",
+          "PLCG2",
+          "RASA1",
+          "SYNGAP1",
+          "SYT1",
+          "SYT2"
+        ],
+        "labels": [
+          "LOF",
+          "GOF",
+          "LOF",
+          "GOF",
+          "LOF",
+          "LOF",
+          "DN",
+          "DN"
+        ]
+      },
+      "PF00520": {
+        "macro_f1": 0.41687552213867995,
+        "per_class_auroc": {
+          "GOF": 0.5384615384615384,
+          "DN": 0.5333333333333333,
+          "LOF": 0.6153846153846154
+        },
+        "n": 16,
+        "class_counts": {
+          "1": 10,
+          "2": 3,
+          "0": 3
+        },
+        "genes": [
+          "CACNA1G",
+          "KCNQ1",
+          "KCNQ2",
+          "KCNQ4",
+          "KCNQ5",
+          "NALCN",
+          "SCN10A",
+          "SCN11A",
+          "SCN1A",
+          "SCN2A",
+          "SCN3A",
+          "SCN4A",
+          "SCN5A",
+          "SCN8A",
+          "SCN9A",
+          "TRPM4"
+        ],
+        "labels": [
+          "GOF",
+          "LOF",
+          "DN",
+          "DN",
+          "GOF",
+          "LOF",
+          "GOF",
+          "GOF",
+          "GOF",
+          "GOF",
+          "GOF",
+          "GOF",
+          "LOF",
+          "DN",
+          "GOF",
+          "GOF"
+        ]
+      },
+      "PF00071": {
+        "macro_f1": 0.3076923076923077,
+        "per_class_auroc": {
+          "GOF": 0.0,
+          "DN": 1.0,
+          "LOF": 0.0
+        },
+        "n": 9,
+        "class_counts": {
+          "1": 7,
+          "0": 1,
+          "2": 1
+        },
+        "genes": [
+          "CDC42",
+          "HRAS",
+          "KRAS",
+          "MRAS",
+          "NRAS",
+          "RAB11B",
+          "RAB39B",
+          "RIT1",
+          "RRAS2"
+        ],
+        "labels": [
+          "GOF",
+          "GOF",
+          "GOF",
+          "GOF",
+          "GOF",
+          "DN",
+          "LOF",
+          "GOF",
+          "GOF"
+        ]
+      },
+      "PF00069": {
+        "macro_f1": 0.3,
+        "per_class_auroc": {
+          "GOF": 0.033333333333333326,
+          "DN": 0.41666666666666674,
+          "LOF": 0.6000000000000001
+        },
+        "n": 17,
+        "class_counts": {
+          "0": 2,
+          "1": 5,
+          "2": 10
+        },
+        "genes": [
+          "CDK19",
+          "CDK4",
+          "CDKL5",
+          "CSNK2A1",
+          "DYRK1A",
+          "MAK",
+          "MAP2K1",
+          "MAP2K2",
+          "MAPKAPK5",
+          "NEK1",
+          "NEK8",
+          "RPS6KA3",
+          "SCYL1",
+          "SIK1",
+          "STK11",
+          "TAOK1",
+          "TBK1"
+        ],
+        "labels": [
+          "DN",
+          "GOF",
+          "LOF",
+          "GOF",
+          "LOF",
+          "LOF",
+          "GOF",
+          "GOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "GOF",
+          "LOF",
+          "LOF",
+          "DN"
+        ]
+      },
+      "PF02931": {
+        "macro_f1": 0.3717948717948718,
+        "per_class_auroc": {
+          "GOF": 0.875,
+          "DN": 0.75,
+          "LOF": 0.375
+        },
+        "n": 10,
+        "class_counts": {
+          "2": 6,
+          "1": 2,
+          "0": 2
+        },
+        "genes": [
+          "CHRNA1",
+          "CHRNA4",
+          "CHRNB1",
+          "CHRNB2",
+          "CHRNG",
+          "GABRA1",
+          "GABRA5",
+          "GABRG2",
+          "GLRA1",
+          "GLRB"
+        ],
+        "labels": [
+          "LOF",
+          "GOF",
+          "LOF",
+          "GOF",
+          "LOF",
+          "DN",
+          "DN",
+          "LOF",
+          "LOF",
+          "LOF"
+        ]
+      },
+      "PF00027": {
+        "macro_f1": 0.5333333333333333,
+        "per_class_auroc": {
+          "GOF": 0.75,
+          "DN": 0.125,
+          "LOF": 1.0
+        },
+        "n": 6,
+        "class_counts": {
+          "2": 2,
+          "0": 2,
+          "1": 2
+        },
+        "genes": [
+          "CNGB1",
+          "CNGB3",
+          "HCN4",
+          "KCNH1",
+          "KCNH2",
+          "PRKAR1A"
+        ],
+        "labels": [
+          "LOF",
+          "LOF",
+          "DN",
+          "GOF",
+          "DN",
+          "GOF"
+        ]
+      },
+      "PF01410": {
+        "macro_f1": 0.1,
+        "per_class_auroc": {
+          "GOF": 0.09999999999999998,
+          "DN": null,
+          "LOF": 0.1
+        },
+        "n": 9,
+        "class_counts": {
+          "2": 5,
+          "0": 4
+        },
+        "genes": [
+          "COL11A1",
+          "COL11A2",
+          "COL1A1",
+          "COL1A2",
+          "COL27A1",
+          "COL2A1",
+          "COL3A1",
+          "COL5A1",
+          "COL5A2"
+        ],
+        "labels": [
+          "LOF",
+          "DN",
+          "LOF",
+          "LOF",
+          "LOF",
+          "DN",
+          "DN",
+          "LOF",
+          "DN"
+        ]
+      },
+      "PF00008": {
+        "macro_f1": 0.4444444444444444,
+        "per_class_auroc": {
+          "GOF": null,
+          "DN": null,
+          "LOF": null
+        },
+        "n": 5,
+        "class_counts": {
+          "2": 5,
+          "1": 1
+        },
+        "genes": [
+          "CRB1",
+          "CRB2",
+          "EYS",
+          "F12",
+          "HSPG2",
+          "LTBP2"
+        ],
+        "labels": [
+          "LOF",
+          "LOF",
+          "LOF",
+          "GOF",
+          "LOF",
+          "LOF"
+        ]
+      },
+      "PF00307": {
+        "macro_f1": 0.3,
+        "per_class_auroc": {
+          "GOF": null,
+          "DN": null,
+          "LOF": null
+        },
+        "n": 7,
+        "class_counts": {
+          "2": 7,
+          "0": 1
+        },
+        "genes": [
+          "DMD",
+          "FLNA",
+          "FLNB",
+          "FLNC",
+          "GAS2L2",
+          "SPTBN1",
+          "SPTBN2",
+          "SPTBN4"
+        ],
+        "labels": [
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "DN",
+          "LOF"
+        ]
+      },
+      "PF00001": {
+        "macro_f1": 0.25,
+        "per_class_auroc": {
+          "GOF": null,
+          "DN": 0.0,
+          "LOF": 0.0
+        },
+        "n": 6,
+        "class_counts": {
+          "1": 2,
+          "2": 4
+        },
+        "genes": [
+          "EDNRA",
+          "EDNRB",
+          "MC2R",
+          "OPN1LW",
+          "RHO",
+          "TSHR"
+        ],
+        "labels": [
+          "GOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "GOF"
+        ]
+      },
+      "PF12662": {
+        "macro_f1": 0.4444444444444444,
+        "per_class_auroc": {
+          "GOF": null,
+          "DN": null,
+          "LOF": null
+        },
+        "n": 5,
+        "class_counts": {
+          "2": 5,
+          "0": 1
+        },
+        "genes": [
+          "FBLN5",
+          "FBN1",
+          "FBN2",
+          "LRP4",
+          "LTBP3",
+          "SCUBE3"
+        ],
+        "labels": [
+          "LOF",
+          "LOF",
+          "DN",
+          "LOF",
+          "LOF",
+          "LOF"
+        ]
+      },
+      "PF00167": {
+        "macro_f1": 0.4857142857142857,
+        "per_class_auroc": {
+          "GOF": null,
+          "DN": 0.625,
+          "LOF": 0.625
+        },
+        "n": 6,
+        "class_counts": {
+          "2": 4,
+          "1": 2
+        },
+        "genes": [
+          "FGF10",
+          "FGF12",
+          "FGF13",
+          "FGF14",
+          "FGF3",
+          "FGF9"
+        ],
+        "labels": [
+          "LOF",
+          "GOF",
+          "GOF",
+          "LOF",
+          "LOF",
+          "LOF"
+        ]
+      },
+      "PF00250": {
+        "macro_f1": 0.25925925925925924,
+        "per_class_auroc": {
+          "GOF": 0.0,
+          "DN": 0.0,
+          "LOF": 0.1111111111111111
+        },
+        "n": 11,
+        "class_counts": {
+          "2": 9,
+          "1": 1,
+          "0": 1
+        },
+        "genes": [
+          "FOXC1",
+          "FOXC2",
+          "FOXE1",
+          "FOXE3",
+          "FOXF1",
+          "FOXG1",
+          "FOXL2",
+          "FOXN1",
+          "FOXP1",
+          "FOXP2",
+          "FOXP3"
+        ],
+        "labels": [
+          "LOF",
+          "GOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "DN",
+          "LOF",
+          "LOF"
+        ]
+      },
+      "PF00503": {
+        "macro_f1": 0.8285714285714285,
+        "per_class_auroc": {
+          "GOF": null,
+          "DN": 1.0,
+          "LOF": 1.0
+        },
+        "n": 6,
+        "class_counts": {
+          "1": 4,
+          "2": 2
+        },
+        "genes": [
+          "GNA11",
+          "GNA14",
+          "GNAO1",
+          "GNAQ",
+          "GNAT1",
+          "GNAT2"
+        ],
+        "labels": [
+          "GOF",
+          "GOF",
+          "GOF",
+          "GOF",
+          "LOF",
+          "LOF"
+        ]
+      },
+      "PF01094": {
+        "macro_f1": 0.1818181818181818,
+        "per_class_auroc": {
+          "GOF": 0.0,
+          "DN": 0.33333333333333337,
+          "LOF": 0.4666666666666667
+        },
+        "n": 8,
+        "class_counts": {
+          "2": 5,
+          "0": 1,
+          "1": 2
+        },
+        "genes": [
+          "GRIA2",
+          "GRIA3",
+          "GRIN1",
+          "GRIN2A",
+          "GRIN2B",
+          "GRIN2D",
+          "GUCY2D",
+          "NPR2"
+        ],
+        "labels": [
+          "LOF",
+          "LOF",
+          "LOF",
+          "DN",
+          "GOF",
+          "GOF",
+          "LOF",
+          "LOF"
+        ]
+      },
+      "PF00104": {
+        "macro_f1": 0.26666666666666666,
+        "per_class_auroc": {
+          "GOF": 0.25,
+          "DN": null,
+          "LOF": 0.25
+        },
+        "n": 11,
+        "class_counts": {
+          "2": 8,
+          "0": 3
+        },
+        "genes": [
+          "HNF4A",
+          "NR0B1",
+          "NR2E3",
+          "NR2F1",
+          "NR2F2",
+          "NR3C2",
+          "NR4A2",
+          "NR5A1",
+          "PPARG",
+          "RORA",
+          "THRA"
+        ],
+        "labels": [
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "LOF",
+          "DN",
+          "LOF",
+          "DN",
+          "DN",
+          "LOF",
+          "LOF"
+        ]
+      },
+      "PF02214": {
+        "macro_f1": 0.16666666666666666,
+        "per_class_auroc": {
+          "GOF": 0.25,
+          "DN": 0.0,
+          "LOF": 0.4444444444444444
+        },
+        "n": 6,
+        "class_counts": {
+          "0": 2,
+          "2": 3,
+          "1": 1
+        },
+        "genes": [
+          "KCNA1",
+          "KCNA2",
+          "KCNB1",
+          "KCNC1",
+          "KCNV2",
+          "KCTD7"
+        ],
+        "labels": [
+          "DN",
+          "LOF",
+          "DN",
+          "GOF",
+          "LOF",
+          "LOF"
+        ]
+      }
+    },
+    "n_qualifying_families": 24,
+    "n_families_run": 24,
+    "majority_accuracy": 0.7024793388429752,
+    "col_names": [
+      "pLI_resid",
+      "LOEUF_resid",
+      "mis_z_resid",
+      "paralog_count_resid",
+      "tissue_tau_resid",
+      "log_abundance_resid",
+      "PPI_degree_resid",
+      "HI_score_resid",
+      "TS_score_resid",
+      "pDN_resid",
+      "pGOF_resid",
+      "pLOF_resid"
+    ],
+    "label": "resid_comb"
+  }
+}

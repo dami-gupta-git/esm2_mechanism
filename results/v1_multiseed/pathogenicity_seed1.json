@@ -1,0 +1,22 @@
+{
+  "logreg_gene": {
+    "auroc_mean": 0.7045495988269803,
+    "auroc_std": 0.006284386573890695,
+    "n_folds": 5
+  },
+  "logreg_family": {
+    "auroc_mean": 0.7033303577859672,
+    "auroc_std": 0.013644555182206815,
+    "n_folds": 5
+  },
+  "mlp_gene": {
+    "auroc_mean": 0.7467788261668818,
+    "auroc_std": 0.005237865874890296,
+    "n_folds": 5
+  },
+  "mlp_family": {
+    "auroc_mean": 0.732460414743958,
+    "auroc_std": 0.00830054749675654,
+    "n_folds": 5
+  }
+}

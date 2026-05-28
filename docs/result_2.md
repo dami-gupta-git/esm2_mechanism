@@ -97,5 +97,5 @@ The one exception worth pursuing: **GOF AUROC = 0.801 under family-split for WT-
 
 ## Data Location
 
-- Results: `results/20260524_baseline_run/run_0/family_split_baselines.json`
-- Script: `scripts/family_split_baselines.py`
+- Results: `../results/20260524_baseline_run/run_0/family_split_baselines.json`
+- Script: `../scripts/family_split_baselines.py`

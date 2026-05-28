@@ -1,0 +1,54 @@
+{
+  "FULL": {
+    "macro_f1_mean": 0.46001851281361417,
+    "macro_f1_std": 0.008139319672854481
+  },
+  "constraint": {
+    "macro_f1_mean": 0.42029843690677315,
+    "macro_f1_std": 0.006877162481368731,
+    "delta_f1_mean": 0.039720075906841,
+    "delta_f1_std": 0.008075956927302869,
+    "delta_auroc_DN_mean": 0.07229186107029724,
+    "delta_auroc_DN_std": 0.008409123433901483
+  },
+  "paralogs": {
+    "macro_f1_mean": 0.4580319335537183,
+    "macro_f1_std": 0.008046690424520964,
+    "delta_f1_mean": 0.0019865792598958267,
+    "delta_f1_std": 0.004212537949753081,
+    "delta_auroc_DN_mean": -0.014912093839292994,
+    "delta_auroc_DN_std": 0.003959023893022114
+  },
+  "expression": {
+    "macro_f1_mean": 0.4519201291858628,
+    "macro_f1_std": 0.005921581408030504,
+    "delta_f1_mean": 0.008098383627751404,
+    "delta_f1_std": 0.004370368847370476,
+    "delta_auroc_DN_mean": 0.002848130954946715,
+    "delta_auroc_DN_std": 0.004143295645569984
+  },
+  "abundance": {
+    "macro_f1_mean": 0.44327065332607135,
+    "macro_f1_std": 0.0035139917963051583,
+    "delta_f1_mean": 0.016747859487542826,
+    "delta_f1_std": 0.005677184402108774,
+    "delta_auroc_DN_mean": -0.011074539837285258,
+    "delta_auroc_DN_std": 0.0096542825566391
+  },
+  "interactome": {
+    "macro_f1_mean": 0.46216470464257664,
+    "macro_f1_std": 0.009171084920148495,
+    "delta_f1_mean": -0.002146191828962496,
+    "delta_f1_std": 0.0036947907377681,
+    "delta_auroc_DN_mean": -0.006902851260494547,
+    "delta_auroc_DN_std": 0.006746785867782724
+  },
+  "dosage": {
+    "macro_f1_mean": 0.4169292828714745,
+    "macro_f1_std": 0.0038997285799307686,
+    "delta_f1_mean": 0.04308922994213965,
+    "delta_f1_std": 0.005964476133868789,
+    "delta_auroc_DN_mean": 0.06695530896139727,
+    "delta_auroc_DN_std": 0.003959934650266376
+  }
+}

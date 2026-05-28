@@ -1,0 +1,156 @@
+{
+  "per_seed": {
+    "0": {
+      "mechanism_geras_mlp_delta_mean_family_macro_f1": 0.363647025604358,
+      "mechanism_geras_mlp_delta_mean_family_auroc_GOF": 0.6271330211031592,
+      "mechanism_geras_mlp_delta_mean_family_auroc_DN": 0.5517087599669617,
+      "mechanism_geras_mlp_delta_mean_family_auroc_LOF": 0.6333030665524956,
+      "mechanism_geras_mlp_delta_mean_gene_macro_f1": 0.4152948506214814,
+      "mechanism_merged_mlp_delta_mean_family_macro_f1": 0.35223312681567603,
+      "mechanism_merged_mlp_delta_mean_family_auroc_GOF": 0.6354568942398777,
+      "mechanism_merged_mlp_delta_mean_family_auroc_DN": 0.5863628585347468,
+      "mechanism_merged_mlp_delta_mean_family_auroc_LOF": 0.6180619936505382,
+      "mechanism_merged_mlp_delta_mean_gene_macro_f1": 0.38370620169016584,
+      "pathogenicity_mlp_gene_auroc": 0.878266835678874,
+      "pathogenicity_mlp_family_auroc": 0.8758162936009685,
+      "pathogenicity_logreg_gene_auroc": 0.8335857814171463,
+      "pathogenicity_logreg_family_auroc": 0.8279659678444327
+    },
+    "1": {
+      "mechanism_geras_mlp_delta_mean_family_macro_f1": 0.293470404403841,
+      "mechanism_geras_mlp_delta_mean_family_auroc_GOF": 0.5480194702064359,
+      "mechanism_geras_mlp_delta_mean_family_auroc_DN": 0.5135084856102187,
+      "mechanism_geras_mlp_delta_mean_family_auroc_LOF": 0.5393100477917147,
+      "mechanism_geras_mlp_delta_mean_gene_macro_f1": 0.28191076628956724,
+      "mechanism_merged_mlp_delta_mean_family_macro_f1": 0.39051502226570767,
+      "mechanism_merged_mlp_delta_mean_family_auroc_GOF": 0.648753204064385,
+      "mechanism_merged_mlp_delta_mean_family_auroc_DN": 0.5911646968947719,
+      "mechanism_merged_mlp_delta_mean_family_auroc_LOF": 0.6689731295245454,
+      "mechanism_merged_mlp_delta_mean_gene_macro_f1": 0.4224099961498327,
+      "pathogenicity_mlp_gene_auroc": 0.7467788261668818,
+      "pathogenicity_mlp_family_auroc": 0.732460414743958,
+      "pathogenicity_logreg_gene_auroc": 0.7045495988269803,
+      "pathogenicity_logreg_family_auroc": 0.7033303577859672
+    },
+    "2": {
+      "mechanism_geras_mlp_delta_mean_family_macro_f1": 0.2950016469914594,
+      "mechanism_geras_mlp_delta_mean_family_auroc_GOF": 0.539852498922528,
+      "mechanism_geras_mlp_delta_mean_family_auroc_DN": 0.4914868659481148,
+      "mechanism_geras_mlp_delta_mean_family_auroc_LOF": 0.5310808905936676,
+      "mechanism_geras_mlp_delta_mean_gene_macro_f1": 0.29260752027598624,
+      "mechanism_merged_mlp_delta_mean_family_macro_f1": 0.3831773724224813,
+      "mechanism_merged_mlp_delta_mean_family_auroc_GOF": 0.6506821456421157,
+      "mechanism_merged_mlp_delta_mean_family_auroc_DN": 0.5418268491060662,
+      "mechanism_merged_mlp_delta_mean_family_auroc_LOF": 0.6813588855082451,
+      "mechanism_merged_mlp_delta_mean_gene_macro_f1": 0.40918108928531965,
+      "pathogenicity_mlp_gene_auroc": 0.7327932256920443,
+      "pathogenicity_mlp_family_auroc": 0.7493488941247698,
+      "pathogenicity_logreg_gene_auroc": 0.7039897522274883,
+      "pathogenicity_logreg_family_auroc": 0.7013234520680669
+    },
+    "3": {
+      "mechanism_geras_mlp_delta_mean_family_macro_f1": 0.2756443171986282,
+      "mechanism_geras_mlp_delta_mean_family_auroc_GOF": 0.5342675175822652,
+      "mechanism_geras_mlp_delta_mean_family_auroc_DN": 0.48497143778468094,
+      "mechanism_geras_mlp_delta_mean_family_auroc_LOF": 0.528083896293101,
+      "mechanism_geras_mlp_delta_mean_gene_macro_f1": 0.26253600066191785,
+      "mechanism_merged_mlp_delta_mean_family_macro_f1": 0.39467408306148327,
+      "mechanism_merged_mlp_delta_mean_family_auroc_GOF": 0.6625955808277464,
+      "mechanism_merged_mlp_delta_mean_family_auroc_DN": 0.5893117167901037,
+      "mechanism_merged_mlp_delta_mean_family_auroc_LOF": 0.675103877340538,
+      "mechanism_merged_mlp_delta_mean_gene_macro_f1": 0.41867288873561365,
+      "pathogenicity_mlp_gene_auroc": 0.7436476267572794,
+      "pathogenicity_mlp_family_auroc": 0.748325102624747,
+      "pathogenicity_logreg_gene_auroc": 0.7037934183931386,
+      "pathogenicity_logreg_family_auroc": 0.7012107547240242
+    },
+    "4": {
+      "mechanism_geras_mlp_delta_mean_family_macro_f1": 0.2652991633752667,
+      "mechanism_geras_mlp_delta_mean_family_auroc_GOF": 0.5332504863338494,
+      "mechanism_geras_mlp_delta_mean_family_auroc_DN": 0.4721247818803448,
+      "mechanism_geras_mlp_delta_mean_family_auroc_LOF": 0.5191522066505466,
+      "mechanism_geras_mlp_delta_mean_gene_macro_f1": 0.283631973648067,
+      "mechanism_merged_mlp_delta_mean_family_macro_f1": 0.40458481614655667,
+      "mechanism_merged_mlp_delta_mean_family_auroc_GOF": 0.6783023546108341,
+      "mechanism_merged_mlp_delta_mean_family_auroc_DN": 0.6001782924426009,
+      "mechanism_merged_mlp_delta_mean_family_auroc_LOF": 0.6919494954260171,
+      "mechanism_merged_mlp_delta_mean_gene_macro_f1": 0.40985699835699707,
+      "pathogenicity_mlp_gene_auroc": 0.746339721587467,
+      "pathogenicity_mlp_family_auroc": 0.7416170886008693,
+      "pathogenicity_logreg_gene_auroc": 0.7043199372782014,
+      "pathogenicity_logreg_family_auroc": 0.7021627616078195
+    }
+  },
+  "aggregate": {
+    "mechanism_geras_mlp_delta_mean_family_macro_f1": {
+      "mean": 0.29861251151471063,
+      "std": 0.034369418806324284,
+      "n": 5
+    },
+    "mechanism_geras_mlp_delta_mean_family_auroc_GOF": {
+      "mean": 0.5565045988296475,
+      "std": 0.03570127561386155,
+      "n": 5
+    },
+    "mechanism_geras_mlp_delta_mean_family_auroc_DN": {
+      "mean": 0.5027600662380642,
+      "std": 0.027905354796071924,
+      "n": 5
+    },
+    "mechanism_geras_mlp_delta_mean_family_auroc_LOF": {
+      "mean": 0.550186021576305,
+      "std": 0.04205552903503078,
+      "n": 5
+    },
+    "mechanism_geras_mlp_delta_mean_gene_macro_f1": {
+      "mean": 0.30719622229940396,
+      "std": 0.05493142482892561,
+      "n": 5
+    },
+    "mechanism_merged_mlp_delta_mean_family_macro_f1": {
+      "mean": 0.38503688414238096,
+      "std": 0.017801974747371486,
+      "n": 5
+    },
+    "mechanism_merged_mlp_delta_mean_family_auroc_GOF": {
+      "mean": 0.6551580358769917,
+      "std": 0.01442336306342074,
+      "n": 5
+    },
+    "mechanism_merged_mlp_delta_mean_family_auroc_DN": {
+      "mean": 0.5817688827536579,
+      "std": 0.020496598250215353,
+      "n": 5
+    },
+    "mechanism_merged_mlp_delta_mean_family_auroc_LOF": {
+      "mean": 0.6670894762899768,
+      "std": 0.025663629589559176,
+      "n": 5
+    },
+    "mechanism_merged_mlp_delta_mean_gene_macro_f1": {
+      "mean": 0.40876543484358585,
+      "std": 0.01351784850942482,
+      "n": 5
+    },
+    "pathogenicity_mlp_gene_auroc": {
+      "mean": 0.7695652471765093,
+      "std": 0.054586785903736654,
+      "n": 5
+    },
+    "pathogenicity_mlp_family_auroc": {
+      "mean": 0.7695135587390626,
+      "std": 0.05349202620340515,
+      "n": 5
+    },
+    "pathogenicity_logreg_gene_auroc": {
+      "mean": 0.7300476976285909,
+      "std": 0.05176969999227279,
+      "n": 5
+    },
+    "pathogenicity_logreg_family_auroc": {
+      "mean": 0.727198658806062,
+      "std": 0.050389363947667576,
+      "n": 5
+    }
+  }
+}

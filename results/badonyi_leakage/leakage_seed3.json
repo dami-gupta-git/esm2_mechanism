@@ -1,0 +1,179 @@
+{
+  "seed": 3,
+  "regimes": {
+    "ALL": {
+      "n_variants": 18985,
+      "n_genes": 1950,
+      "n_families": 1146,
+      "class_dist_variants": {
+        "LOF": 14453,
+        "DN": 2816,
+        "GOF": 1716
+      },
+      "V2": {
+        "n_folds": 5,
+        "macro_f1_mean": 0.4987626239950571,
+        "macro_f1_std": 0.09770853998363895,
+        "auroc_GOF_mean": 0.7080850040134935,
+        "auroc_GOF_std": 0.09226733700137625,
+        "auroc_GOF_n_folds": 5,
+        "auroc_DN_mean": 0.7368330218101627,
+        "auroc_DN_std": 0.14943485680324156,
+        "auroc_DN_n_folds": 5,
+        "auroc_LOF_mean": 0.8054344260728425,
+        "auroc_LOF_std": 0.10875541316541235,
+        "auroc_LOF_n_folds": 5,
+        "per_gene_f1_mean": 0.40975086714433234,
+        "per_gene_f1_std": 0.05349665719945458
+      },
+      "V_bad": {
+        "n_folds": 5,
+        "macro_f1_mean": 0.4437943502647399,
+        "macro_f1_std": 0.053809786553175115,
+        "auroc_GOF_mean": 0.7307891299086607,
+        "auroc_GOF_std": 0.06057537761753558,
+        "auroc_GOF_n_folds": 5,
+        "auroc_DN_mean": 0.7611265139181846,
+        "auroc_DN_std": 0.08533671863672905,
+        "auroc_DN_n_folds": 5,
+        "auroc_LOF_mean": 0.7706922248111413,
+        "auroc_LOF_std": 0.10650127615943666,
+        "auroc_LOF_n_folds": 5,
+        "per_gene_f1_mean": 0.43146312182977375,
+        "per_gene_f1_std": 0.0424861969613008
+      },
+      "V2_bad": {
+        "n_folds": 5,
+        "macro_f1_mean": 0.5002358404630308,
+        "macro_f1_std": 0.141999240040014,
+        "auroc_GOF_mean": 0.6960161384515239,
+        "auroc_GOF_std": 0.14579174583024482,
+        "auroc_GOF_n_folds": 5,
+        "auroc_DN_mean": 0.833365984948521,
+        "auroc_DN_std": 0.06314910705254988,
+        "auroc_DN_n_folds": 5,
+        "auroc_LOF_mean": 0.8109201446195806,
+        "auroc_LOF_std": 0.1492032996541751,
+        "auroc_LOF_n_folds": 5,
+        "per_gene_f1_mean": 0.4304456683296536,
+        "per_gene_f1_std": 0.06297888146131377
+      }
+    },
+    "IN": {
+      "n_variants": 8045,
+      "n_genes": 557,
+      "n_families": 330,
+      "class_dist_variants": {
+        "LOF": 4596,
+        "GOF": 1285,
+        "DN": 2164
+      },
+      "V2": {
+        "n_folds": 5,
+        "macro_f1_mean": 0.4114460472722106,
+        "macro_f1_std": 0.10453948611971628,
+        "auroc_GOF_mean": 0.7207886757994293,
+        "auroc_GOF_std": 0.08138712927643496,
+        "auroc_GOF_n_folds": 5,
+        "auroc_DN_mean": 0.5914826279393188,
+        "auroc_DN_std": 0.16202525730771328,
+        "auroc_DN_n_folds": 5,
+        "auroc_LOF_mean": 0.6848262506438582,
+        "auroc_LOF_std": 0.04319830374805959,
+        "auroc_LOF_n_folds": 5,
+        "per_gene_f1_mean": 0.38396921178922155,
+        "per_gene_f1_std": 0.05350437675243662
+      },
+      "V_bad": {
+        "n_folds": 5,
+        "macro_f1_mean": 0.3873905096079,
+        "macro_f1_std": 0.13091731908798973,
+        "auroc_GOF_mean": 0.5734524289642807,
+        "auroc_GOF_std": 0.14787288200722587,
+        "auroc_GOF_n_folds": 5,
+        "auroc_DN_mean": 0.776196812029596,
+        "auroc_DN_std": 0.10715211607117583,
+        "auroc_DN_n_folds": 5,
+        "auroc_LOF_mean": 0.6369875171752021,
+        "auroc_LOF_std": 0.12953134976094896,
+        "auroc_LOF_n_folds": 5,
+        "per_gene_f1_mean": 0.43102855769171955,
+        "per_gene_f1_std": 0.03868851811712413
+      },
+      "V2_bad": {
+        "n_folds": 5,
+        "macro_f1_mean": 0.4752777039391451,
+        "macro_f1_std": 0.12283091249112739,
+        "auroc_GOF_mean": 0.7188995766373858,
+        "auroc_GOF_std": 0.11821388121793948,
+        "auroc_GOF_n_folds": 5,
+        "auroc_DN_mean": 0.736891347249746,
+        "auroc_DN_std": 0.15646992643808674,
+        "auroc_DN_n_folds": 5,
+        "auroc_LOF_mean": 0.7581824060260212,
+        "auroc_LOF_std": 0.025272758215368507,
+        "auroc_LOF_n_folds": 5,
+        "per_gene_f1_mean": 0.4202590982023028,
+        "per_gene_f1_std": 0.03442894266305749
+      }
+    },
+    "OUT": {
+      "n_variants": 10940,
+      "n_genes": 1393,
+      "n_families": 948,
+      "class_dist_variants": {
+        "LOF": 9857,
+        "DN": 652,
+        "GOF": 431
+      },
+      "V2": {
+        "n_folds": 5,
+        "macro_f1_mean": 0.4328373493325207,
+        "macro_f1_std": 0.08163880747004669,
+        "auroc_GOF_mean": 0.5230502576732226,
+        "auroc_GOF_std": 0.11166840551533883,
+        "auroc_GOF_n_folds": 5,
+        "auroc_DN_mean": 0.7823386739736503,
+        "auroc_DN_std": 0.22613795369138898,
+        "auroc_DN_n_folds": 5,
+        "auroc_LOF_mean": 0.8346517267136597,
+        "auroc_LOF_std": 0.08459309514177897,
+        "auroc_LOF_n_folds": 5,
+        "per_gene_f1_mean": 0.3974990036017999,
+        "per_gene_f1_std": 0.03501569851076842
+      },
+      "V_bad": {
+        "n_folds": 5,
+        "macro_f1_mean": 0.3655790324552178,
+        "macro_f1_std": 0.05075192765452365,
+        "auroc_GOF_mean": 0.7398756843077138,
+        "auroc_GOF_std": 0.15586305662626182,
+        "auroc_GOF_n_folds": 5,
+        "auroc_DN_mean": 0.8039781791051294,
+        "auroc_DN_std": 0.10316937493361267,
+        "auroc_DN_n_folds": 5,
+        "auroc_LOF_mean": 0.8386748747577591,
+        "auroc_LOF_std": 0.06433053990967724,
+        "auroc_LOF_n_folds": 5,
+        "per_gene_f1_mean": 0.3685090079104557,
+        "per_gene_f1_std": 0.015823454455377476
+      },
+      "V2_bad": {
+        "n_folds": 5,
+        "macro_f1_mean": 0.4890194721763533,
+        "macro_f1_std": 0.03815757119834143,
+        "auroc_GOF_mean": 0.5678697821401529,
+        "auroc_GOF_std": 0.14186721843429334,
+        "auroc_GOF_n_folds": 5,
+        "auroc_DN_mean": 0.7834593847548218,
+        "auroc_DN_std": 0.2288740512965046,
+        "auroc_DN_n_folds": 5,
+        "auroc_LOF_mean": 0.8433121233205256,
+        "auroc_LOF_std": 0.057754750429029826,
+        "auroc_LOF_n_folds": 5,
+        "per_gene_f1_mean": 0.41802873951173547,
+        "per_gene_f1_std": 0.045153070912325885
+      }
+    }
+  }
+}

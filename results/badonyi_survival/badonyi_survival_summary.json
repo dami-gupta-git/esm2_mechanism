@@ -1,0 +1,75 @@
+{
+  "n_seeds": 5,
+  "baseline_no_holdout": {
+    "DN_vs_LOF_mean": 0.5748517400247801,
+    "DN_vs_LOF_std": 0.0,
+    "DN_vs_LOF_n_seeds": 5,
+    "GOF_vs_LOF_mean": 0.6519840806389307,
+    "GOF_vs_LOF_std": 0.0,
+    "GOF_vs_LOF_n_seeds": 5,
+    "LOF_vs_nonLOF_mean": 0.4674530194093869,
+    "LOF_vs_nonLOF_std": 0.0,
+    "LOF_vs_nonLOF_n_seeds": 5,
+    "n_total_first": 1685
+  },
+  "family_holdout": {
+    "DN_vs_LOF_mean": 0.5878380317393508,
+    "DN_vs_LOF_std": 0.0,
+    "DN_vs_LOF_n_seeds": 5,
+    "GOF_vs_LOF_mean": 0.6657395969364346,
+    "GOF_vs_LOF_std": 0.0,
+    "GOF_vs_LOF_n_seeds": 5,
+    "LOF_vs_nonLOF_mean": 0.48282724894802687,
+    "LOF_vs_nonLOF_std": 0.0,
+    "LOF_vs_nonLOF_n_seeds": 5,
+    "n_total_first": 1229
+  },
+  "mmseqs_holdout": {
+    "DN_vs_LOF_mean": 0.5866024959426941,
+    "DN_vs_LOF_std": 0.0,
+    "DN_vs_LOF_n_seeds": 5,
+    "GOF_vs_LOF_mean": 0.6600497634867253,
+    "GOF_vs_LOF_std": 0.0,
+    "GOF_vs_LOF_n_seeds": 5,
+    "LOF_vs_nonLOF_mean": 0.4782253674469243,
+    "LOF_vs_nonLOF_std": 0.0,
+    "LOF_vs_nonLOF_n_seeds": 5,
+    "n_total_first": 1255
+  },
+  "badonyi_in_train": {
+    "DN_vs_LOF_mean": 0.6771988795518208,
+    "DN_vs_LOF_std": 0.0,
+    "DN_vs_LOF_n_seeds": 5,
+    "GOF_vs_LOF_mean": 0.7133210180623973,
+    "GOF_vs_LOF_std": 0.0,
+    "GOF_vs_LOF_n_seeds": 5,
+    "LOF_vs_nonLOF_mean": 0.625467898602227,
+    "LOF_vs_nonLOF_std": 0.0,
+    "LOF_vs_nonLOF_n_seeds": 5,
+    "n_total_first": 621
+  },
+  "badonyi_out_train": {
+    "DN_vs_LOF_mean": 0.6197567178355854,
+    "DN_vs_LOF_std": 0.0,
+    "DN_vs_LOF_n_seeds": 5,
+    "GOF_vs_LOF_mean": 0.6941836390774713,
+    "GOF_vs_LOF_std": 0.0,
+    "GOF_vs_LOF_n_seeds": 5,
+    "LOF_vs_nonLOF_mean": 0.4719649477586788,
+    "LOF_vs_nonLOF_std": 0.0,
+    "LOF_vs_nonLOF_n_seeds": 5,
+    "n_total_first": 1064
+  },
+  "deltas_vs_baseline": {
+    "family_holdout": {
+      "delta_DN_vs_LOF": 0.012986291714570664,
+      "delta_GOF_vs_LOF": 0.013755516297503934,
+      "delta_LOF_vs_nonLOF": 0.015374229538639983
+    },
+    "mmseqs_holdout": {
+      "delta_DN_vs_LOF": 0.011750755917913969,
+      "delta_GOF_vs_LOF": 0.00806568284779463,
+      "delta_LOF_vs_nonLOF": 0.010772348037537405
+    }
+  }
+}

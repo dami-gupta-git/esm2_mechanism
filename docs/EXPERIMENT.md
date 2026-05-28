@@ -14,7 +14,7 @@ If the probe succeeds, the finding is that protein language models encode not ju
 
 **Gerasimavicius et al. 2022** (Nature Communications 13:3895, OSF: 10.17605/OSF.IO/H62FQ)
 
-**Local copy:** `data/DiseaseMech_Stability_VEPS.xlsx` (233MB, gitignored). Sheet used: `ClinVar_gene_level`. SCP to new pods rather than re-downloading from OSF.
+**Local copy:** `../data/DiseaseMech_Stability_VEPS.xlsx` (233MB, gitignored). Sheet used: `ClinVar_gene_level`. SCP to new pods rather than re-downloading from OSF.
 
 - ~10,200 pathogenic ClinVar missense variants (GOF: 1,983 / DN: 894 / HI: 1,678 / AR: 5,678)
 - ~948 Mendelian disease genes (GOF: 81 / DN: 60 / HI: 82 / AR: 725)
