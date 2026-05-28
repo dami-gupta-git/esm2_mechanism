@@ -34,25 +34,25 @@ AUROC columns: GOF / DN / LOF one-vs-rest.
 
 ### 1. WT-only signal is largely paralog leakage
 
-WT-only gene-split F1 = 0.580 → family-split F1 = 0.389 (Δ = +0.191). The majority of the apparent mechanism signal disappears when protein families are held out. The probe was learning "kinases tend to be GOF, ion channels tend to be DN" — protein family identity, not mechanism per se.
+WT-only gene-split F1 = 0.580 → family-split F1 = 0.389 (Δ = +0.191). Most of the apparent mechanism signal disappears when protein families are held out. The probe was learning "kinases tend to be GOF, ion channels tend to be DN" — protein family identity, not mechanism.
 
-WT and mutant embeddings are nearly identical in performance (0.580 vs 0.579 gene-split, 0.389 vs 0.381 family-split). This confirms the signal is entirely in the protein identity, not in the mutation.
+WT and mutant embeddings are nearly identical in performance (0.580 vs 0.579 gene-split, 0.389 vs 0.381 family-split). The signal is entirely in the protein identity, not the mutation.
 
-Concatenating WT+mutant (`wt_concat_mut`) adds nothing over WT alone — and even retains slightly more signal under family-split (0.413 vs 0.389), likely because the joint representation has more capacity to find residual cross-family signal.
+Concatenating WT+mutant (`wt_concat_mut`) adds nothing over WT alone — though it does retain slightly more signal under family-split (0.413 vs 0.389), likely because the joint representation has more capacity to pick up residual cross-family signal.
 
 ### 2. Delta probe is flat: no leakage, but no signal
 
-`delta_mean` F1 stays flat at 0.279→0.281 across both CV schemes. No homology leakage (because the family identity is subtracted out), but also no mechanism signal. The mutation-specific perturbation does not linearly encode mechanism class.
+`delta_mean` F1 stays flat at 0.279→0.281 across both CV schemes. No homology leakage (the family identity gets subtracted out), but also no mechanism signal. The mutation-specific perturbation doesn't linearly encode mechanism class.
 
-`delta_per_residue` has a small leakage (0.376→0.348, Δ=+0.028) and slightly more signal than mean-pooled delta. The local context at the variant position carries a weak but real family-correlated signal.
+`delta_per_residue` has a small leakage (0.376→0.348, Δ=+0.028) and slightly more signal than mean-pooled delta. Local context at the variant position carries a weak but real family-correlated signal.
 
 ### 3. FoldX ΔΔG is family-invariant and non-trivial for DN
 
-FoldX ΔΔG is completely flat across CV schemes (0.279→0.281) — no family leakage at all, as expected for a physics-based stability score. Notably, its DN AUROC (0.614 gene-split, 0.614 family-split) is the **highest family-split DN AUROC of any feature** including the delta probe. Stability alone separates DN better than ESM-2 delta embeddings — DN mutations are thermodynamically distinctive (interface-disrupting).
+FoldX ΔΔG is completely flat across CV schemes (0.279→0.281) — no family leakage, as expected for a physics-based score. Notably, its DN AUROC (0.614 gene-split, 0.614 family-split) is the **highest family-split DN AUROC of any feature** including the delta probe. Stability alone separates DN better than ESM-2 delta embeddings — DN mutations are thermodynamically distinctive (interface-disrupting).
 
 ### 4. GOF AUROC survives family-split most robustly
 
-Across all features, the GOF AUROC drops the least under family-split relative to gene-split:
+Across all features, GOF AUROC drops the least under family-split:
 
 | Feature | GOF AUROC gene-split | GOF AUROC family-split | Retention |
 |---|---|---|---|
@@ -62,11 +62,11 @@ Across all features, the GOF AUROC drops the least under family-split relative t
 | DN wt_only | 0.804 | 0.687 | 85% |
 | LOF wt_only | 0.915 | 0.852 | 93% |
 
-GOF AUROC under family-split (0.801 for WT-only) is the highest surviving signal in the entire experiment. ESM-2 encodes something about GOF protein sequences that generalises across protein families. This is the one finding that survives the stringent homology-aware test.
+GOF AUROC under family-split (0.801 for WT-only) is the highest surviving signal in the experiment. ESM-2 encodes something about GOF protein sequences that generalises across families. This is the one finding that holds up under the stringent homology-aware test.
 
 ### 5. AlphaMissense is essentially random for mechanism
 
-AlphaMissense AUROC is 0.50 for DN and LOF — it encodes no mechanism information at all. It is a pathogenicity predictor, not a mechanism predictor, and the two are orthogonal. Interestingly, its GOF PR-AUC (0.593 gene-split, 0.589 family-split) is higher than expected — pathogenicity scores may partially track GOF because GOF mutations are often activating and score as "pathogenic."
+AlphaMissense AUROC is 0.50 for DN and LOF — it carries no mechanism information. It's a pathogenicity predictor, not a mechanism predictor, and the two are orthogonal. Interestingly, its GOF PR-AUC (0.593 gene-split, 0.589 family-split) is higher than expected — pathogenicity scores may partially track GOF because GOF mutations are often activating and score as "pathogenic."
 
 ---
 
@@ -74,16 +74,16 @@ AlphaMissense AUROC is 0.50 for DN and LOF — it encodes no mechanism informati
 
 ### What the numbers mean in plain English
 
-The WT-only probe looked promising (F1=0.58) but the signal mostly came from the probe learning which protein family a gene belongs to — kinases are GOF, ion channels are DN, structural proteins are LOF. When we hold out entire protein families from the test set, that shortcut disappears and performance drops to 0.39.
+The WT-only probe looked promising (F1=0.58) but the signal mostly came from it learning which protein family a gene belongs to — kinases are GOF, ion channels are DN, structural proteins are LOF. Hold out entire protein families and that shortcut disappears; performance drops to 0.39.
 
-The delta probe (mutant minus wildtype) genuinely avoids this problem — by subtracting the wildtype, you remove the family-identity information. But what's left (the mutation-specific shift) doesn't carry enough mechanism signal for a linear probe to find.
+The delta probe (mutant minus wildtype) genuinely avoids this problem — subtracting the wildtype removes the family-identity information. But what's left (the mutation-specific shift) doesn't carry enough mechanism signal for a linear probe to find.
 
 The one exception worth pursuing: **GOF AUROC = 0.801 under family-split for WT-only.** ESM-2 has learned something about what GOF proteins look like at the sequence level that doesn't reduce to "it's a kinase." That signal generalises across families and is the thread most worth pulling.
 
 ### What this rules out
 
-- ESM-2 delta-embeddings do not linearly encode gene-level dominant disease mechanism beyond protein stability and family identity
-- WT-only mechanism classification is not a genuine mechanism signal — it is protein family classification, and protein family correlates with mechanism in the training data
+- ESM-2 delta-embeddings don't linearly encode gene-level dominant disease mechanism beyond protein stability and family identity
+- WT-only mechanism classification is not a genuine mechanism signal — it's protein family classification, and protein family correlates with mechanism in the training data
 - AlphaMissense (a state-of-the-art variant effect predictor) carries zero mechanism information — pathogenicity and mechanism are orthogonal
 
 ### What remains open
