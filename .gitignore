@@ -226,3 +226,6 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 docs/connnect_runpod.md
+docs/PUBLISH.md
+docs/interview.md
+docs/explain.txt

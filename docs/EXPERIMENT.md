@@ -1,5 +1,7 @@
 # ESM-2 Delta-Embedding Mechanism Geometry
 
+> **Scope note (added 2026-05-28):** This document is the pre-registration for results 1–10 (the frozen ESM-2 characterisation arc). Results 11–23 (gene-level proteome features, Badonyi structural priors, within-family analysis, pathogenicity geometry) were designed post-hoc as follow-up arcs and are not covered here. See `docs/README.md` for the full results index. An **Outcomes** section is appended at the end of this document recording how each pre-registered element resolved.
+
 ## Overview
 
 Protein language models like ESM-2 encode evolutionary and biophysical constraints in their sequence representations. When a missense mutation occurs, the difference between the mutant and wildtype ESM-2 embeddings — a delta-embedding — captures how the model's representation of the protein shifts in response to the amino acid change. Prior work has established that pathogenic mutations differ systematically by molecular disease mechanism at the structural level: loss-of-function mutations are destabilizing, dominant-negative mutations cluster at protein interfaces, and gain-of-function mutations occur in disordered regions with mild stability effects (Gerasimavicius et al. 2022). Prior work has identified a dominant stability/constraint axis in ESM-2 delta-embedding space [citation needed]. What no study has asked is whether mechanism-specific geometry survives in ESM-2 delta space after the stability axis is removed — and whether GOF, DN, and LOF occupy geometrically independent directions.
@@ -188,3 +190,87 @@ No correction is applied within families, but confirmatory and exploratory tests
 ## Key scientific claim
 
 ESM-2 delta-embeddings encode gene-level dominant disease mechanism class (GOF / DN / LOF) in a way that is geometrically distinct from protein stability perturbation. The three mechanism classes occupy different directions in ESM-2 delta space. This is recoverable by a linear classifier from protein sequence alone, without structural information, and is independent of the FoldX-defined stability signal that dominates ESM-2's zero-shot variant effect predictions.
+
+---
+
+## Outcomes (added 2026-05-28)
+
+This section records how each pre-registered element resolved. All references are to `docs/result_*.md` files.
+
+### Headline probe (Section 3)
+
+**Result:** Null. Linear delta_mean macro-F1 = 0.279 under gene-split CV (result_1) — at majority-class chance level. The pre-registered effect-size scale (< 0.60 AUROC = null) was confirmed: even allowing for the different metric (F1 vs AUROC), the finding is unambiguous.
+
+The null result was initially obscured by WT-only achieving F1 = 0.580 under gene-split. Family-split CV (result_2) collapsed WT-only to F1 = 0.389, explaining this as Pfam family memorisation. The actual CV design used in the pre-registration (gene-split) was insufficiently strict; family-split became the de facto standard after results 2–4 established causal leakage.
+
+**MLP probes (exploratory, result_3/5/7):** MLP delta gene-split F1 = 0.415; family-split F1 = 0.299 ± 0.034 (Gerasimavicius, 5-seed). 62.8% of gene-split MLP signal is family-recognition leakage — exact and seed-invariant (result_7; see `result_leakage_fraction.md` for diagnostic formulation).
+
+### Stability nuisance subspace removal (Section 2)
+
+**Path A or B:** Path B was used — Megascale was not run due to infrastructure constraints. Stability subspace fit directly on Gerasimavicius FoldX ΔΔG (result_1).
+
+**Stability transfer validation (Path A threshold rho > 0.3):** Not tested — Path B was taken without attempting Path A.
+
+**Effect of projection:** Negligible. Projecting out the FoldX-fit stability subspace made no difference to probe F1 (result_1, Section on stability). Path B may have removed mechanism-correlated variance along with stability, or the probe had insufficient power to detect the difference. The stability projection was not pursued in subsequent results.
+
+**Pre-registered stability asymmetry prediction:** FALSIFIED. GOF variance explained by the stability subspace = 63%; LOF = 60%. The pre-registered prediction was that (GOF var. exp.) / (LOF var. exp.) bootstrap CI upper bound < 0.70 — the observed ratio of ~1.05 is opposite in sign to the prediction. GOF variants show slightly *more* stability variance, not less. This likely reflects Path B overfitting or a difference between FoldX ΔΔG and actual stability perturbations in this dataset (result_1, stability notes).
+
+### Gene-family-split CV (Section 4)
+
+**Result:** Critical finding, not in the pre-registration. Family-split CV was not pre-registered but was added after result_2 showed the large gene→family drop in WT-only signal. This became the de facto primary holdout for all subsequent work. Results 2–10 all use family-split as the honest evaluation baseline. The 62.8% leakage fraction on Gerasimavicius is the structural diagnostic (result_7 + result_6 Part 2).
+
+**Pfam singletons:** Handled per the pre-registered rule — dropped from family-split folds, not assigned to singleton groups.
+
+### Baselines (Section 5)
+
+**WT-only:** F1 = 0.580 gene-split → 0.389 family-split (result_2). Large gene→family drop confirms family memorisation is the primary signal source in WT embeddings.
+
+**One-hot amino acid identity:** Not run as a standalone baseline. Pre-registered but not executed.
+
+**FoldX ddG only:** Implicitly tested via the stability subspace projection (result_1); stability alone does not separate mechanism classes.
+
+**AlphaMissense:** F1 ~ 0.0 (result_2 family-split baselines). AlphaMissense carries zero mechanism information, consistent with it encoding pathogenicity not mechanism.
+
+### Negative controls (Section 6)
+
+**Shuffled delta:** Not run as a formal control. Implicit through the chance-level linear probe result.
+
+**Benign stability-matched variants:** Not run. Infrastructure not pursued (FoldX on ClinVar benign variants was not computed).
+
+### Probe direction orthogonality (Section 7)
+
+**Not run.** Once the headline probe was null under family-split, fitting pairwise probe directions and computing cosine matrices was not scientifically motivated — if there is no cross-family mechanism signal to separate, the probe directions are fitting family identity rather than mechanism geometry, and their orthogonality would not be interpretable.
+
+### Secondary analysis: interface and disorder directions (Section 8)
+
+**Not run.** The feasibility pre-check (≥500 variants in held-out genes from Livesey & Marsh / IUPred2) was not performed. After the primary probe returned null under family-split, this section was deprioritised.
+
+### ESM-2 3B robustness check (Section 9)
+
+**Not run.** After the frozen-PLM arc established a family-split ceiling of F1 ≈ 0.30–0.39 and found that nonlinear probes (MLP) do not improve family-split F1 (result_7), running a larger model under the same conditions would not change the central finding. The result_21 stability experiment (GBM on ESM-2 delta for ΔΔG) showed that nonlinearity does help stability transfer but not mechanism — confirming the mechanism-specific bottleneck. The pre-registered scale thresholds remain meaningful if future work revisits fine-tuned or task-specific models.
+
+### Per-class sample sizes and CV scheme choice
+
+**Result:** GOF has 1,983 variants and 81 genes — above the pre-registered thresholds (300 variants / 50 genes) for switching to LOGO CV. 5-fold gene-split CV was used as pre-registered.
+
+### Data section actuals
+
+| Pre-registered | Actual |
+|---|---|
+| ~10,200 pathogenic ClinVar missense variants | 10,233 variants after filtering |
+| GOF: 1,983 / DN: 894 / HI: 1,678 / AR: 5,678 | Confirmed |
+| ~948 Mendelian disease genes | 948 genes confirmed |
+
+### What the pre-registration did not anticipate
+
+1. **Family-split CV as primary holdout.** Gene-split was pre-registered; family-split was added post-hoc after result_2 revealed that gene-split inflates WT-only signal by leakage. Family-split became the de facto honest evaluation for all 23 results.
+
+2. **The leakage fraction as a structural diagnostic.** The 62.8% leakage fraction on Gerasimavicius is exact, seed-invariant, and computable from dataset structure without training. See `result_leakage_fraction.md`.
+
+3. **Post-hoc arcs (results 11–23).** After establishing the ESM-2 ceiling (results 1–10), the project expanded to gene-level proteome features (results 11–14), Badonyi structural priors (results 15–16), perturbation pattern analysis (results 19–20), stability geometry (result 21), log-likelihood scan (result 22), and pathogenicity/stability/mechanism geometry contrast (result 23). These were not pre-registered and are documented in `docs/README.md`.
+
+4. **Pathogenicity positive control (result 6).** Not in the pre-registration. Added to establish pipeline soundness and the pathogenicity–mechanism dissociation under identical conditions.
+
+### Summary verdict on the pre-registered hypothesis
+
+The central hypothesis — that ESM-2 delta-embeddings encode gene-level dominant disease mechanism beyond protein stability — is **not supported under the project's family-split CV standard.** Family-split macro-F1 = 0.299 ± 0.034 (Gerasimavicius, MLP, 5-seed) — near the majority-class baseline of 0.279. 62.8% of the gene-split signal is family-recognition leakage. Stability projection (Path B) had no effect. The pathogenicity–mechanism dissociation (pathogenicity AUROC 0.74–0.88 vs mechanism F1 0.30–0.39, both family-split-stable) is the central finding of the ESM-2 arc. Mechanism signal that does exist in ESM-2 delta is family-correlated and does not generalise across held-out families.

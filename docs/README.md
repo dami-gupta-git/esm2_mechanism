@@ -61,7 +61,7 @@ The experimental work is essentially done. Remaining: writeup consolidation, one
 - Merged dataset family-split **0.352** seed 0 → **0.385 ± 0.018 5-seed**
 - Always-predict-LOF baseline: **0.279** (Gerasimavicius), **0.311** (gene-level merged)
 - Family-split floor under multi-seed: **F1 = 0.30 (Gerasimavicius) / 0.39 (merged)** — merged is the more reliable headline
-**What it concludes:** The floor is real but lower than the single-seed numbers in this file. The pathogenicity-mechanism dissociation holds (pathogenicity 0.74–0.88 vs mechanism 0.30–0.39, both family-split-stable). The GOF AUROC (0.557 ± 0.036 Geras / 0.655 ± 0.014 merged delta MLP) is the strongest mechanism-class signal that survives family-split, distinct from the WT-only GOF AUROC of 0.73–0.80 which captures gene identity rather than mutation effect. See PUBLISH.md for v1/v2/v3 paper plan.
+**What it concludes:** The floor is real but lower than the single-seed numbers in this file. The pathogenicity-mechanism dissociation holds (pathogenicity 0.74–0.88 vs mechanism 0.30–0.39, both family-split-stable). The GOF AUROC (0.557 ± 0.036 Geras / 0.655 ± 0.014 merged delta MLP) is the strongest mechanism-class signal that survives family-split, distinct from the WT-only GOF AUROC of 0.73–0.80 which captures gene identity rather than mutation effect.
 
 ### 8. `result_8.md` — Within-family mechanism (first pass)
 **Script:** ad-hoc analysis on cached Gerasimavicius embeddings · Local CPU, seed=42
@@ -157,14 +157,11 @@ The experimental work is essentially done. Remaining: writeup consolidation, one
 
 **The narrative shape:** frozen-PLM negative result (1–10) → gene-level proteome features beat ESM-2 (11–13) → clinical utility narrows to one column (14) → structural priors beat both (15) → within-family signal lives in within-family proteome variation (16). ESM-2 is dispensable throughout. The modality ordering — structural > proteome > sequence — is consistent across family-split and MMseqs2-20 holdouts.
 
-**Publication plan:** `PUBLISH.md` (recently updated) — v1 covers results 1–10 dissociation; v2 adds results 11–16 modality comparison + clinical utility + within-family + Badonyi holdout robustness; v3 adds DDG2P + SaProt/ESM-3.
-
 ---
 
 ## Supporting docs
 
 - `EXPERIMENT.md` — Pre-registration document (original ESM-2 hypothesis, results 1–10 scope)
-- `PUBLISH.md` — Publication plan: v1/v2/v3 versioned bioRxiv strategy; updated 2026-05-26 to reflect results 11–16
 - `plan_experiment.md` — Experiment 11 plan: per-variant ESM-2 + gene-level proteome features (staged execution: pilot → V2 → V3 → V4)
 - `plan_esm2_proteome.md` — Detailed Phase 1+2 plan for proteome feature engineering
 - `plan_clinical.md` — Clinical utility analysis plan (result 14)
@@ -214,7 +211,7 @@ Feature matrices:
 
 The experimental matrix is essentially complete. What's left:
 
-1. **One master figure** — bar chart of macro-F1 / per-class AUROC × modality (V1/V2/V_bad/V2+bad) × holdout (family-split / MMseqs2-20). Referenced from PUBLISH.md v2 plan. ~half day.
+1. **One master figure** — bar chart of macro-F1 / per-class AUROC × modality (V1/V2/V_bad/V2+bad) × holdout (family-split / MMseqs2-20). ~half day.
 2. **Bootstrap CIs on headline numbers** — V_bad and V2+bad DN AUROC have seed std but not within-seed CIs. ~2 hours.
 3. **Calibration analysis on V2+bad** — reliability diagram and ECE. ~1 hour.
 4. **Path B (raw structural features de novo)** — compute FoldX ΔΔG, SASA, SCRIBER, RSA on AF2 structures for the merged gene set; re-evaluate V_struct vs V_bad. Optional rigour upgrade; ~several days including FoldX runtime. Skip unless reviewer specifically pushes back.
