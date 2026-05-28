@@ -2,19 +2,21 @@
 
 **This is a standalone research project, not an AI Scientist run.** All experiments were designed and executed manually. The code lives in `esm2_mechanism/scripts/` and was run directly on RunPod (A100 80GB) or local CPU. The project will likely move to its own repository.
 
-Sixteen `result_*.md` files written across May 23–26, 2026. Read in the order below for the coherent narrative arc. Results 3 and 5 are superseded by result 7.
+Twenty-three `result_*.md` files written across May 23–28, 2026, plus `result_leakage_fraction.md` (working note). Read in the order below for the coherent narrative arc. Results 3 and 5 are superseded by result 7.
 
 ---
 
-## Current state (as of result 16, 2026-05-26)
+## Current state (as of result 23, 2026-05-28)
 
-The project has three connected arcs:
+The project has four connected arcs:
 
 1. **Results 1–10 — frozen ESM-2 characterisation.** Mechanism floor under family-split CV is **F1 = 0.385 ± 0.018 (merged, 5-seed) / 0.299 ± 0.034 (Gerasimavicius, 5-seed)** — see result_6 Part 2 for the multi-seed correction. Clan-holdout shows ~half the family-split signal is fold memorisation (result 10). Pathogenicity positive control AUROC 0.74–0.88 across replications, family-split-stable (gene→family Δ ≈ 0 reproducibly; result 6) — confirms pipeline soundness and establishes the pathogenicity–mechanism dissociation. 62.8% of gene-split mechanism signal is family-recognition leakage on Gerasimavicius (exact, seed-invariant — structural property of the dataset; result 7 + result 6 Part 2).
 
 2. **Results 11–14 — gene-level proteome features.** A 4-feature pilot (result 11) hits macro-F1 0.417 family-split. The 37-feature matrix (result 12, sources: gnomAD, paralogs, HPA, PaxDb, BioPlex, ClinGen) gives V2 macro-F1 = 0.462 ± 0.025 — outperforming frozen ESM-2 delta (V1, 0.382) by +0.080 (result 13). Per-gene scoring lifts the V2 advantage to +0.101. Combining ESM-2 + proteome (V3) does not reliably improve over V2 alone (Gate 2 fails 3/5 seeds). Feature ablation (T4) shows constraint + dosage are load-bearing; the proteome-biology features (PPI, paralogs, abundance) contribute little to aggregate F1 but matter per-class. Clinical utility (result 14) collapses to a single column: paralog count alone achieves AUROC 0.746 within ClinGen HI=3, beating the full 37-feature model (0.650). Calibration is poor; operating-point performance is weak.
 
 3. **Results 15–16 — Badonyi structural priors + within-family.** Badonyi 2024's SVM probabilities (3 features) beat ESM-2 (+0.104 macro-F1) and proteome (+0.022). V2+bad reaches macro-F1 = 0.511 and DN AUROC = 0.827 — the project's high-water mark (result 15). ESM-2 is the dispensable modality (V1+bad < V_bad). Robustness analyses (result 15 Appendix A: leakage triage; Appendix B: MMseqs2-20 cluster-holdout) confirm the lift is real and survives a stricter sequence-similarity holdout matched to Saadat & Fellay 2025. Within families (result 16), residual proteome features (gene minus family-mean) achieve F1 = 0.514 in LOGO CV across 24 Pfam families. Badonyi residuals add nothing within-family — the structural prior carries only cross-family signal. Homeodomains (n=30, F1=0.633) are the anchor example. The result 16 addendum tests Badonyi's *raw published model* under family-split: it passes the leakage-free criterion but shows a per-gene training-set fit effect (LOF AUROC 0.625 in-training vs 0.472 never-seen) — does not affect V_bad/V2+bad validity, but affects how Badonyi's published numbers should be cited.
+
+4. **Results 17–23 — pathogenicity geometry, perturbation scans, stability, AlphaMissense.** AlphaMissense is family-robust on ClinVar (mean per-family AUROC 0.948 ± 0.046; result 17) but not on ProteinGym DMS labels (mean per-assay AUROC 0.721 ± 0.150, 32% below 0.70; result 18) — the tight ClinVar distribution reflects curation–training overlap, not general family-robustness. ClinVar variant pattern features (spatial hotspot vs spread) give nearly leak-free GOF signal (family-split AUROC 0.646; result 19); the unbiased in-silico scan loses that GOF signal alone (F1 0.272) but adds orthogonal signal to proteome (V2+scan F1 0.413; result 20). Stability in ESM-2 delta is nonlinearly encoded but cross-family transferable (GBM Pfam-split AUROC 0.750 vs linear 0.597; result 21) — the sharpest contrast with mechanism, where nonlinearity does not rescue family-split performance. Log-likelihood scan gives no improvement over the embedding scan (LL-only F1 0.261; result 22), confirming the bottleneck is sampling density not readout. Pathogenicity is carried by delta direction not magnitude (direction AUROC 0.896 vs magnitude 0.664; result 23); that direction IS conservation (masked-LL alone 0.891 family-split); conservation transfers linearly for pathogenicity, nonlinearly for stability, and not at all for mechanism — the transferability is task- and probe-dependent within one frozen model.
 
 The experimental work is essentially done. Remaining: writeup consolidation, one master figure, optional rigour (bootstrap CIs, calibration on V2+bad), optional Path B (raw structural features de novo).
 
@@ -139,7 +141,45 @@ The experimental work is essentially done. Remaining: writeup consolidation, one
 
 ---
 
-## The coherent story across all 16
+### 17. `result_17.md` — AlphaMissense is family-robust on ClinVar
+**Script:** `alphamissense_family_split.py` · **Run:** May 26, 16,334 ClinVar variants, 182 Pfam families
+**Headline numbers:** Overall AUROC = **0.940**. Per-family AUROC mean **0.948 ± 0.046**, median 0.960, IQR 0.923–0.983. **0% of families below AUROC 0.70**.
+**What it concludes:** result_6's family-robustness finding (ESM-2 pathogenicity probe Δ ≈ 0 gene→family) generalises to the published clinical predictor. Caveat: ClinVar–AM training-logic overlap may inflate the absolute number; the tight per-family *distribution* is the durable finding.
+**Open question after reading:** *Does the tight distribution survive when labels come from physical experiments rather than clinical curation?*
+
+### 18. `result_18.md` — AlphaMissense on ProteinGym: family-robustness narrows without training–test overlap
+**Script:** `proteingym_alphamissense.py` · 91 human DMS assays (ProteinGym v1.3)
+**Headline numbers:** Per-assay AUROC mean **0.721 ± 0.150**, range 0.170–0.957. **32% of assays below AUROC 0.70; 14% below 0.60**.
+**What it concludes:** The tight ClinVar distribution is partly underwritten by curation–training overlap. On physical DMS labels the distribution is wide and bimodal — failures cluster on OOD assays (thermal-stability mini-proteins, less-studied proteins), not classic disease genes. Reframes result_17 as a within-curation-distribution claim.
+
+### 19. `result_19.md` — ClinVar variant pattern features: spatial hotspot distribution predicts mechanism with near-zero leakage
+**Script:** `perturbation_pattern.py` · CPU, seeds 0–4, Gerasimavicius merged
+**Headline numbers:** 8 scalar features from spatial distribution of ClinVar delta magnitudes. GOF AUROC **0.646** (vs 0.578 baseline). Family-split F1 **0.399**. Gene-split ≈ family-split — near-zero leakage.
+**What it concludes:** GOF hotspot biology (mutations must hit specific sites to activate) vs LOF spread (can break anywhere) is readable from observed ClinVar variant positions via ESM-2 perturbation magnitudes. Signal is real but depends on observing ClinVar variants (circularity concern — addressed in result 20).
+
+### 20. `result_20.md` — In-silico perturbation scan: unbiased hotspot features add to proteome but fail alone
+**Scripts:** `perturbation_scan.py`, `perturbation_probe.py` · GPU H100, seeds 0–4, ~568k forward passes
+**Headline numbers:** Scan-only family-split F1 = **0.272** (below G1 threshold 0.368). V2+scan F1 = **0.413** (passes G3 threshold 0.405).
+**What it concludes:** Removing ClinVar circularity via systematic in-silico scan loses the GOF hotspot signal when used alone, but scan features add orthogonal information to proteome features. Not a standalone modality; a useful complement.
+
+### 21. `result_21.md` — Stability is nonlinearly encoded and cross-family transferable; mechanism is not
+**Scripts:** `megascale_stability.py`, `megascale_mlp.py` · GPU A100, S1724 benchmark (1,277 variants, 27 proteins)
+**Headline numbers:** Linear Pfam-split AUROC = 0.597. GBM Pfam-split AUROC = **0.750** (≈ linear in-distribution 0.764). RF = 0.735.
+**What it concludes:** Stability signal in ESM-2 delta lives in a curved cross-family submanifold — nonlinearly organised but transferable. Mechanism MLP lift evaporates under family-split (result 7); stability GBM lift does not. This is the sharpest task-level distinction in the embedding space.
+
+### 22. `result_22.md` — Log-likelihood scan: sharper readout, same sampling problem
+**Script:** `ll_scan.py` · GPU H100, seeds 0–4, ~198k forward passes
+**Headline numbers:** LL-only family-split F1 = **0.261** (worse than embedding scan 0.272). All gates fail.
+**What it concludes:** The readout (L2 distance vs log-likelihood) is not the bottleneck in result_20. Sparse 100-position sampling is. Follow-up would need denser or adaptive sampling.
+
+### 23. `result_23.md` — Pathogenicity is direction (= conservation), not magnitude; transferability is task- and probe-dependent
+**Scripts:** `magnitude_direction.py`, `direction_geometry.py`, `transfer_contrast.py`, `conservation_axis.py` · GPU + CPU, 5 seeds
+**Headline numbers:** Direction AUROC **0.896** (≈ full delta 0.884); magnitude AUROC **0.664**. Masked-LL alone = **0.891** (beats embedding direction 0.835 — embedding adds nothing). Conservation transfer: pathogenicity linear 0.815 / GBM 0.889; stability GBM 0.750 (nonlinear manifold); mechanism linear 0.520 / GBM 0.540 (chance).
+**What it concludes:** The pre-registered hypothesis (pathogenicity = magnitude) is falsified. Pathogenicity is direction, and that direction IS conservation. Conservation transfers linearly for pathogenicity, only nonlinearly for stability, and not at all for mechanism. Transferability is task- and probe-dependent within one frozen model.
+
+---
+
+## The coherent story across all 23
 
 1. **(1–2)** Linear probes are at chance on delta. WT-only F1=0.58 collapses to 0.39 under family-split — most apparent mechanism signal is family identity.
 2. **(4)** ESM-2 strongly clusters by Pfam (26× purity) and 74.8% of genes share their family's modal mechanism — the causal explanation.
@@ -154,8 +194,13 @@ The experimental work is essentially done. Remaining: writeup consolidation, one
 11. **(14)** Clinical utility reduces to paralog_count alone (AUROC 0.746 within HI=3) beating the multi-feature model. Calibration poor; operating-point performance weak.
 12. **(15)** Badonyi structural prior (3 features) beats ESM-2 (1280 dims) and proteome (37 dims). V2+bad is the high-water mark (F1=0.511, DN AUROC=0.827). Robust under leakage triage and MMseqs2-20 cluster-split.
 13. **(16)** Within-family mechanism lives in residual proteome features (F1=0.514 in LOGO across 24 families); Badonyi residuals add nothing within-family. Homeodomains are the cleanest case. Badonyi's raw published model is family-recognition-robust but shows per-gene training-set fit on LOF.
+14. **(17–18)** AlphaMissense is family-robust on ClinVar (mean per-family AUROC 0.948) but not on ProteinGym DMS (mean 0.721, 32% below 0.70) — the tight ClinVar distribution reflects curation–training overlap, not general robustness.
+15. **(19–20)** ClinVar variant pattern (hotspot vs spread) gives near-leak-free GOF signal (AUROC 0.646); unbiased in-silico scan loses that signal alone but adds orthogonally to proteome.
+16. **(21)** Stability in ESM-2 delta is nonlinearly cross-family transferable (GBM 0.750 Pfam-split); mechanism is not — the sharpest task-level distinction in the embedding space.
+17. **(22)** LL scan readout doesn't improve on embedding scan; sampling density is the bottleneck.
+18. **(23)** Pathogenicity = direction = conservation. Conservation transfers linearly for pathogenicity, nonlinearly for stability, not at all for mechanism. Unifies the cross-result pattern.
 
-**The narrative shape:** frozen-PLM negative result (1–10) → gene-level proteome features beat ESM-2 (11–13) → clinical utility narrows to one column (14) → structural priors beat both (15) → within-family signal lives in within-family proteome variation (16). ESM-2 is dispensable throughout. The modality ordering — structural > proteome > sequence — is consistent across family-split and MMseqs2-20 holdouts.
+**The narrative shape:** frozen-PLM negative result (1–10) → gene-level proteome features beat ESM-2 (11–13) → clinical utility narrows to one column (14) → structural priors beat both (15) → within-family signal lives in within-family proteome variation (16) → pathogenicity geometry and AlphaMissense robustness characterised (17–18) → perturbation scans bound the ClinVar-pattern signal (19–20) → stability is nonlinearly transferable, mechanism is not (21–22) → conservation unifies the transferability gradient (23). ESM-2 is dispensable for mechanism throughout. The only family-transferable signal it carries is conservation, which fully explains pathogenicity and partially explains stability but leaves mechanism at chance.
 
 ---
 
@@ -166,7 +211,6 @@ The experimental work is essentially done. Remaining: writeup consolidation, one
 - `plan_esm2_proteome.md` — Detailed Phase 1+2 plan for proteome feature engineering
 - `plan_clinical.md` — Clinical utility analysis plan (result 14)
 - `plan_badonyi.md` — Pre-registration for Badonyi raw-model holdout (result 16 addendum)
-- `explain.txt` — Plain-English explanation of the original experiment design (result 1–2 era)
 - `progress_notes.md` — Running log of decisions, bugs fixed, observations
 - `../scripts/README.md` — What each script does
 
