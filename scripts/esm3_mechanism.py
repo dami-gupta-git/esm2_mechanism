@@ -56,11 +56,12 @@ PFAM_JSON      = DATA / "pfam_families.json"
 EMB_SEQ        = EMB / "esm3_geras_seq_mean.npy"
 EMB_SEQ_STRUCT = EMB / "esm3_geras_seq_struct_mean.npy"
 EMB_VALID_IDX  = EMB / "esm3_geras_valid_idx.npy"   # indices of non-skipped variants
+STRUCT_META    = EMB / "esm3_geras_struct_meta.json" # structure-application coverage (phase 2)
 
 # AF2 structure token cache (phase 1 output)
 STRUCT_TOKENS  = DATA / "cache" / "esm3_struct_tokens.json"
 
-ESM3_MODEL  = "esm3-sm-open-v1"   # 1.4B, open weights
+ESM3_MODEL  = "esm3-sm-open-v1"   # 1.4B open weights, loaded via ESM3_sm_open_v0()
 AF2_API_URL = "https://alphafold.ebi.ac.uk/api/prediction/{uniprot_id}"
 
 # Match result_7 exactly
@@ -125,7 +126,6 @@ def phase1_structure_tokens() -> None:
     Genes without AF2 structures fall back to seq-only in phase 2.
     """
     try:
-        from esm.models.esm3 import ESM3
         from esm.sdk.api import ESMProtein
         from esm.utils.structure.protein_chain import ProteinChain
     except ImportError:
@@ -378,6 +378,17 @@ def phase2_extract_embeddings(batch_size: int = 4) -> None:
           f"({100*n_struct_applied/max(1,len(valid_indices)):.1f}%)")
     print(f"Structure coord-length fallbacks: {struct_fallback_count[0]}")
 
+    # Persist structure coverage for phase 3 / result_26 (counts reflect this run;
+    # may undercount if phase 2 was resumed from a checkpoint).
+    STRUCT_META.write_text(json.dumps({
+        "n_variants_total":       n,
+        "n_variants_embedded":    len(valid_indices),
+        "n_variants_skipped":     n_skipped,
+        "n_structure_applied":    n_struct_applied,
+        "structure_applied_frac": n_struct_applied / max(1, len(valid_indices)),
+        "n_struct_coord_fallback": struct_fallback_count[0],
+    }, indent=2))
+
     for cond in remaining_conds:
         wt_arr = np.array(wt_embs[cond])
         mut_arr = np.array(mut_embs[cond])
@@ -405,8 +416,8 @@ def _run_mlp(X: np.ndarray, y: np.ndarray, splits: list, n_classes: int,
     """
     import torch
     import torch.nn as nn
+    from torch.utils.data import DataLoader, TensorDataset
 
-    torch.manual_seed(seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     all_pred, all_true, all_proba = [], [], []
 
@@ -416,7 +427,7 @@ def _run_mlp(X: np.ndarray, y: np.ndarray, splits: list, n_classes: int,
         if len(set(y_tr)) < 2:
             continue
 
-        # 15% validation split for early stopping
+        # 15% validation split — matches result_7 exactly
         rng = np.random.RandomState(seed + fold_i)
         idx = np.arange(len(y_tr)); rng.shuffle(idx)
         n_val = max(1, int(0.15 * len(idx)))
@@ -434,39 +445,41 @@ def _run_mlp(X: np.ndarray, y: np.ndarray, splits: list, n_classes: int,
         counts = np.bincount(y_tr, minlength=n_classes).astype(np.float32)
         cw = torch.tensor(1.0 / (counts + 1e-8)).to(device)
 
-        model = nn.Sequential(
-            nn.Linear(X_fit.shape[1], 256), nn.ReLU(), nn.Dropout(0.3),
-            nn.Linear(256, 64),             nn.ReLU(), nn.Dropout(0.3),
-            nn.Linear(64, n_classes),
-        ).to(device)
-        opt = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-3)
-        loss_fn = nn.CrossEntropyLoss(weight=cw)
+        layers = []
+        prev = X_fit.shape[1]
+        for h in (256, 64):
+            layers += [nn.Linear(prev, h), nn.ReLU(), nn.Dropout(0.3)]
+            prev = h
+        layers.append(nn.Linear(prev, n_classes))
+        mlp = nn.Sequential(*layers).to(device)
+        opt = torch.optim.Adam(mlp.parameters(), lr=1e-3, weight_decay=1e-3)
+        crit = nn.CrossEntropyLoss(weight=cw)
 
-        best_val, patience, best_state = float("inf"), 0, None
+        ds = TensorDataset(torch.tensor(X_fit), torch.tensor(y_fit, dtype=torch.long))
+        loader = DataLoader(ds, batch_size=256, shuffle=True)
+
+        best_val, patience_cnt, best_state = float("inf"), 0, None
         for epoch in range(100):
-            model.train()
-            for b in range(0, len(X_fit), 256):
-                xb = torch.tensor(X_fit[b:b+256]).to(device)
-                yb = torch.tensor(y_fit[b:b+256]).to(device)
-                opt.zero_grad(); loss_fn(model(xb), yb).backward(); opt.step()
-            model.eval()
+            mlp.train()
+            for xb, yb in loader:
+                opt.zero_grad(); crit(mlp(xb.to(device)), yb.to(device)).backward(); opt.step()
+            mlp.eval()
             with torch.no_grad():
-                vl = loss_fn(model(torch.tensor(X_val).to(device)),
-                             torch.tensor(y_val).to(device)).item()
+                vl = crit(mlp(torch.tensor(X_val).to(device)),
+                          torch.tensor(y_val, dtype=torch.long).to(device)).item()
             if vl < best_val - 1e-4:
-                best_val = vl; patience = 0
-                best_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
+                best_val = vl; patience_cnt = 0
+                best_state = {k: v.clone() for k, v in mlp.state_dict().items()}
             else:
-                patience += 1
-                if patience >= 10:
+                patience_cnt += 1
+                if patience_cnt >= 10:
                     break
 
         if best_state:
-            model.load_state_dict({k: v.to(device) for k, v in best_state.items()})
-        model.eval()
+            mlp.load_state_dict(best_state)
+        mlp.eval()
         with torch.no_grad():
-            logits = model(torch.tensor(X_te_n).to(device))
-            proba  = torch.softmax(logits, dim=-1).cpu().numpy()
+            proba = torch.softmax(mlp(torch.tensor(X_te_n).to(device)), dim=1).cpu().numpy()
         pred = proba.argmax(axis=1)
         all_pred.append(pred); all_true.append(y_te); all_proba.append(proba)
 
@@ -614,7 +627,8 @@ def phase3_probes() -> None:
     print(f"  M3: seq_struct − seq > {M3_THRESHOLD:.3f}                 → {fmt(gap, m3)}")
 
     if m1 is False:
-        print("\n  Interpretation: NULL CONFIRMED — mechanism not recoverable from ESM-3 regardless of modality.")
+        print("\n  Interpretation: NULL CONFIRMED — mechanism not recoverable from ESM-3 "
+              "sequence or sequence+structure representations (function tokens not tested).")
     elif m1 and m2 is False and m3:
         print("\n  Interpretation: STRUCTURE RESCUES MECHANISM — structure tokens are the operative ingredient.")
     elif m1 and m2:
@@ -622,10 +636,13 @@ def phase3_probes() -> None:
     elif m1 and m3 is False:
         print("\n  Interpretation: ESM-3 better than ESM-2 but structure tokens not the reason.")
 
+    struct_meta = json.loads(STRUCT_META.read_text()) if STRUCT_META.exists() else None
+
     summary = {
         "esm2_baseline_family_split_f1": ESM2_FAMILY_F1,
         "m1_threshold": M1_THRESHOLD,
         "conditions": "seq, seq_struct (function tokens not implemented)",
+        "structure_coverage": struct_meta,
         "results": results,
         "decision_rules": {
             "M1": {"criterion": f"seq_struct family-split F1 > {M1_THRESHOLD:.3f}",
