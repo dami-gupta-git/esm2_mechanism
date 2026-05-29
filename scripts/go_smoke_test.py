@@ -20,6 +20,7 @@ Outputs:
 import gzip, io, json, os, sys, urllib.request
 import numpy as np
 from collections import defaultdict
+from utils_probes import gene_split_cv, family_split_cv
 import functools
 print = functools.partial(print, flush=True)
 
@@ -180,32 +181,6 @@ def load_gene_embeddings(genes, gene_to_uniprot):
 
 
 # ── CV ────────────────────────────────────────────────────────────────────────
-
-def gene_split_cv(genes, n_folds=5, seed=42):
-    u = np.array(sorted(set(genes)))
-    np.random.RandomState(seed).shuffle(u)
-    splits = []
-    for fold in np.array_split(u, n_folds):
-        te = np.where(np.isin(genes, fold))[0]
-        tr = np.where(~np.isin(genes, fold))[0]
-        if len(tr) >= 10 and len(te) >= 5:
-            splits.append((tr, te))
-    return splits
-
-
-def family_split_cv(genes, pfam_map, n_folds=5, seed=42):
-    g2p = {g: pfam_map[g] for g in np.unique(genes) if pfam_map.get(g)}
-    fams = np.array(sorted(set(g2p.values())))
-    np.random.RandomState(seed).shuffle(fams)
-    n = len(genes)
-    splits = []
-    for fold_fams in np.array_split(fams, n_folds):
-        fs = set(fold_fams)
-        te = np.array([genes[i] in g2p and g2p[genes[i]] in fs  for i in range(n)])
-        tr = np.array([genes[i] in g2p and g2p[genes[i]] not in fs for i in range(n)])
-        if tr.sum() >= 10 and te.sum() >= 5:
-            splits.append((np.where(tr)[0], np.where(te)[0]))
-    return splits
 
 
 def run_logreg_binary(X, y, splits, seed=42):

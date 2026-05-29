@@ -34,7 +34,7 @@ import numpy as np
 import pandas as pd
 from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import LabelEncoder, StandardScaler
-from utils_probes import compute_metrics, per_gene_f1
+from utils_probes import compute_metrics, per_gene_f1, family_split_indices
 import functools
 print = functools.partial(print, flush=True)
 
@@ -130,17 +130,6 @@ def load_badonyi_train_flags():
 # ---------------------------------------------------------------------------
 # CV
 # ---------------------------------------------------------------------------
-
-def family_split_indices(groups, n_folds, seed):
-    rng = np.random.RandomState(seed)
-    unique_fams = np.array(sorted(f for f in set(groups) if f is not None))
-    rng.shuffle(unique_fams)
-    fam_fold = {f: i % n_folds for i, f in enumerate(unique_fams)}
-    fold_of = np.array([fam_fold[g] for g in groups])
-    for k in range(n_folds):
-        test = np.where(fold_of == k)[0]
-        train = np.where(fold_of != k)[0]
-        yield train, test
 
 
 def _align_proba(proba, clf_classes):

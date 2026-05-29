@@ -55,6 +55,7 @@ from typing import Optional
 import numpy as np
 import functools
 print = functools.partial(print, flush=True)
+from utils_probes import family_split_indices
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -395,18 +396,6 @@ def build_feature_table(
 # ---------------------------------------------------------------------------
 # Step 6 — Family-split CV models
 # ---------------------------------------------------------------------------
-def family_split_indices(groups: np.ndarray, n_folds: int, seed: int):
-    """Yield (train_idx, test_idx) where families do not overlap across folds."""
-    rng = np.random.RandomState(seed)
-    unique_fams = np.array(sorted(f for f in set(groups) if f is not None))
-    rng.shuffle(unique_fams)
-    fam_fold = {f: i % n_folds for i, f in enumerate(unique_fams)}
-    fold_of = np.array([fam_fold[g] for g in groups])
-    for k in range(n_folds):
-        test = np.where(fold_of == k)[0]
-        train = np.where(fold_of != k)[0]
-        yield train, test
-
 
 def evaluate_model(model, X: np.ndarray, y: np.ndarray, groups: np.ndarray,
                    n_folds: int = 5, seed: int = 0) -> dict:

@@ -21,6 +21,7 @@ import warnings
 import numpy as np
 from sklearn.metrics import roc_auc_score, f1_score
 from sklearn.preprocessing import LabelEncoder
+from utils_probes import gene_split_cv
 import functools
 print = functools.partial(print, flush=True)
 
@@ -93,25 +94,6 @@ def load_embeddings(emb_dir, model_name=ESM2_MODEL_650M, prefix=""):
 
 
 # ---------------------------------------------------------------------------
-# Gene-split CV (same logic as experiment.py)
-# ---------------------------------------------------------------------------
-
-def gene_split_cv(genes, n_folds=5, seed=42):
-    unique_genes = np.array(sorted(set(genes)))
-    rng = np.random.RandomState(seed)
-    rng.shuffle(unique_genes)
-    gene_folds = np.array_split(unique_genes, n_folds)
-    splits = []
-    for fold_genes in gene_folds:
-        fold_gene_set = set(fold_genes)
-        test_mask = np.array([g in fold_gene_set for g in genes])
-        train_mask = ~test_mask
-        if train_mask.sum() < 10 or test_mask.sum() < 5:
-            continue
-        splits.append((np.where(train_mask)[0], np.where(test_mask)[0]))
-    return splits
-
-
 # ---------------------------------------------------------------------------
 # MLP probe (PyTorch)
 # ---------------------------------------------------------------------------

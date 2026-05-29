@@ -29,11 +29,11 @@ from pathlib import Path
 
 import numpy as np
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import f1_score, roc_auc_score
 from sklearn.neural_network import MLPClassifier
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 from utils_probes import (
     family_split_indices, compute_metrics, aggregate_folds, align_proba,
+    per_gene_f1,
 )
 import functools
 print = functools.partial(print, flush=True)
@@ -113,25 +113,6 @@ def broadcast_gene_features(genes: np.ndarray, matrix: np.ndarray,
 # ---------------------------------------------------------------------------
 # Per-gene T2 scoring (aggregate variant-level proba → gene-level)
 # ---------------------------------------------------------------------------
-
-def per_gene_f1(y_true_variants: np.ndarray,
-                proba_variants: np.ndarray,
-                genes_variants: np.ndarray) -> float:
-    """Aggregate per-variant probabilities to per-gene predictions and compute macro-F1."""
-    unique_genes = list(set(genes_variants.tolist()))
-    y_gene, pred_gene = [], []
-    for g in unique_genes:
-        mask = genes_variants == g
-        labels_g = y_true_variants[mask]
-        # majority label as true gene label
-        true_label = int(np.bincount(labels_g).argmax())
-        # mean proba across variants
-        mean_proba = proba_variants[mask].mean(0)
-        pred_label = int(mean_proba.argmax())
-        y_gene.append(true_label)
-        pred_gene.append(pred_label)
-    return float(f1_score(y_gene, pred_gene, average="macro", zero_division=0))
-
 
 # ---------------------------------------------------------------------------
 # Runners

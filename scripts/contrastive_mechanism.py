@@ -32,6 +32,7 @@ import numpy as np
 from sklearn.metrics import roc_auc_score, f1_score
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.preprocessing import LabelEncoder
+from utils_probes import gene_split_cv, family_split_cv
 import functools
 print = functools.partial(print, flush=True)
 
@@ -82,44 +83,7 @@ def load_pfam(data_dir, genes):
     print(f"Pfam coverage: {n_annotated}/{len(genes)} genes")
     return gene_pfam, pfam_map
 
-# ---------------------------------------------------------------------------
-# CV splits
-# ---------------------------------------------------------------------------
 
-def family_split_cv(genes, gene_pfam, pfam_map, n_folds=5, seed=42):
-    """Family-disjoint CV: held-out test folds contain entire Pfam families."""
-    gene_to_pfam = {g: pfam_map.get(g) for g in np.unique(genes)}
-    annotated_mask = np.array([gene_to_pfam.get(g) is not None for g in genes])
-
-    unique_fams = sorted(set(v for v in gene_to_pfam.values() if v is not None))
-    rng = np.random.RandomState(seed)
-    fam_arr = np.array(unique_fams)
-    rng.shuffle(fam_arr)
-
-    splits = []
-    for fold_fams in np.array_split(fam_arr, n_folds):
-        fold_set = set(fold_fams)
-        te = annotated_mask & np.array([gene_to_pfam.get(g) in fold_set for g in genes])
-        tr = annotated_mask & ~te
-        if tr.sum() >= 20 and te.sum() >= 10:
-            splits.append((np.where(tr)[0], np.where(te)[0]))
-
-    print(f"Family-split: {len(splits)} folds, {len(unique_fams)} families")
-    return splits
-
-
-def gene_split_cv(genes, n_folds=5, seed=42):
-    unique_genes = np.array(sorted(set(genes)))
-    rng = np.random.RandomState(seed)
-    rng.shuffle(unique_genes)
-    splits = []
-    for fold_genes in np.array_split(unique_genes, n_folds):
-        fold_set = set(fold_genes)
-        te = np.array([g in fold_set for g in genes])
-        tr = ~te
-        if tr.sum() >= 20 and te.sum() >= 10:
-            splits.append((np.where(tr)[0], np.where(te)[0]))
-    return splits
 
 # ---------------------------------------------------------------------------
 # Supervised contrastive loss
@@ -448,7 +412,7 @@ def main():
 
     print("\n=== Building CV splits ===")
     gene_splits = gene_split_cv(genes, n_folds=args.n_folds, seed=args.seed)
-    fam_splits = family_split_cv(genes, gene_pfam, pfam_map,
+    fam_splits = family_split_cv(genes, pfam_map,
                                   n_folds=args.n_folds, seed=args.seed)
     print(f"Gene-split: {len(gene_splits)} folds | Family-split: {len(fam_splits)} folds")
 

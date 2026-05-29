@@ -38,6 +38,7 @@ import numpy as np
 from sklearn.metrics import f1_score, roc_auc_score
 from sklearn.neural_network import MLPClassifier
 from sklearn.preprocessing import LabelEncoder, StandardScaler
+from utils_probes import gene_split_cv, family_split_cv
 
 print = functools.partial(print, flush=True)
 warnings.filterwarnings("ignore")
@@ -117,38 +118,6 @@ def load_proteome_features(data_dir: Path) -> tuple:
     print(f"Proteome features: {X.shape}, {len(genes)} genes")
     return X, genes
 
-
-# ---------------------------------------------------------------------------
-# CV splits (mirroring utils_probes.py but operating on gene-level arrays)
-# ---------------------------------------------------------------------------
-
-def gene_split_cv(genes: list, n_folds: int = 5, seed: int = 42) -> list:
-    u = np.array(sorted(set(genes)))
-    np.random.RandomState(seed).shuffle(u)
-    g = np.array(genes)
-    splits = []
-    for fold in np.array_split(u, n_folds):
-        tr = np.where(~np.isin(g, fold))[0]
-        te = np.where(np.isin(g, fold))[0]
-        if len(tr) >= 10 and len(te) >= 5:
-            splits.append((tr, te))
-    return splits
-
-
-def family_split_cv(genes: list, pfam_map: dict,
-                    n_folds: int = 5, seed: int = 42) -> list:
-    g = np.array(genes)
-    g2p = {gene: pfam_map[gene] for gene in set(genes) if pfam_map.get(gene)}
-    fams = np.array(sorted(set(g2p.values())))
-    np.random.RandomState(seed).shuffle(fams)
-    splits = []
-    for fold_fams in np.array_split(fams, n_folds):
-        fs = set(fold_fams)
-        te = np.array([g[i] in g2p and g2p[g[i]] in fs for i in range(len(g))])
-        tr = np.array([g[i] in g2p and g2p[g[i]] not in fs for i in range(len(g))])
-        if tr.sum() >= 10 and te.sum() >= 5:
-            splits.append((np.where(tr)[0], np.where(te)[0]))
-    return splits
 
 
 # ---------------------------------------------------------------------------

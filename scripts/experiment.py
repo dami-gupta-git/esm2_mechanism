@@ -36,6 +36,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import roc_auc_score, f1_score, precision_recall_curve, auc
 from sklearn.preprocessing import LabelEncoder
 from sklearn.decomposition import PCA
+from utils_probes import gene_split_cv
 
 warnings.filterwarnings("ignore")
 
@@ -612,29 +613,8 @@ def variance_explained_per_class(deltas, labels_3class, subspace):
 
 
 # ---------------------------------------------------------------------------
-# Gene-split cross-validation
+# Gene-split cross-validation (see utils_probes.gene_split_cv)
 # ---------------------------------------------------------------------------
-
-def gene_split_cv(X, y, genes, n_folds=5, seed=42):
-    """
-    Gene-split CV: split unique genes into folds, ensuring no gene
-    appears in both train and test. Returns list of (train_idx, test_idx).
-    """
-    unique_genes = np.array(sorted(set(genes)))
-    rng = np.random.RandomState(seed)
-    rng.shuffle(unique_genes)
-
-    gene_folds = np.array_split(unique_genes, n_folds)
-    splits = []
-    for fold_genes in gene_folds:
-        fold_gene_set = set(fold_genes)
-        test_mask = np.array([g in fold_gene_set for g in genes])
-        train_mask = ~test_mask
-        if train_mask.sum() < 10 or test_mask.sum() < 5:
-            continue
-        splits.append((np.where(train_mask)[0], np.where(test_mask)[0]))
-
-    return splits
 
 
 def fetch_pfam_families(variants, seq_cache, cache_dir):
@@ -731,7 +711,7 @@ def run_linear_probe(X, y, genes, n_folds=5, seed=42):
     Run linear probe (LR) with gene-split CV.
     Returns per-fold metrics and bootstrap CIs.
     """
-    splits = gene_split_cv(X, y, genes, n_folds=n_folds, seed=seed)
+    splits = gene_split_cv(genes, n_folds=n_folds, seed=seed)
     classes = sorted(set(y))
 
     fold_results = []
@@ -802,7 +782,7 @@ def probe_direction_orthogonality(X, y, genes, stability_subspace,
     Path A (Megascale subspace): reports 4x4 matrix including stability direction.
     Path B (direct subspace or None): reports 3x3 pairwise inter-probe matrix only.
     """
-    splits = gene_split_cv(X, y, genes, n_folds=n_folds, seed=seed)
+    splits = gene_split_cv(genes, n_folds=n_folds, seed=seed)
     all_train_idx = np.unique(np.concatenate([tr for tr, _ in splits]))
 
     X_train = X[all_train_idx]

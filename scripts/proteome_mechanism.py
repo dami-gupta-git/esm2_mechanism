@@ -36,10 +36,10 @@ from pathlib import Path
 
 import numpy as np
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import f1_score, roc_auc_score
 from sklearn.neural_network import MLPClassifier
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.preprocessing import LabelEncoder, StandardScaler
+from utils_probes import compute_metrics, family_split_indices
 import functools
 print = functools.partial(print, flush=True)
 
@@ -63,23 +63,6 @@ MERGED_GENE_LIST = DATA_DIR / "merged_gene_list.tsv"
 PFAM_FAMILIES = DATA_DIR / "pfam_families.json"
 
 CLASSES = ["GOF", "DN", "LOF"]
-
-# ---------------------------------------------------------------------------
-# family_split_indices — copied verbatim from proteome_pilot.py
-# ---------------------------------------------------------------------------
-
-def family_split_indices(groups: np.ndarray, n_folds: int, seed: int):
-    """Yield (train_idx, test_idx) where families do not overlap across folds."""
-    rng = np.random.RandomState(seed)
-    unique_fams = np.array(sorted(f for f in set(groups) if f is not None))
-    rng.shuffle(unique_fams)
-    fam_fold = {f: i % n_folds for i, f in enumerate(unique_fams)}
-    fold_of = np.array([fam_fold[g] for g in groups])
-    for k in range(n_folds):
-        test = np.where(fold_of == k)[0]
-        train = np.where(fold_of != k)[0]
-        yield train, test
-
 
 # ---------------------------------------------------------------------------
 # Gene-split CV (from experiment_mlp.py / contrastive_mechanism.py)
@@ -238,28 +221,6 @@ def load_proteome_features(genes: np.ndarray) -> np.ndarray:
     print(f"Proteome features broadcast: {X_prot.shape}")
     return X_prot
 
-
-# ---------------------------------------------------------------------------
-# Metrics helper
-# ---------------------------------------------------------------------------
-
-def compute_metrics(
-    y_true: np.ndarray,
-    y_pred: np.ndarray,
-    y_proba: np.ndarray,
-) -> dict:
-    macro_f1 = float(f1_score(y_true, y_pred, average="macro", zero_division=0))
-    per_class_auroc: dict[str, float | None] = {}
-    for i, cls in enumerate(CLASSES):
-        y_bin = (y_true == i).astype(int)
-        if y_bin.sum() == 0 or y_bin.sum() == len(y_bin):
-            per_class_auroc[cls] = None
-        else:
-            per_class_auroc[cls] = float(roc_auc_score(y_bin, y_proba[:, i]))
-    return {
-        "macro_f1": macro_f1,
-        "per_class_auroc": per_class_auroc,
-    }
 
 
 def aggregate_fold_results(fold_list: list[dict]) -> dict:
