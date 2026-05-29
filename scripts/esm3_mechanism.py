@@ -225,7 +225,8 @@ def phase2_extract_embeddings(batch_size: int = 4) -> None:
     n = len(variants)
     print(f"Variants to embed: {n}")
 
-    struct_cache = {}
+    # Load structure token cache (uid -> coordinates list or None)
+    struct_cache: dict = {}
     if STRUCT_TOKENS.exists():
         struct_cache = json.loads(STRUCT_TOKENS.read_text())
         n_struct = sum(1 for v in struct_cache.values() if v is not None)
@@ -237,81 +238,89 @@ def phase2_extract_embeddings(batch_size: int = 4) -> None:
         "seq_struct": EMB_SEQ_STRUCT,
         "full":       EMB_FULL,
     }
-    deltas = {c: None for c in conditions}
     for cond, path in conditions.items():
         if path.exists():
-            deltas[cond] = np.load(str(path))
-            print(f"  {cond}: cached ({deltas[cond].shape})")
+            arr = np.load(str(path))
+            print(f"  {cond}: cached ({arr.shape})")
 
-    remaining_conds = [c for c, d in deltas.items() if d is None]
+    remaining_conds = [c for c, path in conditions.items() if not path.exists()]
     if not remaining_conds:
         print("All conditions already cached.")
         return
 
     EMB.mkdir(parents=True, exist_ok=True)
 
-    # Accumulate wt and mut embeddings per condition
-    emb_dim = None
     wt_embs  = {c: [] for c in remaining_conds}
     mut_embs = {c: [] for c in remaining_conds}
 
-    def embed_protein(seq: str, uid: str | None, condition: str) -> np.ndarray:
-        """Embed one sequence under the given condition; return mean-pooled (D,) array."""
-        coords = None
-        if condition in ("seq_struct", "full") and uid and struct_cache.get(uid) is not None:
-            try:
-                import torch
-                coords = torch.tensor(struct_cache[uid], dtype=torch.float32).to(device)
-            except Exception:
-                coords = None
+    def get_struct_tokens(uid: str | None, seq_len: int) -> "torch.Tensor | None":
+        """Return structure tokens tensor (L+2,) for uid, or None if unavailable."""
+        if uid is None or struct_cache.get(uid) is None:
+            return None
+        try:
+            coords = torch.tensor(struct_cache[uid], dtype=torch.float32)
+            # coords shape: (L, 37, 3) from AF2 PDB via ProteinChain
+            # Trim/pad to match seq_len
+            L = coords.shape[0]
+            if L != seq_len:
+                return None
+            # Tokenise via the structure encoder
+            protein = ESMProtein(sequence="A" * seq_len, coordinates=coords)
+            tensor = model.encode(protein)
+            return tensor.structure  # (L+2,) or None
+        except Exception:
+            return None
 
-        protein = ESMProtein(sequence=seq, coordinates=coords)
+    def embed_sequence(seq: str, struct_toks: "torch.Tensor | None",
+                       condition: str) -> np.ndarray:
+        """Run ESM-3 forward pass; return mean-pooled (D,) embedding (excluding BOS/EOS)."""
+        protein = ESMProtein(sequence=seq)
+        tensor  = model.encode(protein)
+        seq_tok = tensor.sequence.unsqueeze(0).to(device)   # (1, L+2)
+
+        use_struct = condition in ("seq_struct", "full") and struct_toks is not None
+        s_tok = struct_toks.unsqueeze(0).to(device) if use_struct else None
+
         with torch.inference_mode():
-            output = model.encode(protein)
-            # sequence_embeddings: (L, D)
-            emb = output.embeddings.mean(dim=0).cpu().float().numpy()
+            out = model(sequence_tokens=seq_tok, structure_tokens=s_tok)
+
+        # out.embeddings: (1, L+2, D) — exclude BOS (0) and EOS (-1)
+        emb = out.embeddings[0, 1:-1].mean(dim=0).cpu().float().numpy()
         return emb
 
     for i, v in enumerate(variants):
-        uid     = v.get("uniprot_id")
-        wt_seq  = v["wt_seq"]
-        pos     = v["aa_pos"]   # 1-indexed
+        uid    = v.get("uniprot_id")
+        wt_seq = v["wt_seq"]
+        pos    = v["aa_pos"]
 
-        # Apply windowing for long sequences
         wt_win, new_pos = window_sequence(wt_seq, pos)
-        # Build mut sequence from windowed wt
         mut_win = list(wt_win)
         mut_win[new_pos - 1] = v["aa_mut"]
         mut_win = "".join(mut_win)
 
+        # Get structure tokens once per variant (same for wt and mut — same position context)
+        struct_toks = get_struct_tokens(uid, len(wt_win))
+
         for cond in remaining_conds:
-            wt_e  = embed_protein(wt_win,  uid, cond)
-            mut_e = embed_protein(mut_win, uid, cond)
+            wt_e  = embed_sequence(wt_win,  struct_toks, cond)
+            mut_e = embed_sequence(mut_win, struct_toks, cond)
             wt_embs[cond].append(wt_e)
             mut_embs[cond].append(mut_e)
-            if emb_dim is None:
-                emb_dim = wt_e.shape[0]
 
         if (i + 1) % 100 == 0:
             print(f"  [{i+1}/{n}] variants embedded")
-            # Checkpoint: save what we have so far
             for cond in remaining_conds:
-                if len(wt_embs[cond]) == i + 1:
-                    wt_arr  = np.array(wt_embs[cond])
-                    mut_arr = np.array(mut_embs[cond])
-                    np.save(str(conditions[cond]).replace(".npy", "_ckpt_wt.npy"), wt_arr)
-                    np.save(str(conditions[cond]).replace(".npy", "_ckpt_mut.npy"), mut_arr)
+                np.save(str(conditions[cond]).replace(".npy", "_ckpt_wt.npy"),
+                        np.array(wt_embs[cond]))
+                np.save(str(conditions[cond]).replace(".npy", "_ckpt_mut.npy"),
+                        np.array(mut_embs[cond]))
 
-    print(f"\nEmbedding dimension: {emb_dim}")
     for cond in remaining_conds:
         wt_arr  = np.array(wt_embs[cond])
         mut_arr = np.array(mut_embs[cond])
         delta   = mut_arr - wt_arr
         np.save(str(conditions[cond]), delta)
         print(f"  {cond}: delta saved → {conditions[cond]}  shape={delta.shape}")
-
-    # Clean up checkpoints
-    for cond in remaining_conds:
         for suffix in ("_ckpt_wt.npy", "_ckpt_mut.npy"):
             p = Path(str(conditions[cond]).replace(".npy", suffix))
             if p.exists():
