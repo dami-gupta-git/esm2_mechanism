@@ -3,9 +3,25 @@
 
 ---
 
+## Background: a more principled score
+
+Result_20 replaced ClinVar variant positions with a systematic in-silico scan (100 evenly-spaced positions per gene, 3 probe amino acids), but used the **embedding L2 distance** as the mutation effect score — how much the ESM-2 representation shifts when you make the substitution.
+
+This experiment uses a more principled score instead: **ESM-2's own log-likelihood**. ESM-2 is a masked language model — it was trained to predict which amino acid belongs at a masked position given the surrounding sequence. For any position, it directly outputs `log P(aa | context)` for all 20 amino acids. The mutation effect score is:
+
+```
+ΔLL = log P(wt_aa | context) − log P(mut_aa | context)
+```
+
+High ΔLL means the model strongly prefers the wildtype — the position is conserved and the mutation is "surprising." This is the same scoring approach used in ESM-1v and EVE for variant effect prediction, and is more principled than embedding L2 distance.
+
+The key question: does using this more principled readout fix the sampling problem from result_20 (scan-only F1 = 0.272)?
+
+---
+
 ## TL;DR
 
-Replacing the embedding L2 distance (result_20) with ESM-2's native log-likelihood score (`log P(wt) − log P(mut)`) at the same 100 evenly-spaced positions gives no improvement. LL-only family-split F1 = **0.261** — marginally worse than the embedding scan (0.272) and well below all three decision thresholds. All gates fail. The readout is not the bottleneck; the sparse 100-position sampling is.
+Replacing the embedding L2 distance (result_20) with ESM-2's native log-likelihood score at the same 100 evenly-spaced positions gives no improvement. LL-only family-split F1 = **0.261** — marginally worse than the embedding scan (0.272) and well below all three decision thresholds. All gates fail. The readout is not the bottleneck; the sparse 100-position sampling is.
 
 ---
 
@@ -16,21 +32,7 @@ Replacing the embedding L2 distance (result_20) with ESM-2's native log-likeliho
 - **Score:** `ΔLL = log P(wt_aa | context) − log P(probe_aa | context)` averaged over Ala, Asp, Trp
 - **Total forward passes:** ~198k (1 per position, all 20 AAs scored simultaneously via masking — 3× fewer than result_20)
 - **CV:** 5-fold gene-split AND family-split, 5 seeds (0–4)
-- **Probe:** logistic regression (L2, balanced class weights), gene-level features
-
----
-
-## What is log-likelihood?
-
-ESM-2 is a masked language model: it was trained to predict which amino acid belongs at a masked position given the surrounding sequence. At any position, it outputs `log P(aa | context)` for all 20 amino acids directly.
-
-The mutation effect score is:
-
-```
-ΔLL = log P(wt_aa | context) − log P(mut_aa | context)
-```
-
-High ΔLL = the model strongly prefers the wildtype — the position is conserved and the mutation is "surprising." This is the same scoring approach used in ESM-1v (Meier et al. 2021) and EVE (Frazer et al. 2021) for variant effect prediction, and is more principled than the embedding L2 distance used in result_20.
+- **Classifier:** logistic regression (L2, balanced class weights), gene-level features
 
 ---
 
@@ -93,11 +95,11 @@ LL + scan (0.266) is no better than either alone (0.261, 0.272). The two readout
 
 ### F3 — LL + delta almost passes G2 (0.380 vs 0.385)
 
-The combined LL + mean-pooled delta misses G2 by 0.005. This is within noise. It is not evidence that LL adds to delta — the scan + delta combination in result_20 achieved 0.375 with the same data, so LL is delivering approximately the same marginal contribution as embedding distance.
+The combined LL + mean-pooled delta misses G2 by 0.005. This is within noise — the scan + delta combination in result_20 achieved 0.375 with the same data, so LL is delivering approximately the same marginal contribution as embedding distance.
 
 ### F4 — Near-zero leakage confirmed
 
-LL-only gene-split (0.263) ≈ family-split (0.261), Δ = +0.002. The LL features are genuinely leak-free — they carry no family-recognition shortcut. The problem is not leakage; it is signal weakness.
+LL-only gene-split (0.263) ≈ family-split (0.261), Δ = +0.002. The LL features are genuinely leak-free. The problem is not leakage; it is signal weakness.
 
 ---
 
@@ -105,7 +107,7 @@ LL-only gene-split (0.263) ≈ family-split (0.261), Δ = +0.002. The LL feature
 
 ### The readout is not the bottleneck
 
-Results 20 and 22 together deliver a clean verdict: it does not matter whether you use embedding L2 distance or log-likelihood to score mutations at the 100 probe positions. Both methods give essentially the same (weak) result. The bottleneck is sampling density, not the scoring function.
+Results 20 and 22 together deliver a clean verdict: it doesn't matter whether you use embedding L2 distance or log-likelihood to score mutations at the 100 probe positions. Both methods give essentially the same (weak) result. The bottleneck is sampling density, not the scoring function.
 
 For a GOF gene with 2–3 critical hotspot positions in a 1000-AA protein, 100 uniform positions have a ~26% chance of hitting even one hotspot. LL is a sharper instrument, but a sharp instrument measuring the wrong positions is no better than a blunt one.
 

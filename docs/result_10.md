@@ -3,15 +3,21 @@
 
 ---
 
+## Background: what a clan is, and why this matters
+
+Results 1–9 used **protein family-split CV** — holding out entire Pfam protein families from the test set. But protein families within the same **clan** (a higher-level grouping of related families that share a common evolutionary ancestor) still appeared in training. If the mechanism signal that survives family-split is actually just the classifier recognising which clan a protein belongs to, it would still collapse under a stricter holdout.
+
+This experiment tests the strictest level of holdout we can do: hold out entire clans — groups of evolutionarily related protein families. If the MLP's mechanism signal is real, it should survive. If it's clan-level memorisation, it should collapse.
+
+---
+
 ## TL;DR
 
-Leave-one-clan-out evaluation across 21 qualifying Pfam clans (groups of related protein families) tests whether ESM-2 delta mechanism signal generalises to completely unseen protein folds, or is clan/family memorisation. Clan-holdout MLP macro-F1 = **0.299 ± 0.076** — substantially below the family-split floor of 0.352, but above chance (majority baseline 0.254, per-class AUROCs 0.57–0.64). The signal is heterogeneous: some clans generalise well (Cupin F1=0.536, RING GOF-AUROC=0.797), others collapse to chance (Ion_channel F1=0.190). **Approximately half the family-split mechanism signal is clan-level memorisation; the remainder is genuine cross-fold generalisation.**
+Leave-one-clan-out evaluation across 21 qualifying Pfam clans tests whether ESM-2 delta mechanism signal generalises to completely unseen protein folds, or is clan/family memorisation. Clan-holdout MLP macro-F1 = **0.299 ± 0.076** — substantially below the family-split floor of 0.352, but above chance (majority baseline 0.254, per-class AUROCs 0.57–0.64). The signal is heterogeneous: some clans generalise well (Cupin F1=0.536, RING GOF-AUROC=0.797), others collapse to chance (Ion_channel F1=0.190). **Approximately half the family-split mechanism signal is clan-level memorisation; the remainder is genuine cross-fold generalisation.**
 
 ---
 
 ## Background and motivation
-
-Results 1–9 established that ESM-2 encodes pathogenicity strongly (AUROC 0.88) and mechanism weakly (family-split F1 ~0.36–0.40). A key unresolved question: is the mechanism signal that *does* survive family-split CV genuine sequence-level encoding, or is it clan-level memorisation — the model exploiting the fact that protein families within a clan share fold and mechanism?
 
 The standard family-split CV (results 7–9) holds out Pfam families but families within the same clan remain in training. If the mechanism signal is clan-memorisation, it should collapse when an entire clan is held out. If it's real sequence-level signal, it should survive.
 
@@ -25,7 +31,7 @@ The standard family-split CV (results 7–9) holds out Pfam families but familie
 ## Setup
 
 - **Features:** delta_mean = mean_pool(mut) − mean_pool(wt), ESM-2 650M frozen (cached embeddings)
-- **Probe:** MLP (256→64, alpha=1e-3, early stopping), same architecture as result_7
+- **Classifier:** MLP (256→64, early stopping), same architecture as result_7
 - **Baseline:** k-NN (k=10, cosine) and majority-class predictor
 - **Clan file:** Pfam-A.clans.tsv (Pfam release current as of May 2026)
 - **Qualifying clans:** ≥2 mechanism classes, ≥20 variants in second-most-common class, ≥3 genes
@@ -37,7 +43,7 @@ The standard family-split CV (results 7–9) holds out Pfam families but familie
 
 ### Aggregate (21 clans)
 
-| Probe | Macro-F1 (mean ± std) | Macro-F1 (weighted) |
+| Classifier | Macro-F1 (mean ± std) | Macro-F1 (weighted) |
 |---|---|---|
 | MLP clan-holdout | **0.299 ± 0.076** | 0.282 |
 | k-NN clan-holdout | 0.274 | — |
@@ -80,8 +86,8 @@ Clan-holdout MLP F1 = 0.299; family-split MLP F1 = 0.352; majority baseline = 0.
 The large standard deviation reflects genuinely different generalisability across protein architectures:
 
 **Well-generalising clans** (MLP F1 > 0.35):
-- **Cupin (CL0029):** F1=0.536, DN AUROC=0.839. Cupins are jelly-roll β-barrel enzymes; GOF/DN/LOF mechanisms map to distinct active site geometries accessible from sequence.
-- **Death domain (CL0041):** F1=0.378, LOF AUROC=0.903. Death domains mediate homotypic interactions; LOF vs GOF reflects whether the interaction interface is disrupted or constitutively activated.
+- **Cupin (CL0029):** F1=0.536, DN AUROC=0.839. Cupins are enzyme families where GOF/DN/LOF mechanisms map to distinct active site geometries that are readable from sequence.
+- **Death domain (CL0041):** F1=0.378, LOF AUROC=0.903. Death domains mediate protein interactions; LOF vs GOF reflects whether the interaction interface is disrupted or constitutively activated.
 - **GPCR_A (CL0192):** F1=0.370, DN AUROC=0.800. GPCRs have stereotyped GOF/DN patterns tied to transmembrane helix packing.
 
 **Poor-generalising clans** (MLP F1 < 0.22):
@@ -91,29 +97,27 @@ The large standard deviation reflects genuinely different generalisability acros
 
 ### F3 — AUROCs above 0.5 confirm real signal, not noise
 
-Even the weakest clans show per-class AUROCs meaningfully above 0.5 when averaged. The mean per-class AUROCs (GOF 0.597, DN 0.575, LOF 0.636) indicate that ESM-2 delta embeddings carry some mechanism-correlated information that transfers across protein folds. This rules out the "pure memorisation" hypothesis.
+Even the weakest clans show per-class AUROCs meaningfully above 0.5 when averaged. This rules out the "pure memorisation" hypothesis.
 
 ### F4 — Ion_channel (result_8) signal is family-specific, not clan-level
 
-Result_8 found delta F1=0.407 within PF00520 (one ion channel family). The clan-level holdout for CL0030 (all 21 ion channel genes) gives F1=0.190 — essentially chance for a 3-class problem. This means the within-family signal from result_8 does not generalise even across ion channel subtypes. It is genuinely family-specific.
+Result_8 found delta F1=0.407 within PF00520 (one ion channel family). The clan-level holdout for CL0030 (all 21 ion channel genes) gives F1=0.190 — essentially chance for a 3-class problem. The within-family signal from result_8 does not generalise even across ion channel subtypes. It is genuinely family-specific.
 
 ---
 
 ## Interpretation
 
-### What this means for the central finding
+### What this means
 
-The corrected picture after result_10:
+> ESM-2 delta embeddings encode mechanism signal that is **partially genuine and partially memorisation**. Under family-split CV, approximately half the signal comes from clan-level correlations (related protein families sharing both fold and mechanism). The other half represents real cross-fold mechanism generalisation (F1=0.299, AUROCs 0.57–0.64). The signal is strongest for proteins with stereotyped structural mechanisms (GPCRs, death domains, cupins) and weakest for architecturally plastic repeat proteins (ankyrins, EF-hands) and large, heterogeneous superfamilies (ion channels).
 
-> ESM-2 delta embeddings encode mechanism signal that is **partially genuine and partially memorisation**. Under family-split CV (the standard evaluation), approximately half the signal comes from clan-level correlations (related protein families sharing both fold and mechanism). The other half represents real cross-fold mechanism generalisation, visible in the clan-holdout results (F1=0.299, AUROCs 0.57–0.64). The signal is strongest for proteins with stereotyped structural mechanisms (GPCRs, death domains, cupins) and weakest for architecturally plastic repeat proteins (ankyrins, EF-hands) and large, heterogeneous superfamilies (ion channels).
+### Is it a lookup table?
 
-### The lookup question (answered)
-
-The original question: "Is it a lookup table?" The answer is **partially yes, partially no**. Clan-level memorisation accounts for ~40–50% of family-split mechanism signal (drop from 0.352 to 0.299 = −0.053, relative to the gap above chance 0.352−0.254=0.098, so ~54% is memorisation). The remaining ~46% is cross-fold generalisation — real mechanism encoding in ESM-2 delta space.
+Partially yes, partially no. Clan-level memorisation accounts for ~40–50% of family-split mechanism signal (drop from 0.352 to 0.299 = −0.053, relative to the gap above chance 0.352−0.254=0.098, so ~54% is memorisation). The remaining ~46% is cross-fold generalisation — real mechanism encoding in ESM-2 delta space.
 
 ### Why the heterogeneity matters
 
-The variance across clans (std=0.076) is scientifically informative: mechanism is more readable from sequence in protein architectures where mechanism maps to stereotyped structural features (active site geometry for cupins, interface topology for death domains) than in architecturally plastic proteins where the same mechanism can arise from many different sequence contexts.
+Mechanism is more readable from sequence in protein architectures where mechanism maps to stereotyped structural features (active site geometry for cupins, interface topology for death domains) than in architecturally plastic proteins where the same mechanism can arise from many different sequence contexts.
 
 ---
 
@@ -133,9 +137,9 @@ The variance across clans (std=0.076) is scientifically informative: mechanism i
 
 ## What's open
 
-1. **Multi-seed replication** — all numbers are seed=0. The large per-clan variance (std=0.076) means some individual clan results may be noisy. 5 seeds would stabilise the aggregate.
+1. **Multi-seed replication** — all numbers are seed=0. The large per-clan variance (std=0.076) means some individual clan results may be noisy.
 2. **Why Cupin generalises** — Cupin F1=0.536 is striking. Worth examining which variants drive this: are specific active-site positions mechanism-predictive across all cupin genes?
-3. **Sequence distance analysis** — does clan-holdout performance correlate with Pfam clan size (proxy for fold diversity)? Smaller, tighter clans may generalise better because member families share more detailed structural features.
+3. **Sequence distance analysis** — does clan-holdout performance correlate with Pfam clan size? Smaller, tighter clans may generalise better because member families share more detailed structural features.
 
 ---
 
@@ -151,8 +155,6 @@ The variance across clans (std=0.076) is scientifically informative: mechanism i
 
 This result's mechanistic interpretation — "DN biology lives at the complex-assembly level, which ESM-2 cannot see from sequence" — motivated Experiment 11 (the proteome-features thread) under the hypothesis that interactome features like PPI_degree would recover the missing DN signal.
 
-That hypothesis is partially contradicted by result_13's T4 feature ablation. Dropping PPI_degree from V2 gives ΔF1 = −0.002 — PPI_degree contributes nothing to aggregate cross-family mechanism prediction. The DN AUROC lift in V2+bad (result 15) comes from constraint + Badonyi structural features, not from interactome biology.
+That hypothesis is partially contradicted by result_13's feature ablation. Dropping PPI_degree from the proteome model gives ΔF1 = −0.002 — PPI_degree contributes nothing to aggregate cross-family mechanism prediction. The DN AUROC lift in result_15 comes from constraint + Badonyi structural features, not from interactome biology.
 
-**Resolution via result_16:** the within-family LOGO analysis shows that the within-family mechanism signal lives in *family-residual* proteome features (gene minus family-mean on constraint, abundance, etc.) — not in absolute interactome degree. PPI_degree may carry within-family signal for specific architectures, but it doesn't move the cross-family aggregate metric. The clan-holdout finding here (some clans generalise, some don't) is consistent with the result_16 picture: within-family mechanism is partially learnable from gene-level variation, and the heterogeneity across clans reflects which families have meaningful within-family proteome variation.
-
-The "DN biology = complex assembly" interpretation in this result should be read as resolution-dependent: at the cross-family level, the signal that wins is constraint + Badonyi structural priors, not interactome topology. At the within-family level (result 16), the signal that wins is within-family proteome variation. The interactome-as-DN-signal claim does not survive the feature ablation in either resolution.
+**Resolution via result_16:** the within-family LOGO analysis shows that the within-family mechanism signal lives in *family-residual* proteome features (gene minus family-mean on constraint, abundance, etc.) — not in absolute interactome degree. PPI_degree may carry within-family signal for specific architectures, but it doesn't move the cross-family aggregate metric. The "DN biology = complex assembly" interpretation in this result should be read as resolution-dependent: at the cross-family level, the signal that wins is constraint + Badonyi structural priors, not interactome topology. At the within-family level (result 16), the signal that wins is within-family proteome variation.

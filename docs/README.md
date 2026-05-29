@@ -177,9 +177,14 @@ The experimental work is essentially done. Remaining: writeup consolidation, one
 **Headline numbers:** Direction AUROC **0.896** (≈ full delta 0.884); magnitude AUROC **0.664**. Masked-LL alone = **0.891** (beats embedding direction 0.835 — embedding adds nothing). Conservation transfer: pathogenicity linear 0.815 / GBM 0.889; stability GBM 0.750 (nonlinear manifold); mechanism linear 0.520 / GBM 0.540 (chance).
 **What it concludes:** The pre-registered hypothesis (pathogenicity = magnitude) is falsified. Pathogenicity is direction, and that direction IS conservation. Conservation transfers linearly for pathogenicity, only nonlinearly for stability, and not at all for mechanism. Transferability is task- and probe-dependent within one frozen model.
 
+### 25. `result_25.md` — Enzyme type classification from ESM-2 WT embeddings: confirms mechanism null is task-specific
+**Scripts:** `fetch_enzyme_labels.py`, `enzyme_classification.py` · Local CPU, 5 seeds. UniProt EC labels for 1985 genes (kinase 136, protease 68, oxidoreductase 119, non-enzyme 1662).
+**Headline numbers:** LogReg family-split macro-F1 = **0.655 ± 0.012**. Per-class AUROCs: kinase **0.896**, protease **0.904**, oxidoreductase **0.890**, non-enzyme **0.854**. Leakage fraction **13.7%** (vs 62.8% for mechanism). Proteome features family-split F1 = **0.251** (≈ majority 0.228 — gene-biology is at chance for enzyme class). LogReg beats MLP family-split (0.655 vs 0.597 — enzyme class is linearly separable).
+**What it concludes:** The mechanism floor (0.385) is not a methodological ceiling. The same pipeline achieves F1 = 0.655 for enzyme type — Δ = +0.270 above mechanism. Enzyme class (a WT fold property) is strongly and linearly encoded; disease mechanism (a mutation-effect property) is not. The task × modality double dissociation is complete: ESM-2 WT embeddings predict enzyme class strongly, proteome features predict disease mechanism better than ESM-2. The mechanism null result is task-specific.
+
 ---
 
-## The coherent story across all 23
+## The coherent story across all 25
 
 1. **(1–2)** Linear probes are at chance on delta. WT-only F1=0.58 collapses to 0.39 under family-split — most apparent mechanism signal is family identity.
 2. **(4)** ESM-2 strongly clusters by Pfam (26× purity) and 74.8% of genes share their family's modal mechanism — the causal explanation.
@@ -200,8 +205,9 @@ The experimental work is essentially done. Remaining: writeup consolidation, one
 17. **(22)** LL scan readout doesn't improve on embedding scan; sampling density is the bottleneck.
 18. **(23)** Pathogenicity = direction = conservation. Conservation transfers linearly for pathogenicity, nonlinearly for stability, not at all for mechanism. Unifies the cross-result pattern.
 19. **(24)** ESM-2 ΔLL on 96 human ProteinGym DMS assays: median ρ=0.50 (replicates ESM-1v), 8% of assays below ρ=0.20 vs AM's 14%. G3 fails (+0.041 vs +0.05 threshold) — per-assay variance is intrinsic to DMS task heterogeneity. Binding (ρ=0.34) is the weak point; Stability (ρ=0.59) and Activity (ρ=0.53) are strongest. Completes the transferability gradient: conservation → pathogenicity (0.891) > stability (0.750) > DMS fitness (0.50, high variance) > mechanism (chance).
+20. **(25)** Enzyme type positive control (kinase/protease/oxidoreductase/non-enzyme): WT embedding family-split F1 = 0.655 ± 0.012, leakage 13.7%, all per-class AUROCs ≥ 0.85. Mechanism floor (0.385) is task-specific, not methodological. Double dissociation: ESM-2 WT embeddings predict enzyme class (F1 = 0.655); proteome features do not (F1 = 0.251 ≈ chance). Proteome features predict mechanism better than ESM-2 (result 13). LogReg outperforms MLP for enzyme type — linearly separable, paralleling pathogenicity (result 23) and contrasting with stability (result 21).
 
-**The narrative shape:** frozen-PLM negative result (1–10) → gene-level proteome features beat ESM-2 (11–13) → clinical utility narrows to one column (14) → structural priors beat both (15) → within-family signal lives in within-family proteome variation (16) → pathogenicity geometry and AlphaMissense robustness characterised (17–18) → perturbation scans bound the ClinVar-pattern signal (19–20) → stability is nonlinearly transferable, mechanism is not (21–22) → conservation unifies the transferability gradient (23) → conservation predicts DMS fitness on average but with intrinsic assay-type variance, completing the gradient (24). ESM-2 is dispensable for mechanism throughout. The only family-transferable signal it carries is conservation, which fully explains pathogenicity, partially explains stability and DMS fitness, and leaves mechanism at chance.
+**The narrative shape:** frozen-PLM negative result (1–10) → gene-level proteome features beat ESM-2 (11–13) → clinical utility narrows to one column (14) → structural priors beat both (15) → within-family signal lives in within-family proteome variation (16) → pathogenicity geometry and AlphaMissense robustness characterised (17–18) → perturbation scans bound the ClinVar-pattern signal (19–20) → stability is nonlinearly transferable, mechanism is not (21–22) → conservation unifies the transferability gradient (23) → conservation predicts DMS fitness on average but with intrinsic assay-type variance, completing the gradient (24) → enzyme-type positive control confirms the mechanism null is task-specific and closes the pipeline-validity question (25). ESM-2 is dispensable for mechanism throughout. The only family-transferable signal it carries is conservation, which fully explains pathogenicity, partially explains stability and DMS fitness, and leaves mechanism at chance. Enzyme class — a fold property, not a perturbation property — is the clearest positive demonstration of what the embeddings do encode.
 
 ---
 
@@ -239,6 +245,7 @@ The experimental work is essentially done. Remaining: writeup consolidation, one
 | 15-AppB | `results/mmseqs_cluster_holdout/cluster_summary.json` |
 | 16 | `results/within_family/within_family_summary.json` |
 | 16-addendum | `results/badonyi_survival/badonyi_survival_summary.json` |
+| 25 | `results/enzyme_classification/enzyme_classification_summary.json` |
 
 ESM-2 embeddings under `data/embeddings/`:
 - `embeddings_{wt,mut}{,_pos}_esm2_t33_650M_UR50D.npy` — Gerasimavicius 10,231 variants (results 1–5, 7)
@@ -249,6 +256,7 @@ Feature matrices:
 - `data/proteome_features_aligned.npy` (2,424 × 37) — gnomAD + paralogs + HPA + PaxDb + BioPlex + ClinGen (result 12)
 - `data/badonyi_features_aligned.npy` (2,424 × 13) — pDN/pGOF/pLOF + residuals + missingness (result 15)
 - `data/mmseqs_clusters.json` — gene → MMseqs2-20 cluster_rep mapping (result 15 Appendix B)
+- `data/enzyme_labels.tsv` — 2424 genes, 4-class enzyme labels (kinase/protease/oxidoreductase/non-enzyme), EC numbers, UniProt flags (result 25)
 
 ---
 

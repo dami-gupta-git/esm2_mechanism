@@ -13,18 +13,18 @@ The leakage delta after correcting gene-split to respect family boundaries is **
 
 ## Setup
 
-**Data:** merged dataset, 19,100 variants across 1,985 genes (Gerasimavicius + G2P/NatComms). 18,985 variants (99.4%) had a Pfam family assignment and were included in family-split CV.
+**Data:** merged dataset, 19,100 variants across 1,985 genes (Gerasimavicius + G2P/NatComms). 18,985 variants (99.4%) had a protein family assignment and were included in family-split CV.
 
 **Proteome feature matrix:** 2,424 × 37 float32 (median-imputed, family-mean-centred residuals included). Sources: gnomAD v4.1 (pLI, LOEUF, mis_z, ~93%), Ensembl paralogs (100%), HPA tissue specificity category (99.2%), PaxDb protein abundance (98.4%), BioPlex PPI degree (75%), ClinGen dosage HI/TS (19%/37%). See result_12.
 
-**Evaluation:** 5-fold family-split CV (primary), family-aware gene-split CV (leakage diagnostic). 5 seeds (0–4). Scaler fit on training fold only. Class balancing via oversampling in MLP; `class_weight="balanced"` in LogReg.
+**Evaluation:** 5-fold family-split CV (primary), family-aware gene-split CV (leakage diagnostic). 5 seeds (0–4). Scaler fit on training fold only. Class balancing via oversampling in MLP; `class_weight="balanced"` in logistic regression.
 
 **Models:**
 
 | Variant | Features | Architecture |
 |---|---|---|
 | V1 | ESM-2 delta (1280-dim) | MLP 1280→256→64→3 |
-| V2 | Proteome only (37-dim) | LogReg (balanced) + MLP 37→64→32→3 |
+| V2 | Proteome only (37-dim) | Logistic reg (balanced) + MLP 37→64→32→3 |
 | V3 | Concat (1317-dim) | MLP 1317→256→64→3 |
 | V4 | Contrastive on V3 inputs | Projection 1317→256→64, TripletMarginLoss + k-NN (k=10, cosine) |
 
@@ -50,7 +50,7 @@ The leakage delta after correcting gene-split to respect family boundaries is **
 | V3 (concat) | 0.678 ± 0.021 | **0.740 ± 0.017** | **0.759 ± 0.011** |
 | V4 (contrastive) | 0.576 ± 0.005 | 0.702 ± 0.005 | 0.689 ± 0.007 |
 
-V2 per-class AUROCs (seed 0, LogReg): GOF=0.675, DN=0.697, LOF=0.807.
+V2 per-class AUROCs (seed 0, logistic reg): GOF=0.675, DN=0.697, LOF=0.807.
 
 ### Gate outcomes (per seed)
 
@@ -71,7 +71,7 @@ Gate 3 (V4 ≥ 0.417): 2/2 PASS (where run).
 V3 gene-split macro-F1 = **0.448 ± 0.019**.
 Leakage delta (gene-split − family-split) = **+0.001 ± 0.011**.
 
-After fixing gene-split to respect Pfam family boundaries (genes from the same family assigned to the same fold), the leakage delta collapsed to ~0. This is the correct result — it confirms the family-split is the right primary metric and that there is no within-family positional leakage in V3. The earlier (unfixed) gene-split showed +0.059 delta, which was an artefact of the split implementation.
+After fixing gene-split to respect protein family boundaries, the leakage delta collapsed to ~0. This confirms the family-split is the right primary metric and there is no within-family positional leakage in V3. The earlier (unfixed) gene-split showed +0.059 delta, which was an artefact of the split implementation.
 
 ---
 
@@ -83,19 +83,19 @@ V2 (proteome only) outperforms V1 (ESM-2 delta) by 0.080 F1 on average, with no 
 
 ### F2 — The combination is not reliably additive
 
-V3 (concat) passes Gate 2 on only 2/5 seeds. The failure pattern is systematic: when V2 is high (seeds 1, 3, 4: V2 = 0.471–0.499), V3 does not clear V2+0.02. When V2 is lower (seeds 0, 2: V2 = 0.432–0.437), V3 clears the gate. This suggests V3's apparent lift in some seeds is noise from fold assignment, not genuine complementarity. The two feature classes are not reliably orthogonal at this sample size and with this evaluation setup.
+V3 (concat) passes Gate 2 on only 2/5 seeds. The failure pattern is systematic: when V2 is high (seeds 1, 3, 4: V2 = 0.471–0.499), V3 does not clear V2+0.02. When V2 is lower (seeds 0, 2: V2 = 0.432–0.437), V3 clears the gate. This suggests V3's apparent lift in some seeds is noise from fold assignment, not genuine complementarity. The two feature classes aren't reliably orthogonal at this sample size.
 
 ### F3 — DN mechanism is the most tractable class
 
-DN AUROC lifts from 0.663 (V1) to 0.740 (V3), a +0.077 improvement that is consistent across seeds (std 0.017). This is the strongest per-class finding and directly validates the hypothesis from result_10: DN biology is encoded in complex-assembly context (PPI_degree, abundance), not in sequence alone. LOF also improves (0.661 → 0.759), largely driven by constraint features (pLI, LOEUF). GOF shows the smallest lift (0.609 → 0.678) and remains the weakest class — consistent with GOF being mechanistically heterogeneous and none of the current features capturing gain-of-function biology specifically.
+DN AUROC lifts from 0.663 (V1) to 0.740 (V3), a +0.077 improvement consistent across seeds (std 0.017). This is the strongest per-class finding and directly validates the hypothesis from result_10: DN biology is encoded in complex-assembly context (PPI_degree, abundance), not in sequence alone. LOF also improves (0.661 → 0.759), largely driven by constraint features (pLI, LOEUF). GOF shows the smallest lift (0.609 → 0.678) and remains the weakest class — consistent with GOF being mechanistically heterogeneous and none of the current features capturing activating-mutation biology specifically.
 
 ### F4 — V4 contrastive head adds nothing over V3
 
-V4 (0.424 ± 0.005) underperforms V3 (0.447 ± 0.020) on macro-F1 and underperforms V3 on all three per-class AUROCs. The contrastive projection does not find additional structure beyond what the MLP already learns in the concatenated space. V4 is also the most stable variant (std 0.005), which likely reflects it converging to a k-NN solution that ignores the learned projection and falls back to raw distance.
+V4 (0.424 ± 0.005) underperforms V3 (0.447 ± 0.020) on macro-F1 and underperforms V3 on all three per-class AUROCs. The contrastive projection does not find additional structure beyond what the MLP already learns in the concatenated space. V4 is also the most stable variant (std 0.005), which likely reflects it converging to a k-NN solution that falls back to raw distance.
 
 ### F5 — Leakage is negligible after split correction
 
-The corrected gene-split leakage delta of +0.001 ± 0.011 confirms there is no within-family positional leakage in V3. The proteome features, despite being gene-level, do not introduce family-level contamination beyond what the family-split already controls for. The family-mean-centred residuals in the feature matrix (engineered in Phase 2) appear to be doing their job.
+The corrected gene-split leakage delta of +0.001 ± 0.011 confirms there is no within-family positional leakage in V3. The proteome features, despite being gene-level, do not introduce family-level contamination beyond what the family-split already controls for. The family-mean-centred residuals engineered in Phase 2 appear to be doing their job.
 
 ---
 
@@ -134,13 +134,13 @@ Results 11–13 scored per-variant: each of ~19k variants contributes independen
 | V2 (proteome only) | **0.738** |
 | V3 (concat) | 0.709 |
 
-**Key finding:** V2's advantage over V1 grows from +0.080 (per-variant) to **+0.101** (per-gene), confirming the per-variant result was not driven by high-variant-count gene weighting. V3 drops further below V2 per-gene (0.413 vs 0.413) relative to per-variant (0.447 vs 0.462) — the combination adds less when each gene votes once. V2 per-gene F1 0.460 is consistent with the pilot result (0.417 on 4 features), and substantially above the pilot now that the full 37-feature matrix is used.
+**Key finding:** V2's advantage over V1 grows from +0.080 (per-variant) to **+0.101** (per-gene), confirming the per-variant result was not driven by high-variant-count gene weighting. V3 drops further below V2 per-gene (0.413 vs 0.413) relative to per-variant (0.447 vs 0.462) — the combination adds less when each gene votes once.
 
 ---
 
 ## T4 — V2 Feature-class ablation (added post result_13)
 
-Drop one feature class at a time from V2 (LogReg on gene-level proteome features, per-gene scoring). Report ΔF1 = V2_full − V2_minus_class (positive = that class was helping).
+Drop one feature class at a time from V2 (logistic regression on gene-level proteome features, per-gene scoring). Report ΔF1 = V2_full − V2_minus_class (positive = that class was helping).
 
 **Feature classes:** constraint (pLI/LOEUF/mis_z), paralogs (paralog_count), expression (tissue_specificity_tau), abundance (log_abundance_ppm), interactome (PPI_degree), dosage (HI_score/TS_score). Each class includes all derived columns (raw + _missing + _familyresid + _familyresid_missing).
 
@@ -158,11 +158,11 @@ Drop one feature class at a time from V2 (LogReg on gene-level proteome features
 
 ### Key findings from ablation
 
-**F1 — Constraint and dosage are the two load-bearing feature classes.** Dropping either costs ~0.040 F1 (half a standard deviation above baseline). These are the features that most directly encode mechanism: constraint (pLI/LOEUF/mis_z) separates LoF-intolerant genes from tolerant ones; dosage (ClinGen HI/TS) provides expert-curated mechanism information for the 19–37% of genes covered.
+**F1 — Constraint and dosage are the two load-bearing feature classes.** Dropping either costs ~0.040 F1. Constraint (pLI/LOEUF/mis_z) separates LoF-intolerant genes from tolerant ones; dosage (ClinGen HI/TS) provides expert-curated mechanism information for the 19–37% of genes covered.
 
-**F2 — The DN AUROC finding is surprising and contradicts the prior hypothesis.** Dropping constraint and dosage features each *increases* DN AUROC by +0.07. This means constraint and dosage features are *hurting* DN identification in the multi-class model — likely because constraint and dosage signals strongly push predictions toward LOF, and DN genes are constrained enough that the model conflates them with LOF. Removing these features liberates the DN signal in abundance, paralogs, and expression.
+**F2 — The DN AUROC finding is surprising.** Dropping constraint and dosage features each *increases* DN AUROC by +0.07. These features are *hurting* DN identification in the multi-class model — likely because constraint and dosage strongly push predictions toward LOF, and DN genes are constrained enough that the model conflates them with LOF. Removing these features frees up the DN signal in abundance, paralogs, and expression.
 
-**F3 — PPI_degree (interactome) adds nothing.** Dropping it marginally improves F1 (−0.002). This directly contradicts the interpretation in result_10 that "DN biology lives in complex-assembly context (PPI_degree, abundance)" — a reconciliation is required (see below).
+**F3 — PPI_degree (interactome) adds nothing.** Dropping it marginally improves F1 (−0.002). This contradicts the interpretation in result_10 that "DN biology lives in complex-assembly context (PPI_degree, abundance)" — a reconciliation is required (see below).
 
 **F4 — Paralogs add almost nothing to aggregate F1** (ΔF1 = +0.002) but reliably help DN AUROC (ΔDN = −0.015 when dropped, i.e. removing paralogs hurts DN). The signal is DN-specific and small.
 
@@ -176,22 +176,21 @@ This means the +0.101 per-gene V2 vs V1 gap is primarily explained by constraint
 
 ### Reconciliation with result_10
 
-Result_10 concluded: *"DN biology is encoded in complex-assembly context (PPI_degree, abundance)"* — specifically that the clan-holdout signal that survived was strongest for clans with stereotyped complex-assembly mechanisms (Cupin F1=0.536, Death domain F1=0.378). The T4 ablation here finds PPI_degree contributes ΔF1 = −0.002 to V2. These appear to contradict each other. The resolution is that they are measuring different things:
+Result_10 concluded: *"DN biology is encoded in complex-assembly context (PPI_degree, abundance)"* — specifically that the clan-holdout signal was strongest for clans with stereotyped complex-assembly mechanisms. The T4 ablation here finds PPI_degree contributes ΔF1 = −0.002 to V2. These appear to contradict each other. The resolution is that they are measuring different things:
 
-**Result_10 asks:** does ESM-2 *sequence signal* for DN generalise across protein folds? It observed that Cupin and Death domain clans generalise well, and interpreted this as "ESM-2 encodes complex-assembly context in its sequence representations." The word "context" there was about what ESM-2's pretraining might have learned — not a claim about gene-level PPI_degree as a feature.
+**Result_10 asks:** does ESM-2 *sequence signal* for DN generalise across protein folds? The word "context" there was about what ESM-2's pretraining might have learned — not a claim about gene-level PPI_degree as a feature.
 
-**T4 asks:** does the *gene-level PPI_degree feature* (number of BioPlex interaction partners) help a logistic regression classify mechanism? It does not. BioPlex coverage is only 75%, and PPI_degree is a coarse degree count that doesn't distinguish complex membership from transient interactions. Even if complex-assembly biology is real, this particular operationalisation of it (BioPlex degree in a gene-level logistic regression) does not capture it.
+**T4 asks:** does the *gene-level PPI_degree feature* (number of BioPlex interaction partners) help a logistic regression classify mechanism? It does not. BioPlex coverage is only 75%, and PPI_degree is a coarse degree count that doesn't distinguish complex membership from transient interactions.
 
-**The reconciliation:** result_10's "complex-assembly context" interpretation was a hypothesis about ESM-2 representations, not a validated prediction about which gene-level features would work. T4 shows that *this specific feature* (BioPlex PPI_degree) does not carry the signal in a gene-level model. It does not falsify the biological hypothesis that DN biology involves complex assembly — it shows BioPlex degree is the wrong proxy for it. A better operationalisation (e.g. number of co-complex partners from CORUM, or stoichiometric abundance ratios) might recover the signal. Result_10's interpretation was not wrong, but it was premature in its implied feature prediction.
+**The reconciliation:** result_10's "complex-assembly context" interpretation was a hypothesis about ESM-2 representations, not a validated prediction about which gene-level features would work. T4 shows that *this specific feature* (BioPlex PPI_degree) does not carry the signal in a gene-level model. A better operationalisation (e.g. number of co-complex partners from CORUM) might recover the signal.
 
 ---
 
 ## What remains open
 
-1. **DN without constraint/dosage** — the ablation suggests a DN-specific model should drop constraint and dosage features and instead focus on abundance + paralogs + expression. A DN-only logistic regression on these three features would test this directly.
-2. **GOF is unsolved** — no feature class shows a large GOF AUROC delta in the ablation. Structural features (AF2-derived, Badonyi direction) or PTM density would be the next step.
-3. **Clinical utility framing** — addressed in result_14.
-4. **Fine-tuning ESM-2** — not addressed here; frozen embeddings are a design choice, not a conclusion about what pLMs could learn.
+1. **DN without constraint/dosage** — the ablation suggests a DN-specific model should drop constraint and dosage features and instead focus on abundance + paralogs + expression.
+2. **GOF is unsolved** — no feature class shows a large GOF AUROC delta in the ablation.
+3. **Fine-tuning ESM-2** — not addressed here; frozen embeddings are a design choice, not a conclusion about what pLMs could learn.
 
 ---
 
@@ -216,6 +215,4 @@ We tested four models for predicting the mechanism of disease variants — wheth
 
 The clearest finding is that simple gene-level features — how constrained a gene is in the human population, how many protein partners it has, how abundant it is in the cell — are substantially better at predicting mechanism than a large protein language model trained on sequences. This held across all five experiment repetitions. The combination of both feature types did not reliably improve over gene-level features alone, suggesting the sequence model is not adding independent information.
 
-The dominant-negative class showed the largest improvement from adding gene-level features. This makes biological sense: dominant-negative variants cause disease by disrupting protein complexes, and information about complex membership and protein abundance lives in the interactome data, not in the amino acid sequence. Loss-of-function prediction also improved, largely because population constraint scores (which measure how intolerant a gene is to mutations) are directly informative. Gain-of-function remained the hardest class to predict — none of the current features capture what makes a mutation activating rather than disrupting.
-
-The most important next question is whether this level of prediction accuracy is good enough to be clinically useful — for example, in helping prioritise how to interpret variants of unknown significance, or in matching patients to therapies that target the correct disease mechanism.
+The dominant-negative class showed the largest improvement from adding gene-level features. Loss-of-function prediction also improved, largely because population constraint scores are directly informative. Gain-of-function remained the hardest class to predict — none of the current features capture what makes a mutation activating rather than disrupting.

@@ -3,20 +3,36 @@
 
 ---
 
+## Background: what this experiment is testing
+
+Each protein variant in the dataset has been labelled with a **disease mechanism**: gain-of-function (GOF — the mutant protein does too much), dominant negative (DN — the mutant protein actively interferes with the normal copy), or loss-of-function (LOF — the mutant protein does too little or nothing).
+
+ESM-2 is a protein language model — it converts a protein sequence into a list of numbers (an "embedding") that encodes something about the protein's structure and biology. For each variant, we computed two embeddings: one for the wildtype (normal) sequence and one for the mutant. The **delta** is just the mutant embedding minus the wildtype embedding — it captures how the mutation shifted the model's representation of the protein.
+
+The question: can we use that shift to predict which mechanism class the variant belongs to?
+
+We test this with a **linear classifier** (also called a linear probe): a simple model that draws a flat decision boundary in the embedding space. If the three mechanism classes cluster in different regions, the classifier will find it.
+
+**AUROC** (area under the ROC curve) measures how well a classifier ranks one class above the others. 0.5 = random, 1.0 = perfect. The pre-registered threshold for "meaningful" in this study is > 0.72. **Macro-F1** is the average F1 score across all three classes — it penalises classifiers that just predict the most common class.
+
+---
+
 ## Setup
 
 - **Dataset**: Gerasimavicius et al. 2022, `ClinVar_gene_level` sheet
 - **Variants**: 10,231 (GOF: 1,983 / DN: 894 / LOF: 7,354)
 - **Genes**: 948
-- **CV**: 5-fold gene-split
-- **Stability path**: B_direct (Megascale not available; subspace fit directly on Gerasimavicius FoldX ΔΔG)
-- **Bootstrap**: disabled for this run (too slow on 10k×1280; will re-enable after confirming signal)
+- **CV**: 5-fold gene-split (genes are split across folds, so the model can't memorise a gene it saw in training)
+- **Stability path**: B_direct (a physics-based stability score was used to define a "stability direction" in embedding space, then projected out — Megascale data wasn't available so we fit this directly on the dataset's own FoldX ΔΔG values)
+- **Bootstrap**: disabled for this run (too slow on 10k×1280 dimensions; will re-enable after confirming signal)
 
 ---
 
 ## Headline Results
 
-### Primary probe: mean-pooled stability-projected delta, 3-class gene-split CV
+### Primary result: mean-pooled delta, 3-class cross-validation
+
+The delta was averaged across all residue positions in the protein (mean-pooled) and fed into the linear classifier.
 
 | Metric | Value | Pre-registered threshold |
 |---|---|---|
@@ -26,43 +42,49 @@
 | AUROC LOF | 0.628 | > 0.72 = meaningful |
 | **Mean macro-AUROC** | **0.610** | **0.60–0.72 = weak** |
 
-**Verdict: weak signal.** Mean macro-AUROC of 0.610 falls in the "weak signal" band. Macro-F1 of 0.279 is effectively at chance for a class-imbalanced 3-class problem (LOF = 72% of variants).
+**Verdict: weak signal.** Mean macro-AUROC of 0.610 falls in the "weak signal" band. Macro-F1 of 0.279 is effectively at chance — a classifier that just always predicts LOF (the most common class, 72% of variants) would score similarly.
 
 ### Per-residue delta (co-primary)
+
+Instead of averaging across the whole protein, we used only the delta at the specific mutated position.
 
 | Metric | Value |
 |---|---|
 | macro-F1 | 0.373 |
 | AUROC GOF | 0.649 |
 
-Per-residue delta outperforms mean-pooled on macro-F1 (0.373 vs 0.279). The local context at the variant position carries more signal than the whole-protein mean. Per-residue is the more informative representation.
+This does better than the whole-protein average (0.373 vs 0.279 F1). The local context right at the mutation site carries more signal than the average across the whole protein.
 
 ---
 
 ## Baselines
 
-| Baseline | macro-F1 | Notes |
-|---|---|---|
-| **WT-only ESM-2** | **0.580** | **Strongest result — beats delta probe** |
-| One-hot AA identity | 0.280 | At chance — substitution identity carries no signal |
-| FoldX ΔΔG only | 0.279 | At chance — stability alone separates nothing |
-| AlphaMissense | 0.279 | At chance — pathogenicity score carries no mechanism signal |
-| Shuffled delta (neg ctrl) | 0.279 | Confirms delta is at chance |
+To put the delta results in context, we also tested simpler features:
 
-**Key finding: WT-only embeddings (macro-F1 = 0.580) substantially outperform the delta probe (0.279).** The wildtype representation alone classifies mechanism better than any mutation-specific signal.
+| Feature | macro-F1 | Notes |
+|---|---|---|
+| **WT-only ESM-2** | **0.580** | **Strongest result — beats the delta** |
+| One-hot AA identity | 0.280 | Just encoding which amino acid changed — at chance |
+| FoldX ΔΔG only | 0.279 | A physics-based stability score — at chance |
+| AlphaMissense | 0.279 | A state-of-the-art pathogenicity predictor — at chance |
+| Shuffled delta (negative control) | 0.279 | Randomly permuted delta — confirms delta is at chance |
+
+**The most striking finding: using only the wildtype embedding (no mutation information at all) gives macro-F1 = 0.580.** That's much better than the delta. The protein's normal sequence encodes enough information to partially predict its mechanism class — even without knowing what mutation occurred.
 
 ---
 
 ## WT-Only Follow-up: Family-Split CV
 
-Run post-hoc to test whether the WT signal is family-level or mechanism-level.
+The WT-only result looks impressive, but there's a catch. If related proteins (e.g. all kinases) tend to share the same mechanism label, the classifier might just be recognising protein families rather than learning anything about mechanism.
+
+To test this, we re-ran with **family-split CV**: instead of splitting by gene, we held out entire protein families from the test set. This is a harder test — the classifier can't use any protein from the same family as a hint.
 
 | CV scheme | macro-F1 | macro-AUROC |
 |---|---|---|
 | Gene-split | 0.580 | ~0.62 (estimated) |
 | Family-split | 0.298 | 0.528 ± 0.022 |
 
-**AUROC drops from ~0.62 to 0.528 under family-split.** The WT probe is largely learning protein family identity (kinases = GOF, structural proteins = DN) rather than mechanism itself. Some residual signal above chance (0.528 > 0.50) survives, but it's weak.
+**Performance drops sharply.** The WT signal mostly disappears when families are held out — it was largely learning "kinases = GOF, structural proteins = DN" rather than anything more fundamental. A small residual above chance (0.528 > 0.50) survives, but it's weak.
 
 Pfam coverage: 10,200/10,231 variants annotated across 662 families.
 
@@ -70,24 +92,21 @@ Pfam coverage: 10,200/10,231 variants annotated across 662 families.
 
 ## Stability Subspace
 
-- **Path B** (direct fit on Gerasimavicius FoldX ΔΔG) — Megascale not available
-- Variance explained: GOF=63%, DN=58%, LOF=60%
-- **Variance asymmetry GOF vs LOF: -0.056** — pre-registered prediction (GOF ≥ 30% less variance explained than LOF) **does not hold**
-- GOF variants actually have *more* variance explained by the stability subspace than LOF, contradicting Gerasimavicius's finding that GOF mutations have milder structural effects. This may reflect Path B overfitting to the data distribution.
+We tried projecting the delta onto (and away from) a "stability direction" in embedding space — the hypothesis being that stability-related variation might be obscuring mechanism signal.
 
-Projected and unprojected delta give identical macro-F1 (0.279) — stability projection makes no difference at this performance level.
+- Variance of the delta explained by the stability direction: GOF=63%, DN=58%, LOF=60%
+- **Pre-registered prediction** (GOF variants should have ≥30% less variance along the stability direction than LOF) **does not hold** — GOF actually has *more* variance explained, not less
+- After projecting out the stability direction, macro-F1 is unchanged at 0.279 — removing stability information doesn't help or hurt
 
 ---
 
 ## Orthogonality
 
-Cosine matrix entries are NaN — the pairwise probes failed to fit (likely due to insufficient class separation or numerical issues). `null_cosine_mean = 0.418` is unusually high for 1280-dim space (expected ~0), suggesting a numerical issue in the orthogonality analysis.
-
-One partial result: `DN_vs_GOF|GOF_vs_LOF` cosine is distinguishable from null (True), but this is an isolated finding without the full 3×3 matrix and shouldn't be over-interpreted.
+We tried to measure whether the three mechanism classes point in distinct directions in delta space. This analysis mostly failed — numerical issues (likely due to how poorly separated the classes are) produced NaN values across most of the matrix. The one partial result shouldn't be interpreted on its own.
 
 ---
 
-## Family-Split CV on Delta (from main run)
+## Family-Split CV on Delta
 
 | Metric | Gene-split | Family-split |
 |---|---|---|
@@ -96,37 +115,37 @@ One partial result: `DN_vs_GOF|GOF_vs_LOF` cosine is distinguishable from null (
 | AUROC DN | 0.561 | 0.547 |
 | AUROC LOF | 0.628 | 0.572 |
 
-Delta shows a modest AUROC drop under family-split (0.61 → 0.57 mean). The signal isn't purely family-level, but it's too weak to interpret meaningfully.
+The delta's AUROC drops a little under family-split (mean 0.61 → 0.57), but F1 is essentially unchanged. The signal is too weak to say much either way.
 
 ---
 
 ## Interpretation
 
 ### What worked
-- Pipeline ran end-to-end on 10,231 real variants
-- WT embeddings carry mechanism signal (macro-F1 0.58 gene-split) — ESM-2 encodes enough about protein identity to partially predict mechanism without seeing any mutation
-- Per-residue delta (0.373) is more informative than mean-pooled delta (0.279)
+- The pipeline ran end-to-end on 10,231 real variants
+- WT embeddings carry some mechanism signal (macro-F1 0.58 under gene-split) — ESM-2 encodes enough about a protein's identity to partially predict its mechanism class without even seeing the mutation
+- The delta at the specific mutated position (0.373) is more informative than averaging across the whole protein (0.279)
 
 ### What didn't work
-- **Delta embeddings don't linearly encode mechanism beyond gene identity.** Subtracting the WT removes the signal that actually separates mechanism classes. What's left (the mutation-specific perturbation) is dominated by stability/noise.
-- Stability projection (Path B) made no difference — the subspace isn't capturing a meaningful stability axis at this data scale.
-- The pre-registered variance asymmetry prediction did not hold.
+- **The delta doesn't encode mechanism in a way a linear classifier can find.** Subtracting the wildtype embedding removes the information that actually separates mechanism classes. What's left is dominated by stability noise.
+- Projecting out stability made no difference.
+- The pre-registered prediction about GOF vs LOF variance did not hold.
 
-### Root cause hypotheses
-1. **Gene-level labels are too coarse.** All variants from a gene get the same label regardless of which mechanism they individually act through. The delta captures variant-level perturbation; the label is gene-level. This mismatch may be fundamental.
-2. **Class imbalance is severe.** LOF = 72% of variants. The probe collapses toward predicting LOF. Rebalancing (e.g. undersample LOF to match GOF+DN) might expose more signal.
-3. **Stability projection is too aggressive or misdirected.** Path B fits on the same data, potentially removing mechanism-correlated variance along with stability.
-4. **Linear probe is appropriate but the representation is wrong.** Mean-pooled delta averages over 500+ residues; mechanism signal at the variant position gets diluted. Per-residue does better, which supports this.
+### Why might this be?
+1. **Gene-level labels are coarse.** Every variant in a gene gets the same mechanism label, regardless of what that specific variant actually does. The delta captures a variant-level perturbation; the label is gene-level. This mismatch may be fundamental.
+2. **Class imbalance is severe.** LOF = 72% of variants. The classifier tends to just predict LOF. Rebalancing the classes might reveal more signal.
+3. **Averaging over the whole protein loses the signal.** Averaging across 500+ residues dilutes the information at the mutation site. Per-residue delta does better, which fits this story.
+4. **Stability projection may be removing the wrong thing.** Fitting the stability direction on the same data might accidentally remove mechanism-correlated variance too.
 
 ---
 
 ## Next Steps
 
-1. **Rebalance classes** — undersample LOF to ~2× GOF count, re-run probe
-2. **Per-residue delta as primary** — run full experiment with per-residue as headline feature
-3. **MLP probe** — test whether mechanism signal is nonlinearly separable in delta space
+1. **Rebalance classes** — undersample LOF to ~2× GOF count, re-run
+2. **Per-residue delta as primary** — run the full experiment using the per-residue delta as the main feature
+3. **Nonlinear classifier** — test whether the mechanism signal is there but just not linearly separable
 4. **Expand dataset** — merge with G2P (~158 GOF genes, ~118 DN genes vs current 81/60) for more balanced classes
-5. **WT embedding as primary** — reframe the experiment around what WT encodes; use delta as a contrast
+5. **WT embedding as primary** — reframe the experiment around what the wildtype encodes; use the delta as a contrast
 
 ---
 

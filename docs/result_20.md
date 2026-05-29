@@ -3,6 +3,14 @@
 
 ---
 
+## Background: removing the ClinVar position bias
+
+Result_19 found that the *spatial pattern* of ESM-2 perturbations across a gene's observed clinical variants predicts mechanism — with near-zero leakage. But we flagged a problem: the positions we measured were the same positions that ClinVar says are important. Famous GOF genes have hundreds of reports at their canonical hotspot (e.g. KRAS G12), which makes those positions look highly clustered — not because of biology, but because of how intensively they were studied.
+
+This experiment removes that bias by replacing ClinVar positions with a **systematic in-silico scan**: 100 evenly-spaced positions per gene × 3 probe amino acids (Ala, Asp, Trp), regardless of which variants have actually been reported clinically. Every gene gets the same number of measurements at the same spacing, so study intensity can't bias the features.
+
+---
+
 ## TL;DR
 
 Replacing ClinVar variants with a systematic in-silico scan (100 evenly-spaced positions × 3 probe amino acids per gene, ~568k ESM-2 forward passes) eliminates the circularity of result_19 but also loses its GOF signal. Scan-only family-split F1 = **0.272** — well below the ClinVar-pattern baseline (0.348) and the G1 threshold (0.368). However, scan features combined with proteome features reach F1 = **0.413**, passing G3 (threshold 0.405). The scan adds orthogonal signal to proteome features even though it cannot stand alone.
@@ -16,7 +24,7 @@ Replacing ClinVar variants with a systematic in-silico scan (100 evenly-spaced p
 - **Total forward passes:** 567,771 (some positions skipped where probe AA = WT AA)
 - **Embeddings:** ESM-2 650M mean-pooled WT and mutant sequences
 - **CV:** 5-fold gene-split AND family-split, 5 seeds (0–4)
-- **Probe:** logistic regression (L2, balanced class weights), gene-level features
+- **Classifier:** logistic regression (L2, balanced class weights), gene-level features
 
 ---
 
@@ -69,17 +77,17 @@ Four feature combinations tested:
 
 ### F1 — Scan-only signal collapses without ClinVar bias
 
-Scan-only F1 = 0.272, versus result_19 ClinVar-pattern F1 = 0.348. The unbiased scan is substantially worse than using observed clinical variants. This is not a failure of the method — it confirms that result_19's signal came partly from the ClinVar enrichment for known hotspots. When you sample blindly at 100 positions, you usually miss the 2–3 positions that actually matter for a GOF gene.
+Scan-only F1 = 0.272, versus result_19 ClinVar-pattern F1 = 0.348. The unbiased scan is substantially worse. This is not a failure of the method — it confirms that result_19's signal came partly from the ClinVar enrichment for known hotspots. When you sample blindly at 100 positions, you usually miss the 2–3 positions that actually matter for a GOF gene.
 
 Scan-only also shows near-zero leakage (gene-split 0.280 ≈ family-split 0.272, Δ = +0.008), confirming the features are not family-recognition shortcuts. There is genuine but weak signal in the uniform scan.
 
 ### F2 — Scan adds nothing to the mean-pooled delta
 
-Scan + delta (0.375) is essentially identical to baseline delta alone (0.377). The 5 scalar features derived from the uniform scan are fully subsumed by the 1280-dimensional mean-pooled delta. Whatever signal the scan captures is already present in the aggregate embedding.
+Scan + delta (0.375) is essentially identical to baseline delta alone (0.377). The 5 scalar features from the uniform scan are fully subsumed by the 1280-dimensional mean-pooled delta. Whatever signal the scan captures is already present in the aggregate embedding.
 
 ### F3 — Scan adds to proteome features (G3 passes)
 
-Scan + proteome (0.413) beats proteome-alone threshold (0.405) and exceeds the baseline delta (0.377). The scan features capture something orthogonal to proteome-level properties (protein length, domain composition, expression). This is the one positive finding: the ESM-2 perturbation landscape adds information beyond what is known about the gene from databases.
+Scan + proteome (0.413) beats proteome-alone threshold (0.405) and exceeds the baseline delta (0.377). The scan features capture something orthogonal to proteome-level properties. This is the one positive finding: the ESM-2 perturbation landscape adds information beyond what is known about the gene from databases.
 
 ### F4 — GOF AUROC is higher than expected for a null
 
@@ -89,22 +97,22 @@ Scan-only GOF AUROC = 0.524 (family-split). This is above chance (0.5) despite t
 
 ## Interpretation
 
-### What this proved and disproved (plain-language)
+### What this proved and disproved
 
 The hope going in was the *positive* version: that a fair, unbiased scan could recover result_19's GOF-hotspot signal **without** relying on where clinical variants happen to sit. That would have shown the mechanism signal is fully extractable from sequence alone, no human-study bias required.
 
-That hope was **largely disproved**. Scan-only F1 (0.272) fell well below the ClinVar-pattern baseline (0.348) and failed G1. Sampling 100 fair, evenly-spaced positions usually misses the 2–3 spots that actually matter for a GOF gene, so the signal collapses. The headline hypothesis did not hold.
+That hope was **largely disproved**. Scan-only F1 (0.272) fell well below the ClinVar-pattern baseline (0.348) and failed G1. Sampling 100 fair, evenly-spaced positions usually misses the 2–3 spots that actually matter for a GOF gene, so the signal collapses.
 
-But the disproof is itself informative — it is a clean reality-check on result_19. Result_19 looked stronger than it really was *because part of its apparent power was the ClinVar position bias, not ESM-2.* Specifically (see result_19 F4): result_19's clustering features were partly driven by (a) variant *count* (`n_variants_log`, a "how-studied" proxy) and (b) clustering that reflects doctors repeatedly reporting the same famous hotspot. Strip both away with a fixed even scan and most of the lift disappears.
+The disproof is itself informative — it is a clean reality-check on result_19. Result_19 looked stronger than it really was *because part of its apparent power was the ClinVar position bias, not ESM-2*. Strip both away with a fixed even scan and most of the lift disappears.
 
-Two clarifications that were not obvious:
+Two clarifications:
 
-- **ESM-2 was never predicting ClinVar.** ESM-2 only measures how disruptive a mutation is; the bias lived in *which positions* it was asked to measure. The labels (GOF/LOF/DN) come from the curated Gerasimavicius dataset, not ClinVar — only the *positions* came from ClinVar.
-- **This is not "ESM-2 carries no signal."** The plain mean-pooled delta (result_7, F1≈0.377) and the scan+proteome combination here (G3, 0.413) both carry genuine, leak-free mechanism signal. The correct reading is narrower: ESM-2 carries *less* mechanism signal than result_19 first suggested, and result_19's extra boost was largely a ClinVar artifact. The smaller, genuine core survives.
+- **ESM-2 was never predicting ClinVar.** ESM-2 only measures how disruptive a mutation is; the bias lived in *which positions* it was asked to measure. The mechanism labels (GOF/LOF/DN) come from the curated Gerasimavicius dataset, not ClinVar — only the *positions* came from ClinVar.
+- **This is not "ESM-2 carries no signal."** The plain mean-pooled delta (result_7, F1≈0.377) and the scan+proteome combination here (G3, 0.413) both carry genuine, leak-free mechanism signal. Result_19's extra boost was largely a ClinVar artifact. The smaller, genuine core survives.
 
 ### Why scan-only fails where ClinVar-pattern succeeded
 
-Result_19 used the positions where clinical variants actually occur — these are by definition enriched for functionally important positions. The scan samples uniformly, so for a GOF gene with 3 critical positions out of 1000, 100 uniform samples have only a ~26% chance of hitting even one. The hotspot concentration signal (`scan_mag_cv`) is diluted by the 97 uninformative positions.
+Result_19 used the positions where clinical variants actually occur — enriched for functionally important positions by definition. The scan samples uniformly, so for a GOF gene with 3 critical positions out of 1000, 100 uniform samples have only a ~26% chance of hitting even one. The hotspot concentration signal is diluted by the ~97 uninformative positions.
 
 This is not a flaw in the scan design — it is a correct negative result. It shows that the hotspot biology is real (result_19 found it using known positions) but requires either knowing where to look or denser sampling to recover it blindly.
 
