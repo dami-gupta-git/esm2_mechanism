@@ -69,8 +69,10 @@ N_FOLDS = 5
 SEEDS   = [0, 1, 2, 3, 4]
 
 # Decision rule thresholds (pre-registered)
-M1_THRESHOLD = 0.414   # ESM-2 family-split 0.364 + 0.05
-M3_THRESHOLD = 0.03    # full - seq-only gap
+# ESM-2 5-seed family-split baseline = 0.299 ± 0.034 (result_7 multi-seed correction)
+ESM2_FAMILY_F1 = 0.299
+M1_THRESHOLD   = ESM2_FAMILY_F1 + 0.05   # 0.349
+M3_THRESHOLD   = 0.03    # full - seq-only gap
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -250,25 +252,51 @@ def phase2_extract_embeddings(batch_size: int = 4) -> None:
 
     EMB.mkdir(parents=True, exist_ok=True)
 
-    wt_embs  = {c: [] for c in remaining_conds}
-    mut_embs = {c: [] for c in remaining_conds}
+    # Resume from checkpoints if available
+    wt_embs:  dict[str, list] = {}
+    mut_embs: dict[str, list] = {}
+    resume_from = 0
+    for cond in remaining_conds:
+        ckpt_wt  = Path(str(conditions[cond]).replace(".npy", "_ckpt_wt.npy"))
+        ckpt_mut = Path(str(conditions[cond]).replace(".npy", "_ckpt_mut.npy"))
+        if ckpt_wt.exists() and ckpt_mut.exists():
+            wt_embs[cond]  = list(np.load(str(ckpt_wt), allow_pickle=True))
+            mut_embs[cond] = list(np.load(str(ckpt_mut), allow_pickle=True))
+            resume_from = max(resume_from, len(wt_embs[cond]))
+        else:
+            wt_embs[cond]  = []
+            mut_embs[cond] = []
+    if resume_from > 0:
+        print(f"Resuming from checkpoint: {resume_from} variants already done")
 
-    def get_struct_tokens(uid: str | None, seq_len: int) -> "torch.Tensor | None":
-        """Return structure tokens tensor (L+2,) for uid, or None if unavailable."""
+    struct_fallback_count = [0]  # mutable counter accessible in closure
+
+    def get_struct_tokens(uid: str | None, wt_seq_full: str,
+                          win_start: int, win_len: int) -> "torch.Tensor | None":
+        """
+        Return structure tokens for the windowed region [win_start, win_start+win_len).
+        win_start is 0-indexed start of the window in the full sequence.
+        Slices the AF2 coordinate array to match the windowed sequence.
+        Returns None and falls back to seq-only if structure unavailable.
+        """
         if uid is None or struct_cache.get(uid) is None:
             return None
         try:
             coords = torch.tensor(struct_cache[uid], dtype=torch.float32)
-            # coords shape: (L, 37, 3) from AF2 PDB via ProteinChain
-            # Trim/pad to match seq_len
-            L = coords.shape[0]
-            if L != seq_len:
+            L_full = coords.shape[0]
+            # Slice coords to the window — if AF2 length doesn't match full seq, skip
+            if L_full != len(wt_seq_full):
+                struct_fallback_count[0] += 1
                 return None
-            # Tokenise via the structure encoder
-            protein = ESMProtein(sequence="A" * seq_len, coordinates=coords)
+            coords_win = coords[win_start:win_start + win_len]
+            if coords_win.shape[0] != win_len:
+                struct_fallback_count[0] += 1
+                return None
+            protein = ESMProtein(sequence="A" * win_len, coordinates=coords_win)
             tensor = model.encode(protein)
-            return tensor.structure  # (L+2,) or None
+            return tensor.structure
         except Exception:
+            struct_fallback_count[0] += 1
             return None
 
     def embed_sequence(seq: str, struct_toks: "torch.Tensor | None",
@@ -288,18 +316,38 @@ def phase2_extract_embeddings(batch_size: int = 4) -> None:
         emb = out.embeddings[0, 1:-1].mean(dim=0).cpu().float().numpy()
         return emb
 
+    import time
+    t_start = time.time()
+
     for i, v in enumerate(variants):
+        if i < resume_from:
+            continue
         uid    = v.get("uniprot_id")
         wt_seq = v["wt_seq"]
         pos    = v["aa_pos"]
 
         wt_win, new_pos = window_sequence(wt_seq, pos)
+        if new_pos < 1 or new_pos > len(wt_win):
+            print(f"  SKIP variant {i}: pos={pos} new_pos={new_pos} out of range for seq len {len(wt_win)}")
+            for cond in remaining_conds:
+                wt_embs[cond].append(None)
+                mut_embs[cond].append(None)
+            continue
         mut_win = list(wt_win)
         mut_win[new_pos - 1] = v["aa_mut"]
         mut_win = "".join(mut_win)
 
-        # Get structure tokens once per variant (same for wt and mut — same position context)
-        struct_toks = get_struct_tokens(uid, len(wt_win))
+        # Compute window start offset in the full sequence (for coordinate slicing)
+        L = len(wt_seq)
+        if L <= 1022:
+            win_start = 0
+        else:
+            half = 511
+            win_start = max(0, pos - 1 - half)
+            if win_start + 1022 > L:
+                win_start = max(0, L - 1022)
+
+        struct_toks = get_struct_tokens(uid, wt_seq, win_start, len(wt_win))
 
         for cond in remaining_conds:
             wt_e  = embed_sequence(wt_win,  struct_toks, cond)
@@ -308,33 +356,119 @@ def phase2_extract_embeddings(batch_size: int = 4) -> None:
             mut_embs[cond].append(mut_e)
 
         if (i + 1) % 100 == 0:
-            print(f"  [{i+1}/{n}] variants embedded")
+            elapsed = time.time() - t_start
+            done = (i + 1) - resume_from
+            rate = done / elapsed if elapsed > 0 else 0
+            eta  = (n - i - 1) / rate if rate > 0 else 0
+            print(f"  [{i+1}/{n}] {rate:.1f} var/s  ETA {eta/60:.0f} min")
             for cond in remaining_conds:
                 np.save(str(conditions[cond]).replace(".npy", "_ckpt_wt.npy"),
-                        np.array(wt_embs[cond]))
+                        np.array(wt_embs[cond], dtype=object))
                 np.save(str(conditions[cond]).replace(".npy", "_ckpt_mut.npy"),
-                        np.array(mut_embs[cond]))
+                        np.array(mut_embs[cond], dtype=object))
 
     for cond in remaining_conds:
-        wt_arr  = np.array(wt_embs[cond])
-        mut_arr = np.array(mut_embs[cond])
+        # Filter out None entries (skipped variants)
+        pairs = [(w, m) for w, m in zip(wt_embs[cond], mut_embs[cond])
+                 if w is not None and m is not None]
+        wt_arr  = np.array([p[0] for p in pairs])
+        mut_arr = np.array([p[1] for p in pairs])
         delta   = mut_arr - wt_arr
         np.save(str(conditions[cond]), delta)
-        print(f"  {cond}: delta saved → {conditions[cond]}  shape={delta.shape}")
+        n_skip = len(wt_embs[cond]) - len(pairs)
+        print(f"  {cond}: delta saved → {conditions[cond]}  shape={delta.shape}  skipped={n_skip}")
         for suffix in ("_ckpt_wt.npy", "_ckpt_mut.npy"):
             p = Path(str(conditions[cond]).replace(".npy", suffix))
             if p.exists():
                 p.unlink()
 
+    print(f"Structure fallbacks (coords length mismatch): {struct_fallback_count[0]}")
     print("Phase 2 complete.")
 
 
 # ── Phase 3: probes and decision rules ───────────────────────────────────────
 
+def _run_mlp(X: np.ndarray, y: np.ndarray, splits: list, n_classes: int,
+             seed: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    PyTorch MLP (256→64) with class-weighted cross-entropy and early stopping.
+    Matches result_7's run_mlp_probe exactly.
+    Returns (all_pred, all_true, all_proba) concatenated across folds.
+    """
+    import torch
+    import torch.nn as nn
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    all_pred, all_true, all_proba = [], [], []
+
+    for fold_i, (tr, te) in enumerate(splits):
+        X_tr, X_te = X[tr].astype(np.float32), X[te].astype(np.float32)
+        y_tr, y_te = y[tr], y[te]
+        if len(set(y_tr)) < 2:
+            continue
+
+        # 15% validation split for early stopping
+        rng = np.random.RandomState(seed + fold_i)
+        idx = np.arange(len(y_tr)); rng.shuffle(idx)
+        n_val = max(1, int(0.15 * len(idx)))
+        val_idx, fit_idx = idx[:n_val], idx[n_val:]
+        X_fit, y_fit = X_tr[fit_idx], y_tr[fit_idx]
+        X_val, y_val = X_tr[val_idx], y_tr[val_idx]
+        if len(X_fit) < 10 or len(X_val) < 5:
+            continue
+
+        mu = X_fit.mean(0); std = X_fit.std(0) + 1e-8
+        X_fit = (X_fit - mu) / std
+        X_val = (X_val - mu) / std
+        X_te_n = (X_te  - mu) / std
+
+        counts = np.bincount(y_tr, minlength=n_classes).astype(np.float32)
+        cw = torch.tensor(1.0 / (counts + 1e-8)).to(device)
+
+        model = nn.Sequential(
+            nn.Linear(X_fit.shape[1], 256), nn.ReLU(), nn.Dropout(0.3),
+            nn.Linear(256, 64),             nn.ReLU(), nn.Dropout(0.3),
+            nn.Linear(64, n_classes),
+        ).to(device)
+        opt = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-3)
+        loss_fn = nn.CrossEntropyLoss(weight=cw)
+
+        best_val, patience, best_state = float("inf"), 0, None
+        for epoch in range(100):
+            model.train()
+            for b in range(0, len(X_fit), 256):
+                xb = torch.tensor(X_fit[b:b+256]).to(device)
+                yb = torch.tensor(y_fit[b:b+256]).to(device)
+                opt.zero_grad(); loss_fn(model(xb), yb).backward(); opt.step()
+            model.eval()
+            with torch.no_grad():
+                vl = loss_fn(model(torch.tensor(X_val).to(device)),
+                             torch.tensor(y_val).to(device)).item()
+            if vl < best_val - 1e-4:
+                best_val = vl; patience = 0
+                best_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
+            else:
+                patience += 1
+                if patience >= 10:
+                    break
+
+        if best_state:
+            model.load_state_dict({k: v.to(device) for k, v in best_state.items()})
+        model.eval()
+        with torch.no_grad():
+            logits = model(torch.tensor(X_te_n).to(device))
+            proba  = torch.softmax(logits, dim=-1).cpu().numpy()
+        pred = proba.argmax(axis=1)
+        all_pred.append(pred); all_true.append(y_te); all_proba.append(proba)
+
+    if not all_pred:
+        return np.array([]), np.array([]), np.array([])
+    return np.concatenate(all_pred), np.concatenate(all_true), np.vstack(all_proba)
+
+
 def phase3_probes() -> None:
     sys.path.insert(0, str(SCRIPTS))
     from utils_probes import gene_split_cv, family_split_cv
-    from sklearn.neural_network import MLPClassifier
     from sklearn.linear_model import LogisticRegression
     from sklearn.preprocessing import StandardScaler
     from sklearn.metrics import f1_score, roc_auc_score
@@ -345,12 +479,19 @@ def phase3_probes() -> None:
     y_labels = np.array([v["mech3"] for v in variants])
     label_set = ["GOF", "DN", "LOF"]
     y = np.array([label_set.index(l) for l in y_labels])
+    n_classes = len(label_set)
 
     conditions = {
         "seq":        EMB_SEQ,
         "seq_struct": EMB_SEQ_STRUCT,
         "full":       EMB_FULL,
     }
+
+    # Log structure coverage in phase 2 output
+    for cond, path in conditions.items():
+        if path.exists():
+            arr = np.load(str(path))
+            print(f"  {cond}: {arr.shape[0]} variants embedded (of {len(variants)} total)")
 
     results = {}
 
@@ -360,13 +501,17 @@ def phase3_probes() -> None:
             continue
 
         delta = np.load(str(path))
+        # delta may have fewer rows than variants if some were skipped
+        n_delta = delta.shape[0]
+        y_cond  = y[:n_delta]
+        genes_cond = genes[:n_delta]
         print(f"\n=== Condition: {cond}  shape={delta.shape} ===")
 
-        cond_results = {"gene_split": {}, "family_split": {}}
+        cond_results: dict = {"gene_split": {}, "family_split": {}}
 
         for cv_name, get_splits in [
-            ("gene_split",   lambda seed: gene_split_cv(genes, N_FOLDS, seed)),
-            ("family_split", lambda seed: family_split_cv(genes, pfam_map, N_FOLDS, seed)),
+            ("gene_split",   lambda seed: gene_split_cv(genes_cond, N_FOLDS, seed)),
+            ("family_split", lambda seed: family_split_cv(genes_cond, pfam_map, N_FOLDS, seed)),
         ]:
             mlp_f1s, mlp_gof, mlp_dn = [], [], []
             lr_f1s = []
@@ -377,41 +522,20 @@ def phase3_probes() -> None:
                     print(f"  {cv_name} seed={seed}: no valid splits, skip")
                     continue
 
-                scaler = StandardScaler()
-
-                # MLP
-                mlp_preds, mlp_true = [], []
-                mlp_probs_gof, mlp_probs_dn = [], []
-                for tr, te in splits:
-                    X_tr = scaler.fit_transform(delta[tr])
-                    X_te = scaler.transform(delta[te])
-                    clf = MLPClassifier(
-                        hidden_layer_sizes=(256, 64),
-                        max_iter=300,
-                        random_state=seed,
-                        class_weight={i: 1.0 / np.mean(y[tr] == i) for i in range(3)},
-                    )
-                    clf.fit(X_tr, y[tr])
-                    pred  = clf.predict(X_te)
-                    proba = clf.predict_proba(X_te)
-                    mlp_preds.append(pred)
-                    mlp_true.append(y[te])
-                    mlp_probs_gof.append(proba[:, label_set.index("GOF")])
-                    mlp_probs_dn.append(proba[:, label_set.index("DN")])
-
-                all_pred = np.concatenate(mlp_preds)
-                all_true = np.concatenate(mlp_true)
-                all_gof  = np.concatenate(mlp_probs_gof)
-                all_dn   = np.concatenate(mlp_probs_dn)
-
-                f1 = f1_score(all_true, all_pred, average="macro")
-                gof_auc = roc_auc_score((all_true == label_set.index("GOF")).astype(int), all_gof)
-                dn_auc  = roc_auc_score((all_true == label_set.index("DN")).astype(int),  all_dn)
-                mlp_f1s.append(f1)
-                mlp_gof.append(gof_auc)
-                mlp_dn.append(dn_auc)
+                # PyTorch MLP — matches result_7
+                pred, true, proba = _run_mlp(delta, y_cond, splits, n_classes, seed)
+                if len(pred) == 0:
+                    continue
+                mlp_f1s.append(f1_score(true, pred, average="macro"))
+                mlp_gof.append(roc_auc_score(
+                    (true == label_set.index("GOF")).astype(int),
+                    proba[:, label_set.index("GOF")]))
+                mlp_dn.append(roc_auc_score(
+                    (true == label_set.index("DN")).astype(int),
+                    proba[:, label_set.index("DN")]))
 
                 # Logistic regression
+                scaler = StandardScaler()
                 lr_preds, lr_true = [], []
                 for tr, te in splits:
                     X_tr = scaler.fit_transform(delta[tr])
@@ -420,22 +544,23 @@ def phase3_probes() -> None:
                         max_iter=1000, random_state=seed,
                         class_weight="balanced", C=0.1,
                     )
-                    clf.fit(X_tr, y[tr])
+                    clf.fit(X_tr, y_cond[tr])
                     lr_preds.append(clf.predict(X_te))
-                    lr_true.append(y[te])
-                lr_f1s.append(f1_score(np.concatenate(lr_true), np.concatenate(lr_preds), average="macro"))
+                    lr_true.append(y_cond[te])
+                lr_f1s.append(f1_score(
+                    np.concatenate(lr_true), np.concatenate(lr_preds), average="macro"))
 
             if not mlp_f1s:
                 continue
 
             r = {
-                "mlp_f1_mean":  float(np.mean(mlp_f1s)),
-                "mlp_f1_std":   float(np.std(mlp_f1s)),
+                "mlp_f1_mean":        float(np.mean(mlp_f1s)),
+                "mlp_f1_std":         float(np.std(mlp_f1s)),
                 "mlp_gof_auroc_mean": float(np.mean(mlp_gof)),
                 "mlp_dn_auroc_mean":  float(np.mean(mlp_dn)),
-                "lr_f1_mean":   float(np.mean(lr_f1s)),
-                "lr_f1_std":    float(np.std(lr_f1s)),
-                "n_seeds":      len(mlp_f1s),
+                "lr_f1_mean":         float(np.mean(lr_f1s)),
+                "lr_f1_std":          float(np.std(lr_f1s)),
+                "n_seeds":            len(mlp_f1s),
             }
             cond_results[cv_name] = r
             print(f"  {cv_name}: MLP F1={r['mlp_f1_mean']:.3f}±{r['mlp_f1_std']:.3f}  "
@@ -445,42 +570,50 @@ def phase3_probes() -> None:
         results[cond] = cond_results
 
     # ── decision rules ─────────────────────────────────────────────────────
-    print("\n=== DECISION RULES ===")
+    print(f"\n=== DECISION RULES ===")
+    print(f"  ESM-2 baseline (result_7, 5-seed): family-split MLP F1 = {ESM2_FAMILY_F1:.3f}")
+    print(f"  M1 threshold = {M1_THRESHOLD:.3f}  (ESM2 + 0.05)")
 
-    esm2_family_f1 = 0.364   # result_7 MLP 5-seed mean
-
-    def get_f1(cond, cv):
+    def get_f1(cond: str, cv: str) -> float:
         return results.get(cond, {}).get(cv, {}).get("mlp_f1_mean", float("nan"))
 
     full_f1 = get_f1("full", "family_split")
     seq_f1  = get_f1("seq",  "family_split")
-    ss_f1   = get_f1("seq_struct", "family_split")
 
     m1 = full_f1 > M1_THRESHOLD if not np.isnan(full_f1) else None
     m2 = seq_f1  > M1_THRESHOLD if not np.isnan(seq_f1)  else None
-    m3 = (full_f1 - seq_f1) > M3_THRESHOLD if not np.isnan(full_f1) and not np.isnan(seq_f1) else None
+    m3 = (full_f1 - seq_f1) > M3_THRESHOLD \
+         if not np.isnan(full_f1) and not np.isnan(seq_f1) else None
 
-    print(f"  ESM-2 baseline (result_7): family-split MLP F1 = {esm2_family_f1:.3f}")
-    print(f"  M1: ESM-3 full   family-split F1 > {M1_THRESHOLD:.3f} → {full_f1:.3f} → {'PASS ✓' if m1 else 'FAIL ✗' if m1 is not None else 'N/A'}")
-    print(f"  M2: ESM-3 seq    family-split F1 > {M1_THRESHOLD:.3f} → {seq_f1:.3f}  → {'PASS ✓' if m2 else 'FAIL ✗' if m2 is not None else 'N/A'}")
-    print(f"  M3: full - seq   > {M3_THRESHOLD:.3f}               → {full_f1 - seq_f1:.3f}  → {'PASS ✓' if m3 else 'FAIL ✗' if m3 is not None else 'N/A'}")
+    def fmt(v, passed):
+        s = f"{v:.3f}" if not np.isnan(v) else "N/A"
+        return f"{s} → {'PASS ✓' if passed else 'FAIL ✗' if passed is not None else 'N/A'}"
+
+    print(f"  M1: ESM-3 full   family-split F1 > {M1_THRESHOLD:.3f} → {fmt(full_f1, m1)}")
+    print(f"  M2: ESM-3 seq    family-split F1 > {M1_THRESHOLD:.3f} → {fmt(seq_f1, m2)}")
+    gap = full_f1 - seq_f1 if not np.isnan(full_f1) and not np.isnan(seq_f1) else float("nan")
+    print(f"  M3: full − seq   > {M3_THRESHOLD:.3f}               → {fmt(gap, m3)}")
 
     if m1 is False:
-        print("\n  Interpretation: NULL CONFIRMED — mechanism is not recoverable from ESM-3 regardless of modality.")
+        print("\n  Interpretation: NULL CONFIRMED — mechanism not recoverable from ESM-3 regardless of modality.")
     elif m1 and m2 is False and m3:
         print("\n  Interpretation: STRUCTURE RESCUES MECHANISM — structure tokens are the operative ingredient.")
     elif m1 and m2:
         print("\n  Interpretation: SCALE SUFFICES — model scale (not structure tokens) accounts for the lift.")
     elif m1 and m3 is False:
-        print("\n  Interpretation: ESM-3 better but structure tokens not the reason.")
+        print("\n  Interpretation: ESM-3 better than ESM-2 but structure tokens not the reason.")
 
     summary = {
-        "esm2_baseline_family_split_f1": esm2_family_f1,
+        "esm2_baseline_family_split_f1": ESM2_FAMILY_F1,
+        "m1_threshold": M1_THRESHOLD,
         "results": results,
         "decision_rules": {
-            "M1": {"criterion": f"full family-split F1 > {M1_THRESHOLD}", "value": full_f1, "passed": m1},
-            "M2": {"criterion": f"seq family-split F1 > {M1_THRESHOLD}",  "value": seq_f1,  "passed": m2},
-            "M3": {"criterion": f"full - seq > {M3_THRESHOLD}",           "value": float(full_f1 - seq_f1) if not np.isnan(full_f1) and not np.isnan(seq_f1) else None, "passed": m3},
+            "M1": {"criterion": f"full family-split F1 > {M1_THRESHOLD:.3f}",
+                   "value": full_f1, "passed": m1},
+            "M2": {"criterion": f"seq family-split F1 > {M1_THRESHOLD:.3f}",
+                   "value": seq_f1,  "passed": m2},
+            "M3": {"criterion": f"full − seq > {M3_THRESHOLD:.3f}",
+                   "value": float(gap) if not np.isnan(gap) else None, "passed": m3},
         },
         "model": ESM3_MODEL,
         "dataset": "gerasimavicius",
