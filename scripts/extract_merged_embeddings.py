@@ -31,15 +31,8 @@ parser.add_argument("--model", default="esm2_t33_650M_UR50D")
 parser.add_argument("--batch_size", type=int, default=32)
 args = parser.parse_args()
 
-# Add parent dir to path to import from experiment.py
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-try:
-    from experiment import (window_sequence, apply_missense,
-                            get_esm2_embeddings_for_pairs, fetch_uniprot_sequence)
-except ImportError:
-    sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-    from experiment import (window_sequence, apply_missense,
-                            get_esm2_embeddings_for_pairs, fetch_uniprot_sequence)
+from esm2_mechanism import get_esm2_embeddings_for_pairs
+from utils_sequences import window_sequence, apply_missense, fetch_uniprot_sequence
 
 # Load merged variants
 variants_path = os.path.join(args.data_dir, "merged_variants.json")

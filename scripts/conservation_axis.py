@@ -41,7 +41,8 @@ OUT = os.path.join(ROOT, "results", "magnitude_direction")
 os.makedirs(OUT, exist_ok=True)
 
 sys.path.insert(0, SCRIPTS)
-from experiment import window_sequence, ESM2_MODEL_650M
+from esm2_mechanism import ESM2_MODEL_650M
+from utils_sequences import window_sequence
 # multiseed_v1 is imported lazily inside Phase-2 analysis (Phase-1 extraction does
 # not need it, so the pod only needs experiment.py + fair-esm to run --extract).
 

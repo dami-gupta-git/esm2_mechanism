@@ -18,19 +18,9 @@ from collections import Counter
 
 import numpy as np
 
-# Reuse functions from the main experiment script
-from experiment import (
-    fetch_gerasimavicius_dataset,
-    build_sequence_cache,
-    fetch_alphamissense_scores,
-    window_sequence,
-    apply_missense,
-    gene_split_cv,
-    gene_family_split_cv,
-    run_linear_probe,
-    fetch_pfam_families,
-    ESM2_MODEL_650M,
-)
+from esm2_mechanism import fetch_gerasimavicius_dataset, fetch_alphamissense_scores, ESM2_MODEL_650M
+from utils_sequences import build_sequence_cache, window_sequence, apply_missense, fetch_pfam_families
+from utils_probes import gene_split_cv, family_split_cv
 
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import roc_auc_score, f1_score, precision_recall_curve, auc
@@ -194,12 +184,10 @@ def main():
     # 5. Build splits — gene-split AND family-split
     # ------------------------------------------------------------------
     print("\n=== Building CV splits ===")
-    pfam_map = fetch_pfam_families(valid_variants, seq_cache, data_dir)
-    gene_splits = gene_split_cv(None, None, genes_arr,
-                                 n_folds=args.n_folds, seed=args.seed)
-    family_splits = gene_family_split_cv(None, None, genes_arr,
-                                          pfam_map, n_folds=args.n_folds,
-                                          seed=args.seed)
+    pfam_map = fetch_pfam_families(valid_variants, data_dir)
+    gene_splits = gene_split_cv(genes_arr, n_folds=args.n_folds, seed=args.seed)
+    family_splits = family_split_cv(genes_arr, pfam_map,
+                                     n_folds=args.n_folds, seed=args.seed)
 
     print(f"Gene-split folds:   {len(gene_splits)}")
     print(f"Family-split folds: {len(family_splits)}")

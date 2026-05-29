@@ -1,7 +1,7 @@
 """
 Shared sequence utilities: UniProt fetching, missense application, windowing, caching.
 
-Used by experiment.py, esm3_mechanism.py, score_esm1v.py and any other script
+Used by esm2_mechanism.py, esm3_mechanism.py, score_esm1v.py and any other script
 that needs to prepare WT/mutant sequence pairs for embedding models.
 """
 

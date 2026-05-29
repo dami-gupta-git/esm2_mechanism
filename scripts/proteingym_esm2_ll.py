@@ -202,7 +202,7 @@ def phase2_extract_ll(jobs: list[dict], batch_size: int = 32) -> dict[str, dict[
     if device != "cuda":
         raise RuntimeError("Phase 2 requires a GPU. Run on RunPod.")
 
-    from experiment import ESM2_MODEL_650M
+    from esm2_mechanism import ESM2_MODEL_650M
     model, alphabet = esm_lib.pretrained.load_model_and_alphabet(ESM2_MODEL_650M)
     model = model.to(device).eval()
     batch_converter = alphabet.get_batch_converter()

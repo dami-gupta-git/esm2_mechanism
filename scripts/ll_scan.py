@@ -41,7 +41,8 @@ CHECKPOINT_EVERY = 50            # genes between saves
 MIN_POSITIONS = 3
 
 sys.path.insert(0, str(Path(__file__).parent))
-from experiment import window_sequence, ESM2_MODEL_650M
+from esm2_mechanism import ESM2_MODEL_650M
+from utils_sequences import window_sequence
 
 
 # ── Phase 1: load probe list ──────────────────────────────────────────────────

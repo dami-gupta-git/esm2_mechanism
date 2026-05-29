@@ -54,7 +54,7 @@ def load_variants_and_labels(data_dir, variants_file=None):
         with open(seq_path) as f:
             seq_cache = json.load(f)
 
-        from experiment import apply_missense, window_sequence
+        from utils_sequences import apply_missense, window_sequence
         valid_variants = []
         for v in variants:
             uid = v["uniprot_id"]
