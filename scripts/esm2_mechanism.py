@@ -27,7 +27,6 @@ import warnings
 import urllib.request
 import urllib.error
 import functools
-from io import StringIO
 
 import numpy as np
 print = functools.partial(print, flush=True)
@@ -36,7 +35,12 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import roc_auc_score, f1_score, precision_recall_curve, auc
 from sklearn.preprocessing import LabelEncoder
 from sklearn.decomposition import PCA
-from utils_probes import gene_split_cv
+
+from utils_probes import gene_split_cv, family_split_cv, run_logreg_cv
+from utils_sequences import (
+    build_sequence_cache, fetch_pfam_families,
+    apply_missense, window_sequence,
+)
 
 warnings.filterwarnings("ignore")
 
@@ -45,11 +49,10 @@ warnings.filterwarnings("ignore")
 # ---------------------------------------------------------------------------
 
 OSF_DATASET_URL = "https://osf.io/rct6d/download"  # Gerasimavicius et al. DiseaseMech_Stability_VEPS.xlsx
-UNIPROT_REST = "https://rest.uniprot.org/uniprotkb"
 ESM2_MODEL_650M = "esm2_t33_650M_UR50D"
 ESM2_MODEL_3B = "esm2_t36_3B_UR50D"
-MAX_SEQ_LEN = 1022  # ESM-2 token limit
-WINDOW_HALF = 500   # for sequences > 1022 aa, window ±500 around variant position
+
+CLASSES_3 = ["GOF", "DN", "LOF"]
 
 # Pre-registered thresholds
 STABILITY_TRANSFER_RHO_THRESHOLD = 0.3  # Spearman ρ for Megascale→Gerasimavicius transfer
@@ -66,9 +69,8 @@ BENIGN_LEAK_THRESHOLD = 0.50           # benign AUROC as fraction of pathogenic 
 def fetch_gerasimavicius_dataset(cache_dir):
     """
     Download and parse the Gerasimavicius et al. variant table from OSF.
-    File: DiseaseMech_Stability_VEPS.xlsx, sheet: HGMD_four_class
-    Columns used: Gene, Uniprot_id, Uniprot_variant, Gene_mechanism_label, raw_FoldX_Monomer
-    Uniprot_variant format: e.g. "H77Y" (wt_aa + position + mut_aa)
+    File: DiseaseMech_Stability_VEPS.xlsx, sheet: ClinVar_gene_level
+    Columns used: Gene, Uniprot_id, Uniprot_variant, Disease_mechanism, raw_FoldX_Monomer
     Returns list of dicts with keys: gene, uniprot_id, aa_pos, aa_wt, aa_mut,
     mechanism (GOF/DN/HI/AR), foldx_ddg.
     Falls back to a minimal synthetic dataset for testing if download fails.
@@ -106,7 +108,6 @@ def fetch_gerasimavicius_dataset(cache_dir):
 
         variant_pat = re.compile(r"^([A-Z])(\d+)([A-Z])$")
 
-        # Mechanism label normalisation for ClinVar_gene_level Disease_mechanism column
         mech_map = {
             "GOF": "GOF", "DN": "DN", "HI": "HI",
             "AR": "AR", "AR, HET": "AR", "AR, HOM": "AR",
@@ -114,7 +115,6 @@ def fetch_gerasimavicius_dataset(cache_dir):
 
         for row in rows[1:]:
             try:
-                # Only include ClinVar disease variants (not GNOMAD)
                 row_class = str(row[col.get("Class", -1)] or "").strip().upper()
                 if "CLINVAR" not in row_class:
                     continue
@@ -228,97 +228,13 @@ def _print_dataset_stats(variants):
 
 
 # ---------------------------------------------------------------------------
-# Protein sequence fetching
+# AlphaMissense score fetching
 # ---------------------------------------------------------------------------
-
-def fetch_uniprot_sequence(uniprot_id, retries=3, delay=1.0):
-    """Fetch canonical protein sequence from UniProt."""
-    url = f"{UNIPROT_REST}/{uniprot_id}.fasta"
-    for attempt in range(retries):
-        try:
-            with urllib.request.urlopen(url, timeout=30) as resp:
-                fasta = resp.read().decode()
-            lines = fasta.strip().split("\n")
-            seq = "".join(l for l in lines if not l.startswith(">"))
-            return seq.upper() if seq else None
-        except Exception:
-            if attempt < retries - 1:
-                time.sleep(delay)
-    return None
-
-
-def apply_missense(sequence, aa_pos, aa_wt, aa_mut):
-    """
-    Apply a missense mutation to a protein sequence.
-    aa_pos is 1-indexed. Returns None if position is out of range or WT mismatch.
-    """
-    idx = aa_pos - 1
-    if idx < 0 or idx >= len(sequence):
-        return None
-    if sequence[idx] != aa_wt:
-        return None
-    seq_list = list(sequence)
-    seq_list[idx] = aa_mut
-    return "".join(seq_list)
-
-
-def window_sequence(sequence, aa_pos, window_half=WINDOW_HALF, max_len=MAX_SEQ_LEN):
-    """
-    For sequences longer than max_len, extract a window centered on aa_pos.
-    Returns (windowed_seq, new_aa_pos) where new_aa_pos is the variant position
-    in the windowed sequence (1-indexed).
-    """
-    if len(sequence) <= max_len:
-        return sequence, aa_pos
-
-    idx = aa_pos - 1  # 0-indexed
-    start = max(0, idx - window_half)
-    end = min(len(sequence), idx + window_half)
-    # Ensure window is at most max_len
-    if end - start > max_len:
-        half = max_len // 2
-        start = max(0, idx - half)
-        end = min(len(sequence), start + max_len)
-
-    windowed = sequence[start:end]
-    new_pos = idx - start + 1  # 1-indexed in windowed sequence
-    return windowed, new_pos
-
-
-def build_sequence_cache(variants, cache_dir):
-    """
-    Fetch and cache protein sequences for all unique genes.
-    Returns dict: uniprot_id -> canonical sequence.
-    """
-    cache_path = os.path.join(cache_dir, "sequences.json")
-    if os.path.exists(cache_path):
-        with open(cache_path) as f:
-            return json.load(f)
-
-    os.makedirs(cache_dir, exist_ok=True)
-    sequences = {}
-    unique_uniprots = {v["uniprot_id"] for v in variants if v["uniprot_id"]}
-    print(f"Fetching sequences for {len(unique_uniprots)} UniProt IDs...")
-
-    for i, uid in enumerate(sorted(unique_uniprots)):
-        if i % 50 == 0:
-            print(f"  {i}/{len(unique_uniprots)}")
-        seq = fetch_uniprot_sequence(uid)
-        if seq:
-            sequences[uid] = seq
-        time.sleep(0.3)
-
-    with open(cache_path, "w") as f:
-        json.dump(sequences, f)
-
-    print(f"  Fetched {len(sequences)}/{len(unique_uniprots)} sequences")
-    return sequences
-
 
 def fetch_alphamissense_scores(variants, cache_dir, retries=3, delay=1.0):
     """
-    Fetch per-variant AlphaMissense pathogenicity scores via MyVariant.info
-    (dbnsfp.alphamissense.score field). Returns numpy array of scores, NaN where unavailable.
+    Fetch per-variant AlphaMissense pathogenicity scores via MyVariant.info.
+    Returns numpy array of scores, NaN where unavailable.
     """
     cache_path = os.path.join(cache_dir, "alphamissense_scores.json")
     if os.path.exists(cache_path):
@@ -342,16 +258,12 @@ def fetch_alphamissense_scores(variants, cache_dir, retries=3, delay=1.0):
         print(f"  Fetching {len(to_fetch)} AlphaMissense scores from MyVariant.info...")
         base_url = "https://myvariant.info/v1/hg38/query"
         fetched = 0
-        deadline = time.time() + 300  # 5 min max — AM is a non-critical baseline
+        deadline = time.time() + 300
         for i, v, key in to_fetch:
             if time.time() > deadline:
                 print(f"  AlphaMissense fetch timeout — saving {fetched} fetched, continuing")
                 break
-            gene = v["gene"]
-            aa_wt = v["aa_wt"]
-            aa_mut = v["aa_mut"]
-            aa_pos = v["aa_pos"]
-            query = f"{gene} p.{aa_wt}{aa_pos}{aa_mut}"
+            query = f"{v['gene']} p.{v['aa_wt']}{v['aa_pos']}{v['aa_mut']}"
             score = None
             for attempt in range(retries):
                 try:
@@ -416,8 +328,6 @@ def get_esm2_embeddings_for_pairs(wt_seqs, mut_seqs, aa_positions,
     wt_pos_list, mut_pos_list = [], []
 
     N = len(wt_seqs)
-    # Interleave WT and mutant: [wt0, mut0, wt1, mut1, ...]
-    # batch_size refers to number of pairs; actual forward pass has 2*batch_size sequences
     for i in range(0, N, batch_size):
         pairs = list(zip(wt_seqs[i:i+batch_size],
                          mut_seqs[i:i+batch_size],
@@ -440,7 +350,7 @@ def get_esm2_embeddings_for_pairs(wt_seqs, mut_seqs, aa_positions,
             wt_mean_list.append(wt_rep[1:len(wt)+1].mean(0).numpy())
             mut_mean_list.append(mut_rep[1:len(mut)+1].mean(0).numpy())
 
-            var_idx_token = var_pos  # var_pos is 1-indexed; token index = var_pos (BOS at 0)
+            var_idx_token = var_pos  # 1-indexed; token index = var_pos (BOS at 0)
             if 0 < var_idx_token <= reps.shape[1] - 1:
                 wt_pos_list.append(wt_rep[var_idx_token].numpy())
                 mut_pos_list.append(mut_rep[var_idx_token].numpy())
@@ -465,8 +375,7 @@ def fit_stability_subspace_megascale(cache_dir, n_components=10,
     Fit a stability nuisance subspace using the Megascale dataset
     (Tsuboyama et al. 2023, zenodo.org/records/7844779).
 
-    Returns the projection matrix (D x n_components) defining the subspace,
-    or None if Megascale data is unavailable.
+    Returns the projection matrix (n_components, D) or None if unavailable.
     """
     subspace_cache = os.path.join(cache_dir, f"stability_subspace_{model_name}.npy")
     if os.path.exists(subspace_cache):
@@ -484,23 +393,18 @@ def fit_stability_subspace_megascale(cache_dir, n_components=10,
     deltas = np.load(megascale_cache)
     ddg = np.load(megascale_ddg_cache)
 
-    # Regress each delta dimension on ΔΔG, collect regression coefficients
-    # Then PCA on the coefficient matrix to get the stability subspace
     from sklearn.linear_model import Ridge
     reg = Ridge(alpha=1.0)
     reg.fit(ddg.reshape(-1, 1), deltas)
     coefs = np.array(reg.coef_).flatten()
 
-    # The stability direction is the unit vector along the regression coefficient
     stability_dir = coefs / (np.linalg.norm(coefs) + 1e-10)
 
-    # PCA on residuals after regressing out ΔΔG to find additional stability axes
     deltas_res = deltas - deltas.dot(stability_dir)[:, None] * stability_dir
     pca = PCA(n_components=min(n_components - 1, deltas_res.shape[0] - 1, deltas_res.shape[1]))
     pca.fit(deltas_res)
 
-    # Subspace = stability direction + top PCA components of residuals
-    subspace = np.vstack([stability_dir.reshape(1, -1), pca.components_])  # (n_components, D)
+    subspace = np.vstack([stability_dir.reshape(1, -1), pca.components_])
     subspace = subspace[:n_components]
 
     np.save(subspace_cache, subspace)
@@ -525,7 +429,6 @@ def fit_stability_subspace_direct(deltas, foldx_ddg, n_components=10, genes=None
     genes_valid = genes[valid] if genes is not None else None
 
     if genes_valid is not None:
-        # Leave-one-gene-out CV: fit on all-but-one-gene to get unbiased stability direction
         unique_genes = np.unique(genes_valid)
         coefs_list = []
         for held_gene in unique_genes:
@@ -549,7 +452,7 @@ def fit_stability_subspace_direct(deltas, foldx_ddg, n_components=10, genes=None
     coefs = np.array(coefs).flatten()
     stability_dir = coefs / (np.linalg.norm(coefs) + 1e-10)
 
-    deltas_res = deltas_valid - deltas_valid.dot(stability_dir) [:, None] * stability_dir
+    deltas_res = deltas_valid - deltas_valid.dot(stability_dir)[:, None] * stability_dir
     n_comp = min(n_components - 1, deltas_res.shape[0] - 1, deltas_res.shape[1] - 1)
     if n_comp < 1:
         return stability_dir.reshape(1, -1)
@@ -561,18 +464,41 @@ def fit_stability_subspace_direct(deltas, foldx_ddg, n_components=10, genes=None
 
 
 def validate_stability_transfer(subspace, deltas_geras, foldx_ddg_geras):
-    """
-    Validate that the Megascale-fit subspace correlates with FoldX ΔΔG
-    on Gerasimavicius variants. Returns Spearman ρ.
+    """Validate Megascale-fit subspace against FoldX ΔΔG on Gerasimavicius variants.
+
+    Returns Spearman ρ.
     """
     valid = ~np.isnan(foldx_ddg_geras)
     if valid.sum() < 20:
         return 0.0
-
-    # Project deltas onto first (primary stability) direction of subspace
     proj = deltas_geras[valid].dot(subspace[0])
     rho, _ = spearmanr(proj, foldx_ddg_geras[valid])
     return float(rho)
+
+
+def select_stability_subspace(megascale_subspace, deltas, foldx_ddg, genes, n_components):
+    """Choose between Megascale-transfer (Path A) and direct-fit (Path B) subspaces.
+
+    Returns (subspace, stability_path, transfer_rho).
+    """
+    transfer_rho = float("nan")
+
+    if megascale_subspace is not None:
+        transfer_rho = validate_stability_transfer(megascale_subspace, deltas, foldx_ddg)
+        print(f"  Megascale→Gerasimavicius transfer Spearman ρ = {transfer_rho:.3f}")
+        print(f"  Pre-registered threshold: ρ > {STABILITY_TRANSFER_RHO_THRESHOLD}")
+
+        if transfer_rho >= STABILITY_TRANSFER_RHO_THRESHOLD:
+            print("  Path A: Megascale transfer PASSES — using Megascale subspace")
+            return megascale_subspace, "A_megascale", transfer_rho
+
+        print("  Path A: Megascale transfer FAILS — falling back to Path B")
+    else:
+        print("  Path B: No Megascale data — fitting subspace directly on Gerasimavicius")
+
+    subspace = fit_stability_subspace_direct(deltas, foldx_ddg,
+                                              n_components=n_components, genes=genes)
+    return subspace, "B_direct", transfer_rho
 
 
 def project_out_subspace(deltas, subspace):
@@ -613,164 +539,6 @@ def variance_explained_per_class(deltas, labels_3class, subspace):
 
 
 # ---------------------------------------------------------------------------
-# Gene-split cross-validation (see utils_probes.gene_split_cv)
-# ---------------------------------------------------------------------------
-
-
-def fetch_pfam_families(variants, seq_cache, cache_dir):
-    """
-    Fetch primary Pfam family for each unique gene via UniProt.
-    Returns dict: gene -> pfam_id (or None if not found).
-    Genes lacking annotation are excluded from family-split CV.
-    """
-    cache_path = os.path.join(cache_dir, "pfam_families.json")
-    if os.path.exists(cache_path):
-        with open(cache_path) as f:
-            return json.load(f)
-
-    pfam_map = {}
-    unique_pairs = {(v["gene"], v["uniprot_id"]) for v in variants if v["uniprot_id"]}
-    print(f"Fetching Pfam families for {len(unique_pairs)} genes...")
-
-    for gene, uniprot_id in sorted(unique_pairs):
-        url = f"https://rest.uniprot.org/uniprotkb/{uniprot_id}.json"
-        pfam_id = None
-        try:
-            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-            with urllib.request.urlopen(req, timeout=20) as resp:
-                data = json.loads(resp.read().decode())
-            for xref in data.get("uniProtKBCrossReferences", []):
-                if xref.get("database") == "Pfam":
-                    pfam_id = xref.get("id")
-                    break
-        except Exception:
-            pass
-        pfam_map[gene] = pfam_id
-        time.sleep(0.3)
-
-    with open(cache_path, "w") as f:
-        json.dump(pfam_map, f)
-
-    n_annotated = sum(1 for v in pfam_map.values() if v is not None)
-    print(f"  Pfam annotations: {n_annotated}/{len(pfam_map)} genes")
-    return pfam_map
-
-
-def gene_family_split_cv(X, y, genes, pfam_map, n_folds=5, seed=42):
-    """
-    Gene-family-split CV: hold out entire Pfam families.
-    Genes without Pfam annotation are dropped (not assigned to singleton groups).
-    Returns list of (train_idx, test_idx), or empty list if < 10 Pfam families.
-    """
-    gene_to_pfam = {}
-    for gene in np.unique(genes):
-        pfam = pfam_map.get(gene)
-        if pfam is not None:
-            gene_to_pfam[gene] = pfam
-
-    if not gene_to_pfam:
-        print("  No Pfam annotations — family-split CV infeasible")
-        return []
-
-    # Only keep variants whose gene has a Pfam annotation
-    annotated_mask = np.array([genes[i] in gene_to_pfam for i in range(len(genes))])
-    if annotated_mask.sum() < 20:
-        print("  Too few annotated variants — family-split CV infeasible")
-        return []
-
-    unique_families = sorted(set(gene_to_pfam.values()))
-    if len(unique_families) < 10:
-        print(f"  Only {len(unique_families)} Pfam families — family-split CV infeasible (need ≥ 10)")
-        return []
-
-    rng = np.random.RandomState(seed)
-    family_arr = np.array(unique_families)
-    rng.shuffle(family_arr)
-    family_folds = np.array_split(family_arr, n_folds)
-
-    splits = []
-    for fold_families in family_folds:
-        fold_family_set = set(fold_families)
-        test_mask = np.array([
-            genes[i] in gene_to_pfam and gene_to_pfam[genes[i]] in fold_family_set
-            for i in range(len(genes))
-        ])
-        train_mask = np.array([
-            genes[i] in gene_to_pfam and gene_to_pfam[genes[i]] not in fold_family_set
-            for i in range(len(genes))
-        ])
-        if train_mask.sum() < 10 or test_mask.sum() < 5:
-            continue
-        splits.append((np.where(train_mask)[0], np.where(test_mask)[0]))
-
-    return splits
-
-
-def run_linear_probe(X, y, genes, n_folds=5, seed=42):
-    """
-    Run linear probe (LR) with gene-split CV.
-    Returns per-fold metrics and bootstrap CIs.
-    """
-    splits = gene_split_cv(genes, n_folds=n_folds, seed=seed)
-    classes = sorted(set(y))
-
-    fold_results = []
-    all_test_idx = []
-    all_pred_proba = []
-    all_true = []
-
-    for train_idx, test_idx in splits:
-        X_train, X_test = X[train_idx], X[test_idx]
-        y_train, y_test = y[train_idx], y[test_idx]
-
-        if len(set(y_train)) < 2:
-            continue
-
-        clf = LogisticRegression(max_iter=1000, C=1.0, solver="lbfgs",
-                                  random_state=seed)
-        clf.fit(X_train, y_train)
-        proba = clf.predict_proba(X_test)
-        pred = clf.predict(X_test)
-
-        fold_metrics = {}
-        for i, cls in enumerate(clf.classes_):
-            y_bin = (y_test == cls).astype(int)
-            if y_bin.sum() > 0 and (1 - y_bin).sum() > 0:
-                fold_metrics[f"auroc_{cls}"] = float(roc_auc_score(y_bin, proba[:, i]))
-            else:
-                fold_metrics[f"auroc_{cls}"] = float("nan")
-
-        macro_f1 = float(f1_score(y_test, pred, average="macro", zero_division=0))
-        fold_metrics["macro_f1"] = macro_f1
-
-        for i, cls in enumerate(clf.classes_):
-            y_bin = (y_test == cls).astype(int)
-            if y_bin.sum() > 0 and (1 - y_bin).sum() > 0:
-                prec, rec, _ = precision_recall_curve(y_bin, proba[:, i])
-                fold_metrics[f"pr_auc_{cls}"] = float(auc(rec, prec))
-            else:
-                fold_metrics[f"pr_auc_{cls}"] = float("nan")
-
-        fold_results.append(fold_metrics)
-        all_true.extend(y_test.tolist())
-        all_pred_proba.append(proba)
-
-    if not fold_results:
-        return {"error": "insufficient data for CV"}
-
-    # Aggregate across all keys present in any fold
-    agg = {}
-    all_keys = set().union(*[f.keys() for f in fold_results])
-    for key in all_keys:
-        vals = [f[key] for f in fold_results if key in f and not np.isnan(f[key])]
-        if vals:
-            agg[f"{key}_mean"] = float(np.mean(vals))
-            agg[f"{key}_std"] = float(np.std(vals))
-
-    return agg
-
-
-# ---------------------------------------------------------------------------
 # Probe direction orthogonality
 # ---------------------------------------------------------------------------
 
@@ -779,8 +547,6 @@ def probe_direction_orthogonality(X, y, genes, stability_subspace,
     """
     Fit pairwise LR probes (GOF-vs-DN, GOF-vs-LOF, DN-vs-LOF) and compute
     cosine similarity between probe weight vectors. Compare to shuffled-label null.
-    Path A (Megascale subspace): reports 4x4 matrix including stability direction.
-    Path B (direct subspace or None): reports 3x3 pairwise inter-probe matrix only.
     """
     splits = gene_split_cv(genes, n_folds=n_folds, seed=seed)
     all_train_idx = np.unique(np.concatenate([tr for tr, _ in splits]))
@@ -808,25 +574,20 @@ def probe_direction_orthogonality(X, y, genes, stability_subspace,
 
     probe_weights = fit_pairwise_probes(y_train)
 
-    # Cosine similarity matrix between pairwise probe directions
     pair_keys = list(probe_weights.keys())
     cosine_matrix = {}
     for i, k1 in enumerate(pair_keys):
         for j, k2 in enumerate(pair_keys):
             if i >= j:
                 continue
-            cos = float(np.dot(probe_weights[k1], probe_weights[k2]))
-            cosine_matrix[f"{k1}|{k2}"] = cos
+            cosine_matrix[f"{k1}|{k2}"] = float(np.dot(probe_weights[k1], probe_weights[k2]))
 
-    # Stability direction cosines (Path A only — Megascale subspace is not None)
     stability_cosines = {}
     if stability_subspace is not None:
         stab_dir = stability_subspace[0] / (np.linalg.norm(stability_subspace[0]) + 1e-10)
         for pair_key, w in probe_weights.items():
-            cos = float(np.dot(w, stab_dir))
-            stability_cosines[f"{pair_key}_vs_stability"] = cos
+            stability_cosines[f"{pair_key}_vs_stability"] = float(np.dot(w, stab_dir))
 
-    # Shuffled-label null
     rng = np.random.RandomState(seed)
     null_cosines = []
     for _ in range(n_shuffle):
@@ -859,27 +620,16 @@ def probe_direction_orthogonality(X, y, genes, stability_subspace,
 
 
 # ---------------------------------------------------------------------------
-# Baselines
+# Baselines and negative controls
 # ---------------------------------------------------------------------------
 
-def run_baselines(embeddings_wt, deltas_mean, foldx_ddg, labels, genes,
+def run_baselines(embeddings_wt, deltas_mean, foldx_ddg, y, genes,
                   aa_wt_list, aa_mut_list, alphamissense_scores, seed=42):
-    """
-    Run four baselines under gene-split CV:
-    1. WT-only ESM-2 embeddings (no delta)
-    2. One-hot amino acid identity (40-dim: 20 WT + 20 mut)
-    3. FoldX ΔΔG only (1-dim)
-    4. AlphaMissense score (1-dim), if available
-    """
-    results = {}
+    """Run four baselines under gene-split CV."""
+    splits = gene_split_cv(genes, seed=seed)
     AA_ORDER = list("ACDEFGHIKLMNPQRSTVWY")
     aa_index = {a: i for i, a in enumerate(AA_ORDER)}
 
-    # Baseline 1: WT-only embeddings
-    print("  Baseline: WT-only embeddings")
-    results["wt_only"] = run_linear_probe(embeddings_wt, labels, genes, seed=seed)
-
-    # Baseline 2: one-hot amino acid identity
     n = len(aa_wt_list)
     onehot = np.zeros((n, 40), dtype=np.float32)
     for i, (wt, mut) in enumerate(zip(aa_wt_list, aa_mut_list)):
@@ -889,47 +639,171 @@ def run_baselines(embeddings_wt, deltas_mean, foldx_ddg, labels, genes,
             onehot[i, wt_idx] = 1.0
         if mut_idx is not None:
             onehot[i, 20 + mut_idx] = 1.0
-    print("  Baseline: one-hot amino acid identity")
-    results["onehot_aa"] = run_linear_probe(onehot, labels, genes, seed=seed)
 
-    # Baseline 3: FoldX ΔΔG only
     ddg_feat = np.nan_to_num(foldx_ddg, nan=0.0).reshape(-1, 1)
-    if ddg_feat.std() > 0:
-        print("  Baseline: FoldX ΔΔG only")
-        results["foldx_ddg_only"] = run_linear_probe(ddg_feat, labels, genes, seed=seed)
-    else:
-        results["foldx_ddg_only"] = {"note": "no FoldX ΔΔG available"}
 
-    # Baseline 4: AlphaMissense score
+    configs = [
+        ("wt_only",     embeddings_wt,  True),
+        ("onehot_aa",   onehot,         True),
+        ("foldx_ddg_only", ddg_feat,    ddg_feat.std() > 0),
+    ]
     if alphamissense_scores is not None and not np.all(np.isnan(alphamissense_scores)):
         am_feat = np.nan_to_num(alphamissense_scores, nan=0.0).reshape(-1, 1)
-        if am_feat.std() > 0:
-            print("  Baseline: AlphaMissense score")
-            results["alphamissense"] = run_linear_probe(am_feat, labels, genes, seed=seed)
-        else:
-            results["alphamissense"] = {"note": "AlphaMissense scores have zero variance"}
+        configs.append(("alphamissense", am_feat, am_feat.std() > 0))
     else:
-        results["alphamissense"] = {"note": "AlphaMissense scores unavailable"}
+        configs.append(("alphamissense", None, False))
 
-    return results
-
-
-def run_negative_controls(deltas_mean, labels, genes, seed=42):
-    """
-    Two negative controls:
-    1. Shuffled delta: randomly reassign delta from a different gene
-    2. Returns metrics — signal should be near chance
-    """
     results = {}
-    rng = np.random.RandomState(seed)
-
-    # Control 1: shuffle deltas across genes (break variant-gene association)
-    shuffle_idx = rng.permutation(len(deltas_mean))
-    deltas_shuffled = deltas_mean[shuffle_idx]
-    print("  Negative control: shuffled deltas")
-    results["shuffled_delta"] = run_linear_probe(deltas_shuffled, labels, genes, seed=seed)
-
+    for name, X_bl, runnable in configs:
+        if not runnable or X_bl is None:
+            results[name] = {"note": f"{name} unavailable or zero-variance"}
+            continue
+        print(f"  Baseline: {name}")
+        results[name] = run_logreg_cv(X_bl, y, splits, classes=CLASSES_3,
+                                       seed=seed, label=name)
     return results
+
+
+def run_negative_controls(deltas_mean, y, genes, seed=42):
+    """Shuffle deltas across genes to verify signal collapses to chance."""
+    rng = np.random.RandomState(seed)
+    splits = gene_split_cv(genes, seed=seed)
+    deltas_shuffled = deltas_mean[rng.permutation(len(deltas_mean))]
+    print("  Negative control: shuffled deltas")
+    return {
+        "shuffled_delta": run_logreg_cv(deltas_shuffled, y, splits,
+                                         classes=CLASSES_3, seed=seed,
+                                         label="shuffled_delta"),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Phase helpers for run()
+# ---------------------------------------------------------------------------
+
+def _load_data(data_dir):
+    """Phase 1: load and filter the Gerasimavicius dataset."""
+    variants = fetch_gerasimavicius_dataset(data_dir)
+    for v in variants:
+        v["label_3class"] = "LOF" if v["mechanism"] in ("HI", "AR") else v["mechanism"]
+    variants = [v for v in variants
+                if v["uniprot_id"] and v["aa_wt"] and v["aa_mut"] and v["aa_pos"] > 0]
+    print(f"After filtering: {len(variants)} variants")
+    return variants
+
+
+def _prepare_sequences(variants, data_dir):
+    """Phase 2: fetch sequences and build WT/mutant pairs."""
+    seq_cache = build_sequence_cache(variants, data_dir)
+
+    valid_variants, wt_seqs, mut_seqs, var_positions = [], [], [], []
+    for v in variants:
+        uid = v["uniprot_id"]
+        if uid not in seq_cache:
+            continue
+        wt_win, new_pos = window_sequence(seq_cache[uid], v["aa_pos"])
+        mut_win = apply_missense(wt_win, new_pos, v["aa_wt"], v["aa_mut"])
+        if mut_win is None:
+            continue
+        wt_seqs.append(wt_win)
+        mut_seqs.append(mut_win)
+        var_positions.append(new_pos)
+        valid_variants.append(v)
+
+    print(f"Valid variant pairs: {len(valid_variants)}")
+    if len(valid_variants) < 50:
+        print("WARNING: Very few valid variants. Results may not be reliable.")
+    return valid_variants, seq_cache, wt_seqs, mut_seqs, var_positions
+
+
+def _load_or_extract_embeddings(wt_seqs, mut_seqs, var_positions,
+                                 data_dir, model_name, device, batch_size):
+    """Phase 3: load cached embeddings or run ESM-2 forward pass."""
+    emb_cache = {
+        "wt":      os.path.join(data_dir, f"embeddings_wt_{model_name}.npy"),
+        "mut":     os.path.join(data_dir, f"embeddings_mut_{model_name}.npy"),
+        "wt_pos":  os.path.join(data_dir, f"embeddings_wt_pos_{model_name}.npy"),
+        "mut_pos": os.path.join(data_dir, f"embeddings_mut_pos_{model_name}.npy"),
+    }
+    if os.path.exists(emb_cache["wt"]) and os.path.exists(emb_cache["mut"]):
+        print("\n=== Loading cached embeddings ===")
+        emb_wt_mean  = np.load(emb_cache["wt"])
+        emb_mut_mean = np.load(emb_cache["mut"])
+        emb_wt_pos   = np.load(emb_cache["wt_pos"])  if os.path.exists(emb_cache["wt_pos"])  else emb_wt_mean
+        emb_mut_pos  = np.load(emb_cache["mut_pos"]) if os.path.exists(emb_cache["mut_pos"]) else emb_mut_mean
+    else:
+        print(f"\n=== Extracting ESM-2 embeddings ({model_name}) ===")
+        emb_wt_mean, emb_mut_mean, emb_wt_pos, emb_mut_pos = get_esm2_embeddings_for_pairs(
+            wt_seqs, mut_seqs, var_positions,
+            model_name=model_name, device=device, batch_size=batch_size,
+        )
+        np.save(emb_cache["wt"],      emb_wt_mean)
+        np.save(emb_cache["mut"],     emb_mut_mean)
+        np.save(emb_cache["wt_pos"],  emb_wt_pos)
+        np.save(emb_cache["mut_pos"], emb_mut_pos)
+
+    return emb_wt_mean, emb_mut_mean, emb_wt_pos, emb_mut_pos
+
+
+def _run_primary_probes(deltas_mean_proj, deltas_mean,
+                         deltas_pos_proj, deltas_pos,
+                         y, genes, n_cv_folds, seed):
+    """Phase 5: run the four primary probe variants."""
+    splits = gene_split_cv(genes, n_folds=n_cv_folds, seed=seed)
+    probe_configs = [
+        ("mean_pooled_projected",   deltas_mean_proj),
+        ("mean_pooled_unprojected", deltas_mean),
+        ("per_residue_projected",   deltas_pos_proj),
+        ("per_residue_unprojected", deltas_pos),
+    ]
+    results = {}
+    for name, X in probe_configs:
+        print(f"  {name}:")
+        results[name] = run_logreg_cv(X, y, splits, classes=CLASSES_3,
+                                       seed=seed, label=name)
+    return results
+
+
+def _run_secondary_probes(deltas_mean_proj, labels_4class, labels_3class,
+                           genes, n_cv_folds, seed):
+    """Phase 6: 4-class probe and HI-vs-AR probe."""
+    results = {}
+    classes_4 = sorted(set(labels_4class.tolist()))
+
+    le4 = LabelEncoder().fit(classes_4)
+    y4 = le4.transform(labels_4class)
+    splits4 = gene_split_cv(genes, n_folds=n_cv_folds, seed=seed)
+    print("  4-class (GOF/DN/HI/AR):")
+    results["four_class"] = run_logreg_cv(deltas_mean_proj, y4, splits4,
+                                           classes=classes_4, seed=seed, label="4class")
+
+    hi_ar_mask = np.isin(labels_4class, ["HI", "AR"])
+    if hi_ar_mask.sum() >= 20:
+        le2 = LabelEncoder().fit(["AR", "HI"])
+        y2 = le2.transform(labels_4class[hi_ar_mask])
+        splits2 = gene_split_cv(genes[hi_ar_mask], n_folds=n_cv_folds, seed=seed)
+        print("  HI vs AR (2-class):")
+        results["hi_vs_ar"] = run_logreg_cv(deltas_mean_proj[hi_ar_mask], y2, splits2,
+                                             classes=["AR", "HI"], seed=seed, label="hi_vs_ar")
+    return results
+
+
+def _run_family_cv(deltas_mean_proj, y, genes, valid_variants,
+                   data_dir, n_cv_folds, seed):
+    """Phase 7: gene-family-split CV using Pfam families."""
+    pfam_map = fetch_pfam_families(valid_variants, data_dir)
+    n_families = len(set(v for v in pfam_map.values() if v is not None))
+
+    splits = family_split_cv(genes, pfam_map, n_folds=n_cv_folds, seed=seed)
+    if not splits:
+        print("  Family-split CV infeasible — skipping")
+        return {}, pfam_map, n_families
+
+    print(f"  Running family-split CV with {len(splits)} folds")
+    results = run_logreg_cv(deltas_mean_proj, y, splits, classes=CLASSES_3,
+                             seed=seed, label="family_cv")
+    print(f"  Family-split macro-F1: {results.get('macro_f1_mean', float('nan')):.3f}")
+    return results, pfam_map, n_families
 
 
 # ---------------------------------------------------------------------------
@@ -951,91 +825,36 @@ def run(out_dir, seed=0, model_name=ESM2_MODEL_650M, n_stability_components=10,
     # 1. Load dataset
     # ------------------------------------------------------------------
     print("\n=== Loading Gerasimavicius dataset ===")
-    variants = fetch_gerasimavicius_dataset(data_dir)
-
-    # Build 3-class label: HI + AR → LOF
-    for v in variants:
-        v["label_3class"] = "LOF" if v["mechanism"] in ("HI", "AR") else v["mechanism"]
-
-    # Filter to variants with UniProt ID and valid AA info
-    variants = [v for v in variants if v["uniprot_id"] and v["aa_wt"] and v["aa_mut"] and v["aa_pos"] > 0]
-    print(f"After filtering: {len(variants)} variants")
+    variants = _load_data(data_dir)
 
     # ------------------------------------------------------------------
-    # 2. Fetch protein sequences
+    # 2. Prepare sequences
     # ------------------------------------------------------------------
     print("\n=== Fetching protein sequences ===")
-    seq_cache = build_sequence_cache(variants, data_dir)
-
-    # Prepare WT and mutant sequences
-    valid_variants = []
-    wt_seqs = []
-    mut_seqs = []
-    var_positions = []
-
-    for v in variants:
-        uid = v["uniprot_id"]
-        if uid not in seq_cache:
-            continue
-        wt_full = seq_cache[uid]
-
-        # Window long sequences
-        wt_win, new_pos = window_sequence(wt_full, v["aa_pos"])
-        mut_win = apply_missense(wt_win, new_pos, v["aa_wt"], v["aa_mut"])
-        if mut_win is None:
-            continue
-
-        wt_seqs.append(wt_win)
-        mut_seqs.append(mut_win)
-        var_positions.append(new_pos)
-        valid_variants.append(v)
-
-    print(f"Valid variant pairs: {len(valid_variants)}")
-    if len(valid_variants) < 50:
-        print("WARNING: Very few valid variants. Results may not be reliable.")
+    valid_variants, seq_cache, wt_seqs, mut_seqs, var_positions = _prepare_sequences(
+        variants, data_dir
+    )
 
     # ------------------------------------------------------------------
     # 3. Extract embeddings
     # ------------------------------------------------------------------
-    emb_cache_wt = os.path.join(data_dir, f"embeddings_wt_{model_name}.npy")
-    emb_cache_mut = os.path.join(data_dir, f"embeddings_mut_{model_name}.npy")
-    emb_cache_wt_pos = os.path.join(data_dir, f"embeddings_wt_pos_{model_name}.npy")
-    emb_cache_mut_pos = os.path.join(data_dir, f"embeddings_mut_pos_{model_name}.npy")
+    emb_wt_mean, emb_mut_mean, emb_wt_pos, emb_mut_pos = _load_or_extract_embeddings(
+        wt_seqs, mut_seqs, var_positions, data_dir, model_name, device, batch_size
+    )
 
-    if all(os.path.exists(p) for p in [emb_cache_wt, emb_cache_mut]):
-        print("\n=== Loading cached embeddings ===")
-        emb_wt_mean = np.load(emb_cache_wt)
-        emb_mut_mean = np.load(emb_cache_mut)
-        if os.path.exists(emb_cache_wt_pos):
-            emb_wt_pos = np.load(emb_cache_wt_pos)
-            emb_mut_pos = np.load(emb_cache_mut_pos)
-        else:
-            emb_wt_pos = emb_wt_mean
-            emb_mut_pos = emb_mut_mean
-    else:
-        print(f"\n=== Extracting ESM-2 embeddings ({model_name}) ===")
-        emb_wt_mean, emb_mut_mean, emb_wt_pos, emb_mut_pos = get_esm2_embeddings_for_pairs(
-            wt_seqs, mut_seqs, var_positions,
-            model_name=model_name, device=device, batch_size=batch_size
-        )
-        np.save(emb_cache_wt, emb_wt_mean)
-        np.save(emb_cache_mut, emb_mut_mean)
-        np.save(emb_cache_wt_pos, emb_wt_pos)
-        np.save(emb_cache_mut_pos, emb_mut_pos)
-
-    # Delta embeddings (co-primary: mean-pooled and per-residue)
     deltas_mean = emb_mut_mean - emb_wt_mean
-    deltas_pos = emb_mut_pos - emb_wt_pos
-
+    deltas_pos  = emb_mut_pos  - emb_wt_pos
     print(f"Delta embedding shape: {deltas_mean.shape}")
 
-    # Labels and gene arrays
-    labels_3class = np.array([v["label_3class"] for v in valid_variants])
-    labels_4class = np.array([v["mechanism"] for v in valid_variants])
-    genes_arr = np.array([v["gene"] for v in valid_variants])
-    foldx_ddg = np.array([v["foldx_ddg"] if v["foldx_ddg"] is not None else np.nan
-                           for v in valid_variants])
-    aa_wt_list = [v["aa_wt"] for v in valid_variants]
+    # Labels and metadata arrays
+    le3 = LabelEncoder().fit(CLASSES_3)
+    labels_3class  = np.array([v["label_3class"] for v in valid_variants])
+    labels_4class  = np.array([v["mechanism"]    for v in valid_variants])
+    y3             = le3.transform(labels_3class)
+    genes_arr      = np.array([v["gene"]         for v in valid_variants])
+    foldx_ddg      = np.array([v["foldx_ddg"] if v["foldx_ddg"] is not None else np.nan
+                                for v in valid_variants])
+    aa_wt_list  = [v["aa_wt"]  for v in valid_variants]
     aa_mut_list = [v["aa_mut"] for v in valid_variants]
 
     print("\n=== Fetching AlphaMissense scores ===")
@@ -1046,256 +865,140 @@ def run(out_dir, seed=0, model_name=ESM2_MODEL_650M, n_stability_components=10,
     print(f"Unique genes: {len(set(genes_arr))}")
 
     # ------------------------------------------------------------------
-    # 4. Stability subspace: fit and validate transfer
+    # 4. Stability subspace
     # ------------------------------------------------------------------
     print("\n=== Stability subspace ===")
     megascale_subspace = fit_stability_subspace_megascale(
         data_dir, n_components=n_stability_components,
-        model_name=model_name, device=device
+        model_name=model_name, device=device,
+    )
+    stability_subspace, stability_path, transfer_rho = select_stability_subspace(
+        megascale_subspace, deltas_mean, foldx_ddg, genes_arr, n_stability_components
     )
 
-    stability_path = "A_megascale"
-    transfer_rho = float("nan")
-
-    if megascale_subspace is not None:
-        transfer_rho = validate_stability_transfer(megascale_subspace, deltas_mean, foldx_ddg)
-        print(f"  Megascale→Gerasimavicius transfer Spearman ρ = {transfer_rho:.3f}")
-        print(f"  Pre-registered threshold: ρ > {STABILITY_TRANSFER_RHO_THRESHOLD}")
-
-        if transfer_rho >= STABILITY_TRANSFER_RHO_THRESHOLD:
-            stability_subspace = megascale_subspace
-            stability_path = "A_megascale"
-            print("  Path A: Megascale transfer PASSES — using Megascale subspace")
-        else:
-            print("  Path A: Megascale transfer FAILS — falling back to Path B")
-            stability_subspace = fit_stability_subspace_direct(
-                deltas_mean, foldx_ddg, n_components=n_stability_components, genes=genes_arr
-            )
-            stability_path = "B_direct"
-    else:
-        print("  Path B: No Megascale data — fitting subspace directly on Gerasimavicius")
-        stability_subspace = fit_stability_subspace_direct(
-            deltas_mean, foldx_ddg, n_components=n_stability_components, genes=genes_arr
-        )
-        stability_path = "B_direct"
-
-    # Variance explained per class (pre-registered prediction)
     var_exp = variance_explained_per_class(deltas_mean, labels_3class, stability_subspace)
     print(f"  Variance explained by stability subspace: {var_exp}")
 
-    # Project out stability subspace
     deltas_mean_proj = project_out_subspace(deltas_mean, stability_subspace)
-    deltas_pos_proj = project_out_subspace(deltas_pos, stability_subspace)
+    deltas_pos_proj  = project_out_subspace(deltas_pos,  stability_subspace)
 
     # ------------------------------------------------------------------
-    # 5. Primary probe: 3-class GOF/DN/LOF
+    # 5. Primary probes
     # ------------------------------------------------------------------
     print("\n=== Primary linear probe (3-class: GOF/DN/LOF) ===")
-
-    results_primary = {}
-
-    # Mean-pooled delta, projected
-    print("  Mean-pooled delta (stability-projected):")
-    results_primary["mean_pooled_projected"] = run_linear_probe(
-        deltas_mean_proj, labels_3class, genes_arr, n_folds=n_cv_folds, seed=seed
-    )
-
-    # Mean-pooled delta, unprojected
-    print("  Mean-pooled delta (unprojected):")
-    results_primary["mean_pooled_unprojected"] = run_linear_probe(
-        deltas_mean, labels_3class, genes_arr, n_folds=n_cv_folds, seed=seed
-    )
-
-    # Per-residue delta, projected (co-primary)
-    print("  Per-residue delta (stability-projected):")
-    results_primary["per_residue_projected"] = run_linear_probe(
-        deltas_pos_proj, labels_3class, genes_arr, n_folds=n_cv_folds, seed=seed
-    )
-
-    # Per-residue delta, unprojected
-    print("  Per-residue delta (unprojected):")
-    results_primary["per_residue_unprojected"] = run_linear_probe(
-        deltas_pos, labels_3class, genes_arr, n_folds=n_cv_folds, seed=seed
+    results_primary = _run_primary_probes(
+        deltas_mean_proj, deltas_mean, deltas_pos_proj, deltas_pos,
+        y3, genes_arr, n_cv_folds, seed,
     )
 
     # ------------------------------------------------------------------
-    # 6. Secondary probe: 4-class and HI vs AR
+    # 6. Secondary probes
     # ------------------------------------------------------------------
     print("\n=== Secondary probes ===")
-    results_secondary = {}
-
-    # 4-class
-    print("  4-class (GOF/DN/HI/AR):")
-    results_secondary["four_class"] = run_linear_probe(
-        deltas_mean_proj, labels_4class, genes_arr, n_folds=n_cv_folds, seed=seed
+    results_secondary = _run_secondary_probes(
+        deltas_mean_proj, labels_4class, labels_3class, genes_arr, n_cv_folds, seed
     )
-
-    # HI vs AR only
-    hi_ar_mask = np.isin(labels_4class, ["HI", "AR"])
-    if hi_ar_mask.sum() >= 20:
-        print("  HI vs AR (2-class):")
-        results_secondary["hi_vs_ar"] = run_linear_probe(
-            deltas_mean_proj[hi_ar_mask], labels_4class[hi_ar_mask],
-            genes_arr[hi_ar_mask], n_folds=n_cv_folds, seed=seed
-        )
 
     # ------------------------------------------------------------------
     # 7. Baselines
     # ------------------------------------------------------------------
     print("\n=== Baselines ===")
     results_baselines = run_baselines(
-        emb_wt_mean, deltas_mean_proj, foldx_ddg, labels_3class, genes_arr,
-        aa_wt_list, aa_mut_list, alphamissense_scores, seed=seed
+        emb_wt_mean, deltas_mean_proj, foldx_ddg, y3, genes_arr,
+        aa_wt_list, aa_mut_list, alphamissense_scores, seed=seed,
     )
 
     # ------------------------------------------------------------------
     # 8. Negative controls
     # ------------------------------------------------------------------
     print("\n=== Negative controls ===")
-    results_negctrl = run_negative_controls(deltas_mean_proj, labels_3class, genes_arr, seed=seed)
+    results_negctrl = run_negative_controls(deltas_mean_proj, y3, genes_arr, seed=seed)
 
     # ------------------------------------------------------------------
-    # 8b. Gene-family-split CV (robustness check)
+    # 9. Gene-family-split CV
     # ------------------------------------------------------------------
     print("\n=== Gene-family-split CV ===")
-    pfam_map = fetch_pfam_families(valid_variants, seq_cache, data_dir)
-    family_splits = gene_family_split_cv(
-        deltas_mean_proj, labels_3class, genes_arr, pfam_map,
-        n_folds=n_cv_folds, seed=seed
+    results_family_cv, pfam_map, pfam_n_families = _run_family_cv(
+        deltas_mean_proj, y3, genes_arr, valid_variants, data_dir, n_cv_folds, seed
     )
-    results_family_cv = {}
-    if family_splits:
-        print(f"  Running family-split CV with {len(family_splits)} folds")
-        family_fold_results = []
-        for train_idx, test_idx in family_splits:
-            X_tr, X_te = deltas_mean_proj[train_idx], deltas_mean_proj[test_idx]
-            y_tr, y_te = labels_3class[train_idx], labels_3class[test_idx]
-            if len(set(y_tr)) < 2:
-                continue
-            clf = LogisticRegression(max_iter=1000, C=1.0, solver="lbfgs",
-                                     random_state=seed)
-            clf.fit(X_tr, y_tr)
-            pred = clf.predict(X_te)
-            proba = clf.predict_proba(X_te)
-            fm = {"macro_f1": float(f1_score(y_te, pred, average="macro", zero_division=0))}
-            for i, cls in enumerate(clf.classes_):
-                y_bin = (y_te == cls).astype(int)
-                if y_bin.sum() > 0 and (1 - y_bin).sum() > 0:
-                    fm[f"auroc_{cls}"] = float(roc_auc_score(y_bin, proba[:, i]))
-            family_fold_results.append(fm)
-        if family_fold_results:
-            results_family_cv = {}
-            for key in family_fold_results[0]:
-                vals = [f[key] for f in family_fold_results if key in f and not np.isnan(f[key])]
-                if vals:
-                    results_family_cv[f"{key}_mean"] = float(np.mean(vals))
-                    results_family_cv[f"{key}_std"] = float(np.std(vals))
-        print(f"  Family-split macro-F1: {results_family_cv.get('macro_f1_mean', float('nan')):.3f}")
-    else:
-        print("  Family-split CV infeasible — skipping")
 
     # ------------------------------------------------------------------
-    # 9. Probe direction orthogonality
+    # 10. Probe direction orthogonality
     # ------------------------------------------------------------------
     print("\n=== Probe direction orthogonality ===")
-    # Use Megascale subspace for path A cosines, or None for path B
     subspace_for_ortho = stability_subspace if stability_path == "A_megascale" else None
     ortho_results = probe_direction_orthogonality(
         deltas_mean_proj, labels_3class, genes_arr,
         stability_subspace=subspace_for_ortho,
-        n_folds=n_cv_folds, seed=seed
+        n_folds=n_cv_folds, seed=seed,
     )
     print(f"  Cosine matrix: {ortho_results['cosine_matrix']}")
     print(f"  Null cosine mean: {ortho_results['null_cosine_mean']:.3f} ± {ortho_results['null_cosine_std']:.3f}")
 
     # ------------------------------------------------------------------
-    # 10. Compile final_info
+    # 11. Compile and save results
     # ------------------------------------------------------------------
     primary_mean_proj = results_primary["mean_pooled_projected"]
-    primary_per_proj = results_primary["per_residue_projected"]
-
-    # Pre-registered tiebreak: mean-pooled is headline
-    headline_macro_f1 = primary_mean_proj.get("macro_f1_mean", float("nan"))
-    headline_auroc_gof = primary_mean_proj.get("auroc_GOF_mean", float("nan"))
-    headline_auroc_dn = primary_mean_proj.get("auroc_DN_mean", float("nan"))
-    headline_auroc_lof = primary_mean_proj.get("auroc_LOF_mean", float("nan"))
-
-    # Scale interpretation (pre-registered thresholds vs 650M)
-    model_scale = "650M" if "650M" in model_name else "3B"
+    primary_per_proj  = results_primary["per_residue_projected"]
 
     final_info = {
-        # Primary results (headline: mean-pooled, projected)
-        "headline_macro_f1": headline_macro_f1,
-        "headline_auroc_GOF": headline_auroc_gof,
-        "headline_auroc_DN": headline_auroc_dn,
-        "headline_auroc_LOF": headline_auroc_lof,
-        # Per-residue (co-primary)
-        "per_residue_macro_f1": primary_per_proj.get("macro_f1_mean", float("nan")),
-        "per_residue_auroc_GOF": primary_per_proj.get("auroc_GOF_mean", float("nan")),
-        # Unprojected (for comparison)
-        "unprojected_macro_f1": results_primary["mean_pooled_unprojected"].get("macro_f1_mean", float("nan")),
-        # Stability subspace info
-        "stability_path": stability_path,
-        "stability_transfer_rho": transfer_rho,
-        "variance_explained_GOF": var_exp.get("GOF", float("nan")),
-        "variance_explained_DN": var_exp.get("DN", float("nan")),
-        "variance_explained_LOF": var_exp.get("LOF", float("nan")),
-        "variance_asymmetry_gof_lof": var_exp.get("gof_lof_asymmetry", float("nan")),
+        "headline_macro_f1":        primary_mean_proj.get("macro_f1_mean",  float("nan")),
+        "headline_auroc_GOF":       primary_mean_proj.get("auroc_GOF_mean", float("nan")),
+        "headline_auroc_DN":        primary_mean_proj.get("auroc_DN_mean",  float("nan")),
+        "headline_auroc_LOF":       primary_mean_proj.get("auroc_LOF_mean", float("nan")),
+        "per_residue_macro_f1":     primary_per_proj.get("macro_f1_mean",   float("nan")),
+        "per_residue_auroc_GOF":    primary_per_proj.get("auroc_GOF_mean",  float("nan")),
+        "unprojected_macro_f1":     results_primary["mean_pooled_unprojected"].get("macro_f1_mean", float("nan")),
+        "stability_path":           stability_path,
+        "stability_transfer_rho":   transfer_rho,
+        "variance_explained_GOF":   var_exp.get("GOF",   float("nan")),
+        "variance_explained_DN":    var_exp.get("DN",    float("nan")),
+        "variance_explained_LOF":   var_exp.get("LOF",   float("nan")),
+        "variance_asymmetry_gof_lof":         var_exp.get("gof_lof_asymmetry",         float("nan")),
         "variance_asymmetry_prediction_holds": var_exp.get("asymmetry_prediction_holds", False),
-        # Baselines
-        "baseline_wt_only_macro_f1": results_baselines.get("wt_only", {}).get("macro_f1_mean", float("nan")),
-        "baseline_foldx_macro_f1": results_baselines.get("foldx_ddg_only", {}).get("macro_f1_mean", float("nan")),
-        # Baselines (new)
-        "baseline_onehot_macro_f1": results_baselines.get("onehot_aa", {}).get("macro_f1_mean", float("nan")),
-        "baseline_alphamissense_macro_f1": results_baselines.get("alphamissense", {}).get("macro_f1_mean", float("nan")),
-        # Negative controls
-        "neg_ctrl_shuffled_macro_f1": results_negctrl.get("shuffled_delta", {}).get("macro_f1_mean", float("nan")),
-        # Orthogonality
+        "baseline_wt_only_macro_f1":      results_baselines.get("wt_only",       {}).get("macro_f1_mean", float("nan")),
+        "baseline_foldx_macro_f1":        results_baselines.get("foldx_ddg_only",{}).get("macro_f1_mean", float("nan")),
+        "baseline_onehot_macro_f1":       results_baselines.get("onehot_aa",     {}).get("macro_f1_mean", float("nan")),
+        "baseline_alphamissense_macro_f1":results_baselines.get("alphamissense", {}).get("macro_f1_mean", float("nan")),
+        "neg_ctrl_shuffled_macro_f1":     results_negctrl.get("shuffled_delta",  {}).get("macro_f1_mean", float("nan")),
         "cosine_GOF_DN_vs_GOF_LOF": ortho_results["cosine_matrix"].get("GOF_vs_DN|GOF_vs_LOF", float("nan")),
-        "cosine_GOF_DN_vs_DN_LOF": ortho_results["cosine_matrix"].get("GOF_vs_DN|DN_vs_LOF", float("nan")),
+        "cosine_GOF_DN_vs_DN_LOF":  ortho_results["cosine_matrix"].get("GOF_vs_DN|DN_vs_LOF",  float("nan")),
         "cosine_GOF_LOF_vs_DN_LOF": ortho_results["cosine_matrix"].get("GOF_vs_LOF|DN_vs_LOF", float("nan")),
-        "null_cosine_mean": ortho_results["null_cosine_mean"],
+        "null_cosine_mean":         ortho_results["null_cosine_mean"],
         "ortho_distinguishable_from_null": str(ortho_results["distinguishable_from_null"]),
-        # Gene-family-split CV
-        "family_cv_macro_f1": results_family_cv.get("macro_f1_mean", float("nan")),
+        "family_cv_macro_f1":  results_family_cv.get("macro_f1_mean",  float("nan")),
         "family_cv_auroc_GOF": results_family_cv.get("auroc_GOF_mean", float("nan")),
-        "family_cv_auroc_DN": results_family_cv.get("auroc_DN_mean", float("nan")),
+        "family_cv_auroc_DN":  results_family_cv.get("auroc_DN_mean",  float("nan")),
         "family_cv_auroc_LOF": results_family_cv.get("auroc_LOF_mean", float("nan")),
-        # Stability path
-        "orthogonality_path": ortho_results.get("path", "unknown"),
-        # Dataset stats
+        "orthogonality_path":  ortho_results.get("path", "unknown"),
         "n_variants": len(valid_variants),
-        "n_genes": len(set(genes_arr)),
+        "n_genes":    len(set(genes_arr)),
         "n_GOF": int((labels_3class == "GOF").sum()),
-        "n_DN": int((labels_3class == "DN").sum()),
+        "n_DN":  int((labels_3class == "DN").sum()),
         "n_LOF": int((labels_3class == "LOF").sum()),
-        "model": model_name,
-        "model_scale": model_scale,
-        "seed": seed,
+        "model":       model_name,
+        "model_scale": "650M" if "650M" in model_name else "3B",
+        "seed":        seed,
     }
 
     print("\n=== Final results ===")
     for k, v in final_info.items():
-        if isinstance(v, float):
-            print(f"  {k}: {v:.4f}")
-        else:
-            print(f"  {k}: {v}")
+        print(f"  {k}: {v:.4f}" if isinstance(v, float) else f"  {k}: {v}")
 
-    # Save all results
     with open(os.path.join(out_dir, f"final_info_seed{seed}.json"), "w") as f:
         json.dump(final_info, f, indent=2)
 
     detailed = {
-        "primary": results_primary,
-        "secondary": results_secondary,
-        "baselines": results_baselines,
-        "negative_controls": results_negctrl,
-        "orthogonality": ortho_results,
+        "primary":            results_primary,
+        "secondary":          results_secondary,
+        "baselines":          results_baselines,
+        "negative_controls":  results_negctrl,
+        "orthogonality":      ortho_results,
         "variance_explained": var_exp,
-        "stability_path": stability_path,
+        "stability_path":     stability_path,
         "stability_transfer_rho": transfer_rho,
-        "family_cv": results_family_cv,
-        "pfam_n_families": len(set(v for v in pfam_map.values() if v is not None)),
+        "family_cv":          results_family_cv,
+        "pfam_n_families":    pfam_n_families,
     }
     with open(os.path.join(out_dir, f"detailed_results_seed{seed}.json"), "w") as f:
         json.dump(detailed, f, indent=2, default=str)
@@ -1309,31 +1012,30 @@ def run(out_dir, seed=0, model_name=ESM2_MODEL_650M, n_stability_components=10,
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--out_dir", type=str, default="run_0")
-    parser.add_argument("--model", type=str, default=ESM2_MODEL_650M,
+    parser.add_argument("--out_dir",    type=str, default="run_0")
+    parser.add_argument("--model",      type=str, default=ESM2_MODEL_650M,
                         choices=[ESM2_MODEL_650M, ESM2_MODEL_3B])
-    parser.add_argument("--seeds", type=int, nargs="+", default=[0])
+    parser.add_argument("--seeds",      type=int, nargs="+", default=[0])
     parser.add_argument("--batch_size", type=int, default=32)
     args = parser.parse_args()
     os.makedirs(args.out_dir, exist_ok=True)
-    all_results = {}
-    final_infos_list = []
 
+    final_infos_list = []
     for seed in args.seeds:
         print(f"\n{'='*60}\n=== Seed {seed} ===\n{'='*60}")
         fi = run(args.out_dir, seed=seed, model_name=args.model,
                  batch_size=args.batch_size)
-        all_results[f"seed{seed}_final_info"] = fi
         final_infos_list.append(fi)
 
     numeric_keys = [k for k, v in final_infos_list[0].items()
                     if isinstance(v, (int, float)) and not np.isnan(v)]
     final_infos = {
-        "means": {k: float(np.mean([d[k] for d in final_infos_list
-                                     if isinstance(d.get(k), (int, float))]))
-                  for k in numeric_keys},
+        "means":   {k: float(np.mean([d[k] for d in final_infos_list
+                                       if isinstance(d.get(k), (int, float))]))
+                    for k in numeric_keys},
         "stderrs": {k: float(np.std([d[k] for d in final_infos_list
-                                      if isinstance(d.get(k), (int, float))]) / max(len(args.seeds), 1)**0.5)
+                                      if isinstance(d.get(k), (int, float))]) /
+                              max(len(args.seeds), 1)**0.5)
                     for k in numeric_keys},
         "final_info_list": final_infos_list,
     }
@@ -1342,6 +1044,6 @@ if __name__ == "__main__":
         json.dump(final_infos, f, indent=2)
 
     with open(os.path.join(args.out_dir, "all_results.npy"), "wb") as f:
-        np.save(f, all_results)
+        np.save(f, {"seeds": final_infos_list})
 
     print(f"\nDone. Results written to {args.out_dir}/final_info.json")

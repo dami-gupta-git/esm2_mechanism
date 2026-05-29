@@ -33,12 +33,13 @@ print = functools.partial(print, flush=True)
 ROOT = Path(__file__).resolve().parents[1]
 DATA = ROOT / "data"
 
+from utils_sequences import window_sequence
+
 CHECKPOINTS = [
     "esm1v_t33_650M_UR90S_1",
     "esm1v_t33_650M_UR90S_2",
 ]
 CHECKPOINT_EVERY = 50   # genes between saves
-WINDOW = 1022           # ESM-1v max tokens (1024 minus BOS/EOS)
 
 
 def build_gene_maps() -> tuple[dict[str, str], dict[str, str]]:
@@ -49,20 +50,6 @@ def build_gene_maps() -> tuple[dict[str, str], dict[str, str]]:
         g2u.setdefault(r["gene"], r["uniprot_id"])
     seqs: dict[str, str] = json.load(open(DATA / "sequences.json"))
     return g2u, seqs
-
-
-def window_sequence(seq: str, pos_1indexed: int) -> tuple[str, int]:
-    """Centre a window of WINDOW residues on pos; return (windowed_seq, new_pos_1indexed)."""
-    L = len(seq)
-    if L <= WINDOW:
-        return seq, pos_1indexed
-    half = WINDOW // 2
-    start = max(0, pos_1indexed - 1 - half)
-    end = start + WINDOW
-    if end > L:
-        end = L
-        start = max(0, end - WINDOW)
-    return seq[start:end], pos_1indexed - start
 
 
 def score_variants_single_model(

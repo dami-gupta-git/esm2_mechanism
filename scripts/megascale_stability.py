@@ -50,7 +50,8 @@ from sklearn.metrics import roc_auc_score
 from sklearn.preprocessing import StandardScaler
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from experiment import get_esm2_embeddings_for_pairs, window_sequence, apply_missense, ESM2_MODEL_650M
+from esm2_mechanism import get_esm2_embeddings_for_pairs, ESM2_MODEL_650M
+from utils_sequences import window_sequence, apply_missense
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA = os.path.join(ROOT, "data")

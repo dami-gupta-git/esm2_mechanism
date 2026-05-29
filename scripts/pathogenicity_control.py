@@ -42,15 +42,8 @@ from utils_probes import gene_split_cv, family_split_cv
 import functools
 print = functools.partial(print, flush=True)
 
-from experiment import (
-    build_sequence_cache,
-    fetch_pfam_families,
-    fetch_gerasimavicius_dataset,
-    window_sequence,
-    apply_missense,
-    get_esm2_embeddings_for_pairs,
-    ESM2_MODEL_650M,
-)
+from esm2_mechanism import fetch_gerasimavicius_dataset, get_esm2_embeddings_for_pairs, ESM2_MODEL_650M
+from utils_sequences import build_sequence_cache, fetch_pfam_families, window_sequence, apply_missense
 
 
 CLINVAR_URL = "https://ftp.ncbi.nlm.nih.gov/pub/clinvar/tab_delimited/variant_summary.txt.gz"

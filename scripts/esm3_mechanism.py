@@ -77,19 +77,6 @@ M3_THRESHOLD   = 0.03    # full - seq-only gap
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
-def window_sequence(seq: str, pos_1indexed: int, window: int = 1022) -> tuple[str, int]:
-    """Centre a window on pos; clamp to sequence ends. Returns (windowed, new_pos_1indexed)."""
-    L = len(seq)
-    if L <= window:
-        return seq, pos_1indexed
-    half = window // 2
-    start = max(0, pos_1indexed - 1 - half)
-    end   = start + window
-    if end > L:
-        end   = L
-        start = max(0, end - window)
-    return seq[start:end], pos_1indexed - start
-
 
 def load_geras() -> tuple[list[dict], np.ndarray, dict]:
     """Load Gerasimavicius variants, collapse HI+AR → LOF, attach wt_seq, return (variants, genes, pfam_map)."""
@@ -501,6 +488,7 @@ def _run_mlp(X: np.ndarray, y: np.ndarray, splits: list, n_classes: int,
 def phase3_probes() -> None:
     sys.path.insert(0, str(SCRIPTS))
     from utils_probes import gene_split_cv, family_split_cv
+from utils_sequences import window_sequence
     from sklearn.linear_model import LogisticRegression
     from sklearn.preprocessing import StandardScaler
     from sklearn.metrics import f1_score, roc_auc_score

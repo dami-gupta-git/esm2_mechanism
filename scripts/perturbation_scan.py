@@ -47,8 +47,8 @@ OUT  = ROOT / "results" / "perturbation_scan"
 OUT.mkdir(parents=True, exist_ok=True)
 
 sys.path.insert(0, str(Path(__file__).parent))
-from experiment import (window_sequence, apply_missense,
-                        get_esm2_embeddings_for_pairs, ESM2_MODEL_650M)
+from esm2_mechanism import get_esm2_embeddings_for_pairs, ESM2_MODEL_650M
+from utils_sequences import window_sequence, apply_missense
 
 PROBE_AAS  = ["A", "D", "W"]   # Ala, Asp, Trp
 PROBE_NAMES = ["ala", "asp", "trp"]
