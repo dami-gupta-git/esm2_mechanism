@@ -10,8 +10,8 @@ Output: data/cache/uniprot_sequences_extended.json (dict[uniprot_id -> sequence]
 Combined with data/sequences.json this gives full coverage for all variants.
 
 Usage:
-    python3 scripts/fetch_uniprot_sequences.py
-    python3 scripts/fetch_uniprot_sequences.py --from-scratch   # ignore existing cache
+    python3 scripts/fetch_data/fetch_uniprot_sequences.py
+    python3 scripts/fetch_data/fetch_uniprot_sequences.py --from-scratch   # ignore existing cache
 """
 
 import argparse
@@ -21,14 +21,15 @@ import urllib.request
 import urllib.parse
 import functools
 from io import StringIO
-from pathlib import Path
+
 
 from Bio import SeqIO
 
+from esm2_mechanism.utils_paths import DATA_DIR
+
 print = functools.partial(print, flush=True)
 
-ROOT = Path(__file__).parents[2]
-DATA = ROOT / "data"
+DATA = DATA_DIR
 CACHE = DATA / "cache"
 MERGED_VARIANTS = DATA / "merged_variants.json"
 SEQUENCES_JSON = DATA / "sequences.json"
@@ -52,7 +53,7 @@ def parse_fasta(text: str) -> dict[str, str]:
     out = {}
     for record in SeqIO.parse(StringIO(text), "fasta"):
         parts = record.id.split("|")
-        acc = parts[1] if len(parts) > 1 else parts[0]
+        acc = parts[1].split("-")[0] if len(parts) > 1 else parts[0].split("-")[0]
         out[acc] = str(record.seq)
     return out
 

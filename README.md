@@ -62,6 +62,21 @@ scripts/
 
 ---
 
+## Setup
+
+```bash
+python3.11 -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
+```
+
+> `evo2` requires CUDA. Install `flash-attn` separately after the above:
+> ```bash
+> pip install flash-attn --no-build-isolation
+> ```
+
+---
+
 ## Quickstart
 
 All scripts are run from the repo root. GPU required only for embedding extraction.

@@ -18,12 +18,8 @@ Key invariants checked:
 - run_ridge_cv: returns spearman/pearson mean/std
 """
 
-import sys
-import os
 import numpy as np
 import pytest
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
 from utils_probes import (
     gene_split_cv, family_split_cv, family_split_indices,
     compute_metrics, aggregate_folds, align_proba,

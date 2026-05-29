@@ -5,13 +5,9 @@ The function subtracts per-family means from each continuous feature column,
 leaving singletons (genes whose family has only 1 member in the dataframe) at 0.
 """
 
-import sys
-import os
 import numpy as np
 import pandas as pd
 import pytest
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
 from build_badonyi_features import compute_family_residuals
 
 
