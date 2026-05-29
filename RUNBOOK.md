@@ -66,11 +66,11 @@ These hit external APIs (UniProt, NCBI, MyVariant, OSF). Resume-safe; rate-limit
 
 | Order | Command | Produces | Notes |
 |---|---|---|---|
-| A1 | `python3 scripts/fetch_uniprot_sequences.py` | `data/sequences.json`, `data/pfam_families.json` | foundation for everything |
-| A2 | `python3 scripts/build_merged_dataset.py` | `data/merged_variants.json`, `data/merged_gene_list.tsv` | reads `AllG2P.csv` + Gerasimavicius |
-| A3 | `python3 scripts/fetch_clinvar_variants.py` | `data/clinvar_variants.tsv` | pathogenicity control variants |
-| A4 | `python3 scripts/fetch_alphamissense.py` | `data/alphamissense_scores.json` | needs merged/pathogenicity variant lists first |
-| A5 | `python3 scripts/fetch_enzyme_labels.py` | `data/enzyme_labels.tsv` | **BUG-FIXED** (EC-string parsing) — must rerun |
+| A1 | `python3 scripts/fetch_data/fetch_uniprot_sequences.py` | `data/sequences.json`, `data/pfam_families.json` | foundation for everything |
+| A2 | `python3 scripts/fetch_data/build_merged_dataset.py` | `data/merged_variants.json`, `data/merged_gene_list.tsv` | reads `AllG2P.csv` + Gerasimavicius |
+| A3 | `python3 scripts/fetch_data/fetch_clinvar_variants.py` | `data/clinvar_variants.tsv` | pathogenicity control variants |
+| A4 | `python3 scripts/fetch_data/fetch_alphamissense.py` | `data/alphamissense_scores.json` | needs merged/pathogenicity variant lists first |
+| A5 | `python3 scripts/fetch_data/fetch_enzyme_labels.py` | `data/enzyme_labels.tsv` | **BUG-FIXED** (EC-string parsing) — must rerun |
 
 **Verify A5:** spot-check a few rows of the new `enzyme_labels.tsv` against UniProt
 EC numbers before trusting result_25. This is the one stage where the *data*, not
@@ -82,8 +82,8 @@ just the metric, may have been wrong.
 
 | Order | Command | Produces | Result |
 |---|---|---|---|
-| B1 | `python3 scripts/build_proteome_features.py` | `data/gene_proteome_features.tsv`, `data/proteome_features_aligned.npy` | result_12 |
-| B2 | `python3 scripts/build_badonyi_features.py` | `data/badonyi_features.tsv`, `data/badonyi_features_aligned.npy` | result_15 |
+| B1 | `python3 scripts/fetch_data/build_proteome_features.py` | `data/gene_proteome_features.tsv`, `data/proteome_features_aligned.npy` | result_12 |
+| B2 | `python3 scripts/fetch_data/build_badonyi_features.py` | `data/badonyi_features.tsv`, `data/badonyi_features_aligned.npy` | result_15 |
 
 ---
 
@@ -93,11 +93,11 @@ See `RUN_EXPERIMENTS.md` for pod setup / scp. Run each in a `tmux` session.
 
 | Order | Command | Produces | Covers |
 |---|---|---|---|
-| C1 | `python3 scripts/esm2_mechanism.py --out_dir results/run_0` | Gerasimavicius WT/mut/pos `.npy` + `run_0/final_info.json` | results 1, 2, 7 |
-| C2 | `python3 scripts/extract_merged_embeddings.py` | `data/embeddings/merged_embeddings_*.npy` | merged-dataset results | 
-| C3 | `python3 scripts/pathogenicity_control.py` (phase 2) | `emb_*_pathogenicity_*.npy` | results 4, 6 |
-| C4 | `python3 scripts/megascale_stability.py` | `data/embeddings/megascale_{wt,mut}_{mean,pos}.npy` **+** `results/megascale_stability/{summary,per_protein_spearman,h3_stability_projection}.json` | result_21 |
-| C5 | `python3 scripts/perturbation_scan.py` | `data/embeddings/scan_ckpt_*.npy` | result_20 scan |
+| C1 | `python3 scripts/embeddings/esm2_mechanism.py --out_dir results/run_0` | Gerasimavicius WT/mut/pos `.npy` + `run_0/final_info.json` | results 1, 2, 7 |
+| C2 | `python3 scripts/embeddings/extract_merged_embeddings.py` | `data/embeddings/merged_embeddings_*.npy` | merged-dataset results | 
+| C3 | `python3 scripts/embeddings/pathogenicity_control.py` (phase 2) | `emb_*_pathogenicity_*.npy` | results 4, 6 |
+| C4 | `python3 scripts/embeddings/megascale_stability.py` | `data/embeddings/megascale_{wt,mut}_{mean,pos}.npy` **+** `results/megascale_stability/{summary,per_protein_spearman,h3_stability_projection}.json` | result_21 |
+| C5 | `python3 scripts/embeddings/perturbation_scan.py` | `data/embeddings/scan_ckpt_*.npy` | result_20 scan |
 
 **C4 note:** this one script both extracts the megascale embeddings (on first run;
 resume-skips if the 4 `.npy` exist) **and** runs the stability analysis in the same
@@ -121,56 +121,56 @@ within a group. **Bold = bug-fixed this sweep, number will change.**
 
 ### D1 — mechanism core (results 1–10)
 ```bash
-python3 scripts/experiment_mlp.py --family_split        # results 3 [confirm], 5
-python3 scripts/mut_only_mlp.py --data_dir data --emb_dir data/embeddings   # result_7  ** (was SyntaxError)
-python3 scripts/family_split_baselines.py               # result_2
-python3 scripts/family_clustering.py                    # result_4  ** (was SyntaxError)
-python3 scripts/multiseed_v1.py                         # result_6 mechanism floor
-python3 scripts/pathogenicity_control.py                # result_6 control (phase 3)
-python3 scripts/contrastive_mechanism.py                # result_9  ** (val-split sizing)
-python3 scripts/clan_holdout.py                         # result_10
-python3 scripts/mmseqs_cluster_holdout.py               # result_15/10  ** (per-class AUROC label bug)
+python3 scripts/mechanism/experiment_mlp.py --family_split        # results 3 [confirm], 5
+python3 scripts/mechanism/mut_only_mlp.py --data_dir data --emb_dir data/embeddings   # result_7  ** (was SyntaxError)
+python3 scripts/mechanism/family_split_baselines.py               # result_2
+python3 scripts/mechanism/family_clustering.py                    # result_4  ** (was SyntaxError)
+python3 scripts/mechanism/multiseed_v1.py                         # result_6 mechanism floor
+python3 scripts/embeddings/pathogenicity_control.py               # result_6 control (phase 3)
+python3 scripts/mechanism/contrastive_mechanism.py                # result_9  ** (val-split sizing)
+python3 scripts/mechanism/clan_holdout.py                         # result_10
+python3 scripts/mechanism/mmseqs_cluster_holdout.py               # result_15/10  ** (per-class AUROC label bug)
 ```
 
 ### D2 — proteome / gene-level (results 11–14)
 ```bash
-python3 scripts/proteome_pilot.py                       # result_11 ** (predict_proba column align)
-python3 scripts/per_gene_ablation.py                    # result_13 ** (fold-append guard)
-python3 scripts/proteome_mechanism.py                   # result_13
-python3 scripts/clinical_utility.py                     # result_14 (verify; likely no-op)
+python3 scripts/proteome/proteome_pilot.py                        # result_11 ** (predict_proba column align)
+python3 scripts/proteome/per_gene_ablation.py                     # result_13 ** (fold-append guard)
+python3 scripts/proteome/proteome_mechanism.py                    # result_13
+python3 scripts/proteome/clinical_utility.py                      # result_14 (verify; likely no-op)
 ```
 
 ### D3 — within-family + Badonyi (results 15–16)
 ```bash
-python3 scripts/badonyi_mechanism.py                    # result_15
-python3 scripts/badonyi_holdout_survival.py             # result_16
-python3 scripts/within_family_mechanism.py              # result_16 ** (concat column offset)
+python3 scripts/badonyi/badonyi_mechanism.py                      # result_15
+python3 scripts/badonyi/badonyi_holdout_survival.py               # result_16
+python3 scripts/badonyi/within_family_mechanism.py                # result_16 ** (concat column offset)
 ```
 
 ### D4 — AlphaMissense / ProteinGym externals (results 17–18, 24)
 ```bash
-python3 scripts/alphamissense_family_split.py           # result_17
-python3 scripts/proteingym_alphamissense.py             # result_18
-python3 scripts/proteingym_esm2_ll.py                   # result_24
+python3 scripts/alphamissense/alphamissense_family_split.py       # result_17
+python3 scripts/alphamissense/proteingym_alphamissense.py         # result_18
+python3 scripts/alphamissense/proteingym_esm2_ll.py               # result_24
 ```
 
 ### D5 — perturbation + stability (results 19–22)
 ```bash
-python3 scripts/perturbation_pattern.py                 # result_19 (verify; minor tweak)
-python3 scripts/perturbation_probe.py                   # result_20 ** (gene_mask misalignment)
+python3 scripts/perturb/perturbation_pattern.py                   # result_19 (verify; minor tweak)
+python3 scripts/perturb/perturbation_probe.py                     # result_20 ** (gene_mask misalignment)
 # megascale_stability.py already ran in Stage C4 (embed + analysis + fixed H3) — do NOT rerun here
-python3 scripts/megascale_mlp.py                        # result_21 MLP companion (reads C4 caches, CPU)
-python3 scripts/ll_scan.py                              # result_22
+python3 scripts/perturb/megascale_mlp.py                          # result_21 MLP companion (reads C4 caches, CPU)
+python3 scripts/perturb/ll_scan.py                                # result_22
 ```
 
 ### D6 — transferability synthesis (result_23) + enzyme control (result_25)
 ```bash
-python3 scripts/magnitude_direction.py                  # result_23
-python3 scripts/conservation_axis.py                    # result_23
-python3 scripts/direction_geometry.py                   # result_23 (verify; single-seed no-op)
-python3 scripts/transfer_contrast.py                    # result_23
-python3 scripts/probe4_axis_identity.py                 # result_23
-python3 scripts/enzyme_classification.py                # result_25 ** (depends on fixed A5 labels)
+python3 scripts/analysis/magnitude_direction.py                   # result_23
+python3 scripts/analysis/conservation_axis.py                     # result_23
+python3 scripts/analysis/direction_geometry.py                    # result_23 (verify; single-seed no-op)
+python3 scripts/analysis/transfer_contrast.py                     # result_23
+python3 scripts/analysis/probe4_axis_identity.py                  # result_23
+python3 scripts/analysis/enzyme_classification.py                 # result_25 ** (depends on fixed A5 labels)
 ```
 
 ### D7 — esm2_mechanism.py derived metrics
@@ -184,7 +184,7 @@ rerun, but re-read those fields when updating result_1/result_23 geometry number
 
 ## Stage E — ESM-3 (result_26) — ⚠️ RE-VERIFY BEFORE TRUSTING
 
-`scripts/esm3_mechanism.py` is its own 3-phase pipeline (AF2 download → GPU embed →
+`scripts/embeddings/esm3_mechanism.py` is its own 3-phase pipeline (AF2 download → GPU embed →
 probes) writing result_26. Independent of A–D. Run per
 `docs/plans/plan_esm3_mechanism.md`.
 
@@ -195,15 +195,15 @@ just-fixed bug may break:**
 - `esm3_mechanism.py`'s fold guard was fixed from `len(set(y_tr)) < 2` to `< 3`
   (skip a fold if any of the 3 classes is missing from train). This matches the
   shared `utils_probes.run_mlp_cv` (`< n_classes`).
-- BUT the ESM-2 baseline (0.299) comes from `experiment_mlp.py`, which **still uses
+- BUT the ESM-2 baseline (0.299) comes from `scripts/mechanism/experiment_mlp.py`, which **still uses
   `< 2`** (lines 140/269/327) — it includes degenerate folds that drag F1 down.
 - So ESM-2 is scored with degenerate folds *in*, ESM-3 with them *out*. **Part of
   the +0.125 gap may be a fold-eligibility artifact, not scale.**
 
 **Required before result_26 can stand or enter PUBLISH.md:** re-score ESM-2 and
-ESM-3 under the *identical* fold rule. Cleanest fix — make `experiment_mlp.py` use
+ESM-3 under the *identical* fold rule. Cleanest fix — make `scripts/mechanism/experiment_mlp.py` use
 the shared `utils_probes.run_mlp_cv` (or bump its guards to `< n_classes`), re-run
-the ESM-2 family-split baseline, then re-run `esm3_mechanism.py` phase 3 and
+the ESM-2 family-split baseline, then re-run `scripts/embeddings/esm3_mechanism.py` phase 3 and
 recompute the M1/M2 gap against the new baseline. Note `esm3_mechanism.py` uses its
 own `_run_mlp` rather than the shared util — unifying them removes this whole class
 of mismatch.
@@ -213,7 +213,7 @@ of mismatch.
 ## Stage F — regenerate figures / docs
 
 ```bash
-python3 scripts/plot.py results/run_0      # AUROC bars, cosine heatmap, variance
+python3 scripts/analysis/plot.py results/run_0      # AUROC bars, cosine heatmap, variance
 ```
 Then update each `docs/result_*.md` whose number moved (the `**` rows above) and
 re-derive the leakage fraction in `result_leakage_fraction.md` from the fresh
