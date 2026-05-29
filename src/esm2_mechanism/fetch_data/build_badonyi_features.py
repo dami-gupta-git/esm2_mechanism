@@ -22,9 +22,7 @@ from esm2_mechanism.utils_paths import DATA_DIR
 print = functools.partial(print, flush=True)
 
 DATA = DATA_DIR
-CACHE = DATA / "cache" / "badonyi"
-
-S3_PATH = CACHE / "table_S3.xlsx"
+S3_PATH = DATA / "downloads" / "table_S3.xlsx"
 MERGED_GENE_LIST = DATA / "merged_gene_list.tsv"
 PFAM_FAMILIES = DATA / "pfam_families.json"
 
@@ -36,7 +34,7 @@ OUT_COLS = DATA / "badonyi_feature_columns.json"
 def load_badonyi_predictions():
     print("Loading Badonyi S3 Table...")
     df = pd.read_excel(S3_PATH, sheet_name="table_S3")
-    df = df[["gene", "uniprot_id", "pDN", "pGOF", "pLOF"]].copy()
+    df = df[["gene", "pDN", "pGOF", "pLOF"]].copy()
     df = df.rename(columns={"gene": "gene_badonyi"})
     # Some gene symbols may differ — keep both for join diagnostics
     print(f"  Loaded {len(df)} genes from S3 Table")
@@ -56,32 +54,52 @@ def load_pfam_families():
     return pfam
 
 
-def compute_family_residuals(df, pfam, feature_cols):
-    """For each continuous feature, subtract the mean of genes in the same Pfam family."""
-    df = df.copy()
-    family_map = {g: pfam.get(g, None) for g in df["gene"]}
-    df["pfam_family"] = df["gene"].map(family_map)
+def compute_family_residuals(df, pfam, feature_cols, observed_mask=None):
+    """For each continuous feature, subtract the mean of observed genes in the same Pfam family.
 
-    is_singleton = []
-    for _, row in df.iterrows():
-        fam = row["pfam_family"]
-        if fam is None:
-            is_singleton.append(1)
-            continue
-        n_in_fam = (df["pfam_family"] == fam).sum()
-        is_singleton.append(1 if n_in_fam <= 1 else 0)
-    df["is_singleton_family_badonyi"] = is_singleton
+    observed_mask: boolean Series (same index as df) marking genes with real (non-imputed)
+    scores. Family means are computed only over observed genes, so imputed values don't
+    contaminate the family mean. If None, all genes are treated as observed.
+
+    Residual assignment rules:
+    - Observed genes in a family with ≥2 observed members: residual = value − observed family mean.
+      _familyresid_missing = 0.
+    - Imputed genes whose family has ≥2 observed members: residual = imputed_value − observed
+      family mean (non-zero artifact, but correctly flagged). _familyresid_missing = 1.
+    - Singletons (family size 1) or families with ≤1 observed member: residual = 0.0.
+      _familyresid_missing = 1.
+    - Genes with no Pfam entry: residual = 0.0, is_singleton_family_badonyi = 1,
+      _familyresid_missing = 1.
+    """
+    df = df.copy()
+    df["pfam_family"] = df["gene"].map(pfam)
+
+    if observed_mask is None:
+        observed_mask = pd.Series(True, index=df.index)
+
+    # Precompute family membership counts (all genes, not just observed)
+    family_counts = df["pfam_family"].value_counts().to_dict()
+    df["is_singleton_family_badonyi"] = df["pfam_family"].map(
+        lambda f: 1 if (f is None or pd.isna(f) or family_counts.get(f, 0) <= 1) else 0
+    )
 
     for col in feature_cols:
         resid_col = f"{col}_familyresid"
-        df[resid_col] = 0.0
-        for fam in df["pfam_family"].dropna().unique():
-            mask = df["pfam_family"] == fam
-            if mask.sum() <= 1:
+        resid_missing_col = f"{resid_col}_missing"
+        df[resid_col] = 0.0        # default: 0.0 (singletons / no-observed-mean)
+        df[resid_missing_col] = 1  # default: missing
+
+        for fam, fam_df in df.groupby("pfam_family", dropna=True):
+            fam_idx = fam_df.index
+            observed_in_fam = fam_idx[observed_mask.loc[fam_idx]]
+            if len(observed_in_fam) <= 1:
+                # singleton or only one observed member — leave residual=0, missing=1
                 continue
-            fam_mean = df.loc[mask, col].mean()
-            df.loc[mask, resid_col] = df.loc[mask, col] - fam_mean
-        # Singleton residuals stay 0 (uninformative)
+            fam_mean = df.loc[observed_in_fam, col].mean()
+            # All family members get residual relative to the observed mean
+            df.loc[fam_idx, resid_col] = df.loc[fam_idx, col] - fam_mean
+            # Only observed members are flagged as non-missing
+            df.loc[observed_in_fam, resid_missing_col] = 0
 
     return df
 
@@ -91,14 +109,11 @@ def main():
     if missing:
         raise FileNotFoundError("Required input(s) not found:\n" + "\n".join(f"  {p}" for p in missing))
 
-    CACHE.mkdir(parents=True, exist_ok=True)
-
     bad = load_badonyi_predictions()
     merged = load_merged_genes()
     pfam = load_pfam_families()
 
     # Join on gene symbol (case-sensitive exact match)
-    merged_genes = merged["gene"].tolist()
     bad_lookup = bad.set_index("gene_badonyi")[["pDN", "pGOF", "pLOF"]]
 
     result = merged[["gene"]].copy()
@@ -113,24 +128,34 @@ def main():
     if missing_genes[:10]:
         print(f"  First 10 missing: {missing_genes[:10]}")
 
-    # Missingness indicators
     feature_cols = ["pDN", "pGOF", "pLOF"]
+
+    # Guard: if join matched nothing, all scores are NaN — median would be NaN and
+    # fillna would be a no-op, silently writing an all-NaN matrix.
+    for col in feature_cols:
+        if result[col].notna().sum() == 0:
+            raise ValueError(
+                f"Column '{col}' has no observed values after join — "
+                "the gene-symbol join likely failed (column rename drift?). "
+                "Refusing to fabricate imputation values."
+            )
+
+    # Missingness indicators — record before imputation
     for col in feature_cols:
         result[f"{col}_missing"] = result[col].isna().astype(float)
 
-    # Median impute missing values
+    # observed_mask: genes with real scores (used for family mean computation)
+    observed_mask = result["pDN_missing"] == 0
+
+    # Family-mean-centred residuals — computed before imputation so family means
+    # are never contaminated by imputed values
+    result = compute_family_residuals(result, pfam, feature_cols, observed_mask)
+
+    # Median impute raw scores after residuals are computed
     for col in feature_cols:
         median_val = result[col].median()
         result[col] = result[col].fillna(median_val)
         print(f"  {col}: median={median_val:.4f}, imputed {result[f'{col}_missing'].sum():.0f} genes")
-
-    # Family-mean-centred residuals
-    result = compute_family_residuals(result, pfam, feature_cols)
-
-    # Residual missingness indicators (singleton genes get residual=0, mark them)
-    for col in feature_cols:
-        resid_col = f"{col}_familyresid"
-        result[f"{resid_col}_missing"] = result["is_singleton_family_badonyi"].astype(float)
 
     # Save TSV
     result.to_csv(OUT_TSV, sep="\t", index=False)

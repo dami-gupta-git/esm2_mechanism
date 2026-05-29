@@ -108,7 +108,7 @@ GNOMAD_V2_ENSG_CACHE = CACHE_DIR / "gnomad_v2.1.1_ensg_symbol.json"
 # ---------------------------------------------------------------------------
 def _download_file(url: str, dest: Path, force: bool = False) -> bool:
     """Download url → dest.  Returns True on success."""
-    if dest.exists() and dest.stat().st_size > 1000 and not force:
+    if dest.exists() and dest.stat().st_size > 1_000_000 and not force:
         print(f"  cached: {dest} ({dest.stat().st_size/1e6:.1f} MB)")
         return True
     print(f"  downloading: {url}")
@@ -245,20 +245,23 @@ def get_gnomad_constraint(force: bool = False) -> dict[str, dict]:
                 parts[idx_mane].strip().lower() in ("true", "1", "yes")
                 if idx_mane is not None else False
             )
-            lof_exp = _fnum(parts[idx_lof_exp]) if idx_lof_exp is not None else 0.0
+            lof_exp = _fnum(parts[idx_lof_exp]) if idx_lof_exp is not None else None
             row = {
                 "pLI": _fnum(parts[idx_pli]),
                 "LOEUF": _fnum(parts[idx_loeuf]),
                 "mis_z": _fnum(parts[idx_misz]),
                 "_mane": is_mane,
-                "_lof_exp": lof_exp if lof_exp is not None else 0.0,
+                "_lof_exp": lof_exp,
             }
             prev = by_gene.get(gene)
             if prev is None:
                 by_gene[gene] = row
             elif row["_mane"] and not prev["_mane"]:
                 by_gene[gene] = row
-            elif row["_mane"] == prev["_mane"] and row["_lof_exp"] > prev["_lof_exp"]:
+            elif row["_mane"] == prev["_mane"] and (
+                (row["_lof_exp"] is not None and prev["_lof_exp"] is None) or
+                (row["_lof_exp"] is not None and prev["_lof_exp"] is not None and row["_lof_exp"] > prev["_lof_exp"])
+            ):
                 by_gene[gene] = row
             n_rows += 1
 
@@ -269,23 +272,54 @@ def get_gnomad_constraint(force: bool = False) -> dict[str, dict]:
 # ---------------------------------------------------------------------------
 # Source 2 — Ensembl Compara paralog count
 # ---------------------------------------------------------------------------
+def _load_paralog_cache(cache_file: Path) -> tuple[bool, Optional[int]]:
+    """
+    Read a paralog cache file. Returns (is_usable, paralog_count).
+
+    A cache entry is only usable if it represents a real REST success: an int
+    count >= 0 with no "error" tag. Anything else — parse error, count=None,
+    or tagged "error" — returns (False, None) so callers re-fetch instead of
+    treating a poisoned zero/None as truth.
+    """
+    if not cache_file.exists():
+        return False, None
+    try:
+        d = json.loads(cache_file.read_text())
+    except Exception:
+        return False, None
+    if "error" in d:
+        return False, None
+    val = d.get("paralog_count")
+    if not isinstance(val, int) or val < 0:
+        return False, None
+    return True, val
+
+
 def _fetch_paralog_count_rest(gene: str, own_cache_dir: Path) -> Optional[int]:
     """Single REST call; writes to own_cache_dir/{gene}.json."""
     cache_file = own_cache_dir / f"{gene}.json"
-    if cache_file.exists():
-        try:
-            d = json.loads(cache_file.read_text())
-            return d.get("paralog_count")
-        except Exception:
-            pass
+    usable, cached = _load_paralog_cache(cache_file)
+    if usable:
+        return cached
+
     url = ENSEMBL_PARALOG_URL.format(gene=gene)
     try:
         req = urllib.request.Request(url, headers={"Accept": "application/json"})
         with urllib.request.urlopen(req, timeout=15) as r:
             body = r.read().decode()
         data = json.loads(body)
+        # An empty "data" list means the gene symbol resolved to no entry —
+        # could be a real "no paralogs" answer OR a transient Ensembl hiccup.
+        # We can't tell them apart, so write an error-tagged sentinel that the
+        # next run will retry, rather than caching a permanent 0.
+        entries = data.get("data")
+        if not entries:
+            err = "empty data payload (HTTP 200 but no entries)"
+            print(f"  paralog fetch ambiguous for {gene}: {err}")
+            cache_file.write_text(json.dumps({"paralog_count": None, "error": err}))
+            return None
         homologies: list = []
-        for entry in data.get("data", []):
+        for entry in entries:
             homologies.extend(entry.get("homologies", []))
         count = sum(1 for h in homologies if "paralog" in h.get("type", "").lower())
         cache_file.write_text(json.dumps({"paralog_count": count}))
@@ -307,23 +341,19 @@ def get_paralogs(genes: list[str]) -> dict[str, Optional[int]]:
     to_fetch: list[str] = []
 
     for gene in genes:
-        # Check pilot cache first
+        # Check pilot cache first, then own. Both go through _load_paralog_cache
+        # so that error-tagged or malformed entries fall through to a re-fetch
+        # instead of silently propagating None.
         pilot_file = PILOT_PARALOG_CACHE / f"{gene}.json"
         own_file = own_cache / f"{gene}.json"
-        if pilot_file.exists():
-            try:
-                d = json.loads(pilot_file.read_text())
-                out[gene] = d.get("paralog_count")
-                continue
-            except Exception:
-                pass
-        if own_file.exists():
-            try:
-                d = json.loads(own_file.read_text())
-                out[gene] = d.get("paralog_count")
-                continue
-            except Exception:
-                pass
+        usable, cached = _load_paralog_cache(pilot_file)
+        if usable:
+            out[gene] = cached
+            continue
+        usable, cached = _load_paralog_cache(own_file)
+        if usable:
+            out[gene] = cached
+            continue
         to_fetch.append(gene)
 
     print(f"  {len(out)} genes from cache, {len(to_fetch)} need REST fetch")
@@ -400,6 +430,8 @@ def get_hpa_features(genes: list[str], force: bool = False) -> dict[str, dict]:
                 if col_gene is None:
                     print(f"WARNING: HPA: gene column not found; header: {fieldnames[:15]}")
                     return result
+                if col_tau_text is None:
+                    print(f"WARNING: HPA: 'RNA tissue specificity' column not found; tau will be None for all genes. Header: {fieldnames[:15]}")
 
                 n_tau = 0
                 for row in reader:
@@ -410,8 +442,8 @@ def get_hpa_features(genes: list[str], force: bool = False) -> dict[str, dict]:
                     if col_tau_text:
                         label = row.get(col_tau_text, "").strip().lower()
                         tau = TAU_MAP.get(label)
-                    result[g]["tissue_specificity_tau"] = tau
-                    if tau is not None:
+                    if tau is not None and result[g]["tissue_specificity_tau"] is None:
+                        result[g]["tissue_specificity_tau"] = tau
                         n_tau += 1
 
                 print(f"  tau: {n_tau} genes assigned")
@@ -430,8 +462,9 @@ def get_paxdb_abundance(genes: list[str], force: bool = False) -> dict[str, Opti
     """
     Returns {gene: log10(abundance_ppm + 1e-3)} or {gene: None}.
 
-    This version of the file has gene symbol in col 0, string ID in col 1,
-    abundance_ppm in col 2.  We use the gene symbol directly.
+    The manually placed file (data/downloads/9606-WHOLE_ORGANISM-integrated.txt)
+    has been pre-processed to: gene_symbol\tstring_id\tabundance_ppm.
+    This differs from the raw PaxDb download which has numeric internal IDs in col 0.
 
     File resolution order:
       1. PAXDB_MANUAL (data/9606-WHOLE_ORGANISM-integrated.txt) — manually placed
@@ -501,7 +534,9 @@ def get_bioplex_degree(genes: list[str], force: bool = False) -> dict[str, Optio
         with open(BIOPLEX_CACHE) as f:
             reader = csv.DictReader(f, delimiter="\t")
             fieldnames = reader.fieldnames or []
-            # Find GeneA / GeneB columns (case-insensitive)
+            # Strict exact-name match only. Substring fallbacks ("gene" in name)
+            # are unsafe — they can pair an ID column with a description column
+            # and silently produce garbage degrees.
             col_a = None
             col_b = None
             for name in fieldnames:
@@ -511,15 +546,10 @@ def get_bioplex_degree(genes: list[str], force: bool = False) -> dict[str, Optio
                 elif nl in ("geneb", "gene_b", "symbolb", "symbol_b", "gene b", "symbol b"):
                     col_b = name
             if col_a is None or col_b is None:
-                print(f"WARNING: BioPlex: symbol columns not found in {fieldnames}; trying any gene/symbol col")
-                for name in fieldnames:
-                    nl = name.lower().strip()
-                    if ("gene" in nl or "symbol" in nl) and col_a is None:
-                        col_a = name
-                    elif ("gene" in nl or "symbol" in nl) and col_b is None and name != col_a:
-                        col_b = name
-            if col_a is None or col_b is None:
-                print(f"WARNING: BioPlex: cannot find gene symbol columns; skipping. Header: {fieldnames}")
+                print(
+                    f"WARNING: BioPlex: expected gene-symbol columns not found. "
+                    f"Header: {fieldnames}; skipping PPI degree."
+                )
                 return result
 
             for row in reader:
@@ -531,11 +561,29 @@ def get_bioplex_degree(genes: list[str], force: bool = False) -> dict[str, Optio
                 degree.setdefault(ga, set()).add(gb)
                 degree.setdefault(gb, set()).add(ga)
 
+        # Sanity check: even with a matched column name, the values themselves
+        # may not be HGNC symbols (e.g. a future BioPlex release could ship
+        # UniProt or Ensembl IDs under a column called "GeneA"). If the overlap
+        # with our gene universe is implausibly small, refuse to silently
+        # produce a near-zero-coverage matrix.
         n_hit = 0
         for gene in genes_set:
             if gene in degree:
                 result[gene] = len(degree[gene])
                 n_hit += 1
+
+        # BioPlex 3.0 in HEK293T covers ~10k genes; even niche universes overlap
+        # by hundreds. <5% overlap almost certainly means we matched ID-type
+        # columns, not symbols.
+        coverage_frac = n_hit / len(genes) if genes else 0.0
+        if degree and coverage_frac < 0.05:
+            print(
+                f"WARNING: BioPlex: only {n_hit}/{len(genes)} ({coverage_frac:.1%}) "
+                f"of universe genes match — columns '{col_a}'/'{col_b}' may not "
+                f"contain HGNC symbols. Discarding to avoid fabricated zero degrees. "
+                f"Sample values: ga={next(iter(degree), None)!r}"
+            )
+            return {g: None for g in genes}
 
         print(f"  BioPlex coverage: {n_hit}/{len(genes)} genes with PPI_degree")
     except Exception as e:
@@ -714,20 +762,23 @@ def build_feature_table(
     }
 
     for feat in CONT_FEATURES:
-        # Family means: {family: mean_value_or_None}
+        # Family means: {family: mean_value_or_None}. Require ≥2 observed members
+        # so a single observed gene doesn't produce a zero residual that's
+        # indistinguishable from "no signal" downstream.
         fam_means: dict[str, Optional[float]] = {}
         for fam, idxs in family_groups.items():
             vals = [rows[i][feat] for i in idxs if rows[i][feat] is not None]
-            fam_means[fam] = float(np.mean(vals)) if vals else None
+            fam_means[fam] = float(np.mean(vals)) if len(vals) >= 2 else None
 
         for row in rows:
             raw = row[feat]
             fam = row["pfam_family"]
-            if fam in singleton_families:
-                row[f"{feat}_familyresid"] = 0.0 if raw is not None else None
-            elif fam and fam_means.get(fam) is not None and raw is not None:
+            if fam and fam_means.get(fam) is not None and raw is not None:
                 row[f"{feat}_familyresid"] = raw - fam_means[fam]
             else:
+                # Singletons, families with <2 observed members, no-family genes,
+                # or missing raw values: residual is undefined — leave None (not 0.0)
+                # so _familyresid_missing flags it as missing downstream.
                 row[f"{feat}_familyresid"] = None
 
     # --- is_singleton_family indicator ---
@@ -863,6 +914,14 @@ def main():
 
     # 2. Pfam families
     families = load_pfam_families(PFAM_FAMILIES)
+
+    # Drop genes with no Pfam family — family residuals are undefined for them
+    # and there are too few (~33) to impute meaningfully
+    genes_no_family = [g for g in genes if families.get(g) is None]
+    genes = [g for g in genes if families.get(g) is not None]
+    if genes_no_family:
+        print(f"Dropped {len(genes_no_family)} genes with no Pfam family: {sorted(genes_no_family)}")
+    print(f"Proceeding with {len(genes)} genes")
 
     # 3. Sources — each wrapped in try/except so one failure doesn't abort
     gnomad: dict[str, dict] = {}

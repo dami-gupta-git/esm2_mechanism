@@ -411,8 +411,11 @@ def main():
     print(f"{'Feature set':<22} {'F1':<16} {'GOF':<12} {'DN':<12} {'LOF':<12}")
     print("-"*72)
 
+    # A missing std must NOT be reported as ±0.000 — that would falsely claim
+    # zero variance across seeds. Render as N/A so the gap is visible.
     def fmt(m, s):
         if m is None: return "   N/A     "
+        if s is None: return f"{m:.3f}±N/A"
         return f"{m:.3f}±{s:.3f}"
 
     for key, label in [
@@ -423,13 +426,13 @@ def main():
         ("resid_combined", "Resid combined "),
     ]:
         f1 = fmt(summary.get(f"{key}_macro_f1_mean"),
-                 summary.get(f"{key}_macro_f1_std") or 0)
+                 summary.get(f"{key}_macro_f1_std"))
         gof = fmt(summary.get(f"{key}_auroc_GOF_mean"),
-                  summary.get(f"{key}_auroc_GOF_std") or 0)
+                  summary.get(f"{key}_auroc_GOF_std"))
         dn = fmt(summary.get(f"{key}_auroc_DN_mean"),
-                 summary.get(f"{key}_auroc_DN_std") or 0)
+                 summary.get(f"{key}_auroc_DN_std"))
         lof = fmt(summary.get(f"{key}_auroc_LOF_mean"),
-                  summary.get(f"{key}_auroc_LOF_std") or 0)
+                  summary.get(f"{key}_auroc_LOF_std"))
         print(f"{label:<22} {f1:<16} {gof:<12} {dn:<12} {lof:<12}")
 
     print("="*72)

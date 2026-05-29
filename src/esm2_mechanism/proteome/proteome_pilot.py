@@ -230,15 +230,21 @@ def parse_gnomad_constraint(path: Path) -> dict[str, dict[str, float]]:
                 "mis_z": fnum(idx_misz),
                 "_mane": (parts[idx_mane].strip().lower() in ("true", "1", "yes"))
                          if idx_mane is not None else False,
-                "_lof_exp": fnum(idx_lof_exp) or 0.0,
+                "_lof_exp": fnum(idx_lof_exp),
             }
-            # Prefer MANE-select transcript; else keep the row with highest lof.exp
+            # Prefer MANE-select transcript; else keep the row with highest lof.exp.
+            # A missing _lof_exp must NOT be coerced to 0.0 — it would silently win
+            # any tie-break against a real 0.0 ("highest" depends on real numbers).
             prev = by_gene.get(gene)
             if prev is None:
                 by_gene[gene] = row
             elif row["_mane"] and not prev["_mane"]:
                 by_gene[gene] = row
-            elif row["_mane"] == prev["_mane"] and row["_lof_exp"] > prev["_lof_exp"]:
+            elif row["_mane"] == prev["_mane"] and (
+                (row["_lof_exp"] is not None and prev["_lof_exp"] is None) or
+                (row["_lof_exp"] is not None and prev["_lof_exp"] is not None
+                 and row["_lof_exp"] > prev["_lof_exp"])
+            ):
                 by_gene[gene] = row
             n_rows += 1
     print(f"  parsed {n_rows} rows -> {len(by_gene)} unique genes")

@@ -7,7 +7,6 @@ leaving singletons (genes whose family has only 1 member in the dataframe) at 0.
 
 import numpy as np
 import pandas as pd
-import pytest
 from esm2_mechanism.fetch_data.build_badonyi_features import compute_family_residuals
 
 
@@ -121,3 +120,34 @@ class TestFamilyResiduals:
             assert f"{col}_familyresid" in out.columns
         assert "is_singleton_family_badonyi" in out.columns
         assert "pfam_family" in out.columns
+
+    def test_observed_mask_excludes_imputed_from_family_mean(self):
+        """Family mean must be computed only over observed genes; imputed gene gets
+        residual relative to that mean, not one contaminated by its own imputed value."""
+        # A and B are observed; C is imputed (value = global median = 0.5)
+        # True family mean of FAM1 from observed = (0.2 + 0.6) / 2 = 0.4
+        # C residual should be 0.5 - 0.4 = 0.1, not 0 as it would be if C were included
+        genes = ["A", "B", "C"]
+        pfam = {"A": "FAM1", "B": "FAM1", "C": "FAM1"}
+        df = make_df(genes, pDN=[0.2, 0.6, 0.5], pGOF=[0.5, 0.5, 0.5], pLOF=[0.5, 0.5, 0.5])
+        observed_mask = pd.Series([True, True, False], index=df.index)
+        out = compute_family_residuals(df, pfam, FEATURE_COLS, observed_mask=observed_mask)
+        np.testing.assert_allclose(out["pDN_familyresid"].values, [-0.2, 0.2, 0.1], atol=1e-10)
+
+    def test_observed_mask_none_uses_all_genes(self):
+        """With no mask, behaviour is identical to treating all genes as observed."""
+        genes = ["A", "B"]
+        pfam = {"A": "FAM1", "B": "FAM1"}
+        df = make_df(genes, pDN=[0.2, 0.6], pGOF=[0.1, 0.9], pLOF=[0.4, 0.4])
+        out_no_mask = compute_family_residuals(df, pfam, FEATURE_COLS)
+        out_all_obs = compute_family_residuals(df, pfam, FEATURE_COLS, observed_mask=pd.Series([True, True], index=df.index))
+        np.testing.assert_array_equal(out_no_mask["pDN_familyresid"].values, out_all_obs["pDN_familyresid"].values)
+
+    def test_family_with_only_imputed_genes_gets_zero_residual(self):
+        """If all genes in a family are imputed, no observed mean exists — residuals stay 0."""
+        genes = ["A", "B"]
+        pfam = {"A": "FAM1", "B": "FAM1"}
+        df = make_df(genes, pDN=[0.3, 0.7], pGOF=[0.5, 0.5], pLOF=[0.5, 0.5])
+        observed_mask = pd.Series([False, False], index=df.index)
+        out = compute_family_residuals(df, pfam, FEATURE_COLS, observed_mask=observed_mask)
+        np.testing.assert_array_equal(out["pDN_familyresid"].values, [0.0, 0.0])

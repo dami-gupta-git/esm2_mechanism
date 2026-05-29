@@ -369,10 +369,14 @@ def run_v2_ablation(
         X_abl = X_prot_gene[:, keep_idx]
         res = run_logreg_cv(X_abl, y_gene, groups_gene)
         delta_f1 = full_f1 - res["macro_f1_mean"]
-        # DN AUROC delta
-        dn_full = full_result.get("auroc_DN_mean") or 0.0
-        dn_abl = res.get("auroc_DN_mean") or 0.0
-        delta_dn = dn_full - dn_abl
+        # DN AUROC delta — missing AUROC must NOT be coerced to 0.0
+        # (a 0.0 default would read as "no change" and silently mask the failure).
+        dn_full = full_result.get("auroc_DN_mean")
+        dn_abl = res.get("auroc_DN_mean")
+        if dn_full is None or dn_abl is None:
+            delta_dn = float("nan")
+        else:
+            delta_dn = dn_full - dn_abl
         ablation_results[cls_name] = {
             **res,
             "n_features_dropped": len(drop_idx),

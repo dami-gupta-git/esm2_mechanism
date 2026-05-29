@@ -16,7 +16,9 @@ import pytest
 
 from esm2_mechanism.fetch_data import build_proteome_features as bpf
 from esm2_mechanism.fetch_data.build_proteome_features import (
+    _load_paralog_cache,
     build_aligned_matrix,
+    get_bioplex_degree,
     get_shet,
 )
 
@@ -100,3 +102,75 @@ def test_get_shet_gene_not_in_universe_ignored(tmp_path, monkeypatch):
     result = get_shet(["BRCA1"])
     assert "UNKNOWN_GENE" not in result
     assert result["BRCA1"] == pytest.approx(0.005)
+
+
+# ---------------------------------------------------------------------------
+# _load_paralog_cache — error-tagged entries must force a re-fetch
+# ---------------------------------------------------------------------------
+def test_paralog_cache_missing_file(tmp_path):
+    usable, val = _load_paralog_cache(tmp_path / "nope.json")
+    assert (usable, val) == (False, None)
+
+
+def test_paralog_cache_valid_entry(tmp_path):
+    f = tmp_path / "g.json"
+    f.write_text(json.dumps({"paralog_count": 7}))
+    assert _load_paralog_cache(f) == (True, 7)
+
+
+def test_paralog_cache_zero_is_valid(tmp_path):
+    # A legitimate "zero paralogs" answer must be honoured (no error tag, int 0).
+    f = tmp_path / "g.json"
+    f.write_text(json.dumps({"paralog_count": 0}))
+    assert _load_paralog_cache(f) == (True, 0)
+
+
+def test_paralog_cache_error_tag_forces_refetch(tmp_path):
+    # A prior transient failure was cached as error-tagged — must NOT be reused.
+    f = tmp_path / "g.json"
+    f.write_text(json.dumps({"paralog_count": None, "error": "timeout"}))
+    assert _load_paralog_cache(f) == (False, None)
+
+
+def test_paralog_cache_malformed_count_forces_refetch(tmp_path):
+    f = tmp_path / "g.json"
+    f.write_text(json.dumps({"paralog_count": None}))
+    assert _load_paralog_cache(f) == (False, None)
+
+
+def test_paralog_cache_corrupt_json_forces_refetch(tmp_path):
+    f = tmp_path / "g.json"
+    f.write_text("{not json")
+    assert _load_paralog_cache(f) == (False, None)
+
+
+# ---------------------------------------------------------------------------
+# get_bioplex_degree — low coverage must be discarded, not silently emitted
+# ---------------------------------------------------------------------------
+def _patch_bioplex(monkeypatch, tmp_path, content):
+    f = tmp_path / "bioplex.tsv"
+    f.write_text(content)
+    monkeypatch.setattr(bpf, "BIOPLEX_CACHE", f)
+    monkeypatch.setattr(bpf, "_download_file", lambda *a, **kw: True)
+
+
+def test_bioplex_normal_coverage(monkeypatch, tmp_path):
+    # 3 universe genes, all present as edges → coverage 100%, returns degrees.
+    content = "GeneA\tGeneB\nBRCA1\tTP53\nBRCA1\tMYC\nTP53\tMYC\n"
+    _patch_bioplex(monkeypatch, tmp_path, content)
+    result = get_bioplex_degree(["BRCA1", "TP53", "MYC"])
+    assert result["BRCA1"] == 2
+    assert result["TP53"] == 2
+    assert result["MYC"] == 2
+
+
+def test_bioplex_low_coverage_discarded(monkeypatch, tmp_path):
+    # 100 universe genes, only 1 matched → 1% coverage < 5% threshold.
+    # Likely the column held non-symbol IDs; refuse to emit a near-zero matrix.
+    edges = "\n".join(f"P{i:05d}\tP{i+1:05d}" for i in range(50))
+    content = "GeneA\tGeneB\n" + edges + "\nBRCA1\tTP53\n"
+    _patch_bioplex(monkeypatch, tmp_path, content)
+    genes = [f"REAL_GENE_{i}" for i in range(98)] + ["BRCA1", "TP53"]
+    result = get_bioplex_degree(genes)
+    # All None — refused to fabricate near-zero degrees from an apparent ID mismatch.
+    assert all(v is None for v in result.values())

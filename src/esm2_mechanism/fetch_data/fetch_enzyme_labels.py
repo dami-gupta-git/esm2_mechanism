@@ -78,7 +78,8 @@ def parse_ec_and_keywords(entry: dict) -> tuple:
     # and also in comments (catalytic activity)
     try:
         prot = entry.get("proteinDescription", {})
-        for name_block in [prot.get("recommendedName", {})] + prot.get("alternativeNames", []):
+        name_blocks = [prot.get("recommendedName") or {}] + (prot.get("alternativeNames") or [])
+        for name_block in name_blocks:
             for ec_obj in name_block.get("ecNumbers", []):
                 val = ec_obj.get("value", "")
                 if val:
@@ -158,14 +159,14 @@ def main():
     data_dir = Path(args.data_dir)
     cache_dir = Path(args.cache_dir)
 
-    missing = [p for p in [data_dir / "merged_valid_variants.json", data_dir / "merged_gene_list.tsv"] if not p.exists()]
+    missing = [p for p in [data_dir / "merged_variants.json", data_dir / "merged_gene_list.tsv"] if not p.exists()]
     if missing:
         raise FileNotFoundError("Required input(s) not found:\n" + "\n".join(f"  {p}" for p in missing))
 
     cache_dir.mkdir(parents=True, exist_ok=True)
 
-    # Load gene -> uniprot_id from merged_valid_variants
-    variants_path = data_dir / "merged_valid_variants.json"
+    # Load gene -> uniprot_id from merged_variants
+    variants_path = data_dir / "merged_variants.json"
     print(f"Loading variants from {variants_path}")
     with open(variants_path) as f:
         variants = json.load(f)
@@ -190,16 +191,17 @@ def main():
 
     # Fetch UniProt entries (with per-accession disk cache)
     print("\nFetching UniProt entries...")
-    results: dict[str, dict] = {}  # gene -> parsed result
-
     unique_accs = list(set(gene_to_uniprot.values()))
     acc_to_data = {}  # acc -> dict or None
+    fetched = 0
 
     for i, acc in enumerate(unique_accs):
         cache_file = cache_dir / f"{acc}.json"
         if cache_file.exists():
             with open(cache_file) as f:
                 acc_to_data[acc] = json.load(f)
+            if (i + 1) % 50 == 0:
+                print(f"  Loaded {i+1}/{len(unique_accs)} accessions (cached)...")
             continue
 
         if (i + 1) % 50 == 0:
@@ -210,11 +212,13 @@ def main():
         with open(cache_file, "w") as f:
             json.dump(entry, f)
         acc_to_data[acc] = entry
+        fetched += 1
 
         # Polite rate limiting: ~3 requests/sec
         time.sleep(0.35)
 
-    print(f"Fetched {sum(1 for v in acc_to_data.values() if v is not None)}/{len(unique_accs)} entries")
+    n_found = sum(1 for v in acc_to_data.values() if v is not None)
+    print(f"Done: {n_found}/{len(unique_accs)} entries found ({fetched} fetched from network, {len(unique_accs) - fetched} from cache)")
 
     # Parse each gene
     rows = []
@@ -229,11 +233,11 @@ def main():
                 "uniprot_id": "",
                 "ec_numbers": "",
                 "keyword_ids": "",
-                "enzyme_4class": "non-enzyme",
+                "enzyme_4class": "unknown",
                 "multi_class_flag": "0",
                 "uniprot_missing_flag": "1",
             })
-            class_counts["non-enzyme"] += 1
+            class_counts["unknown"] += 1
             continue
 
         entry = acc_to_data.get(acc)
@@ -243,11 +247,11 @@ def main():
                 "uniprot_id": acc,
                 "ec_numbers": "",
                 "keyword_ids": "",
-                "enzyme_4class": "non-enzyme",
+                "enzyme_4class": "unknown",
                 "multi_class_flag": "0",
                 "uniprot_missing_flag": "1",
             })
-            class_counts["non-enzyme"] += 1
+            class_counts["unknown"] += 1
             continue
 
         ec_numbers, keyword_ids = parse_ec_and_keywords(entry)
@@ -267,7 +271,7 @@ def main():
             "gene": gene,
             "uniprot_id": acc,
             "ec_numbers": ";".join(ec_numbers),
-            "keyword_ids": ";".join(keyword_ids[:10]),  # cap to avoid huge fields
+            "keyword_ids": ";".join(keyword_ids),
             "enzyme_4class": enzyme_class,
             "multi_class_flag": "1" if is_multi else "0",
             "uniprot_missing_flag": "0",
@@ -285,7 +289,7 @@ def main():
 
     print(f"\nWrote {len(rows)} rows to {out_path}")
     print("\nClass distribution:")
-    for cls in ["kinase", "protease", "oxidoreductase", "non-enzyme"]:
+    for cls in ["kinase", "protease", "oxidoreductase", "non-enzyme", "unknown"]:
         n = class_counts[cls]
         print(f"  {cls:20s}: {n:4d}  ({100*n/len(rows):.1f}%)")
     print(f"  Multi-class genes (flagged): {multi_class_count}")
