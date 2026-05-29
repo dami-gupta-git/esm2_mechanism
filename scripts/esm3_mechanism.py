@@ -3,28 +3,27 @@ ESM-3 mechanism family-split experiment (plan_esm3_mechanism.md).
 
 Tests whether ESM-3's structure tokens rescue the mechanism null from ESM-2.
 
-Three embedding conditions:
-  seq       — sequence tokens only (fair scale comparison to ESM-2 650M)
+Two embedding conditions (function tokens not implemented — dropped):
+  seq        — sequence tokens only (fair scale comparison to ESM-2 650M)
   seq_struct — sequence + AlphaFold2 structure tokens
-  full      — sequence + structure + function tokens (where available)
 
 For each condition: delta = mean_pool(ESM-3(mut)) - mean_pool(ESM-3(wt))
-Same probe/CV/seeds as result_7: MLP + logistic, 5-fold gene-split +
+Same probe/CV/seeds as result_7: PyTorch MLP + logistic, 5-fold gene-split +
 family-split, seeds 0-4 on Gerasimavicius (948 genes, 3-class GOF/LOF/DN).
 
 Decision rules (pre-registered in plan_esm3_mechanism.md):
-  M1: ESM-3 full family-split macro-F1 > 0.414  (ESM-2 0.364 + 0.05)
-  M2: ESM-3 seq-only family-split F1  > 0.414  (scale alone rescues)
-  M3: ESM-3 full - ESM-3 seq-only    > 0.03   (structure adds signal)
+  M1: ESM-3 seq_struct family-split macro-F1 > ESM2_FAMILY_F1 + 0.05 = 0.349
+  M2: ESM-3 seq-only   family-split F1       > 0.349  (scale alone rescues)
+  M3: seq_struct − seq > 0.03  (structure adds signal beyond scale)
 
 Phases:
-  --phase 1   CPU: download AF2 structures, tokenise, cache structure tokens
-  --phase 2   GPU: extract ESM-3 embeddings for all three conditions
+  --phase 1   CPU: download AF2 structures, cache coordinates
+  --phase 2   GPU: extract ESM-3 embeddings for both conditions
   --phase 3   CPU: run probes, evaluate decision rules, write results
 
 Usage:
   python3 scripts/esm3_mechanism.py --phase 1        # local, CPU
-  python3 scripts/esm3_mechanism.py --phase 2        # RunPod H100
+  python3 scripts/esm3_mechanism.py --phase 2        # RunPod A100
   python3 scripts/esm3_mechanism.py --phase 3        # local, CPU
 """
 
@@ -56,7 +55,7 @@ PFAM_JSON      = DATA / "pfam_families.json"
 # ESM-3 embedding cache files (phase 2 output)
 EMB_SEQ        = EMB / "esm3_geras_seq_mean.npy"
 EMB_SEQ_STRUCT = EMB / "esm3_geras_seq_struct_mean.npy"
-EMB_FULL       = EMB / "esm3_geras_full_mean.npy"
+EMB_VALID_IDX  = EMB / "esm3_geras_valid_idx.npy"   # indices of non-skipped variants
 
 # AF2 structure token cache (phase 1 output)
 STRUCT_TOKENS  = DATA / "cache" / "esm3_struct_tokens.json"
@@ -201,19 +200,16 @@ def phase1_structure_tokens() -> None:
 def phase2_extract_embeddings(batch_size: int = 4) -> None:
     """
     For each variant (wt and mut sequence) extract ESM-3 mean-pooled embeddings
-    under three conditions: seq-only, seq+struct, full.
-    Saves delta arrays (mut - wt) to EMB_SEQ, EMB_SEQ_STRUCT, EMB_FULL.
+    under two conditions: seq-only, seq+struct.
+    Saves delta arrays (mut - wt) to EMB_SEQ, EMB_SEQ_STRUCT.
     """
     try:
         import torch
-        from esm.models.esm3 import ESM3
-        from esm.sdk.api import ESMProtein, GenerationConfig
+        from esm.sdk.api import ESMProtein
         from esm.pretrained import ESM3_sm_open_v0
     except ImportError:
         print("ERROR: esm package not found. Install: pip install esm")
         sys.exit(1)
-
-    import torch
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     if device != "cuda":
@@ -234,11 +230,10 @@ def phase2_extract_embeddings(batch_size: int = 4) -> None:
         n_struct = sum(1 for v in struct_cache.values() if v is not None)
         print(f"Structure tokens loaded: {n_struct}/{len(struct_cache)} have structures")
 
-    # Check which conditions are already done
+    # Two conditions only — function tokens not implemented
     conditions = {
         "seq":        EMB_SEQ,
         "seq_struct": EMB_SEQ_STRUCT,
-        "full":       EMB_FULL,
     }
     for cond, path in conditions.items():
         if path.exists():
@@ -255,19 +250,23 @@ def phase2_extract_embeddings(batch_size: int = 4) -> None:
     # Resume from checkpoints if available
     wt_embs:  dict[str, list] = {}
     mut_embs: dict[str, list] = {}
+    valid_indices: list[int] = []
     resume_from = 0
+    idx_ckpt = Path(str(EMB_VALID_IDX).replace(".npy", "_ckpt.npy"))
+    if idx_ckpt.exists():
+        valid_indices = list(np.load(str(idx_ckpt)).astype(int))
     for cond in remaining_conds:
         ckpt_wt  = Path(str(conditions[cond]).replace(".npy", "_ckpt_wt.npy"))
         ckpt_mut = Path(str(conditions[cond]).replace(".npy", "_ckpt_mut.npy"))
         if ckpt_wt.exists() and ckpt_mut.exists():
-            wt_embs[cond]  = list(np.load(str(ckpt_wt), allow_pickle=True))
-            mut_embs[cond] = list(np.load(str(ckpt_mut), allow_pickle=True))
-            resume_from = max(resume_from, len(wt_embs[cond]))
+            wt_embs[cond]  = list(np.load(str(ckpt_wt)))
+            mut_embs[cond] = list(np.load(str(ckpt_mut)))
+            resume_from = max(resume_from, max(valid_indices) + 1 if valid_indices else 0)
         else:
             wt_embs[cond]  = []
             mut_embs[cond] = []
     if resume_from > 0:
-        print(f"Resuming from checkpoint: {resume_from} variants already done")
+        print(f"Resuming from checkpoint: {len(valid_indices)} variants done, next variant index {resume_from}")
 
     struct_fallback_count = [0]  # mutable counter accessible in closure
 
@@ -306,7 +305,7 @@ def phase2_extract_embeddings(batch_size: int = 4) -> None:
         tensor  = model.encode(protein)
         seq_tok = tensor.sequence.unsqueeze(0).to(device)   # (1, L+2)
 
-        use_struct = condition in ("seq_struct", "full") and struct_toks is not None
+        use_struct = condition == "seq_struct" and struct_toks is not None
         s_tok = struct_toks.unsqueeze(0).to(device) if use_struct else None
 
         with torch.inference_mode():
@@ -318,6 +317,7 @@ def phase2_extract_embeddings(batch_size: int = 4) -> None:
 
     import time
     t_start = time.time()
+    n_struct_applied = 0
 
     for i, v in enumerate(variants):
         if i < resume_from:
@@ -329,9 +329,6 @@ def phase2_extract_embeddings(batch_size: int = 4) -> None:
         wt_win, new_pos = window_sequence(wt_seq, pos)
         if new_pos < 1 or new_pos > len(wt_win):
             print(f"  SKIP variant {i}: pos={pos} new_pos={new_pos} out of range for seq len {len(wt_win)}")
-            for cond in remaining_conds:
-                wt_embs[cond].append(None)
-                mut_embs[cond].append(None)
             continue
         mut_win = list(wt_win)
         mut_win[new_pos - 1] = v["aa_mut"]
@@ -348,7 +345,10 @@ def phase2_extract_embeddings(batch_size: int = 4) -> None:
                 win_start = max(0, L - 1022)
 
         struct_toks = get_struct_tokens(uid, wt_seq, win_start, len(wt_win))
+        if struct_toks is not None:
+            n_struct_applied += 1
 
+        valid_indices.append(i)
         for cond in remaining_conds:
             wt_e  = embed_sequence(wt_win,  struct_toks, cond)
             mut_e = embed_sequence(mut_win, struct_toks, cond)
@@ -361,28 +361,36 @@ def phase2_extract_embeddings(batch_size: int = 4) -> None:
             rate = done / elapsed if elapsed > 0 else 0
             eta  = (n - i - 1) / rate if rate > 0 else 0
             print(f"  [{i+1}/{n}] {rate:.1f} var/s  ETA {eta/60:.0f} min")
+            np.save(str(EMB_VALID_IDX).replace(".npy", "_ckpt.npy"),
+                    np.array(valid_indices, dtype=np.int32))
             for cond in remaining_conds:
                 np.save(str(conditions[cond]).replace(".npy", "_ckpt_wt.npy"),
-                        np.array(wt_embs[cond], dtype=object))
+                        np.array(wt_embs[cond]))
                 np.save(str(conditions[cond]).replace(".npy", "_ckpt_mut.npy"),
-                        np.array(mut_embs[cond], dtype=object))
+                        np.array(mut_embs[cond]))
+
+    # Save valid variant indices for phase 3 label alignment
+    valid_idx_arr = np.array(valid_indices, dtype=np.int32)
+    np.save(str(EMB_VALID_IDX), valid_idx_arr)
+    n_skipped = n - len(valid_indices)
+    print(f"\nVariants embedded: {len(valid_indices)}/{n}  skipped={n_skipped}")
+    print(f"Structure applied: {n_struct_applied}/{len(valid_indices)} "
+          f"({100*n_struct_applied/max(1,len(valid_indices)):.1f}%)")
+    print(f"Structure coord-length fallbacks: {struct_fallback_count[0]}")
 
     for cond in remaining_conds:
-        # Filter out None entries (skipped variants)
-        pairs = [(w, m) for w, m in zip(wt_embs[cond], mut_embs[cond])
-                 if w is not None and m is not None]
-        wt_arr  = np.array([p[0] for p in pairs])
-        mut_arr = np.array([p[1] for p in pairs])
-        delta   = mut_arr - wt_arr
+        wt_arr = np.array(wt_embs[cond])
+        mut_arr = np.array(mut_embs[cond])
+        delta = mut_arr - wt_arr
         np.save(str(conditions[cond]), delta)
-        n_skip = len(wt_embs[cond]) - len(pairs)
-        print(f"  {cond}: delta saved → {conditions[cond]}  shape={delta.shape}  skipped={n_skip}")
+        print(f"  {cond}: delta saved → {conditions[cond]}  shape={delta.shape}")
         for suffix in ("_ckpt_wt.npy", "_ckpt_mut.npy"):
             p = Path(str(conditions[cond]).replace(".npy", suffix))
             if p.exists():
                 p.unlink()
+    if idx_ckpt.exists():
+        idx_ckpt.unlink()
 
-    print(f"Structure fallbacks (coords length mismatch): {struct_fallback_count[0]}")
     print("Phase 2 complete.")
 
 
@@ -398,6 +406,7 @@ def _run_mlp(X: np.ndarray, y: np.ndarray, splits: list, n_classes: int,
     import torch
     import torch.nn as nn
 
+    torch.manual_seed(seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     all_pred, all_true, all_proba = [], [], []
 
@@ -478,16 +487,25 @@ def phase3_probes() -> None:
     variants, genes, pfam_map = load_geras()
     y_labels = np.array([v["mech3"] for v in variants])
     label_set = ["GOF", "DN", "LOF"]
-    y = np.array([label_set.index(l) for l in y_labels])
+    y_all = np.array([label_set.index(l) for l in y_labels])
     n_classes = len(label_set)
+
+    # Load valid indices saved by phase 2 for exact label alignment
+    if EMB_VALID_IDX.exists():
+        valid_idx = np.load(str(EMB_VALID_IDX))
+        y           = y_all[valid_idx]
+        genes_valid = genes[valid_idx]
+        print(f"Valid indices loaded: {len(valid_idx)}/{len(y_all)} variants embedded")
+    else:
+        y = y_all
+        genes_valid = genes
+        print("No valid index file found — assuming all variants embedded")
 
     conditions = {
         "seq":        EMB_SEQ,
         "seq_struct": EMB_SEQ_STRUCT,
-        "full":       EMB_FULL,
     }
 
-    # Log structure coverage in phase 2 output
     for cond, path in conditions.items():
         if path.exists():
             arr = np.load(str(path))
@@ -501,11 +519,12 @@ def phase3_probes() -> None:
             continue
 
         delta = np.load(str(path))
-        # delta may have fewer rows than variants if some were skipped
-        n_delta = delta.shape[0]
-        y_cond  = y[:n_delta]
-        genes_cond = genes[:n_delta]
+        if delta.shape[0] != len(y):
+            raise RuntimeError(
+                f"{cond}: delta rows {delta.shape[0]} != labels {len(y)} — valid index mismatch")
         print(f"\n=== Condition: {cond}  shape={delta.shape} ===")
+        y_cond     = y
+        genes_cond = genes_valid
 
         cond_results: dict = {"gene_split": {}, "family_split": {}}
 
@@ -577,22 +596,22 @@ def phase3_probes() -> None:
     def get_f1(cond: str, cv: str) -> float:
         return results.get(cond, {}).get(cv, {}).get("mlp_f1_mean", float("nan"))
 
-    full_f1 = get_f1("full", "family_split")
-    seq_f1  = get_f1("seq",  "family_split")
+    ss_f1  = get_f1("seq_struct", "family_split")
+    seq_f1 = get_f1("seq",       "family_split")
 
-    m1 = full_f1 > M1_THRESHOLD if not np.isnan(full_f1) else None
-    m2 = seq_f1  > M1_THRESHOLD if not np.isnan(seq_f1)  else None
-    m3 = (full_f1 - seq_f1) > M3_THRESHOLD \
-         if not np.isnan(full_f1) and not np.isnan(seq_f1) else None
+    m1 = ss_f1  > M1_THRESHOLD if not np.isnan(ss_f1)  else None
+    m2 = seq_f1 > M1_THRESHOLD if not np.isnan(seq_f1) else None
+    m3 = (ss_f1 - seq_f1) > M3_THRESHOLD \
+         if not np.isnan(ss_f1) and not np.isnan(seq_f1) else None
 
     def fmt(v, passed):
         s = f"{v:.3f}" if not np.isnan(v) else "N/A"
         return f"{s} → {'PASS ✓' if passed else 'FAIL ✗' if passed is not None else 'N/A'}"
 
-    print(f"  M1: ESM-3 full   family-split F1 > {M1_THRESHOLD:.3f} → {fmt(full_f1, m1)}")
-    print(f"  M2: ESM-3 seq    family-split F1 > {M1_THRESHOLD:.3f} → {fmt(seq_f1, m2)}")
-    gap = full_f1 - seq_f1 if not np.isnan(full_f1) and not np.isnan(seq_f1) else float("nan")
-    print(f"  M3: full − seq   > {M3_THRESHOLD:.3f}               → {fmt(gap, m3)}")
+    print(f"  M1: ESM-3 seq_struct family-split F1 > {M1_THRESHOLD:.3f} → {fmt(ss_f1, m1)}")
+    print(f"  M2: ESM-3 seq        family-split F1 > {M1_THRESHOLD:.3f} → {fmt(seq_f1, m2)}")
+    gap = ss_f1 - seq_f1 if not np.isnan(ss_f1) and not np.isnan(seq_f1) else float("nan")
+    print(f"  M3: seq_struct − seq > {M3_THRESHOLD:.3f}                 → {fmt(gap, m3)}")
 
     if m1 is False:
         print("\n  Interpretation: NULL CONFIRMED — mechanism not recoverable from ESM-3 regardless of modality.")
@@ -606,13 +625,14 @@ def phase3_probes() -> None:
     summary = {
         "esm2_baseline_family_split_f1": ESM2_FAMILY_F1,
         "m1_threshold": M1_THRESHOLD,
+        "conditions": "seq, seq_struct (function tokens not implemented)",
         "results": results,
         "decision_rules": {
-            "M1": {"criterion": f"full family-split F1 > {M1_THRESHOLD:.3f}",
-                   "value": full_f1, "passed": m1},
+            "M1": {"criterion": f"seq_struct family-split F1 > {M1_THRESHOLD:.3f}",
+                   "value": ss_f1,  "passed": m1},
             "M2": {"criterion": f"seq family-split F1 > {M1_THRESHOLD:.3f}",
-                   "value": seq_f1,  "passed": m2},
-            "M3": {"criterion": f"full − seq > {M3_THRESHOLD:.3f}",
+                   "value": seq_f1, "passed": m2},
+            "M3": {"criterion": f"seq_struct − seq > {M3_THRESHOLD:.3f}",
                    "value": float(gap) if not np.isnan(gap) else None, "passed": m3},
         },
         "model": ESM3_MODEL,
