@@ -59,13 +59,13 @@ def parse_fasta(text: str) -> dict[str, str]:
 
 
 def main():
-    if not MERGED_VARIANTS.exists():
-        raise FileNotFoundError(f"Required input not found: {MERGED_VARIANTS}")
-
     parser = argparse.ArgumentParser()
     parser.add_argument("--from-scratch", action="store_true",
                         help="Ignore existing cache and re-fetch everything")
     args = parser.parse_args()
+
+    if not MERGED_VARIANTS.exists():
+        raise FileNotFoundError(f"Required input not found: {MERGED_VARIANTS}")
 
     with open(MERGED_VARIANTS) as f:
         variants = json.load(f)
@@ -88,12 +88,11 @@ def main():
             already_have.update(extended)
             print(f"Loaded {len(extended)} sequences from uniprot_sequences_extended.json")
 
-    results: dict[str, str] = {} if args.from_scratch else {
-        k: v for k, v in already_have.items() if k in all_uniprots
-    }
+    new_results: dict[str, str] = {}
+    already_needed = {k: v for k, v in already_have.items() if k in all_uniprots}
 
-    todo = sorted(all_uniprots - set(results))
-    print(f"Already have: {len(results)}, need to fetch: {len(todo)}")
+    todo = sorted(all_uniprots - set(already_needed))
+    print(f"Already have: {len(already_needed)}, need to fetch: {len(todo)}")
 
     if not todo:
         print("Nothing to fetch.")
@@ -109,7 +108,7 @@ def main():
             try:
                 text = fetch_batch(batch)
                 parsed = parse_fasta(text)
-                results.update(parsed)
+                new_results.update(parsed)
                 break
             except Exception as e:
                 print(f"  batch {bi+1}/{n_batches} attempt {attempt+1} error: {e}")
@@ -118,12 +117,14 @@ def main():
             print(f"  GAVE UP on batch {bi+1}/{n_batches}")
 
         elapsed = time.time() - t0
-        print(f"  batch {bi+1}/{n_batches}: {len(results)} fetched ({elapsed:.0f}s)")
-        OUT_PATH.write_text(json.dumps(results))
+        print(f"  batch {bi+1}/{n_batches}: {len(new_results)} fetched ({elapsed:.0f}s)")
+        if new_results:
+            OUT_PATH.write_text(json.dumps({**already_have, **new_results}))
         time.sleep(0.5)
 
-    found = sum(1 for a in all_uniprots if a in results)
-    missing = [a for a in all_uniprots if a not in results]
+    all_results = {**already_have, **new_results}
+    found = sum(1 for a in all_uniprots if a in all_results)
+    missing = [a for a in all_uniprots if a not in all_results]
     print(f"\nFetched {found}/{len(all_uniprots)} sequences")
     if missing:
         print(f"Missing ({len(missing)}): {missing[:20]}")

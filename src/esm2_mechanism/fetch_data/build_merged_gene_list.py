@@ -106,19 +106,37 @@ def _load_clinvar_gene_level(wb) -> tuple[dict[str, str], dict[str, str]]:
 
 
 def _load_g2p(path: Path) -> dict[str, str]:
-    """Gene → mechanism from G2P (definitive/strong confidence only)."""
+    """Gene → mechanism from G2P (definitive/strong confidence only).
+
+    Tiebreaking: if a gene has conflicting mechanisms, use only its 'definitive'
+    entries. If that resolves to a single mechanism, accept it. If the conflict
+    persists even at definitive confidence (or there are no definitive entries),
+    exclude the gene entirely rather than apply an arbitrary rule.
+    """
     df = pd.read_csv(path)
     filtered = df[
         df["confidence"].isin(G2P_CONFIDENCE_KEEP)
         & df["molecular mechanism"].isin(G2P_MECH_MAP)
     ].copy()
     filtered["mech_short"] = filtered["molecular mechanism"].map(G2P_MECH_MAP)
-    out = (
-        filtered.groupby("gene symbol")["mech_short"]
-        .agg(lambda s: s.mode()[0])
-        .to_dict()
-    )
-    print(f"G2P (definitive/strong): {len(out)} genes")
+
+    out = {}
+    skipped = []
+    for gene, group in filtered.groupby("gene symbol"):
+        unique = group["mech_short"].unique()
+        if len(unique) == 1:
+            out[gene] = unique[0]
+            continue
+        # Conflict — try restricting to definitive entries only
+        definitive = group[group["confidence"] == "definitive"]["mech_short"].unique()
+        if len(definitive) == 1:
+            out[gene] = definitive[0]
+        else:
+            skipped.append(gene)
+
+    if skipped:
+        print(f"G2P: excluded {len(skipped)} genes with unresolvable conflicting mechanisms: {sorted(skipped)}")
+    print(f"G2P (definitive/strong, unambiguous): {len(out)} genes")
     return out
 
 

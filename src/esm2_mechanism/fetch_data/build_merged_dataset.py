@@ -17,7 +17,6 @@ Usage:
 import argparse
 import csv
 import json
-import os
 from collections import Counter
 import functools
 
@@ -25,51 +24,45 @@ from esm2_mechanism.utils_paths import DATA_DIR
 
 print = functools.partial(print, flush=True)
 
+GERAS_PATH    = DATA_DIR / "gerasimavicius_variants.json"
+GENE_LIST_PATH = DATA_DIR / "merged_gene_list.tsv"
+CLINVAR_PATH  = DATA_DIR / "clinvar_variants.tsv"
+OUT_PATH      = DATA_DIR / "merged_variants.json"
+
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data_dir", default=str(DATA_DIR))
-    parser.add_argument("--out", default=str(DATA_DIR / "merged_variants.json"))
     parser.add_argument("--pathogenic_only", action="store_true",
                         help="Restrict ClinVar variants to 'pathogenic' only (excludes likely pathogenic)")
     args = parser.parse_args()
 
-    missing = [
-        p for p in [
-            os.path.join(args.data_dir, "gerasimavicius_variants.json"),
-            os.path.join(args.data_dir, "merged_gene_list.tsv"),
-            os.path.join(args.data_dir, "clinvar_variants.tsv"),
-        ]
-        if not os.path.exists(p)
-    ]
+    missing = [p for p in [GERAS_PATH, GENE_LIST_PATH, CLINVAR_PATH] if not p.exists()]
     if missing:
         raise FileNotFoundError("Required input(s) not found:\n" + "\n".join(f"  {p}" for p in missing))
 
     # Load Gerasimavicius variants
-    geras_path = os.path.join(args.data_dir, "gerasimavicius_variants.json")
-    with open(geras_path) as f:
+    with open(GERAS_PATH) as f:
         geras = json.load(f)
     geras_genes = set(v["gene"].upper() for v in geras)
     print(f"Gerasimavicius: {len(geras)} variants, {len(geras_genes)} genes")
 
     # Load merged gene list for mechanism labels (G2P source)
-    gene_list_path = os.path.join(args.data_dir, "merged_gene_list.tsv")
-    with open(gene_list_path) as f:
+    with open(GENE_LIST_PATH) as f:
         gene_mech_map = {r["gene"].upper(): r["mechanism"]
                          for r in csv.DictReader(f, delimiter="\t")}
 
     # Load ClinVar variants (G2P-only genes)
-    clinvar_path = os.path.join(args.data_dir, "clinvar_variants.tsv")
-    with open(clinvar_path) as f:
+    with open(CLINVAR_PATH) as f:
         clinvar_rows = list(csv.DictReader(f, delimiter="\t"))
 
-    # Keep only variants for genes NOT in Gerasimavicius
     if args.pathogenic_only:
         clinvar_rows = [r for r in clinvar_rows if r.get("clinsig","").lower() == "pathogenic"]
         print(f"Filtered to pathogenic only: {len(clinvar_rows)} variants")
 
     new_variants = []
     skipped_no_mech = 0
+    skipped_no_uniprot = 0
+    # Keep only variants for genes NOT in Gerasimavicius
     for r in clinvar_rows:
         gene = r["gene"].upper()
         if gene in geras_genes:
@@ -94,7 +87,7 @@ def main():
             continue
         uniprot_id = r.get("uniprot_id", "").strip()
         if not uniprot_id:
-            skipped_no_mech += 1  # reuse counter — "no usable row"
+            skipped_no_uniprot += 1
             continue
         new_variants.append({
             "gene": gene,
@@ -109,7 +102,8 @@ def main():
         })
 
     print(f"ClinVar new-gene variants: {len(new_variants)} "
-          f"(skipped {skipped_no_mech} with no mechanism label)")
+          f"(skipped {skipped_no_mech} with no mechanism label, "
+          f"{skipped_no_uniprot} with no UniProt ID)")
 
     # Tag Gerasimavicius variants with source
     for v in geras:
@@ -133,9 +127,9 @@ def main():
     print(f"Mechanism (3-class): {dict(mechs3)}")
     print(f"Sources: {dict(sources)}")
 
-    with open(args.out, "w") as f:
+    with open(OUT_PATH, "w") as f:
         json.dump(merged, f)
-    print(f"\nWritten to {args.out}")
+    print(f"\nWritten to {OUT_PATH}")
 
 
 if __name__ == "__main__":
