@@ -370,7 +370,7 @@ def main():
         "n_genes": int(len(set(genes))),
         "n_pathogenic": int(int(y.sum())),
         "n_benign": int(int((1-y).sum())),
-        "n_families": int(n_fams),
+        "n_families": int(len({pfam_map.get(g) for g in genes} - {None})),
         "by_feature": {},
     }
 

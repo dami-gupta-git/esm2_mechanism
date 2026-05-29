@@ -1,0 +1,24 @@
+# LLM APIs
+anthropic
+aider-chat
+backoff
+openai
+google-generativeai
+# Viz
+matplotlib
+pypdf
+pymupdf4llm
+# Common Requirements
+torch
+numpy
+transformers
+datasets
+tiktoken
+wandb
+tqdm
+fair-esm
+scikit-learn
+scipy
+# Evo2 (requires CUDA; install flash-attn with: pip install flash-attn --no-build-isolation)
+evo2
+xgboost

@@ -428,8 +428,12 @@ def evaluate_model(model, X: np.ndarray, y: np.ndarray, groups: np.ndarray,
         Xte_s = scaler.transform(Xte)
         m = clone(model)
         m.fit(Xtr_s, ytr)
-        proba = m.predict_proba(Xte_s)
-        pred = proba.argmax(axis=1)
+        raw_proba = m.predict_proba(Xte_s)
+        # Align to canonical CLASSES order in case a class is absent from training fold
+        proba = np.zeros((len(Xte_s), len(CLASSES)), dtype=np.float32)
+        for ci, c in enumerate(m.classes_):
+            proba[:, c] = raw_proba[:, ci]
+        pred = m.predict(Xte_s)
         y_true_all.append(yte)
         y_pred_all.append(pred)
         y_proba_all.append(proba)

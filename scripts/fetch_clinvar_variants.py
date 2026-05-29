@@ -35,9 +35,10 @@ log = logging.getLogger(__name__)
 # Paths
 # ---------------------------------------------------------------------------
 SCRIPT_DIR = Path(__file__).parent
-INPUT_TSV   = SCRIPT_DIR / "merged_gene_list.tsv"
-OUTPUT_TSV  = SCRIPT_DIR / "clinvar_variants.tsv"
-CACHE_DIR   = SCRIPT_DIR / "cache"
+DATA_DIR   = SCRIPT_DIR.parent / "data"
+INPUT_TSV   = DATA_DIR / "merged_gene_list.tsv"
+OUTPUT_TSV  = DATA_DIR / "clinvar_variants.tsv"
+CACHE_DIR   = DATA_DIR / "cache"
 UNIPROT_CACHE = CACHE_DIR / "uniprot"
 CLINVAR_CACHE = CACHE_DIR / "clinvar"
 

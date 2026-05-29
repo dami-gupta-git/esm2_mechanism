@@ -92,10 +92,14 @@ def parse_ec_and_keywords(entry: dict) -> tuple:
         for comment in entry.get("comments", []):
             if comment.get("commentType") == "CATALYTIC ACTIVITY":
                 reaction = comment.get("reaction", {})
-                for ec_obj in reaction.get("ecNumber", []):
-                    val = ec_obj if isinstance(ec_obj, str) else ec_obj.get("value", "")
-                    if val and val not in ec_numbers:
-                        ec_numbers.append(val)
+                ec_val = reaction.get("ecNumber")
+                if isinstance(ec_val, str) and ec_val and ec_val not in ec_numbers:
+                    ec_numbers.append(ec_val)
+                elif isinstance(ec_val, list):
+                    for ec_obj in ec_val:
+                        val = ec_obj if isinstance(ec_obj, str) else ec_obj.get("value", "")
+                        if val and val not in ec_numbers:
+                            ec_numbers.append(val)
     except Exception:
         pass
 

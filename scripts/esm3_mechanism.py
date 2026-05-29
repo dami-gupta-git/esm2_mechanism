@@ -408,7 +408,7 @@ def phase2_extract_embeddings(batch_size: int = 4) -> None:
 # ── Phase 3: probes and decision rules ───────────────────────────────────────
 
 def _run_mlp(X: np.ndarray, y: np.ndarray, splits: list, n_classes: int,
-             seed: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+             seed: int, genes: np.ndarray = None) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     PyTorch MLP (256→64) with class-weighted cross-entropy and early stopping.
     Matches result_7's run_mlp_probe exactly.
@@ -427,13 +427,23 @@ def _run_mlp(X: np.ndarray, y: np.ndarray, splits: list, n_classes: int,
         if len(set(y_tr)) < 2:
             continue
 
-        # 15% validation split — matches result_7 exactly
+        # 15% gene-disjoint validation split — matches run_mlp_probe in experiment_mlp.py
         rng = np.random.RandomState(seed + fold_i)
-        idx = np.arange(len(y_tr)); rng.shuffle(idx)
-        n_val = max(1, int(0.15 * len(idx)))
-        val_idx, fit_idx = idx[:n_val], idx[n_val:]
-        X_fit, y_fit = X_tr[fit_idx], y_tr[fit_idx]
-        X_val, y_val = X_tr[val_idx], y_tr[val_idx]
+        if genes is not None:
+            tr_genes = genes[tr]
+            unique_tr_genes = np.array(sorted(set(tr_genes)))
+            rng.shuffle(unique_tr_genes)
+            n_val_genes = max(1, int(0.15 * len(unique_tr_genes)))
+            val_gene_set = set(unique_tr_genes[:n_val_genes])
+            val_mask = np.array([g in val_gene_set for g in tr_genes])
+        else:
+            idx = np.arange(len(y_tr)); rng.shuffle(idx)
+            n_val = max(1, int(0.15 * len(idx)))
+            val_mask = np.zeros(len(y_tr), dtype=bool)
+            val_mask[idx[:n_val]] = True
+        fit_mask = ~val_mask
+        X_fit, y_fit = X_tr[fit_mask], y_tr[fit_mask]
+        X_val, y_val = X_tr[val_mask], y_tr[val_mask]
         if len(X_fit) < 10 or len(X_val) < 5:
             continue
 
@@ -555,7 +565,7 @@ def phase3_probes() -> None:
                     continue
 
                 # PyTorch MLP — matches result_7
-                pred, true, proba = _run_mlp(delta, y_cond, splits, n_classes, seed)
+                pred, true, proba = _run_mlp(delta, y_cond, splits, n_classes, seed, genes=genes_cond)
                 if len(pred) == 0:
                     continue
                 mlp_f1s.append(f1_score(true, pred, average="macro"))

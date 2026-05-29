@@ -261,8 +261,8 @@ def train_projection_head(X_train, labels_train, gene_pfam_train,
 
     X_t = torch.tensor(X_norm, dtype=torch.float32)
 
-    # Validation: hold out 15% of triplets
-    n_val = max(50, len(anchors) // 7)
+    # Validation: hold out ~15% of triplets
+    n_val = min(max(10, len(anchors) // 7), len(anchors) - 1)
     rng_val = np.random.RandomState(seed + 99)
     val_idx = rng_val.choice(len(anchors), size=n_val, replace=False)
     train_idx_mask = np.ones(len(anchors), dtype=bool)

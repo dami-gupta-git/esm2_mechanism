@@ -232,8 +232,6 @@ def run_per_gene_cv(
         for ci, c in enumerate(lr2.classes_):
             pr2_al[:, c] = pr2[:, ci]
         pd2 = pr2_al.argmax(axis=1)
-        v2_folds.append(compute_metrics(y_te_g, pd2, pr2_al))
-
         # --- V1 and V3: variant-level train, gene-level test ---
         # Train: all variants from train genes
         tr_var_mask = np.array([g in train_genes_set for g in genes_f])
@@ -242,6 +240,8 @@ def run_per_gene_cv(
 
         if tr_var_mask.sum() < 10 or te_var_mask.sum() < 5:
             continue
+
+        v2_folds.append(compute_metrics(y_te_g, pd2, pr2_al))
 
         X_tr_d, y_tr_d = delta_f[tr_var_mask], y_f[tr_var_mask]
         X_tr_c, y_tr_c = X_concat_f[tr_var_mask], y_f[tr_var_mask]

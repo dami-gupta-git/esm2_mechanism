@@ -94,8 +94,8 @@ def build_gene_features(variants, delta_pos, delta_mean):
         mag_cv   = mag_std / (mag_mean + 1e-8)
 
         # Positional spread (normalise by max observed position as proxy for length)
-        max_pos = float(np.max(positions)) if len(positions) > 1 else 1.0
-        pos_mean_norm = float(np.mean(positions)) / max_pos
+        max_pos = float(np.max(positions))
+        pos_mean_norm = float(np.mean(positions)) / (max_pos + 1e-8)
         pos_std_norm  = float(np.std(positions))  / max_pos if len(positions) > 1 else 0.0
 
         # PCA on per-residue delta matrix

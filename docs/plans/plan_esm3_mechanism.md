@@ -83,7 +83,7 @@ Interpretation matrix:
 
 **Phase 2 (GPU, H100):** Extract ESM-3 embeddings for all variants under all three conditions (seq-only, seq+struct, full). Cache deltas. ~same compute as result_7's ESM-2 run.
 
-**Phase 3 (CPU, local):** Run MLP + logistic probes, 5-fold gene-split + family-split, 5 seeds. Evaluate decision rules. Write result_25.
+**Phase 3 (CPU, local):** Run MLP + logistic probes, 5-fold gene-split + family-split, 5 seeds. Evaluate decision rules. Write result_26.
 
 ---
 
@@ -103,4 +103,4 @@ If M1 passes, it is the most important finding of the project.
 | `data/cache/af2_structures/` | to download (Phase 1) |
 | `data/cache/esm3_deltas_geras.npy` | Phase 2 output |
 | `results/esm3_mechanism/summary.json` | Phase 3 output |
-| `docs/result_25.md` | written if experiment completes |
+| `docs/result_26.md` | written if experiment completes |

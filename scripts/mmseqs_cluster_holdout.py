@@ -117,10 +117,11 @@ def _align_proba(proba, clf_classes):
     return out
 
 
-def compute_metrics(y_true, y_pred, y_proba):
+def compute_metrics(y_true, y_pred, y_proba, cls_to_idx=None):
     macro_f1 = float(f1_score(y_true, y_pred, average="macro", zero_division=0))
     auroc = {}
-    for i, cls in enumerate(CLASSES):
+    for cls in CLASSES:
+        i = cls_to_idx[cls] if cls_to_idx else CLASSES.index(cls)
         y_bin = (y_true == i).astype(int)
         if y_bin.sum() == 0 or y_bin.sum() == len(y_bin):
             auroc[cls] = None
@@ -239,9 +240,9 @@ def run_mlp(X, y, genes, groups, hidden, n_folds, seed, label):
 def run_seed(seed, n_folds, labels, genes, delta, X_prot, X_bad, gene_to_cluster):
     print(f"\n{'='*72}\nSEED {seed}\n{'='*72}")
 
-    le = LabelEncoder()
-    le.fit(CLASSES)
-    y = le.transform(labels)
+    # Use fixed mapping matching CLASSES order: GOF=0, DN=1, LOF=2
+    cls_to_idx = {c: i for i, c in enumerate(CLASSES)}
+    y = np.array([cls_to_idx[lbl] for lbl in labels])
 
     cluster_of = np.array([gene_to_cluster.get(g) for g in genes])
     has_cluster = cluster_of != None  # noqa

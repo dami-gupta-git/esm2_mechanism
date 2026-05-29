@@ -95,7 +95,7 @@ def main():
     print("\n=== SUMMARY ===")
     summary = {}
     for k in ["logreg_gene", "logreg_family", "mlp_gene", "mlp_family"]:
-        vals = [all_results[s][k]["auroc_mean"] for s in range(5)]
+        vals = [all_results[s][k].get("auroc_mean", float("nan")) for s in range(5)]
         summary[k] = {"mean": float(np.mean(vals)), "std": float(np.std(vals)), "per_seed": vals}
         print(f"  {k}: {np.mean(vals):.3f} +/- {np.std(vals):.3f}  "
               f"({' '.join(f'{v:.3f}' for v in vals)})")

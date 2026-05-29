@@ -373,7 +373,11 @@ def main():
     enzyme_labels = load_enzyme_labels(data_dir)
     pfam_map = load_pfam(data_dir)
 
-    # Align labels to gene_list order; drop genes without a label (shouldn't happen)
+    # Align labels to gene_list order
+    missing = [g for g in gene_list if g not in enzyme_labels]
+    if missing:
+        print(f"  WARNING: {len(missing)} genes have no enzyme label and will be assigned 'non-enzyme': "
+              f"{missing[:5]}{'...' if len(missing) > 5 else ''}")
     y_str = [enzyme_labels.get(g, "non-enzyme") for g in gene_list]
     le = LabelEncoder()
     le.fit(ENZYME_CLASSES)
@@ -413,10 +417,14 @@ def main():
         prot_aligned_y = y[[gene_list.index(g) for g in prot_aligned_genes]]
         X_prot_aligned = X_prot[prot_aligned_idxs]
 
-        # Replace NaNs with column means
-        col_means = np.nanmean(X_prot_aligned, axis=0)
-        nan_mask = np.isnan(X_prot_aligned)
-        X_prot_aligned[nan_mask] = np.take(col_means, np.where(nan_mask)[1])
+        # NaN check: proteome_features_aligned.npy is pre-imputed in build_proteome_features.py
+        # so NaNs should not occur. Log if any are present; do not impute here
+        # (imputation must be done per-fold inside CV to avoid test-set leakage).
+        if np.isnan(X_prot_aligned).any():
+            n_nan = int(np.isnan(X_prot_aligned).sum())
+            print(f"  WARNING: {n_nan} NaN values found in proteome features — "
+                  f"these will cause errors in StandardScaler. "
+                  f"Re-run build_proteome_features.py to regenerate pre-imputed features.")
 
         print(f"Proteome-aligned genes: {len(prot_aligned_genes)}")
         proteome_results = run_multiseed(

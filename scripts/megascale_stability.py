@@ -402,14 +402,14 @@ def run_h3_stability_projection(merged_delta_mean, merged_labels, merged_protein
     ridge = Ridge(alpha=1.0)
     ridge.fit(X_s, s1724_ddg)
 
-    # Stability projection vector: unit-normalised Ridge weights
+    # Stability projection vector: unit-normalised Ridge weights (in sc_s feature space)
     w = ridge.coef_  # shape (D,)
-    v = w / (np.linalg.norm(w) + 1e-12)  # unit vector in feature space
+    v = w / (np.linalg.norm(w) + 1e-12)  # unit vector in sc_s-scaled feature space
 
-    # Project stability out of merged delta_mean
-    # residuals_i = x_i - (x_i · v) * v  (remove the stability direction)
-    proj = merged_delta_mean @ v  # (N,) scalar stability score per variant
-    residuals = merged_delta_mean - np.outer(proj, v)
+    # Project stability out of merged delta_mean — must scale first to match sc_s space
+    merged_scaled = sc_s.transform(merged_delta_mean.astype(np.float64)).astype(np.float32)
+    proj = merged_scaled @ v  # (N,) scalar stability score per variant
+    residuals = merged_scaled - np.outer(proj, v)
 
     le = LabelEncoder()
     y = le.fit_transform(merged_labels)
@@ -417,7 +417,7 @@ def run_h3_stability_projection(merged_delta_mean, merged_labels, merged_protein
     baseline_f1s, projected_f1s = [], []
     for seed in range(n_seeds):
         splits = family_split_cv(merged_proteins, pfam_map, n_folds=n_folds, seed=seed)
-        for X, tag in [(merged_delta_mean, "baseline"), (residuals, "projected")]:
+        for X, tag in [(merged_scaled, "baseline"), (residuals, "projected")]:
             fold_f1s = []
             for tr, te in splits:
                 sc = StandardScaler()

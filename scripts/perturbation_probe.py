@@ -55,9 +55,10 @@ def load_all_features(gene_list):
                               if g in scan_idx], dtype=np.float32)
     # Filter gene_list to those with scan features
     gene_mask = np.array([g in scan_idx for g in gene_list])
+    scan_gene_list = gene_list[gene_mask]   # genes that have scan features
     features["scan"] = aligned_scan
 
-    # 2. Mean-pooled delta (gene-level mean of per-variant deltas)
+    # 2. Mean-pooled delta — built over scan_gene_list so rows align to scan features
     with open(DATA / "merged_valid_variants.json") as f:
         variants = json.load(f)
     wt_emb  = np.load(EMB / "merged_embeddings_wt_mean.npy")
@@ -68,11 +69,11 @@ def load_all_features(gene_list):
     gene_delta = defaultdict(list)
     for i, v in enumerate(variants):
         gene_delta[v["gene"].upper()].append(delta[i])
-    delta_X = np.array([np.mean(gene_delta[g], axis=0) for g in gene_list
+    delta_X = np.array([np.mean(gene_delta[g], axis=0) for g in scan_gene_list
                          if g in gene_delta], dtype=np.float32)
     features["delta"] = delta_X
 
-    # 3. Proteome features
+    # 3. Proteome features — built over scan_gene_list so rows align to scan features
     proteome_path = DATA / "proteome_features_aligned.npy"
     if proteome_path.exists():
         with open(DATA / "merged_gene_list.tsv") as f:
@@ -80,7 +81,7 @@ def load_all_features(gene_list):
                             if not line.startswith("gene")]
         proteome_X = np.load(proteome_path)
         pg_idx = {g: i for i, g in enumerate(merged_genes)}
-        proteome_aligned = np.array([proteome_X[pg_idx[g]] for g in gene_list
+        proteome_aligned = np.array([proteome_X[pg_idx[g]] for g in scan_gene_list
                                       if g in pg_idx], dtype=np.float32)
         features["proteome"] = proteome_aligned
     else:
@@ -165,10 +166,8 @@ def main():
 
     # Feature combinations to test
     scan_X    = features["scan"]
-    delta_X   = features["delta"][gene_mask] if "delta" in features else None
+    delta_X   = features["delta"] if "delta" in features else None
     proteome_X = features.get("proteome")
-    if proteome_X is not None:
-        proteome_X = proteome_X[gene_mask]
 
     combos = {
         "baseline_delta":  delta_X,

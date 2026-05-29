@@ -2,7 +2,9 @@
 Shared probe utilities: CV splits, metrics, and regression helpers.
 
 Used by badonyi_mechanism, per_gene_ablation, within_family_mechanism,
-multiseed_v1, pathogenicity_control, contrastive_mechanism, megascale_stability.
+multiseed_v1, pathogenicity_control, contrastive_mechanism, megascale_stability,
+badonyi_leakage_analysis, mmseqs_cluster_holdout, proteome_mechanism,
+experiment_mlp, enzyme_classification, go_smoke_test.
 """
 
 from __future__ import annotations
@@ -105,6 +107,21 @@ def compute_metrics(y_true: np.ndarray, y_pred: np.ndarray,
     if len(y_true) > 0:
         out["n"] = int(len(y_true))
     return out
+
+
+def per_gene_f1(y_true: np.ndarray, proba: np.ndarray,
+                genes: np.ndarray) -> float:
+    """Aggregate per-variant probabilities to per-gene predictions and compute macro-F1."""
+    unique = list(set(genes.tolist()))
+    y_g, p_g = [], []
+    for g in unique:
+        m = genes == g
+        true_label = int(np.bincount(y_true[m]).argmax())
+        mean_proba = proba[m].mean(0)
+        pred_label = int(mean_proba.argmax())
+        y_g.append(true_label)
+        p_g.append(pred_label)
+    return float(f1_score(y_g, p_g, average="macro", zero_division=0))
 
 
 def aggregate_folds(fold_list: list[dict],

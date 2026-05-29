@@ -33,8 +33,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import f1_score, roc_auc_score
 from sklearn.preprocessing import LabelEncoder, StandardScaler
+from utils_probes import compute_metrics, per_gene_f1
 import functools
 print = functools.partial(print, flush=True)
 
@@ -150,33 +150,6 @@ def _align_proba(proba, clf_classes):
             out[:, c] = proba[:, ci]
     return out
 
-
-def compute_metrics(y_true, y_pred, y_proba):
-    macro_f1 = float(f1_score(y_true, y_pred, average="macro", zero_division=0))
-    auroc = {}
-    for i, cls in enumerate(CLASSES):
-        y_bin = (y_true == i).astype(int)
-        if y_bin.sum() == 0 or y_bin.sum() == len(y_bin):
-            auroc[cls] = None
-        else:
-            auroc[cls] = float(roc_auc_score(y_bin, y_proba[:, i]))
-    return {"macro_f1": macro_f1, "per_class_auroc": auroc,
-            "n_test": int(len(y_true)),
-            "class_dist_test": {cls: int((y_true == i).sum())
-                                for i, cls in enumerate(CLASSES)}}
-
-
-def per_gene_f1(y_true, proba, genes):
-    unique = list(set(genes.tolist()))
-    y_g, p_g = [], []
-    for g in unique:
-        m = genes == g
-        true_label = int(np.bincount(y_true[m]).argmax())
-        mean_proba = proba[m].mean(0)
-        pred_label = int(mean_proba.argmax())
-        y_g.append(true_label)
-        p_g.append(pred_label)
-    return float(f1_score(y_g, p_g, average="macro", zero_division=0))
 
 
 def aggregate(fold_list):

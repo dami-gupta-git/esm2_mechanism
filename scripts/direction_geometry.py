@@ -158,9 +158,9 @@ def probe2_universal(delta, y, genes, fam, n_partitions=10, seeds=(0,)):
     families = np.array(sorted(set(ff.tolist())))
 
     cos_obs, cos_null, transfer = [], [], []
-    rng = np.random.RandomState(0)
     part = 0
     for seed in seeds:
+        rng = np.random.RandomState(seed)
         for _ in range(n_partitions):
             fam_shuf = families.copy(); rng.shuffle(fam_shuf)
             half = set(fam_shuf[:len(fam_shuf) // 2])

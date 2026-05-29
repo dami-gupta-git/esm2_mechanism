@@ -95,17 +95,21 @@ from collections import Counter
 labels = Counter(v["label_3class"] for v in valid)
 print(f"3-class distribution: {dict(labels)}")
 
-# Check for partial resume: if checkpoint exists and covers all variants, skip extraction
-ckpt_valid = os.path.join(args.data_dir, "merged_valid_variants.json")
-ckpt_wt = os.path.join(args.data_dir, "merged_embeddings_wt_mean.npy")
-if (os.path.exists(ckpt_wt) and os.path.exists(ckpt_valid)):
+# Check for partial resume: if all checkpoint files exist and cover all variants, skip extraction
+ckpt_valid   = os.path.join(args.data_dir, "merged_valid_variants.json")
+ckpt_wt      = os.path.join(args.data_dir, "merged_embeddings_wt_mean.npy")
+ckpt_mut     = os.path.join(args.data_dir, "merged_embeddings_mut_mean.npy")
+ckpt_wt_pos  = os.path.join(args.data_dir, "merged_embeddings_wt_pos.npy")
+ckpt_mut_pos = os.path.join(args.data_dir, "merged_embeddings_mut_pos.npy")
+if (os.path.exists(ckpt_valid) and os.path.exists(ckpt_wt) and os.path.exists(ckpt_mut)
+        and os.path.exists(ckpt_wt_pos) and os.path.exists(ckpt_mut_pos)):
     prev = json.load(open(ckpt_valid))
     if len(prev) == len(valid):
         print("Embeddings already complete — loading from cache.")
-        wt_mean  = np.load(os.path.join(args.data_dir, "merged_embeddings_wt_mean.npy"))
-        mut_mean = np.load(os.path.join(args.data_dir, "merged_embeddings_mut_mean.npy"))
-        wt_pos   = np.load(os.path.join(args.data_dir, "merged_embeddings_wt_pos.npy"))
-        mut_pos  = np.load(os.path.join(args.data_dir, "merged_embeddings_mut_pos.npy"))
+        wt_mean  = np.load(ckpt_wt)
+        mut_mean = np.load(ckpt_mut)
+        wt_pos   = np.load(ckpt_wt_pos)
+        mut_pos  = np.load(ckpt_mut_pos)
         print(f"Loaded embeddings: {wt_mean.shape}")
         print("Done.")
         sys.exit(0)
@@ -122,13 +126,14 @@ wt_mean, mut_mean, wt_pos, mut_pos = get_esm2_embeddings_for_pairs(
     model_name=args.model, device=device, batch_size=args.batch_size
 )
 
-# Save atomically: write valid_variants first so partial runs are detectable
+# Save: write all npy files first, then valid_variants JSON last so its presence
+# signals a fully consistent checkpoint set (crash between npy saves is detectable on resume)
+np.save(ckpt_wt,      wt_mean)
+np.save(ckpt_mut,     mut_mean)
+np.save(ckpt_wt_pos,  wt_pos)
+np.save(ckpt_mut_pos, mut_pos)
 with open(ckpt_valid, "w") as f:
     json.dump(valid, f)
-np.save(os.path.join(args.data_dir, "merged_embeddings_wt_mean.npy"), wt_mean)
-np.save(os.path.join(args.data_dir, "merged_embeddings_mut_mean.npy"), mut_mean)
-np.save(os.path.join(args.data_dir, "merged_embeddings_wt_pos.npy"), wt_pos)
-np.save(os.path.join(args.data_dir, "merged_embeddings_mut_pos.npy"), mut_pos)
 
 print(f"\nSaved embeddings: {wt_mean.shape}")
 print("Done.")

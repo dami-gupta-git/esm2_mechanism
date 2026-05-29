@@ -598,9 +598,9 @@ def variance_explained_per_class(deltas, labels_3class, subspace):
         if mask.sum() < 5:
             continue
         d = deltas[mask]
-        total_var = float(np.var(d))
+        total_var = float(np.var(d, axis=0).sum())
         proj = d.dot(Q).dot(Q.T)
-        proj_var = float(np.var(proj))
+        proj_var = float(np.var(proj, axis=0).sum())
         results[cls] = proj_var / (total_var + 1e-10)
 
     if "GOF" in results and "LOF" in results:
@@ -778,10 +778,11 @@ def run_linear_probe(X, y, genes, n_folds=5, seed=42):
     if not fold_results:
         return {"error": "insufficient data for CV"}
 
-    # Aggregate
+    # Aggregate across all keys present in any fold
     agg = {}
-    for key in fold_results[0]:
-        vals = [f[key] for f in fold_results if not np.isnan(f[key])]
+    all_keys = set().union(*[f.keys() for f in fold_results])
+    for key in all_keys:
+        vals = [f[key] for f in fold_results if key in f and not np.isnan(f[key])]
         if vals:
             agg[f"{key}_mean"] = float(np.mean(vals))
             agg[f"{key}_std"] = float(np.std(vals))
@@ -1270,9 +1271,9 @@ def run(out_dir, seed=0, model_name=ESM2_MODEL_650M, n_stability_components=10,
         # Negative controls
         "neg_ctrl_shuffled_macro_f1": results_negctrl.get("shuffled_delta", {}).get("macro_f1_mean", float("nan")),
         # Orthogonality
-        "cosine_GOF_DN": ortho_results["cosine_matrix"].get("DN_vs_GOF", float("nan")),
-        "cosine_GOF_LOF": ortho_results["cosine_matrix"].get("GOF_vs_LOF", float("nan")),
-        "cosine_DN_LOF": ortho_results["cosine_matrix"].get("DN_vs_LOF", float("nan")),
+        "cosine_GOF_DN_vs_GOF_LOF": ortho_results["cosine_matrix"].get("GOF_vs_DN|GOF_vs_LOF", float("nan")),
+        "cosine_GOF_DN_vs_DN_LOF": ortho_results["cosine_matrix"].get("GOF_vs_DN|DN_vs_LOF", float("nan")),
+        "cosine_GOF_LOF_vs_DN_LOF": ortho_results["cosine_matrix"].get("GOF_vs_LOF|DN_vs_LOF", float("nan")),
         "null_cosine_mean": ortho_results["null_cosine_mean"],
         "ortho_distinguishable_from_null": str(ortho_results["distinguishable_from_null"]),
         # Gene-family-split CV
@@ -1352,7 +1353,7 @@ if __name__ == "__main__":
                                      if isinstance(d.get(k), (int, float))]))
                   for k in numeric_keys},
         "stderrs": {k: float(np.std([d[k] for d in final_infos_list
-                                      if isinstance(d.get(k), (int, float))]) / max(len(args.seeds), 1))
+                                      if isinstance(d.get(k), (int, float))]) / max(len(args.seeds), 1)**0.5)
                     for k in numeric_keys},
         "final_info_list": final_infos_list,
     }

@@ -111,9 +111,11 @@ def build_family_folds(
     """
     unique_fams = []
     seen = set()
+    singleton_counter = 0
     for f in families:
         if pd.isna(f) or f == "":
-            unique_fams.append(f"__singleton_{len(unique_fams)}")
+            unique_fams.append(f"__singleton_{singleton_counter}")
+            singleton_counter += 1
         elif f not in seen:
             unique_fams.append(f)
             seen.add(f)
@@ -174,7 +176,11 @@ def run_family_split_cv(
             multi_class="ovr", random_state=RANDOM_STATE,
         )
         lr.fit(X_train_sc, y_train)
-        probs[test_idx] = lr.predict_proba(X_test_sc)
+        raw_proba = lr.predict_proba(X_test_sc)
+        aligned = np.zeros((len(test_idx), len(CLASSES)), dtype=np.float32)
+        for ci, c in enumerate(lr.classes_):
+            aligned[:, c] = raw_proba[:, ci]
+        probs[test_idx] = aligned
 
     # Any genes still NaN (edge case): assign uniform
     nan_mask = np.isnan(probs[:, 0])
@@ -235,7 +241,11 @@ def run_mlp_cv(
             random_state=RANDOM_STATE,
         )
         mlp.fit(X_bal, y_bal)
-        probs[test_idx] = mlp.predict_proba(X_test_sc)
+        raw_proba = mlp.predict_proba(X_test_sc)
+        aligned = np.zeros((len(test_idx), len(CLASSES)), dtype=np.float32)
+        for ci, c in enumerate(mlp.classes_):
+            aligned[:, c] = raw_proba[:, ci]
+        probs[test_idx] = aligned
 
     nan_mask = np.isnan(probs[:, 0])
     if nan_mask.any():

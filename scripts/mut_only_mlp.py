@@ -46,9 +46,10 @@ import numpy as np
 
 # Reuse helpers from experiment_mlp.py to guarantee identical methodology
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from experiment_mlp import (
 import functools
 print = functools.partial(print, flush=True)
+
+from experiment_mlp import (
     load_variants_and_labels,
     gene_split_cv,
     make_family_splits,

@@ -305,7 +305,7 @@ def run_seed(seed: int, qualifying: dict, gene_to_row: dict,
 
     # 5. Combined residuals: proteome + Badonyi within-family
     combined_matrix = np.concatenate([prot_matrix, bad_matrix], axis=1)
-    combined_resid_idx = RESID_INDICES + [bad_matrix.shape[1] + i for i in BAD_RESID_INDICES]
+    combined_resid_idx = RESID_INDICES + [prot_matrix.shape[1] + i for i in BAD_RESID_INDICES]
     combined_resid_names = [n + "_resid" for n in RAW_NAMES] + ["pDN_resid", "pGOF_resid", "pLOF_resid"]
     print(f"\n--- COMBINED residuals: proteome + Badonyi (within-family) ---")
     results["resid_combined"] = run_feature_set(
