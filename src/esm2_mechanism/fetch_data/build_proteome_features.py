@@ -7,10 +7,10 @@ data/merged_gene_list.tsv.  Sources:
 
   1. gnomAD v4.1 constraint  (pLI, LOEUF, mis_z)
   2. Ensembl Compara         (paralog_count)
-  3. Human Protein Atlas     (tissue_specificity_tau, n_tissues_expressed)
+  3. Human Protein Atlas     (tissue_specificity_tau)
   4. PaxDb integrated human  (log_abundance_ppm)
   5. BioPlex 3.0 PPI network (PPI_degree)
-  6. ClinGen dosage          (HI_score, TS_score)
+  6. GeneBayes s_het         (s_het) — replaces ClinGen HI/TS (80%/63% missing)
 
 Missing-data policy (from plan_experiment.md §Phase 2):
   - Binary <feature>_missing indicator for every numerical feature.
@@ -33,11 +33,10 @@ import argparse
 import csv
 import functools
 import gzip
+import io
 import json
 import math
-import sys
 import time
-import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Optional
@@ -87,31 +86,26 @@ PAXDB_URL = (
 )
 PAXDB_CACHE = CACHE_DIR / "paxdb_9606_integrated.txt"
 # Manually placed file (PaxDb blocks automated download)
-PAXDB_MANUAL = DATA_DIR / "9606-WHOLE_ORGANISM-integrated.txt"
-
-BIOMART_MAPPING_CACHE = CACHE_DIR / "biomart_ensp_to_gene.tsv"
+PAXDB_MANUAL = DATA_DIR / "downloads" / "9606-WHOLE_ORGANISM-integrated.txt"
 
 BIOPLEX_URL = (
     "https://bioplex.hms.harvard.edu/data/BioPlex_293T_Network_10K_Dec_2019.tsv"
 )
 BIOPLEX_CACHE = CACHE_DIR / "BioPlex_293T_Network_10K.tsv"
 
-CLINGEN_URLS = [
-    "https://ftp.clinicalgenome.org/ClinGen_gene_curation_list_GRCh38.tsv",
-    "https://search.clinicalgenome.org/kb/gene-dosage/download",
-]
-CLINGEN_CACHE = CACHE_DIR / "clingen_gene_curation.tsv"
+# Manually placed file (Zeng et al. 2023 GeneBayes, https://doi.org/10.5281/zenodo.7939767)
+SHET_MANUAL = DATA_DIR / "downloads" / "s_het_estimates.genebayes.tsv"
+
+# gnomAD v2.1.1 — used only to build ensg→gene_symbol map for s_het join
+# (gnomAD v4.1 gene_id column is a bare integer, not an Ensembl ID)
+# Manually placed: data/downloads/gnomad.v2.1.1.lof_metrics.by_gene.txt.bgz
+GNOMAD_V2_MANUAL = DATA_DIR / "downloads" / "gnomad.v2.1.1.lof_metrics.by_gene.txt.bgz"
+GNOMAD_V2_ENSG_CACHE = CACHE_DIR / "gnomad_v2.1.1_ensg_symbol.json"
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-def _http_get(url: str, timeout: int = 60) -> bytes:
-    req = urllib.request.Request(url, headers={"Accept": "*/*", "User-Agent": "Mozilla/5.0"})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        return r.read()
-
-
 def _download_file(url: str, dest: Path, force: bool = False) -> bool:
     """Download url → dest.  Returns True on success."""
     if dest.exists() and dest.stat().st_size > 1000 and not force:
@@ -231,11 +225,17 @@ def get_gnomad_constraint(force: bool = False) -> dict[str, dict]:
 
     by_gene: dict[str, dict] = {}
     n_rows = 0
+    # Every column index we will dereference per row, including the optional
+    # _mane and lof.exp tie-break columns — a row must be long enough for all
+    # of them or we skip it (otherwise parts[idx_mane]/parts[idx_lof_exp] raises).
+    needed = max(
+        i for i in (idx_gene, idx_pli, idx_loeuf, idx_misz, idx_mane, idx_lof_exp)
+        if i is not None
+    )
     with open(cache_path) as f:
         next(f)
         for line in f:
             parts = line.rstrip("\n").split("\t")
-            needed = max(idx_gene, idx_pli, idx_loeuf, idx_misz)
             if len(parts) <= needed:
                 continue
             gene = parts[idx_gene].strip()
@@ -345,16 +345,15 @@ def get_paralogs(genes: list[str]) -> dict[str, Optional[int]]:
 # ---------------------------------------------------------------------------
 def get_hpa_features(genes: list[str], force: bool = False) -> dict[str, dict]:
     """
-    Returns {gene: {tissue_specificity_tau: float|None, n_tissues_expressed: int|None}}.
+    Returns {gene: {tissue_specificity_tau: float|None}}.
 
     Downloads proteinatlas.tsv.zip (bulk export).  Parses:
       - "RNA tissue specificity" column  → tau proxy via text label mapping
-      - "RNA tissue category" or tissue expression columns → n_tissues_expressed
 
     Falls back gracefully if download fails or columns are absent.
     """
     print("=== Human Protein Atlas ===")
-    result: dict[str, dict] = {g: {"tissue_specificity_tau": None, "n_tissues_expressed": None} for g in genes}
+    result: dict[str, dict] = {g: {"tissue_specificity_tau": None} for g in genes}
     genes_set = set(genes)
 
     TAU_MAP = {
@@ -381,7 +380,6 @@ def get_hpa_features(genes: list[str], force: bool = False) -> dict[str, dict]:
             tsv_name = tsv_names[0]
             print(f"  reading {tsv_name} from zip")
             with zf.open(tsv_name) as raw:
-                import io
                 f = io.TextIOWrapper(raw, encoding="utf-8", errors="replace")
                 reader = csv.DictReader(f, delimiter="\t")
                 fieldnames = reader.fieldnames or []
@@ -428,54 +426,6 @@ def get_hpa_features(genes: list[str], force: bool = False) -> dict[str, dict]:
 # ---------------------------------------------------------------------------
 # Source 4 — PaxDb protein abundance
 # ---------------------------------------------------------------------------
-def _fetch_biomart_ensp_to_gene() -> dict[str, str]:
-    """
-    BioMart bulk query: ENSP → HGNC gene symbol.
-    Returns {ensp_id: gene_symbol}.
-    Caches result to BIOMART_MAPPING_CACHE.
-    """
-    if BIOMART_MAPPING_CACHE.exists() and BIOMART_MAPPING_CACHE.stat().st_size > 1000:
-        print(f"  BioMart mapping cached: {BIOMART_MAPPING_CACHE}")
-        mapping: dict[str, str] = {}
-        with open(BIOMART_MAPPING_CACHE) as f:
-            reader = csv.reader(f, delimiter="\t")
-            for row in reader:
-                if len(row) >= 2 and row[0] and row[1]:
-                    mapping[row[0]] = row[1]
-        print(f"  loaded {len(mapping)} ENSP→gene mappings")
-        return mapping
-
-    print("  fetching ENSP→gene symbol mapping from BioMart ...")
-    biomart_url = (
-        "https://www.ensembl.org/biomart/martservice?query="
-        "<?xml version='1.0' encoding='UTF-8'?>"
-        "<!DOCTYPE Query>"
-        "<Query virtualSchemaName='default' formatter='TSV' header='0' uniqueRows='1' count='' datasetConfigVersion='0.6'>"
-        "<Dataset name='hsapiens_gene_ensembl' interface='default'>"
-        "<Attribute name='ensembl_peptide_id'/>"
-        "<Attribute name='hgnc_symbol'/>"
-        "</Dataset>"
-        "</Query>"
-    )
-    try:
-        data = _http_get(biomart_url, timeout=120)
-        lines = data.decode("utf-8", errors="replace").strip().split("\n")
-        mapping: dict[str, str] = {}
-        with open(BIOMART_MAPPING_CACHE, "w") as f:
-            for line in lines:
-                parts = line.split("\t")
-                if len(parts) >= 2 and parts[0].strip() and parts[1].strip():
-                    ensp = parts[0].strip()
-                    gene = parts[1].strip()
-                    mapping[ensp] = gene
-                    f.write(f"{ensp}\t{gene}\n")
-        print(f"  BioMart: {len(mapping)} ENSP→gene mappings")
-        return mapping
-    except Exception as e:
-        print(f"WARNING: BioMart query failed: {e}")
-        return {}
-
-
 def get_paxdb_abundance(genes: list[str], force: bool = False) -> dict[str, Optional[float]]:
     """
     Returns {gene: log10(abundance_ppm + 1e-3)} or {gene: None}.
@@ -509,7 +459,6 @@ def get_paxdb_abundance(genes: list[str], force: bool = False) -> dict[str, Opti
             return result
 
     try:
-        n_hit = 0
         with open(paxdb_path) as f:
             for line in f:
                 line = line.strip()
@@ -522,7 +471,6 @@ def get_paxdb_abundance(genes: list[str], force: bool = False) -> dict[str, Opti
                 abund = _fnum(parts[2])
                 if gene in genes_set and abund is not None and result[gene] is None:
                     result[gene] = math.log10(abund + 1e-3)
-                    n_hit += 1
         n_covered = sum(1 for v in result.values() if v is not None)
         print(f"  PaxDb coverage: {n_covered}/{len(genes)} genes assigned log_abundance_ppm")
         return result
@@ -597,88 +545,95 @@ def get_bioplex_degree(genes: list[str], force: bool = False) -> dict[str, Optio
 
 
 # ---------------------------------------------------------------------------
-# Source 6 — ClinGen dosage sensitivity
+# Source 6 — GeneBayes s_het (Zeng et al. 2023)
 # ---------------------------------------------------------------------------
-def get_clingen_dosage(genes: list[str], force: bool = False) -> dict[str, dict]:
+def _load_ensg_to_symbol() -> dict[str, str]:
     """
-    Returns {gene: {HI_score: int|None, TS_score: int|None}}.
-    Scores are 0-3: 0=no evidence, 1=little, 2=some, 3=sufficient.
+    Returns {ensg: gene_symbol} built from gnomAD v2.1.1 (which uses proper
+    ENSG IDs in its gene_id column, unlike v4.1 which uses bare integers).
+    Result is cached to GNOMAD_V2_ENSG_CACHE as JSON to avoid re-parsing.
+    Reads from GNOMAD_V2_MANUAL (manually placed bgz file).
     """
-    print("=== ClinGen dosage sensitivity ===")
-    result: dict[str, dict] = {g: {"HI_score": None, "TS_score": None} for g in genes}
-    genes_set = set(genes)
+    if GNOMAD_V2_ENSG_CACHE.exists() and GNOMAD_V2_ENSG_CACHE.stat().st_size > 1000:
+        print(f"  ensg→symbol map: loading from cache {GNOMAD_V2_ENSG_CACHE}")
+        with open(GNOMAD_V2_ENSG_CACHE) as f:
+            return json.load(f)
 
-    ok = False
-    for url in CLINGEN_URLS:
-        ok = _download_file(url, CLINGEN_CACHE, force=force)
-        if ok:
-            break
-    if not ok:
-        print("WARNING: ClinGen download failed — HI_score/TS_score will be None for all genes")
+    if not GNOMAD_V2_MANUAL.exists() or GNOMAD_V2_MANUAL.stat().st_size < 1000:
+        print(
+            f"WARNING: {GNOMAD_V2_MANUAL} not found — s_het will be None for all genes.\n"
+            "  Download gnomad.v2.1.1.lof_metrics.by_gene.txt.bgz from gnomAD release 2.1.1 "
+            "and place it at that path."
+        )
+        return {}
+
+    print(f"  ensg→symbol map: parsing {GNOMAD_V2_MANUAL}")
+    mapping: dict[str, str] = {}
+    try:
+        with gzip.open(GNOMAD_V2_MANUAL, "rb") as gz:
+            header = gz.readline().decode().strip().split("\t")
+            idx_gene = header.index("gene") if "gene" in header else None
+            idx_ensg = header.index("gene_id") if "gene_id" in header else None
+            if idx_gene is None or idx_ensg is None:
+                print(f"WARNING: gnomAD v2.1.1 missing gene/gene_id columns: {header[:10]}")
+                return {}
+            needed = max(idx_gene, idx_ensg)
+            for line in gz:
+                parts = line.decode().strip().split("\t")
+                if len(parts) <= needed:
+                    continue
+                ensg = parts[idx_ensg].strip()
+                gene = parts[idx_gene].strip()
+                if ensg and gene and ensg not in mapping:
+                    mapping[ensg] = gene
+        GNOMAD_V2_ENSG_CACHE.parent.mkdir(parents=True, exist_ok=True)
+        GNOMAD_V2_ENSG_CACHE.write_text(json.dumps(mapping))
+        print(f"  ensg→symbol map: {len(mapping)} entries cached")
+    except Exception as e:
+        print(f"WARNING: could not build ensg→symbol map: {e}")
+    return mapping
+
+
+def get_shet(genes: list[str]) -> dict[str, Optional[float]]:
+    """
+    Returns {gene: s_het_post_mean} or {gene: None}.
+
+    Reads data/downloads/s_het_estimates.genebayes.tsv (manually placed).
+    Joins on Ensembl gene ID via the gnomAD v2.1.1 ensg→symbol map.
+    """
+    print("=== GeneBayes s_het ===")
+    result: dict[str, Optional[float]] = {g: None for g in genes}
+
+    if not SHET_MANUAL.exists() or SHET_MANUAL.stat().st_size < 100:
+        print(
+            f"WARNING: {SHET_MANUAL} not found — s_het will be None for all genes.\n"
+            "  Download from https://doi.org/10.5281/zenodo.7939767 and place at that path."
+        )
         return result
 
+    ensg_to_gene = _load_ensg_to_symbol()
+    if not ensg_to_gene:
+        print("WARNING: ensg→symbol map empty — s_het will be None for all genes")
+        return result
+
+    genes_set = set(genes)
     try:
-        # ClinGen file: comment lines start with '#', then headerless data rows.
-        # Positional columns (verified from downloaded file):
-        #   col 0  = gene symbol
-        #   col 5  = HI description text  ("Sufficient evidence for dosage pathogenicity", etc.)
-        #   col 12 = TS description text
-        IDX_GENE = 0
-        IDX_HI = 5
-        IDX_TS = 12
-
-        TEXT_MAP = {
-            "sufficient evidence for dosage pathogenicity": 3,
-            "sufficient evidence": 3,
-            "some evidence": 2,
-            "emerging evidence": 1,
-            "little evidence": 1,
-            "no evidence available": 0,
-            "not yet evaluated": None,
-            "gene associated with autosomal recessive phenotype": None,
-        }
-
-        def extract_score_text(val: str) -> Optional[int]:
-            vl = val.strip().lower()
-            if vl in TEXT_MAP:
-                return TEXT_MAP[vl]
-            # Try numeric
-            try:
-                iv = int(float(vl))
-                return iv if 0 <= iv <= 3 else None
-            except ValueError:
-                return None
-
-        with open(CLINGEN_CACHE) as f:
-            lines = f.readlines()
-
-        n_hit = 0
-        for line in lines:
-            stripped = line.strip()
-            if not stripped or stripped.startswith("#"):
-                continue
-            parts = stripped.split("\t")
-            if len(parts) <= IDX_GENE:
-                continue
-            gene = parts[IDX_GENE].strip()
-            if gene not in genes_set:
-                continue
-            hi_raw = parts[IDX_HI].strip() if len(parts) > IDX_HI else ""
-            ts_raw = parts[IDX_TS].strip() if len(parts) > IDX_TS else ""
-            hi = extract_score_text(hi_raw)
-            ts = extract_score_text(ts_raw)
-            if result[gene]["HI_score"] is None:
-                result[gene]["HI_score"] = hi
-            if result[gene]["TS_score"] is None:
-                result[gene]["TS_score"] = ts
-            n_hit += 1
-
-        n_hi = sum(1 for v in result.values() if v["HI_score"] is not None)
-        n_ts = sum(1 for v in result.values() if v["TS_score"] is not None)
-        print(f"  ClinGen coverage: HI={n_hi}/{len(genes)}, TS={n_ts}/{len(genes)}")
+        with open(SHET_MANUAL) as f:
+            reader = csv.DictReader(f, delimiter="\t")
+            for row in reader:
+                ensg = row.get("ensg", "").strip()
+                gene = ensg_to_gene.get(ensg)
+                if gene is None or gene not in genes_set:
+                    continue
+                val = _fnum(row.get("post_mean", ""))
+                if val is not None and result[gene] is None:
+                    result[gene] = val
     except Exception as e:
-        print(f"WARNING: ClinGen parse failed: {e}")
+        print(f"WARNING: s_het parse failed: {e}")
+        return result
 
+    n_covered = sum(1 for v in result.values() if v is not None)
+    print(f"  s_het coverage: {n_covered}/{len(genes)} genes assigned")
     return result
 
 
@@ -695,8 +650,7 @@ CONT_FEATURES = [
     # n_tissues_expressed: dropped — not in HPA bulk export (0% coverage)
     "log_abundance_ppm",        # PaxDb integrated human, manually downloaded
     "PPI_degree",
-    "HI_score",
-    "TS_score",
+    "s_het",                    # GeneBayes posterior mean (Zeng et al. 2023); replaces ClinGen HI/TS
 ]
 
 
@@ -708,7 +662,7 @@ def build_feature_table(
     hpa: dict[str, dict],
     paxdb: dict[str, Optional[float]],
     bioplex: dict[str, Optional[int]],
-    clingen: dict[str, dict],
+    shet: dict[str, Optional[float]],
 ) -> tuple[list[dict], list[str]]:
     """
     Build per-gene row dicts with:
@@ -743,10 +697,8 @@ def build_feature_table(
         row["log_abundance_ppm"] = paxdb.get(gene)
         # BioPlex
         row["PPI_degree"] = bioplex.get(gene)
-        # ClinGen
-        cl = clingen.get(gene, {})
-        row["HI_score"] = cl.get("HI_score")
-        row["TS_score"] = cl.get("TS_score")
+        # GeneBayes s_het
+        row["s_het"] = shet.get(gene)
         rows.append(row)
 
     # --- Family-mean-centred residuals ---
@@ -757,6 +709,10 @@ def build_feature_table(
         if fam:
             family_groups.setdefault(fam, []).append(i)
 
+    singleton_families: set[str] = {
+        fam for fam, idxs in family_groups.items() if len(idxs) == 1
+    }
+
     for feat in CONT_FEATURES:
         # Family means: {family: mean_value_or_None}
         fam_means: dict[str, Optional[float]] = {}
@@ -764,11 +720,10 @@ def build_feature_table(
             vals = [rows[i][feat] for i in idxs if rows[i][feat] is not None]
             fam_means[fam] = float(np.mean(vals)) if vals else None
 
-        for i, row in enumerate(rows):
+        for row in rows:
             raw = row[feat]
             fam = row["pfam_family"]
-            is_singleton = (fam != "" and fam in family_groups and len(family_groups[fam]) == 1)
-            if is_singleton:
+            if fam in singleton_families:
                 row[f"{feat}_familyresid"] = 0.0 if raw is not None else None
             elif fam and fam_means.get(fam) is not None and raw is not None:
                 row[f"{feat}_familyresid"] = raw - fam_means[fam]
@@ -777,9 +732,7 @@ def build_feature_table(
 
     # --- is_singleton_family indicator ---
     for row in rows:
-        fam = row["pfam_family"]
-        is_singleton = (fam != "" and fam in family_groups and len(family_groups[fam]) == 1)
-        row["is_singleton_family"] = 1 if is_singleton else 0
+        row["is_singleton_family"] = 1 if row["pfam_family"] in singleton_families else 0
 
     # --- Missingness indicators ---
     for feat in CONT_FEATURES:
@@ -836,17 +789,21 @@ def build_aligned_matrix(
                 except (ValueError, TypeError):
                     pass
 
-    # Median imputation column-wise
+    # Median imputation column-wise. A fully-missing column means the source
+    # genuinely produced no data — we must not fabricate a value (a 0.0 default
+    # is also semantically wrong, e.g. pLI=0 means LoF-tolerant, not "unknown").
     for j in range(X.shape[1]):
         col_data = X[:, j]
         nan_mask = np.isnan(col_data)
         if nan_mask.any():
             finite = col_data[~nan_mask]
-            if finite.size > 0:
-                med = float(np.median(finite))
-            else:
-                med = 0.0
-            X[nan_mask, j] = med
+            if finite.size == 0:
+                raise ValueError(
+                    f"Column '{num_cols[j]}' has no observed values across all "
+                    f"{len(rows)} genes — the source likely failed to load. Refusing "
+                    f"to fabricate an imputation value; fix the source and rerun."
+                )
+            X[nan_mask, j] = float(np.median(finite))
 
     return X.astype(np.float32), num_cols
 
@@ -862,8 +819,7 @@ def print_coverage_summary(rows: list[dict], genes: list[str]):
         "HPA (specificity cat.)": "tissue_specificity_tau",
         "PaxDb (log_abund)": "log_abundance_ppm",
         "BioPlex (degree)": "PPI_degree",
-        "ClinGen (HI)": "HI_score",
-        "ClinGen (TS)": "TS_score",
+        "GeneBayes (s_het)": "s_het",
     }
     gene_to_row = {r["gene"]: r for r in rows}
     print("\n" + "=" * 55)
@@ -921,7 +877,7 @@ def main():
     except Exception as e:
         print(f"WARNING: Paralog source failed entirely: {e} — using None for all genes")
 
-    hpa: dict[str, dict] = {g: {"tissue_specificity_tau": None, "n_tissues_expressed": None} for g in genes}
+    hpa: dict[str, dict] = {g: {"tissue_specificity_tau": None} for g in genes}
     try:
         hpa = get_hpa_features(genes, force=force)
     except Exception as e:
@@ -939,16 +895,16 @@ def main():
     except Exception as e:
         print(f"WARNING: BioPlex source failed entirely: {e} — using None for all genes")
 
-    clingen: dict[str, dict] = {g: {"HI_score": None, "TS_score": None} for g in genes}
+    shet: dict[str, Optional[float]] = {g: None for g in genes}
     try:
-        clingen = get_clingen_dosage(genes, force=force)
+        shet = get_shet(genes)
     except Exception as e:
-        print(f"WARNING: ClinGen source failed entirely: {e} — using None for all genes")
+        print(f"WARNING: s_het source failed entirely: {e} — using None for all genes")
 
     # 4. Phase 2: build feature table
     print("=== Phase 2: building feature table ===")
     rows, col_names = build_feature_table(
-        genes, families, gnomad, paralogs, hpa, paxdb, bioplex, clingen
+        genes, families, gnomad, paralogs, hpa, paxdb, bioplex, shet
     )
 
     # 5. Save TSV (raw values, NaN as empty string)

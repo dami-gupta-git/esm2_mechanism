@@ -187,11 +187,31 @@ class TestLoadG2p:
         result = _load_g2p(path)
         assert "GENE1" not in result
 
-    def test_majority_vote_across_entries(self, tmp_path):
+    def test_conflicting_at_definitive_level_excluded(self, tmp_path):
+        # Both definitive entries disagree — gene must be excluded, not arbitrarily resolved
+        rows = [
+            self._g2p_row("GENE1", "definitive", "loss of function"),
+            self._g2p_row("GENE1", "definitive", "gain of function"),
+        ]
+        path = _make_g2p_csv(rows, tmp_path)
+        result = _load_g2p(path)
+        assert "GENE1" not in result
+
+    def test_definitive_breaks_tie_over_strong(self, tmp_path):
+        # definitive=GOF, strong=LOF — definitive wins
+        rows = [
+            self._g2p_row("GENE1", "definitive", "gain of function"),
+            self._g2p_row("GENE1", "strong", "loss of function"),
+        ]
+        path = _make_g2p_csv(rows, tmp_path)
+        result = _load_g2p(path)
+        assert result["GENE1"] == "GOF"
+
+    def test_unambiguous_multiple_entries_accepted(self, tmp_path):
+        # Multiple entries, all same mechanism — should be accepted
         rows = [
             self._g2p_row("GENE1", "definitive", "loss of function"),
             self._g2p_row("GENE1", "strong", "loss of function"),
-            self._g2p_row("GENE1", "definitive", "gain of function"),
         ]
         path = _make_g2p_csv(rows, tmp_path)
         result = _load_g2p(path)

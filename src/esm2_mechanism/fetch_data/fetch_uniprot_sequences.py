@@ -16,11 +16,13 @@ Usage:
 
 import argparse
 import json
+import os
 import time
 import urllib.request
 import urllib.parse
 import functools
 from io import StringIO
+from pathlib import Path
 
 
 from Bio import SeqIO
@@ -58,6 +60,29 @@ def parse_fasta(text: str) -> dict[str, str]:
     return out
 
 
+def select_extended(
+    base: dict[str, str],
+    extended_existing: dict[str, str],
+    new_results: dict[str, str],
+    needed: set[str],
+) -> dict[str, str]:
+    """Sequences to persist in the extended cache: those required by variants
+    (``needed``) that are not already covered by ``base`` (sequences.json).
+
+    Excludes base sequences (avoids duplicating sequences.json) and sequences
+    for IDs no variant references (avoids unbounded bloat). New fetches take
+    precedence over previously-cached extended entries.
+    """
+    merged = {**extended_existing, **new_results}
+    return {k: v for k, v in merged.items() if k in needed and k not in base}
+
+
+def atomic_write_json(path: Path, obj: dict) -> None:
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(obj))
+    os.replace(tmp, path)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--from-scratch", action="store_true",
@@ -73,32 +98,34 @@ def main():
     all_uniprots = {v["uniprot_id"] for v in variants if v.get("uniprot_id")}
     print(f"Unique UniProt IDs in merged_variants.json: {len(all_uniprots)}")
 
-    already_have: dict[str, str] = {}
+    base: dict[str, str] = {}
+    extended_existing: dict[str, str] = {}
 
     if not args.from_scratch:
         if SEQUENCES_JSON.exists():
             with open(SEQUENCES_JSON) as f:
                 base = json.load(f)
-            already_have.update(base)
             print(f"Loaded {len(base)} sequences from sequences.json")
 
         if OUT_PATH.exists():
             with open(OUT_PATH) as f:
-                extended = json.load(f)
-            already_have.update(extended)
-            print(f"Loaded {len(extended)} sequences from uniprot_sequences_extended.json")
+                extended_existing = json.load(f)
+            print(f"Loaded {len(extended_existing)} sequences from uniprot_sequences_extended.json")
 
     new_results: dict[str, str] = {}
-    already_needed = {k: v for k, v in already_have.items() if k in all_uniprots}
+    have_keys = set(base) | set(extended_existing)
 
-    todo = sorted(all_uniprots - set(already_needed))
-    print(f"Already have: {len(already_needed)}, need to fetch: {len(todo)}")
+    todo = sorted(all_uniprots - have_keys)
+    print(f"Already have: {len(all_uniprots & have_keys)}, need to fetch: {len(todo)}")
+
+    CACHE.mkdir(parents=True, exist_ok=True)
 
     if not todo:
         print("Nothing to fetch.")
+        atomic_write_json(OUT_PATH, select_extended(base, extended_existing, new_results, all_uniprots))
+        print(f"Wrote: {OUT_PATH}")
         return
 
-    CACHE.mkdir(parents=True, exist_ok=True)
     n_batches = (len(todo) + BATCH_SIZE - 1) // BATCH_SIZE
     t0 = time.time()
 
@@ -118,13 +145,14 @@ def main():
 
         elapsed = time.time() - t0
         print(f"  batch {bi+1}/{n_batches}: {len(new_results)} fetched ({elapsed:.0f}s)")
-        if new_results:
-            OUT_PATH.write_text(json.dumps({**already_have, **new_results}))
+        atomic_write_json(OUT_PATH, select_extended(base, extended_existing, new_results, all_uniprots))
         time.sleep(0.5)
 
-    all_results = {**already_have, **new_results}
-    found = sum(1 for a in all_uniprots if a in all_results)
-    missing = [a for a in all_uniprots if a not in all_results]
+    atomic_write_json(OUT_PATH, select_extended(base, extended_existing, new_results, all_uniprots))
+
+    have_all = set(base) | set(extended_existing) | set(new_results)
+    found = len(all_uniprots & have_all)
+    missing = sorted(all_uniprots - have_all)
     print(f"\nFetched {found}/{len(all_uniprots)} sequences")
     if missing:
         print(f"Missing ({len(missing)}): {missing[:20]}")

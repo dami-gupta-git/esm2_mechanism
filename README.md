@@ -108,6 +108,26 @@ Raw data files are in `data/` (committed where small enough). Embedding `.npy` a
 
 Primary dataset: Gerasimavicius et al. 2022 (Nature Communications 13:3895). `data/DiseaseMech_Stability_VEPS.xlsx` (233 MB, gitignored).
 
+**Badonyi 2024 SVM scores** (`data/downloads/table_S3.xlsx`): per-gene mechanism probability scores for 20,365 human proteins from Badonyi & Marsh 2024 (PLOS One, DOI: 10.1371/journal.pone.0307312). Three binary SVM classifiers (DN vs LOF, GOF vs LOF, LOF vs non-LOF) were trained on 1,270 curated genes with known mechanisms (OMIM + DDG2P), using AlphaFold structural features, FoldX ΔΔG, ESM-1v scores, ProtNLM embeddings, and population genetics constraints (s_het, gnomAD).
+
+| Column | Description |
+|---|---|
+| `gene` | Gene symbol |
+| `uniprot_id` | UniProt accession |
+| `train_dn_gof_lof` | Training set membership per classifier (DN\|GOF\|LOF, 1=yes) |
+| `rank_max` | Mechanism with the highest percentile rank |
+| `verdict` | Final predicted mechanism (`dn`, `gof`, or `lof`) |
+| `pDN` | SVM probability of dominant-negative mechanism |
+| `DN_pctl` | Proteome-wide percentile rank of pDN |
+| `pGOF` | SVM probability of gain-of-function mechanism |
+| `GOF_pctl` | Proteome-wide percentile rank of pGOF |
+| `pLOF` | SVM probability of loss-of-function mechanism |
+| `LOF_pctl` | Proteome-wide percentile rank of pLOF |
+
+`build_badonyi_features.py` joins on gene symbol and uses `pDN`, `pGOF`, `pLOF` as features (plus missingness indicators and Pfam family-mean-centred residuals).
+
+**GeneBayes s_het** (`data/downloads/` — to be placed manually): posterior estimates of the selection coefficient against heterozygous loss-of-function (s_het) for all human protein-coding genes, from Zeng et al. 2023 (GeneBayes, Pritchard lab). Used as a replacement for ClinGen HI_score, which has 80% missingness. Data: https://doi.org/10.5281/zenodo.7939767. Cited by: Spence, Jeffrey P. et al. "Specificity, length and luck drive gene rankings in association studies." DOI: 10.1038/s41586-025-09703-7 (2025).
+
 ---
 
 ## Results summary

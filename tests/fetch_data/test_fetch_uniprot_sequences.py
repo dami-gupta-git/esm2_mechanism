@@ -7,9 +7,10 @@ Covers:
 - parse_fasta: multiple records
 - parse_fasta: empty input
 - parse_fasta: multi-line sequences are concatenated
+- select_extended: excludes base, excludes unneeded IDs, new overrides existing
 """
 
-from esm2_mechanism.fetch_data.fetch_uniprot_sequences import parse_fasta
+from esm2_mechanism.fetch_data.fetch_uniprot_sequences import parse_fasta, select_extended
 
 
 ISOFORM_FASTA = """\
@@ -72,3 +73,26 @@ def test_isoform_suffix_stripped():
     result = parse_fasta(ISOFORM_FASTA)
     assert "P12345" in result
     assert "P12345-2" not in result
+
+
+def test_select_extended_excludes_base_sequences():
+    # An ID covered by sequences.json must not be duplicated into the extended cache.
+    base = {"P1": "AAA"}
+    out = select_extended(base, {}, {"P1": "AAA", "P2": "CCC"}, needed={"P1", "P2"})
+    assert out == {"P2": "CCC"}
+
+
+def test_select_extended_excludes_unneeded_ids():
+    # Sequences no variant references must not bloat the extended cache.
+    out = select_extended({}, {"P9": "GGG"}, {"P2": "CCC"}, needed={"P2"})
+    assert out == {"P2": "CCC"}
+
+
+def test_select_extended_new_overrides_existing():
+    out = select_extended({}, {"P2": "OLD"}, {"P2": "NEW"}, needed={"P2"})
+    assert out == {"P2": "NEW"}
+
+
+def test_select_extended_empty_when_all_in_base():
+    out = select_extended({"P1": "AAA"}, {}, {}, needed={"P1"})
+    assert out == {}
