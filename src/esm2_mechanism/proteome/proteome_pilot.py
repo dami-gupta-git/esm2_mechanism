@@ -42,9 +42,9 @@ from __future__ import annotations
 
 import argparse
 import csv
+import functools
 import io
 import json
-import logging
 import sys
 import time
 import urllib.request
@@ -53,20 +53,10 @@ from pathlib import Path
 from typing import Optional
 
 import numpy as np
-import functools
+
 print = functools.partial(print, flush=True)
 from esm2_mechanism.utils_probes import family_split_indices
 from esm2_mechanism.utils_paths import DATA_DIR, RESULTS_DIR as _PROJECT_RESULTS_DIR
-
-# ---------------------------------------------------------------------------
-# Logging
-# ---------------------------------------------------------------------------
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(message)s",
-    datefmt="%H:%M:%S",
-)
-log = logging.getLogger("proteome_pilot")
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -132,10 +122,10 @@ def load_gene_labels(tsv_path: Path) -> dict[str, str]:
             if collapsed is None:
                 continue
             labels[gene] = collapsed
-    log.info(f"Loaded {len(labels)} labeled genes from {tsv_path.name} "
-             f"(GOF={sum(1 for v in labels.values() if v=='GOF')}, "
-             f"DN={sum(1 for v in labels.values() if v=='DN')}, "
-             f"LOF={sum(1 for v in labels.values() if v=='LOF')})")
+    print(f"Loaded {len(labels)} labeled genes from {tsv_path.name} "
+          f"(GOF={sum(1 for v in labels.values() if v=='GOF')}, "
+          f"DN={sum(1 for v in labels.values() if v=='DN')}, "
+          f"LOF={sum(1 for v in labels.values() if v=='LOF')})")
     return labels
 
 
@@ -145,7 +135,7 @@ def load_gene_labels(tsv_path: Path) -> dict[str, str]:
 def load_pfam_families() -> dict[str, str]:
     with open(PFAM_FAMILIES) as f:
         d = json.load(f)
-    log.info(f"Loaded Pfam family assignments for {len(d)} genes")
+    print(f"Loaded Pfam family assignments for {len(d)} genes")
     return d
 
 
@@ -155,14 +145,14 @@ def load_pfam_families() -> dict[str, str]:
 def download_gnomad_constraint() -> Path:
     """Download gnomAD v4.1 constraint TSV to cache."""
     if GNOMAD_CACHE.exists() and GNOMAD_CACHE.stat().st_size > 1_000_000:
-        log.info(f"gnomAD constraint cached: {GNOMAD_CACHE} "
-                 f"({GNOMAD_CACHE.stat().st_size/1e6:.1f} MB)")
+        print(f"gnomAD constraint cached: {GNOMAD_CACHE} "
+              f"({GNOMAD_CACHE.stat().st_size/1e6:.1f} MB)")
         return GNOMAD_CACHE
-    log.info(f"Downloading gnomAD constraint from {GNOMAD_CONSTRAINT_URL}")
+    print(f"Downloading gnomAD constraint from {GNOMAD_CONSTRAINT_URL}")
     t0 = time.time()
     urllib.request.urlretrieve(GNOMAD_CONSTRAINT_URL, GNOMAD_CACHE)
-    log.info(f"  downloaded {GNOMAD_CACHE.stat().st_size/1e6:.1f} MB "
-             f"in {time.time()-t0:.1f}s")
+    print(f"  downloaded {GNOMAD_CACHE.stat().st_size/1e6:.1f} MB "
+          f"in {time.time()-t0:.1f}s")
     return GNOMAD_CACHE
 
 
@@ -174,11 +164,11 @@ def parse_gnomad_constraint(path: Path) -> dict[str, dict[str, float]]:
     We take the canonical/MANE_SELECT row per gene where available, otherwise
     the row with the highest lof.exp (most observation power).
     """
-    log.info(f"Parsing gnomAD constraint from {path}")
+    print(f"Parsing gnomAD constraint from {path}")
     # Inspect header
     with open(path) as f:
         header = f.readline().rstrip("\n").split("\t")
-    log.info(f"  gnomAD columns: {len(header)} (first 8: {header[:8]})")
+    print(f"  gnomAD columns: {len(header)} (first 8: {header[:8]})")
 
     # Locate the columns we need.  The v4 schema names them as:
     #   gene, transcript, mane_select (bool),
@@ -203,13 +193,13 @@ def parse_gnomad_constraint(path: Path) -> dict[str, dict[str, float]]:
     if idx_loeuf is None: missing.append("LOEUF")
     if idx_misz is None: missing.append("mis_z")
     if missing:
-        log.error(f"gnomAD TSV missing required columns: {missing}.")
-        log.error(f"  Full header: {header}")
+        print(f"ERROR: gnomAD TSV missing required columns: {missing}.")
+        print(f"  Full header: {header}")
         sys.exit(2)
 
-    log.info(f"  using columns: gene={idx_gene}, pLI={idx_pli}, "
-             f"LOEUF={idx_loeuf}, mis_z={idx_misz}, "
-             f"mane={idx_mane}, lof.exp={idx_lof_exp}")
+    print(f"  using columns: gene={idx_gene}, pLI={idx_pli}, "
+          f"LOEUF={idx_loeuf}, mis_z={idx_misz}, "
+          f"mane={idx_mane}, lof.exp={idx_lof_exp}")
 
     by_gene: dict[str, dict] = {}
     n_rows = 0
@@ -251,7 +241,7 @@ def parse_gnomad_constraint(path: Path) -> dict[str, dict[str, float]]:
             elif row["_mane"] == prev["_mane"] and row["_lof_exp"] > prev["_lof_exp"]:
                 by_gene[gene] = row
             n_rows += 1
-    log.info(f"  parsed {n_rows} rows -> {len(by_gene)} unique genes")
+    print(f"  parsed {n_rows} rows -> {len(by_gene)} unique genes")
     return by_gene
 
 
@@ -288,15 +278,15 @@ def fetch_paralog_count(gene: str, session=None) -> Optional[int]:
         cache_file.write_text(json.dumps({"paralog_count": paralog_count}))
         return paralog_count
     except Exception as e:
-        log.debug(f"paralog fetch failed for {gene}: {e}")
+        print(f"  paralog fetch failed for {gene}: {e}")
         cache_file.write_text(json.dumps({"paralog_count": None, "error": str(e)}))
         return None
 
 
 def fetch_paralogs_for_genes(genes: list[str]) -> dict[str, Optional[int]]:
     """Rate-limited Ensembl REST loop with progress logging."""
-    log.info(f"Fetching paralog counts for {len(genes)} genes "
-             f"(rate-limited to 10 req/s; cached)")
+    print(f"Fetching paralog counts for {len(genes)} genes "
+          f"(rate-limited to 10 req/s; cached)")
     out: dict[str, Optional[int]] = {}
     n_cached = 0
     n_fetched = 0
@@ -313,11 +303,11 @@ def fetch_paralogs_for_genes(genes: list[str]) -> dict[str, Optional[int]]:
             time.sleep(0.1)  # 10 req/s
         if (i + 1) % 100 == 0:
             elapsed = time.time() - t0
-            log.info(f"  {i+1}/{len(genes)} "
-                     f"(cached={n_cached}, fetched={n_fetched}, "
-                     f"elapsed={elapsed:.1f}s)")
-    log.info(f"  done: {n_cached} cached + {n_fetched} fetched "
-             f"in {time.time()-t0:.1f}s")
+            print(f"  {i+1}/{len(genes)} "
+                  f"(cached={n_cached}, fetched={n_fetched}, "
+                  f"elapsed={elapsed:.1f}s)")
+    print(f"  done: {n_cached} cached + {n_fetched} fetched "
+          f"in {time.time()-t0:.1f}s")
     return out
 
 
@@ -342,9 +332,9 @@ def build_feature_table(
     """
     rows = []
     keep_genes = [g for g in labels if families.get(g) is not None]
-    log.info(f"Genes with both label and Pfam family: {len(keep_genes)}/"
-             f"{len(labels)} (dropped {len(labels)-len(keep_genes)} "
-             f"without family assignment)")
+    print(f"Genes with both label and Pfam family: {len(keep_genes)}/"
+          f"{len(labels)} (dropped {len(labels)-len(keep_genes)} "
+          f"without family assignment)")
 
     for gene in sorted(keep_genes):
         row = {
@@ -362,8 +352,8 @@ def build_feature_table(
     # Coverage report
     for col in FEATURE_COLS:
         n_present = sum(1 for r in rows if r[col] is not None)
-        log.info(f"  coverage[{col}]: {n_present}/{len(rows)} "
-                 f"({100*n_present/len(rows):.1f}%)")
+        print(f"  coverage[{col}]: {n_present}/{len(rows)} "
+              f"({100*n_present/len(rows):.1f}%)")
 
     # Build X with missingness indicators and median imputation
     X_raw = np.array(
@@ -384,10 +374,10 @@ def build_feature_table(
 
     y = np.array([CLASSES.index(r["label"]) for r in rows], dtype=int)
     groups = np.array([r["family"] for r in rows])
-    log.info(f"Feature matrix: X={X.shape}, y={y.shape}, "
-             f"groups={len(set(groups))} unique families")
-    log.info(f"Class distribution: "
-             + ", ".join(f"{c}={int((y==i).sum())}" for i, c in enumerate(CLASSES)))
+    print(f"Feature matrix: X={X.shape}, y={y.shape}, "
+          f"groups={len(set(groups))} unique families")
+    print("Class distribution: "
+          + ", ".join(f"{c}={int((y==i).sum())}" for i, c in enumerate(CLASSES)))
     return rows, X, y, groups
 
 
@@ -473,7 +463,7 @@ def save_feature_table(rows: list[dict], path: Path):
         writer.writeheader()
         for r in rows:
             writer.writerow({k: r[k] for k in writer.fieldnames})
-    log.info(f"Wrote feature table: {path}")
+    print(f"Wrote feature table: {path}")
 
 
 # ---------------------------------------------------------------------------
@@ -500,12 +490,12 @@ def main():
     # 3. gnomAD constraint
     gnomad_path = download_gnomad_constraint()
     gnomad = parse_gnomad_constraint(gnomad_path)
-    log.info(f"  gnomAD coverage of labeled genes: "
-             f"{sum(1 for g in labels if g in gnomad)}/{len(labels)}")
+    print(f"  gnomAD coverage of labeled genes: "
+          f"{sum(1 for g in labels if g in gnomad)}/{len(labels)}")
 
     # 4. Paralogs
     if args.skip_paralogs:
-        log.info("Skipping Ensembl paralog fetch (--skip-paralogs)")
+        print("Skipping Ensembl paralog fetch (--skip-paralogs)")
         paralogs = {g: None for g in labels}
     else:
         # Only fetch for genes we'll actually use (have label + family)
@@ -520,9 +510,9 @@ def main():
     from sklearn.linear_model import LogisticRegression
     from sklearn.neural_network import MLPClassifier
 
-    log.info("=" * 60)
-    log.info("Running 5-fold family-split CV")
-    log.info("=" * 60)
+    print("=" * 60)
+    print("Running 5-fold family-split CV")
+    print("=" * 60)
 
     results = {
         "settings": {
@@ -542,18 +532,18 @@ def main():
 
     # Majority baseline
     maj = majority_baseline(y, groups, args.n_folds, args.seed)
-    log.info(f"Majority baseline:  macro_f1 = {maj['macro_f1']:.4f}")
+    print(f"Majority baseline:  macro_f1 = {maj['macro_f1']:.4f}")
     results["models"]["majority"] = maj
 
     # Logistic regression
     lr = LogisticRegression(max_iter=2000, class_weight="balanced",
                             random_state=args.seed)
     lr_res = evaluate_model(lr, X, y, groups, args.n_folds, args.seed)
-    log.info(f"Logistic regression: macro_f1 = {lr_res['macro_f1']:.4f}  "
-             f"AUROC: " + ", ".join(
-                 f"{c}={lr_res['per_class_auroc'][c]:.3f}"
-                 if lr_res['per_class_auroc'][c] is not None else f"{c}=NA"
-                 for c in CLASSES))
+    print(f"Logistic regression: macro_f1 = {lr_res['macro_f1']:.4f}  "
+          "AUROC: " + ", ".join(
+              f"{c}={lr_res['per_class_auroc'][c]:.3f}"
+              if lr_res['per_class_auroc'][c] is not None else f"{c}=NA"
+              for c in CLASSES))
     results["models"]["logreg"] = lr_res
 
     # Tiny MLP
@@ -561,11 +551,11 @@ def main():
                         early_stopping=True, validation_fraction=0.15,
                         random_state=args.seed)
     mlp_res = evaluate_model(mlp, X, y, groups, args.n_folds, args.seed)
-    log.info(f"Tiny MLP (16,8):     macro_f1 = {mlp_res['macro_f1']:.4f}  "
-             f"AUROC: " + ", ".join(
-                 f"{c}={mlp_res['per_class_auroc'][c]:.3f}"
-                 if mlp_res['per_class_auroc'][c] is not None else f"{c}=NA"
-                 for c in CLASSES))
+    print(f"Tiny MLP (16,8):     macro_f1 = {mlp_res['macro_f1']:.4f}  "
+          "AUROC: " + ", ".join(
+              f"{c}={mlp_res['per_class_auroc'][c]:.3f}"
+              if mlp_res['per_class_auroc'][c] is not None else f"{c}=NA"
+              for c in CLASSES))
     results["models"]["mlp"] = mlp_res
 
     # 7. Decision flag
@@ -584,14 +574,14 @@ def main():
     else:
         decision = "NULL: at majority baseline — proceed to full Phase 1 cautiously"
     results["decision"] = decision
-    log.info("=" * 60)
-    log.info(f"DECISION: {decision}")
-    log.info(f"  best model macro_f1 = {best_f1:.4f}")
-    log.info(f"  majority baseline   = {maj['macro_f1']:.4f}")
+    print("=" * 60)
+    print(f"DECISION: {decision}")
+    print(f"  best model macro_f1 = {best_f1:.4f}")
+    print(f"  majority baseline   = {maj['macro_f1']:.4f}")
 
     out_path = results_json_path(args.seed)
     out_path.write_text(json.dumps(results, indent=2))
-    log.info(f"Wrote results JSON: {out_path}")
+    print(f"Wrote results JSON: {out_path}")
 
 
 if __name__ == "__main__":

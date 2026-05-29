@@ -16,7 +16,6 @@ import json
 import os
 import re
 import time
-import logging
 import requests
 from pathlib import Path
 from typing import Optional
@@ -24,13 +23,6 @@ import functools
 from esm2_mechanism.utils_paths import DATA_DIR
 
 print = functools.partial(print, flush=True)
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(message)s",
-    datefmt="%H:%M:%S",
-)
-log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -73,14 +65,14 @@ def get_json(url: str, params: dict, ncbi: bool = False, retries: int = 4) -> Op
             r = SESSION.get(url, params=params, timeout=30)
             if r.status_code == 429 or r.status_code == 503:
                 wait = 10 * (attempt + 1)
-                log.warning("HTTP %s – sleeping %ds", r.status_code, wait)
+                print(f"WARNING: HTTP {r.status_code} – sleeping {wait}s")
                 time.sleep(wait)
                 skip_rate_limit = True
                 continue
             r.raise_for_status()
             return r.json()
         except requests.RequestException as exc:
-            log.warning("Request error (attempt %d): %s", attempt + 1, exc)
+            print(f"WARNING: Request error (attempt {attempt + 1}): {exc}")
             time.sleep(5 * (attempt + 1))
     return None
 
@@ -94,14 +86,14 @@ def get_text(url: str, params: dict, ncbi: bool = False, retries: int = 4) -> Op
             r = SESSION.get(url, params=params, timeout=30)
             if r.status_code == 429 or r.status_code == 503:
                 wait = 10 * (attempt + 1)
-                log.warning("HTTP %s – sleeping %ds", r.status_code, wait)
+                print(f"WARNING: HTTP {r.status_code} – sleeping {wait}s")
                 time.sleep(wait)
                 skip_rate_limit = True
                 continue
             r.raise_for_status()
             return r.text
         except requests.RequestException as exc:
-            log.warning("Request error (attempt %d): %s", attempt + 1, exc)
+            print(f"WARNING: Request error (attempt {attempt + 1}): {exc}")
             time.sleep(5 * (attempt + 1))
     return None
 
@@ -275,7 +267,7 @@ def fetch_clinvar_variants(gene: str) -> list:
         cache_file.write_text(json.dumps([]))
         return []
 
-    log.info("  %s: %d ClinVar IDs found", gene, len(ids))
+    print(f"  {gene}: {len(ids)} ClinVar IDs found")
 
     # Step 2 – fetch summaries in batches of 200
     BATCH = 200
@@ -384,7 +376,7 @@ def main():
         d.mkdir(parents=True, exist_ok=True)
 
     genes = load_gene_list(INPUT_TSV)
-    log.info("Loaded %d genes from %s", len(genes), INPUT_TSV)
+    print(f"Loaded {len(genes)} genes from {INPUT_TSV}")
 
     # Determine which genes already have output rows (for partial-resume at output level).
     # Truncate any partial last line caused by a mid-write crash to avoid duplicate rows.
@@ -394,7 +386,7 @@ def main():
         if not raw.endswith(b"\n"):
             truncate_at = raw.rfind(b"\n") + 1
             if truncate_at > 0:
-                log.warning("Output file has partial last line; truncating to last complete row")
+                print("WARNING: Output file has partial last line; truncating to last complete row")
                 with open(OUTPUT_TSV, "r+b") as fh:
                     fh.truncate(truncate_at)
         with open(OUTPUT_TSV, newline="") as fh:
@@ -414,31 +406,31 @@ def main():
             prefilled_uniprot = gdata["uniprot_id"]
 
             if gene in done_genes:
-                log.info("[%d/%d] %s – already in output, skipping", idx, len(genes), gene)
+                print(f"[{idx}/{len(genes)}] {gene} – already in output, skipping")
                 continue
 
-            log.info("[%d/%d] %s", idx, len(genes), gene)
+            print(f"[{idx}/{len(genes)}] {gene}")
 
             # 1. Resolve UniProt accession
             uniprot_id = fetch_uniprot_id(gene, prefilled_uniprot)
             if uniprot_id is None:
-                log.warning("  %s: no UniProt ID found, skipping", gene)
+                print(f"WARNING: {gene}: no UniProt ID found, skipping")
                 continue
 
             # 2. Fetch protein sequence for WT validation (best-effort)
             sequence: str | None = fetch_protein_sequence(uniprot_id)
             if sequence is None:
-                log.warning("  %s: sequence unavailable, writing variants without WT validation", gene)
+                print(f"WARNING: {gene}: sequence unavailable, writing variants without WT validation")
 
             # 3. Fetch ClinVar variants
             variants = fetch_clinvar_variants(gene)
-            log.info("  %s: %d missense P/LP variants", gene, len(variants))
+            print(f"  {gene}: {len(variants)} missense P/LP variants")
 
             # 4. Write output rows
             gene_written = 0
             for v in variants:
                 if sequence and not validate_wt(v, sequence):
-                    log.debug("  WT mismatch %s pos %d: expected %s", gene, v["pos"], v["wt_aa"])
+                    print(f"  WT mismatch {gene} pos {v['pos']}: expected {v['wt_aa']}")
                     continue
                 writer.writerow([gene, uniprot_id, v["pos"], v["wt_aa"], v["mut_aa"], v["clinsig"]])
                 gene_written += 1
@@ -448,7 +440,7 @@ def main():
             # Flush after each gene so partial results are saved even on crash
             out_fh.flush()
 
-    log.info("Done. %d total variants written to %s", total_variants, OUTPUT_TSV)
+    print(f"Done. {total_variants} total variants written to {OUTPUT_TSV}")
 
 
 if __name__ == "__main__":

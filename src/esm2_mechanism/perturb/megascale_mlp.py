@@ -17,11 +17,14 @@ Outputs:
   results/megascale_stability/mlp_per_protein_spearman.json
 """
 
+import functools
 import json
 import os
 import sys
 import numpy as np
 from scipy.stats import spearmanr, pearsonr
+
+print = functools.partial(print, flush=True)
 from sklearn.metrics import roc_auc_score
 from sklearn.preprocessing import StandardScaler
 from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor

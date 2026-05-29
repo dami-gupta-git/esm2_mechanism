@@ -31,9 +31,9 @@ from __future__ import annotations
 
 import argparse
 import csv
+import functools
 import gzip
 import json
-import logging
 import math
 import sys
 import time
@@ -43,21 +43,10 @@ from pathlib import Path
 from typing import Optional
 
 import numpy as np
-import functools
 
 from esm2_mechanism.utils_paths import DATA_DIR
 
 print = functools.partial(print, flush=True)
-
-# ---------------------------------------------------------------------------
-# Logging
-# ---------------------------------------------------------------------------
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(message)s",
-    datefmt="%H:%M:%S",
-)
-log = logging.getLogger("build_proteome_features")
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -126,16 +115,16 @@ def _http_get(url: str, timeout: int = 60) -> bytes:
 def _download_file(url: str, dest: Path, force: bool = False) -> bool:
     """Download url → dest.  Returns True on success."""
     if dest.exists() and dest.stat().st_size > 1000 and not force:
-        log.info(f"  cached: {dest} ({dest.stat().st_size/1e6:.1f} MB)")
+        print(f"  cached: {dest} ({dest.stat().st_size/1e6:.1f} MB)")
         return True
-    log.info(f"  downloading: {url}")
+    print(f"  downloading: {url}")
     t0 = time.time()
     try:
         urllib.request.urlretrieve(url, dest)
-        log.info(f"  saved {dest.stat().st_size/1e6:.1f} MB in {time.time()-t0:.1f}s → {dest}")
+        print(f"  saved {dest.stat().st_size/1e6:.1f} MB in {time.time()-t0:.1f}s → {dest}")
         return True
     except Exception as e:
-        log.warning(f"  download failed: {e}")
+        print(f"WARNING: download failed: {e}")
         if dest.exists():
             dest.unlink()
         return False
@@ -168,7 +157,7 @@ def load_gene_universe(tsv_path: Path) -> list[str]:
             if g and g not in seen:
                 seen.add(g)
                 genes.append(g)
-    log.info(f"Gene universe: {len(genes)} unique genes from {tsv_path.name}")
+    print(f"Gene universe: {len(genes)} unique genes from {tsv_path.name}")
     return genes
 
 
@@ -178,7 +167,7 @@ def load_gene_universe(tsv_path: Path) -> list[str]:
 def load_pfam_families(path: Path) -> dict[str, Optional[str]]:
     with open(path) as f:
         d = json.load(f)
-    log.info(f"Pfam families loaded: {len(d)} genes")
+    print(f"Pfam families loaded: {len(d)} genes")
     return d
 
 
@@ -187,30 +176,30 @@ def load_pfam_families(path: Path) -> dict[str, Optional[str]]:
 # ---------------------------------------------------------------------------
 def get_gnomad_constraint(force: bool = False) -> dict[str, dict]:
     """Returns {gene: {pLI, LOEUF, mis_z}}."""
-    log.info("=== gnomAD v4.1 constraint ===")
+    print("=== gnomAD v4.1 constraint ===")
 
     # Reuse pilot cache if it exists and is large enough
     cache_path = GNOMAD_CACHE
     if not cache_path.exists() or force:
         if PILOT_GNOMAD_CACHE.exists() and PILOT_GNOMAD_CACHE.stat().st_size > 1_000_000 and not force:
-            log.info(f"  reusing pilot cache: {PILOT_GNOMAD_CACHE}")
+            print(f"  reusing pilot cache: {PILOT_GNOMAD_CACHE}")
             cache_path = PILOT_GNOMAD_CACHE
         else:
             ok = _download_file(GNOMAD_CONSTRAINT_URL, GNOMAD_CACHE, force=force)
             if not ok:
-                log.warning("  gnomAD download failed — all gnomAD features will be None")
+                print("WARNING: gnomAD download failed — all gnomAD features will be None")
                 return {}
     elif GNOMAD_CACHE.stat().st_size <= 1_000_000:
         # Stale/partial cache, try pilot
         if PILOT_GNOMAD_CACHE.exists() and PILOT_GNOMAD_CACHE.stat().st_size > 1_000_000:
-            log.info(f"  reusing pilot cache: {PILOT_GNOMAD_CACHE}")
+            print(f"  reusing pilot cache: {PILOT_GNOMAD_CACHE}")
             cache_path = PILOT_GNOMAD_CACHE
         else:
             ok = _download_file(GNOMAD_CONSTRAINT_URL, GNOMAD_CACHE, force=True)
             if not ok:
                 return {}
 
-    log.info(f"  parsing {cache_path}")
+    print(f"  parsing {cache_path}")
     with open(cache_path) as f:
         header = f.readline().rstrip("\n").split("\t")
 
@@ -237,7 +226,7 @@ def get_gnomad_constraint(force: bool = False) -> dict[str, dict]:
     if idx_misz is None:
         missing_cols.append("mis_z")
     if missing_cols:
-        log.error(f"  gnomAD TSV missing columns: {missing_cols}; header: {header}")
+        print(f"ERROR: gnomAD TSV missing columns: {missing_cols}; header: {header}")
         return {}
 
     by_gene: dict[str, dict] = {}
@@ -273,7 +262,7 @@ def get_gnomad_constraint(force: bool = False) -> dict[str, dict]:
                 by_gene[gene] = row
             n_rows += 1
 
-    log.info(f"  parsed {n_rows} rows → {len(by_gene)} unique genes")
+    print(f"  parsed {n_rows} rows → {len(by_gene)} unique genes")
     return by_gene
 
 
@@ -302,7 +291,7 @@ def _fetch_paralog_count_rest(gene: str, own_cache_dir: Path) -> Optional[int]:
         cache_file.write_text(json.dumps({"paralog_count": count}))
         return count
     except Exception as e:
-        log.debug(f"  paralog fetch failed for {gene}: {e}")
+        print(f"  paralog fetch failed for {gene}: {e}")
         cache_file.write_text(json.dumps({"paralog_count": None, "error": str(e)}))
         return None
 
@@ -312,7 +301,7 @@ def get_paralogs(genes: list[str]) -> dict[str, Optional[int]]:
     Reuse pilot cache (data/cache/proteome_pilot/paralogs/) where available.
     Fetch missing genes via REST at 10 req/s.
     """
-    log.info("=== Ensembl Compara paralogs ===")
+    print("=== Ensembl Compara paralogs ===")
     own_cache = CACHE_DIR / "paralogs"
     out: dict[str, Optional[int]] = {}
     to_fetch: list[str] = []
@@ -337,17 +326,17 @@ def get_paralogs(genes: list[str]) -> dict[str, Optional[int]]:
                 pass
         to_fetch.append(gene)
 
-    log.info(f"  {len(out)} genes from cache, {len(to_fetch)} need REST fetch")
+    print(f"  {len(out)} genes from cache, {len(to_fetch)} need REST fetch")
     t0 = time.time()
     for i, gene in enumerate(to_fetch):
         c = _fetch_paralog_count_rest(gene, own_cache)
         out[gene] = c
         time.sleep(0.1)  # 10 req/s
         if (i + 1) % 100 == 0:
-            log.info(f"  fetched {i+1}/{len(to_fetch)} (elapsed {time.time()-t0:.1f}s)")
+            print(f"  fetched {i+1}/{len(to_fetch)} (elapsed {time.time()-t0:.1f}s)")
 
     n_ok = sum(1 for v in out.values() if v is not None)
-    log.info(f"  paralog_count coverage: {n_ok}/{len(genes)}")
+    print(f"  paralog_count coverage: {n_ok}/{len(genes)}")
     return out
 
 
@@ -364,7 +353,7 @@ def get_hpa_features(genes: list[str], force: bool = False) -> dict[str, dict]:
 
     Falls back gracefully if download fails or columns are absent.
     """
-    log.info("=== Human Protein Atlas ===")
+    print("=== Human Protein Atlas ===")
     result: dict[str, dict] = {g: {"tissue_specificity_tau": None, "n_tissues_expressed": None} for g in genes}
     genes_set = set(genes)
 
@@ -378,7 +367,7 @@ def get_hpa_features(genes: list[str], force: bool = False) -> dict[str, dict]:
 
     ok = _download_file(HPA_PROTEINATLAS_URL, HPA_PROTEINATLAS_CACHE, force=force)
     if not ok:
-        log.warning("  HPA download failed — tissue features will be None for all genes")
+        print("WARNING: HPA download failed — tissue features will be None for all genes")
         return result
 
     try:
@@ -387,16 +376,16 @@ def get_hpa_features(genes: list[str], force: bool = False) -> dict[str, dict]:
             # Find the TSV inside the zip
             tsv_names = [n for n in zf.namelist() if n.endswith(".tsv")]
             if not tsv_names:
-                log.warning(f"  HPA zip contains no TSV: {zf.namelist()}")
+                print(f"WARNING: HPA zip contains no TSV: {zf.namelist()}")
                 return result
             tsv_name = tsv_names[0]
-            log.info(f"  reading {tsv_name} from zip")
+            print(f"  reading {tsv_name} from zip")
             with zf.open(tsv_name) as raw:
                 import io
                 f = io.TextIOWrapper(raw, encoding="utf-8", errors="replace")
                 reader = csv.DictReader(f, delimiter="\t")
                 fieldnames = reader.fieldnames or []
-                log.info(f"  HPA columns ({len(fieldnames)}): {fieldnames[:10]}")
+                print(f"  HPA columns ({len(fieldnames)}): {fieldnames[:10]}")
 
                 # Find gene name column and text specificity label column only.
                 # "RNA tissue specificity score" is NOT Yanai τ — it is an HPA-internal
@@ -411,7 +400,7 @@ def get_hpa_features(genes: list[str], force: bool = False) -> dict[str, dict]:
                         col_tau_text = name
 
                 if col_gene is None:
-                    log.warning(f"  HPA: gene column not found; header: {fieldnames[:15]}")
+                    print(f"WARNING: HPA: gene column not found; header: {fieldnames[:15]}")
                     return result
 
                 n_tau = 0
@@ -427,12 +416,12 @@ def get_hpa_features(genes: list[str], force: bool = False) -> dict[str, dict]:
                     if tau is not None:
                         n_tau += 1
 
-                log.info(f"  tau: {n_tau} genes assigned")
+                print(f"  tau: {n_tau} genes assigned")
     except Exception as e:
-        log.warning(f"  HPA parse failed: {e}")
+        print(f"WARNING: HPA parse failed: {e}")
 
     n_tau = sum(1 for v in result.values() if v["tissue_specificity_tau"] is not None)
-    log.info(f"  HPA coverage: tau={n_tau}/{len(genes)} (n_tissues_expressed not available from bulk export)")
+    print(f"  HPA coverage: tau={n_tau}/{len(genes)} (n_tissues_expressed not available from bulk export)")
     return result
 
 
@@ -446,17 +435,17 @@ def _fetch_biomart_ensp_to_gene() -> dict[str, str]:
     Caches result to BIOMART_MAPPING_CACHE.
     """
     if BIOMART_MAPPING_CACHE.exists() and BIOMART_MAPPING_CACHE.stat().st_size > 1000:
-        log.info(f"  BioMart mapping cached: {BIOMART_MAPPING_CACHE}")
+        print(f"  BioMart mapping cached: {BIOMART_MAPPING_CACHE}")
         mapping: dict[str, str] = {}
         with open(BIOMART_MAPPING_CACHE) as f:
             reader = csv.reader(f, delimiter="\t")
             for row in reader:
                 if len(row) >= 2 and row[0] and row[1]:
                     mapping[row[0]] = row[1]
-        log.info(f"  loaded {len(mapping)} ENSP→gene mappings")
+        print(f"  loaded {len(mapping)} ENSP→gene mappings")
         return mapping
 
-    log.info("  fetching ENSP→gene symbol mapping from BioMart ...")
+    print("  fetching ENSP→gene symbol mapping from BioMart ...")
     biomart_url = (
         "https://www.ensembl.org/biomart/martservice?query="
         "<?xml version='1.0' encoding='UTF-8'?>"
@@ -480,10 +469,10 @@ def _fetch_biomart_ensp_to_gene() -> dict[str, str]:
                     gene = parts[1].strip()
                     mapping[ensp] = gene
                     f.write(f"{ensp}\t{gene}\n")
-        log.info(f"  BioMart: {len(mapping)} ENSP→gene mappings")
+        print(f"  BioMart: {len(mapping)} ENSP→gene mappings")
         return mapping
     except Exception as e:
-        log.warning(f"  BioMart query failed: {e}")
+        print(f"WARNING: BioMart query failed: {e}")
         return {}
 
 
@@ -499,7 +488,7 @@ def get_paxdb_abundance(genes: list[str], force: bool = False) -> dict[str, Opti
       2. PAXDB_CACHE   (data/cache/proteome_features/...)        — previously downloaded
       3. HTTP download (blocked by PaxDb as of 2026-05)
     """
-    log.info("=== PaxDb abundance ===")
+    print("=== PaxDb abundance ===")
     result: dict[str, Optional[float]] = {g: None for g in genes}
     genes_set = set(genes)
 
@@ -507,16 +496,16 @@ def get_paxdb_abundance(genes: list[str], force: bool = False) -> dict[str, Opti
     paxdb_path = None
     if PAXDB_MANUAL.exists() and PAXDB_MANUAL.stat().st_size > 1000:
         paxdb_path = PAXDB_MANUAL
-        log.info(f"  using manually placed file: {paxdb_path}")
+        print(f"  using manually placed file: {paxdb_path}")
     elif PAXDB_CACHE.exists() and PAXDB_CACHE.stat().st_size > 1000 and not force:
         paxdb_path = PAXDB_CACHE
-        log.info(f"  using cached file: {paxdb_path}")
+        print(f"  using cached file: {paxdb_path}")
     else:
         ok = _download_file(PAXDB_URL, PAXDB_CACHE, force=force)
         if ok:
             paxdb_path = PAXDB_CACHE
         else:
-            log.warning("  PaxDb not available — log_abundance_ppm will be None for all genes")
+            print("WARNING: PaxDb not available — log_abundance_ppm will be None for all genes")
             return result
 
     try:
@@ -535,10 +524,10 @@ def get_paxdb_abundance(genes: list[str], force: bool = False) -> dict[str, Opti
                     result[gene] = math.log10(abund + 1e-3)
                     n_hit += 1
         n_covered = sum(1 for v in result.values() if v is not None)
-        log.info(f"  PaxDb coverage: {n_covered}/{len(genes)} genes assigned log_abundance_ppm")
+        print(f"  PaxDb coverage: {n_covered}/{len(genes)} genes assigned log_abundance_ppm")
         return result
     except Exception as e:
-        log.warning(f"  PaxDb parse failed: {e}")
+        print(f"WARNING: PaxDb parse failed: {e}")
         return result
 
 
@@ -550,13 +539,13 @@ def get_bioplex_degree(genes: list[str], force: bool = False) -> dict[str, Optio
     Returns {gene: degree} (number of unique interaction partners).
     Handles TSV with GeneA/GeneB columns (gene symbols).
     """
-    log.info("=== BioPlex 3.0 PPI ===")
+    print("=== BioPlex 3.0 PPI ===")
     result: dict[str, Optional[int]] = {g: None for g in genes}
     genes_set = set(genes)
 
     ok = _download_file(BIOPLEX_URL, BIOPLEX_CACHE, force=force)
     if not ok:
-        log.warning("  BioPlex download failed — PPI_degree will be None for all genes")
+        print("WARNING: BioPlex download failed — PPI_degree will be None for all genes")
         return result
 
     try:
@@ -574,7 +563,7 @@ def get_bioplex_degree(genes: list[str], force: bool = False) -> dict[str, Optio
                 elif nl in ("geneb", "gene_b", "symbolb", "symbol_b", "gene b", "symbol b"):
                     col_b = name
             if col_a is None or col_b is None:
-                log.warning(f"  BioPlex: symbol columns not found in {fieldnames}; trying any gene/symbol col")
+                print(f"WARNING: BioPlex: symbol columns not found in {fieldnames}; trying any gene/symbol col")
                 for name in fieldnames:
                     nl = name.lower().strip()
                     if ("gene" in nl or "symbol" in nl) and col_a is None:
@@ -582,7 +571,7 @@ def get_bioplex_degree(genes: list[str], force: bool = False) -> dict[str, Optio
                     elif ("gene" in nl or "symbol" in nl) and col_b is None and name != col_a:
                         col_b = name
             if col_a is None or col_b is None:
-                log.warning(f"  BioPlex: cannot find gene symbol columns; skipping. Header: {fieldnames}")
+                print(f"WARNING: BioPlex: cannot find gene symbol columns; skipping. Header: {fieldnames}")
                 return result
 
             for row in reader:
@@ -600,9 +589,9 @@ def get_bioplex_degree(genes: list[str], force: bool = False) -> dict[str, Optio
                 result[gene] = len(degree[gene])
                 n_hit += 1
 
-        log.info(f"  BioPlex coverage: {n_hit}/{len(genes)} genes with PPI_degree")
+        print(f"  BioPlex coverage: {n_hit}/{len(genes)} genes with PPI_degree")
     except Exception as e:
-        log.warning(f"  BioPlex parse failed: {e}")
+        print(f"WARNING: BioPlex parse failed: {e}")
 
     return result
 
@@ -615,7 +604,7 @@ def get_clingen_dosage(genes: list[str], force: bool = False) -> dict[str, dict]
     Returns {gene: {HI_score: int|None, TS_score: int|None}}.
     Scores are 0-3: 0=no evidence, 1=little, 2=some, 3=sufficient.
     """
-    log.info("=== ClinGen dosage sensitivity ===")
+    print("=== ClinGen dosage sensitivity ===")
     result: dict[str, dict] = {g: {"HI_score": None, "TS_score": None} for g in genes}
     genes_set = set(genes)
 
@@ -625,7 +614,7 @@ def get_clingen_dosage(genes: list[str], force: bool = False) -> dict[str, dict]
         if ok:
             break
     if not ok:
-        log.warning("  ClinGen download failed — HI_score/TS_score will be None for all genes")
+        print("WARNING: ClinGen download failed — HI_score/TS_score will be None for all genes")
         return result
 
     try:
@@ -686,9 +675,9 @@ def get_clingen_dosage(genes: list[str], force: bool = False) -> dict[str, dict]
 
         n_hi = sum(1 for v in result.values() if v["HI_score"] is not None)
         n_ts = sum(1 for v in result.values() if v["TS_score"] is not None)
-        log.info(f"  ClinGen coverage: HI={n_hi}/{len(genes)}, TS={n_ts}/{len(genes)}")
+        print(f"  ClinGen coverage: HI={n_hi}/{len(genes)}, TS={n_ts}/{len(genes)}")
     except Exception as e:
-        log.warning(f"  ClinGen parse failed: {e}")
+        print(f"WARNING: ClinGen parse failed: {e}")
 
     return result
 
@@ -823,7 +812,7 @@ def save_tsv(rows: list[dict], col_names: list[str], path: Path):
                 else:
                     line.append(str(v))
             writer.writerow(line)
-    log.info(f"Wrote TSV: {path} ({len(rows)} rows × {len(col_names)} cols)")
+    print(f"Wrote TSV: {path} ({len(rows)} rows × {len(col_names)} cols)")
 
 
 def build_aligned_matrix(
@@ -909,9 +898,9 @@ def main():
     for d in (CACHE_DIR, CACHE_DIR / "paralogs"):
         d.mkdir(parents=True, exist_ok=True)
 
-    log.info("=" * 60)
-    log.info("build_proteome_features.py — Experiment 11 Phase 1+2")
-    log.info("=" * 60)
+    print("=" * 60)
+    print("build_proteome_features.py — Experiment 11 Phase 1+2")
+    print("=" * 60)
 
     # 1. Gene universe
     genes = load_gene_universe(MERGED_GENE_LIST)
@@ -924,40 +913,40 @@ def main():
     try:
         gnomad = get_gnomad_constraint(force=force)
     except Exception as e:
-        log.warning(f"gnomAD source failed entirely: {e} — using empty dict")
+        print(f"WARNING: gnomAD source failed entirely: {e} — using empty dict")
 
     paralogs: dict[str, Optional[int]] = {g: None for g in genes}
     try:
         paralogs = get_paralogs(genes)
     except Exception as e:
-        log.warning(f"Paralog source failed entirely: {e} — using None for all genes")
+        print(f"WARNING: Paralog source failed entirely: {e} — using None for all genes")
 
     hpa: dict[str, dict] = {g: {"tissue_specificity_tau": None, "n_tissues_expressed": None} for g in genes}
     try:
         hpa = get_hpa_features(genes, force=force)
     except Exception as e:
-        log.warning(f"HPA source failed entirely: {e} — using None for all genes")
+        print(f"WARNING: HPA source failed entirely: {e} — using None for all genes")
 
     paxdb: dict[str, Optional[float]] = {g: None for g in genes}
     try:
         paxdb = get_paxdb_abundance(genes, force=force)
     except Exception as e:
-        log.warning(f"PaxDb source failed entirely: {e} — using None for all genes")
+        print(f"WARNING: PaxDb source failed entirely: {e} — using None for all genes")
 
     bioplex: dict[str, Optional[int]] = {g: None for g in genes}
     try:
         bioplex = get_bioplex_degree(genes, force=force)
     except Exception as e:
-        log.warning(f"BioPlex source failed entirely: {e} — using None for all genes")
+        print(f"WARNING: BioPlex source failed entirely: {e} — using None for all genes")
 
     clingen: dict[str, dict] = {g: {"HI_score": None, "TS_score": None} for g in genes}
     try:
         clingen = get_clingen_dosage(genes, force=force)
     except Exception as e:
-        log.warning(f"ClinGen source failed entirely: {e} — using None for all genes")
+        print(f"WARNING: ClinGen source failed entirely: {e} — using None for all genes")
 
     # 4. Phase 2: build feature table
-    log.info("=== Phase 2: building feature table ===")
+    print("=== Phase 2: building feature table ===")
     rows, col_names = build_feature_table(
         genes, families, gnomad, paralogs, hpa, paxdb, bioplex, clingen
     )
@@ -966,10 +955,10 @@ def main():
     save_tsv(rows, col_names, OUT_TSV)
 
     # 6. Build aligned numpy matrix (median-imputed)
-    log.info("=== Building aligned numpy matrix ===")
+    print("=== Building aligned numpy matrix ===")
     X, num_cols = build_aligned_matrix(rows, col_names)
     np.save(OUT_NPY, X)
-    log.info(f"Wrote numpy matrix: {OUT_NPY} shape={X.shape} dtype={X.dtype}")
+    print(f"Wrote numpy matrix: {OUT_NPY} shape={X.shape} dtype={X.dtype}")
 
     # 7. Save column metadata
     col_metadata = {
@@ -987,12 +976,12 @@ def main():
         },
     }
     OUT_COLS.write_text(json.dumps(col_metadata, indent=2))
-    log.info(f"Wrote column metadata: {OUT_COLS}")
+    print(f"Wrote column metadata: {OUT_COLS}")
 
     # 8. Coverage summary
     print_coverage_summary(rows, genes)
 
-    log.info("Done.")
+    print("Done.")
 
 
 if __name__ == "__main__":

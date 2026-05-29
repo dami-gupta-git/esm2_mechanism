@@ -1,4 +1,5 @@
 import argparse
+import functools
 import json
 import multiprocessing
 import openai
@@ -12,6 +13,8 @@ from aider.coders import Coder
 from aider.io import InputOutput
 from aider.models import Model
 from datetime import datetime
+
+print = functools.partial(print, flush=True)
 
 from ai_scientist.generate_ideas import generate_ideas, check_idea_novelty
 from ai_scientist.llm import create_client, AVAILABLE_LLMS

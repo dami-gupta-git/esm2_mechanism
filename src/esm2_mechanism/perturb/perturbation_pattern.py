@@ -25,10 +25,12 @@ Outputs:
   results/perturbation_pattern/results.json
 """
 
-import json, os, sys, numpy as np
+import functools, json, os, sys, numpy as np
 from collections import Counter, defaultdict
 
 from esm2_mechanism.utils_paths import DATA_DIR as _DATA_DIR, RESULTS_DIR as _RESULTS_DIR
+
+print = functools.partial(print, flush=True)
 from esm2_mechanism.mechanism.multiseed_v1 import family_split_cv, gene_split_cv
 
 DATA = str(_DATA_DIR)

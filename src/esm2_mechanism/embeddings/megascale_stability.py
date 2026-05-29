@@ -39,12 +39,15 @@ Outputs:
   results/megascale_stability/h3_stability_projection.json
 """
 
+import functools
 import json
 import os
 import sys
 import zipfile
 import numpy as np
 from scipy.stats import spearmanr, pearsonr
+
+print = functools.partial(print, flush=True)
 from sklearn.linear_model import Ridge
 from sklearn.metrics import roc_auc_score
 from sklearn.preprocessing import StandardScaler

@@ -27,11 +27,13 @@ Usage:
   python3 scripts/ll_scan.py
 """
 
-import argparse, json, os, sys, numpy as np
+import argparse, functools, json, os, sys, numpy as np
 from collections import defaultdict
 from pathlib import Path
 
 from esm2_mechanism.utils_paths import DATA_DIR as DATA, RESULTS_DIR as _RESULTS_DIR
+
+print = functools.partial(print, flush=True)
 from esm2_mechanism.embeddings.esm2_mechanism import ESM2_MODEL_650M
 from esm2_mechanism.utils_sequences import window_sequence
 

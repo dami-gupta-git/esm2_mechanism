@@ -20,11 +20,14 @@ Usage:
   python3 scripts/perturbation_probe.py
 """
 
+import functools
 import json, os, sys, numpy as np
 from pathlib import Path
 
 from esm2_mechanism.utils_paths import DATA_DIR as DATA, RESULTS_DIR as _RESULTS_DIR
 from esm2_mechanism.mechanism.multiseed_v1 import gene_split_cv, family_split_cv
+
+print = functools.partial(print, flush=True)
 EMB  = DATA / "embeddings"
 OUT  = _RESULTS_DIR / "perturbation_scan"
 OUT.mkdir(parents=True, exist_ok=True)

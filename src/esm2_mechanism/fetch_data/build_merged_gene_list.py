@@ -34,7 +34,6 @@ Usage
 
 import csv
 import functools
-import logging
 from collections import Counter
 from pathlib import Path
 
@@ -44,9 +43,6 @@ import openpyxl
 from esm2_mechanism.utils_paths import DATA_DIR
 
 print = functools.partial(print, flush=True)
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s",
-                    force=True)
-log = logging.getLogger(__name__)
 
 XLSX = DATA_DIR / "downloads" / "DiseaseMech_Stability_VEPS.xlsx"
 G2P_CSV = DATA_DIR / "downloads" / "AllG2P.csv"
@@ -86,7 +82,7 @@ def _load_functional_protein_class(wb) -> dict[str, str]:
         gene, _inh, mech = row[0], row[1], row[2]
         if gene:
             out[gene] = mech or "Unknown"
-    log.info("Functional_protein_class: %d genes", len(out))
+    print(f"Functional_protein_class: {len(out)} genes")
     return out
 
 
@@ -105,7 +101,7 @@ def _load_clinvar_gene_level(wb) -> tuple[dict[str, str], dict[str, str]]:
         gene: CV_MECH_MAP.get(Counter(mechs).most_common(1)[0][0], "Unknown")
         for gene, mechs in mech_raw.items()
     }
-    log.info("ClinVar_gene_level: %d genes", len(uid_map))
+    print(f"ClinVar_gene_level: {len(uid_map)} genes")
     return uid_map, mech_map
 
 
@@ -122,12 +118,12 @@ def _load_g2p(path: Path) -> dict[str, str]:
         .agg(lambda s: s.mode()[0])
         .to_dict()
     )
-    log.info("G2P (definitive/strong): %d genes", len(out))
+    print(f"G2P (definitive/strong): {len(out)} genes")
     return out
 
 
 def build(xlsx_path: Path, g2p_path: Path, out_path: Path) -> None:
-    log.info("Loading %s", xlsx_path.name)
+    print(f"Loading {xlsx_path.name}")
     wb = openpyxl.load_workbook(xlsx_path, read_only=True)
     try:
         func_mechs = _load_functional_protein_class(wb)
@@ -137,7 +133,7 @@ def build(xlsx_path: Path, g2p_path: Path, out_path: Path) -> None:
     g2p_best = _load_g2p(g2p_path)
 
     all_gera_genes = set(func_mechs) | set(cv_mechs)
-    log.info("Total Gerasimavicius genes (union of sheets): %d", len(all_gera_genes))
+    print(f"Total Gerasimavicius genes (union of sheets): {len(all_gera_genes)}")
 
     rows: list[dict] = []
     emitted_genes: set[str] = set()
@@ -202,10 +198,10 @@ def build(xlsx_path: Path, g2p_path: Path, out_path: Path) -> None:
     src_counts = Counter(r["source"] for r in rows)
     mech_counts = Counter(r["mechanism"] for r in rows)
     n_disagree = sum(1 for r in rows if r["g2p_disagrees"])
-    log.info("Wrote %d genes to %s", len(rows), out_path)
-    log.info("  source: %s", dict(src_counts))
-    log.info("  mechanism: %s", dict(mech_counts))
-    log.info("  g2p_disagrees: %d genes", n_disagree)
+    print(f"Wrote {len(rows)} genes to {out_path}")
+    print(f"  source: {dict(src_counts)}")
+    print(f"  mechanism: {dict(mech_counts)}")
+    print(f"  g2p_disagrees: {n_disagree} genes")
 
 
 def main() -> None:

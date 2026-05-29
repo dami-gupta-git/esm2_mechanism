@@ -9,10 +9,13 @@ experiment_mlp, enzyme_classification, go_smoke_test.
 
 from __future__ import annotations
 
+import functools
 import numpy as np
 from sklearn.linear_model import LogisticRegression, Ridge
 from sklearn.metrics import f1_score, roc_auc_score
 from sklearn.preprocessing import StandardScaler
+
+print = functools.partial(print, flush=True)
 
 MECHANISM_CLASSES = ["GOF", "DN", "LOF"]
 
