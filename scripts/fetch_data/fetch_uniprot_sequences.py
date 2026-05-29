@@ -20,7 +20,10 @@ import time
 import urllib.request
 import urllib.parse
 import functools
+from io import StringIO
 from pathlib import Path
+
+from Bio import SeqIO
 
 print = functools.partial(print, flush=True)
 
@@ -47,19 +50,10 @@ def fetch_batch(accs: list[str]) -> str:
 
 def parse_fasta(text: str) -> dict[str, str]:
     out = {}
-    acc = None
-    buf = []
-    for line in text.splitlines():
-        if line.startswith(">"):
-            if acc and buf:
-                out[acc] = "".join(buf)
-            parts = line[1:].split("|")
-            acc = parts[1] if len(parts) > 1 else parts[0]
-            buf = []
-        elif line.strip():
-            buf.append(line.strip())
-    if acc and buf:
-        out[acc] = "".join(buf)
+    for record in SeqIO.parse(StringIO(text), "fasta"):
+        parts = record.id.split("|")
+        acc = parts[1] if len(parts) > 1 else parts[0]
+        out[acc] = str(record.seq)
     return out
 
 

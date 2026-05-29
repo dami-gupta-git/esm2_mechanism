@@ -24,4 +24,5 @@ evo2
 xgboost
 
 
+biopython
 pytest
