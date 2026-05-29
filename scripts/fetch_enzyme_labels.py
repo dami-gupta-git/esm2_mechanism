@@ -252,7 +252,7 @@ def main():
         # Multi-class flag: gene has EC numbers that map to >1 of our named classes
         mapped_classes = set()
         for ec in ec_numbers:
-            c = assign_4class([ec], keyword_ids)
+            c = assign_4class([ec], [])
             if c != "non-enzyme":
                 mapped_classes.add(c)
         is_multi = len(mapped_classes) > 1

@@ -321,15 +321,21 @@ def phase2_extract_embeddings(batch_size: int = 4) -> None:
         mut_win[new_pos - 1] = v["aa_mut"]
         mut_win = "".join(mut_win)
 
-        # Compute window start offset in the full sequence (for coordinate slicing)
+        # Derive win_start from window_sequence's own logic so coordinate slicing
+        # uses exactly the same offsets as the sequence window (bug fix: previously
+        # a separate formula diverged from window_sequence in edge cases).
         L = len(wt_seq)
         if L <= 1022:
             win_start = 0
         else:
-            half = 511
-            win_start = max(0, pos - 1 - half)
-            if win_start + 1022 > L:
-                win_start = max(0, L - 1022)
+            idx0 = pos - 1  # 0-indexed variant position
+            start = max(0, idx0 - 500)  # WINDOW_HALF = 500
+            end = min(L, idx0 + 500)
+            if end - start > 1022:
+                half = 511
+                start = max(0, idx0 - half)
+                end = min(L, start + 1022)
+            win_start = start
 
         struct_toks = get_struct_tokens(uid, wt_seq, win_start, len(wt_win))
         if struct_toks is not None:
@@ -411,7 +417,7 @@ def _run_mlp(X: np.ndarray, y: np.ndarray, splits: list, n_classes: int,
     for fold_i, (tr, te) in enumerate(splits):
         X_tr, X_te = X[tr].astype(np.float32), X[te].astype(np.float32)
         y_tr, y_te = y[tr], y[te]
-        if len(set(y_tr)) < 2:
+        if len(set(y_tr)) < 3:
             continue
 
         # 15% gene-disjoint validation split — matches run_mlp_probe in experiment_mlp.py
@@ -488,7 +494,7 @@ def _run_mlp(X: np.ndarray, y: np.ndarray, splits: list, n_classes: int,
 def phase3_probes() -> None:
     sys.path.insert(0, str(SCRIPTS))
     from utils_probes import gene_split_cv, family_split_cv
-from utils_sequences import window_sequence
+    from utils_sequences import window_sequence
     from sklearn.linear_model import LogisticRegression
     from sklearn.preprocessing import StandardScaler
     from sklearn.metrics import f1_score, roc_auc_score

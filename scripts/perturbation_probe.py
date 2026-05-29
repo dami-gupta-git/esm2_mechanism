@@ -41,7 +41,11 @@ DECISION_RULES = {
 
 
 def load_all_features(gene_list):
-    """Load all feature matrices aligned to gene_list."""
+    """Load all feature matrices aligned to gene_list.
+
+    All returned arrays are row-aligned to the same filtered gene list.
+    The second return value (gene_mask) maps rows back to gene_list.
+    """
     features = {}
 
     # 1. Scan features (phase 3 output)
@@ -49,16 +53,9 @@ def load_all_features(gene_list):
     with open(DATA / "scan_features_meta.json") as f:
         scan_meta = json.load(f)
     scan_genes = np.array(scan_meta["genes"])
-    # Align to gene_list
     scan_idx = {g: i for i, g in enumerate(scan_genes)}
-    aligned_scan = np.array([scan_X[scan_idx[g]] for g in gene_list
-                              if g in scan_idx], dtype=np.float32)
-    # Filter gene_list to those with scan features
-    gene_mask = np.array([g in scan_idx for g in gene_list])
-    scan_gene_list = gene_list[gene_mask]   # genes that have scan features
-    features["scan"] = aligned_scan
 
-    # 2. Mean-pooled delta — built over scan_gene_list so rows align to scan features
+    # 2. Mean-pooled delta index
     with open(DATA / "merged_valid_variants.json") as f:
         variants = json.load(f)
     wt_emb  = np.load(EMB / "merged_embeddings_wt_mean.npy")
@@ -69,28 +66,57 @@ def load_all_features(gene_list):
     gene_delta = defaultdict(list)
     for i, v in enumerate(variants):
         gene_delta[v["gene"].upper()].append(delta[i])
-    delta_X = np.array([np.mean(gene_delta[g], axis=0) for g in scan_gene_list
-                         if g in gene_delta], dtype=np.float32)
-    features["delta"] = delta_X
 
-    # 3. Proteome features — built over scan_gene_list so rows align to scan features
+    # 3. Proteome / Badonyi gene-to-row index
     proteome_path = DATA / "proteome_features_aligned.npy"
+    pg_idx: dict = {}
     if proteome_path.exists():
         with open(DATA / "merged_gene_list.tsv") as f:
             merged_genes = [line.split("\t")[0].strip() for line in f
                             if not line.startswith("gene")]
-        proteome_X = np.load(proteome_path)
         pg_idx = {g: i for i, g in enumerate(merged_genes)}
-        proteome_aligned = np.array([proteome_X[pg_idx[g]] for g in scan_gene_list
-                                      if g in pg_idx], dtype=np.float32)
-        features["proteome"] = proteome_aligned
+
+    badonyi_path = DATA / "badonyi_features_aligned.npy"
+
+    # Determine which genes have ALL required features so every array has the
+    # same row count (previously each source filtered independently, making
+    # np.hstack silently produce misaligned concatenations).
+    def _has_all(g):
+        if g not in scan_idx:
+            return False
+        if g not in gene_delta:
+            return False
+        if proteome_path.exists() and g not in pg_idx:
+            return False
+        if badonyi_path.exists() and g not in pg_idx:
+            return False
+        return True
+
+    gene_mask = np.array([_has_all(g) for g in gene_list])
+    scan_gene_list = gene_list[gene_mask]
+    print(f"  Genes with all features: {len(scan_gene_list)}/{len(gene_list)}")
+
+    features["scan"] = np.array([scan_X[scan_idx[g]] for g in scan_gene_list],
+                                 dtype=np.float32)
+    features["delta"] = np.array([np.mean(gene_delta[g], axis=0)
+                                   for g in scan_gene_list], dtype=np.float32)
+
+    if proteome_path.exists():
+        proteome_X = np.load(proteome_path)
+        features["proteome"] = np.array([proteome_X[pg_idx[g]]
+                                          for g in scan_gene_list], dtype=np.float32)
     else:
         print("  proteome_features_aligned.npy not found — skipping proteome features")
 
-    # 4. Badonyi features
-    badonyi_path = DATA / "badonyi_features_aligned.npy"
     if badonyi_path.exists():
-        features["badonyi"] = np.load(badonyi_path)[:len(gene_list)]
+        badonyi_X = np.load(badonyi_path)
+        features["badonyi"] = np.array([badonyi_X[pg_idx[g]]
+                                         for g in scan_gene_list], dtype=np.float32)
+
+    # Sanity check: all feature arrays must have the same number of rows
+    row_counts = {name: X.shape[0] for name, X in features.items()}
+    if len(set(row_counts.values())) > 1:
+        raise RuntimeError(f"Feature row count mismatch after alignment: {row_counts}")
 
     return features, gene_mask
 
@@ -102,20 +128,24 @@ def run_probe(X, labels, splits, seed=42):
     from sklearn.preprocessing import LabelEncoder
 
     le = LabelEncoder()
-    y = le.fit_transform(labels)
+    le.fit(["GOF", "DN", "LOF"])
+    y = le.transform(labels)
     classes = le.classes_
     fold_results = []
 
     for tr, te in splits:
-        if len(set(y[tr])) < 2: continue
+        if len(set(y[tr])) < len(classes): continue
         sc = StandardScaler()
         Xtr = sc.fit_transform(X[tr])
         Xte = sc.transform(X[te])
         clf = LogisticRegression(max_iter=2000, C=1.0,
                                   class_weight="balanced", random_state=seed)
         clf.fit(Xtr, y[tr])
-        proba = clf.predict_proba(Xte)
-        pred  = clf.predict(Xte)
+        raw_proba = clf.predict_proba(Xte)
+        proba = np.zeros((len(Xte), len(classes)), dtype=np.float32)
+        for ci, c in enumerate(clf.classes_):
+            proba[:, c] = raw_proba[:, ci]
+        pred  = proba.argmax(axis=1)
         fm = {"macro_f1": float(f1_score(y[te], pred, average="macro", zero_division=0))}
         for i, cls in enumerate(classes):
             yb = (y[te] == i).astype(int)

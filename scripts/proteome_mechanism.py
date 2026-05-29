@@ -38,7 +38,7 @@ import numpy as np
 from sklearn.linear_model import LogisticRegression
 from sklearn.neural_network import MLPClassifier
 from sklearn.neighbors import KNeighborsClassifier
-from sklearn.preprocessing import LabelEncoder, StandardScaler
+from sklearn.preprocessing import StandardScaler
 from utils_probes import compute_metrics, family_split_indices, run_mlp_cv, run_logreg_cv
 import functools
 print = functools.partial(print, flush=True)
@@ -54,7 +54,7 @@ DATA_DIR = PROJECT_DIR / "data"
 EMB_DIR = DATA_DIR / "embeddings"
 
 MERGED_VALID_VARIANTS = EMB_DIR / "merged_valid_variants.json"
-MERGED_Wt_MEAN = EMB_DIR / "merged_embeddings_wt_mean.npy"
+MERGED_WT_MEAN = EMB_DIR / "merged_embeddings_wt_mean.npy"
 MERGED_MUT_MEAN = EMB_DIR / "merged_embeddings_mut_mean.npy"
 
 PROTEOME_FEATURES = DATA_DIR / "proteome_features_aligned.npy"
@@ -134,7 +134,7 @@ def gene_split_indices(
     for k in range(n_folds):
         test = np.where(fold_of == k)[0]
         train = np.where(fold_of != k)[0]
-        if train.sum() < 10 or test.sum() < 5:
+        if len(train) < 10 or len(test) < 5:
             continue
         yield train, test
 
@@ -160,7 +160,7 @@ def load_data() -> tuple[list[dict], np.ndarray, np.ndarray, np.ndarray]:
     genes = np.array([v["gene"] for v in variants])
     n = len(variants)
 
-    wt_mean = np.load(MERGED_Wt_MEAN)[:n]
+    wt_mean = np.load(MERGED_WT_MEAN)[:n]
     mut_mean = np.load(MERGED_MUT_MEAN)[:n]
     delta = (mut_mean - wt_mean).astype(np.float32)
 
@@ -627,10 +627,9 @@ def run_seed(
     print(f"SEED {seed}")
     print(f"{'='*60}")
 
-    # Encode labels to integer
-    le = LabelEncoder()
-    le.fit(CLASSES)
-    y = le.transform(labels)  # int array, GOF=0 DN=1 LOF=2
+    # Encode labels to integer preserving canonical order: GOF=0, DN=1, LOF=2
+    cls_to_idx = {c: i for i, c in enumerate(CLASSES)}
+    y = np.array([cls_to_idx[lbl] for lbl in labels])
 
     # Build groups (variant-level Pfam family for family-split CV)
     # Variants with no Pfam family for their gene are excluded

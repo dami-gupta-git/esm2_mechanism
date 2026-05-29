@@ -97,7 +97,7 @@ def load_gene_table():
     def collapse(m):
         if m in ("GOF", "DN"):
             return m
-        if m in ("HI", "LOF"):
+        if m in ("HI", "AR", "LOF"):
             return "LOF"
         return None
     df["label3"] = df["mechanism"].map(collapse)
@@ -233,6 +233,10 @@ def run_holdout(df, group_col, n_folds, seed):
 # Seed runner
 # ---------------------------------------------------------------------------
 
+def _fmt(v):
+    return f"{v:.3f}" if v is not None else "N/A"
+
+
 def run_seed(df, seed, n_folds):
     print(f"\n{'='*72}\nSEED {seed}\n{'='*72}")
     out = {"seed": seed}
@@ -240,23 +244,23 @@ def run_seed(df, seed, n_folds):
     # Baseline: no holdout (whole-set AUROC with Badonyi predictions)
     print("  Baseline (no holdout) — Badonyi raw on whole labeled set")
     out["baseline_no_holdout"] = compute_aurocs(df)
-    print(f"    DN-vs-LOF: {out['baseline_no_holdout']['DN_vs_LOF']:.3f}")
-    print(f"    GOF-vs-LOF: {out['baseline_no_holdout']['GOF_vs_LOF']:.3f}")
-    print(f"    LOF-vs-nonLOF: {out['baseline_no_holdout']['LOF_vs_nonLOF']:.3f}")
+    print(f"    DN-vs-LOF: {_fmt(out['baseline_no_holdout']['DN_vs_LOF'])}")
+    print(f"    GOF-vs-LOF: {_fmt(out['baseline_no_holdout']['GOF_vs_LOF'])}")
+    print(f"    LOF-vs-nonLOF: {_fmt(out['baseline_no_holdout']['LOF_vs_nonLOF'])}")
 
     # Family-split holdout
     print("\n  Pfam family-split holdout")
     out["family_holdout"] = run_holdout(df, "pfam", n_folds, seed)
     fa = out["family_holdout"]["all_holdout"]
-    print(f"    All-rows (held-out): DN={fa['DN_vs_LOF']:.3f}  "
-          f"GOF={fa['GOF_vs_LOF']:.3f}  LOF={fa['LOF_vs_nonLOF']:.3f}")
+    print(f"    All-rows (held-out): DN={_fmt(fa['DN_vs_LOF'])}  "
+          f"GOF={_fmt(fa['GOF_vs_LOF'])}  LOF={_fmt(fa['LOF_vs_nonLOF'])}")
 
     # MMseqs2-20 holdout
     print("\n  MMseqs2-20 cluster-split holdout")
     out["mmseqs_holdout"] = run_holdout(df, "cluster", n_folds, seed)
     ma = out["mmseqs_holdout"]["all_holdout"]
-    print(f"    All-rows (held-out): DN={ma['DN_vs_LOF']:.3f}  "
-          f"GOF={ma['GOF_vs_LOF']:.3f}  LOF={ma['LOF_vs_nonLOF']:.3f}")
+    print(f"    All-rows (held-out): DN={_fmt(ma['DN_vs_LOF'])}  "
+          f"GOF={_fmt(ma['GOF_vs_LOF'])}  LOF={_fmt(ma['LOF_vs_nonLOF'])}")
 
     # Stratified: IN vs OUT of Badonyi training
     print("\n  Stratified by Badonyi training-set membership (in any classifier)")

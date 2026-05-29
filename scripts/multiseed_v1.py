@@ -74,7 +74,8 @@ def run_mlp_probe(X, labels, splits, seed=42, hidden=(256, 64), dropout=0.3,
     from sklearn.metrics import roc_auc_score, f1_score
 
     le = LabelEncoder()
-    y = le.fit_transform(labels)
+    le.fit(["GOF", "DN", "LOF"])
+    y = le.transform(labels)
     classes = le.classes_
     n_classes = len(classes)
     fold_results = []
@@ -83,7 +84,7 @@ def run_mlp_probe(X, labels, splits, seed=42, hidden=(256, 64), dropout=0.3,
         X_tr = X[train_idx].astype(np.float32)
         X_te = X[test_idx].astype(np.float32)
         y_tr, y_te = y[train_idx], y[test_idx]
-        if len(set(y_tr)) < 2:
+        if len(set(y_tr)) < 3:
             continue
 
         tr_genes_local = np.arange(len(train_idx))
@@ -197,21 +198,16 @@ def load_geras(pfam_map):
         with open(geras_valid_cache) as f:
             variants = json.load(f)
     else:
-        with open(GERAS_VARIANTS) as f:
-            all_variants = json.load(f)
-        # Basic filter (same as experiment.py before seq_cache lookup)
-        variants = [v for v in all_variants
-                    if v.get("uniprot_id") and v.get("aa_wt") and v.get("aa_mut") and v.get("aa_pos", 0) > 0]
-        # The embeddings were generated on RunPod with 10,231 variants (2 dropped by apply_missense).
-        # Since we can't know which 2 were dropped, truncate to match embedding count.
-        emb_n = np.load(GERAS_EMB_WT_MEAN, mmap_mode="r").shape[0]
-        if len(variants) > emb_n:
-            print(f"  Warning: {len(variants)} variants but {emb_n} embeddings; "
-                  f"truncating to {emb_n} (2 variants dropped by apply_missense on RunPod are unknown)")
-            variants = variants[:emb_n]
-        with open(geras_valid_cache, "w") as f:
-            json.dump(variants, f)
-        print(f"  Saved {geras_valid_cache}")
+        raise FileNotFoundError(
+            f"{geras_valid_cache} not found.\n"
+            "This file must list exactly the variants whose embeddings were extracted "
+            "(in the same order), so that label and embedding indices align.\n"
+            "Generate it by running esm2_mechanism.py and saving the valid_variants "
+            "list after apply_missense filtering, or reconstruct it by replaying the "
+            "exact sequence-fetch + apply_missense pipeline used when the embeddings "
+            "were produced. Truncating from the tail is incorrect because apply_missense "
+            "failures are not positionally determined."
+        )
 
     for v in variants:
         if "label_3class" not in v:

@@ -163,15 +163,20 @@ def main() -> int:
     print(f"genes: {len(gene_variants):,}")
 
     ckpt_path = DATA / "esm1v_scores_ckpt.json"
-    done_genes: set[str] = set()
     # Accumulate per-checkpoint scores: {ckpt_name: {vkey: delta_ll}}
     per_ckpt: dict[str, dict[str, float]] = {c: {} for c in CHECKPOINTS}
+    # Track which genes have been scored by each individual checkpoint model
+    ckpt_done: dict[str, set[str]] = {c: set() for c in CHECKPOINTS}
 
     if ckpt_path.exists():
-        ckpt = json.load(open(ckpt_path))
-        done_genes = set(ckpt["done_genes"])
-        per_ckpt = ckpt["per_ckpt"]
-        print(f"Resuming from checkpoint: {len(done_genes)}/{len(gene_variants)} genes done")
+        saved = json.load(open(ckpt_path))
+        per_ckpt = saved.get("per_ckpt", per_ckpt)
+        for c in CHECKPOINTS:
+            ckpt_done[c] = set(saved.get("ckpt_done", {}).get(c, []))
+        done_genes = set.intersection(*[ckpt_done[c] for c in CHECKPOINTS])
+        print(f"Resuming from checkpoint: {len(done_genes)}/{len(gene_variants)} genes fully done")
+    else:
+        done_genes = set()
 
     remaining_genes = [g for g in gene_variants if g not in done_genes]
     print(f"Genes remaining: {len(remaining_genes):,}")
@@ -182,11 +187,13 @@ def main() -> int:
         model = model.to(device).eval()
         print(f"  model loaded on {device}")
 
+        genes_for_ckpt = [g for g in remaining_genes if g not in ckpt_done[ckpt_name]]
+
         gene_batch: list[str] = []
-        for i, gene in enumerate(remaining_genes):
+        for i, gene in enumerate(genes_for_ckpt):
             gene_batch.append(gene)
 
-            if len(gene_batch) >= args.checkpoint_every or i == len(remaining_genes) - 1:
+            if len(gene_batch) >= args.checkpoint_every or i == len(genes_for_ckpt) - 1:
                 batch_gene_variants = {g: gene_variants[g] for g in gene_batch}
                 new_scores = score_variants_single_model(
                     model, alphabet, device,
@@ -194,10 +201,22 @@ def main() -> int:
                     args.batch_size,
                 )
                 per_ckpt[ckpt_name].update(new_scores)
+                ckpt_done[ckpt_name].update(gene_batch)
                 n_ok = sum(1 for v in new_scores.values() if not np.isnan(v))
-                print(f"  [{i+1}/{len(remaining_genes)}] batch of {len(gene_batch)} genes "
+                print(f"  [{i+1}/{len(genes_for_ckpt)}] batch of {len(gene_batch)} genes "
                       f"scored ({n_ok}/{len(new_scores)} non-nan)")
                 gene_batch = []
+
+                # Save intermediate checkpoint so progress survives crashes
+                all_fully_done = set.intersection(*[ckpt_done[c] for c in CHECKPOINTS])
+                ckpt_state = {
+                    "done_genes": list(all_fully_done),
+                    "per_ckpt": per_ckpt,
+                    "ckpt_done": {c: list(ckpt_done[c]) for c in CHECKPOINTS},
+                }
+                with open(ckpt_path, "w") as _f:
+                    json.dump(ckpt_state, _f)
+                print(f"  Checkpoint saved ({len(all_fully_done)} genes fully done)", flush=True)
 
         del model
         try:

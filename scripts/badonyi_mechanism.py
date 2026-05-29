@@ -28,7 +28,6 @@ from collections import Counter
 from pathlib import Path
 
 import numpy as np
-from sklearn.preprocessing import LabelEncoder
 from utils_probes import family_split_indices, run_mlp_cv, run_logreg_cv
 import functools
 print = functools.partial(print, flush=True)
@@ -132,12 +131,11 @@ def run_seed(seed, n_folds, labels, genes, delta, X_prot, X_bad_raw,
              pfam_map) -> dict:
     print(f"\n{'='*60}\nSEED {seed}\n{'='*60}")
 
-    le = LabelEncoder()
-    le.fit(CLASSES)
-    y = le.transform(labels)
+    cls_to_idx = {c: i for i, c in enumerate(CLASSES)}
+    y = np.array([cls_to_idx[lbl] for lbl in labels])
 
     gene_pfam = np.array([pfam_map.get(g) for g in genes])
-    has_family = gene_pfam != None  # noqa: E711
+    has_family = np.array([p is not None for p in gene_pfam])
     fam_idx = np.where(has_family)[0]
 
     # --- Restrict to family-annotated variants ---

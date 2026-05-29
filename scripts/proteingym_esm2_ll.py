@@ -163,6 +163,7 @@ def phase1_build_jobs() -> list[dict]:
         jobs.append({
             "DMS_id":               a["DMS_id"],
             "UniProt_ID":           a["UniProt_ID"],
+            "molecule_name":        a.get("molecule_name", ""),
             "coarse_selection_type": a["coarse_selection_type"],
             "seq_len":              int(a["seq_len"]),
             "wt_seq":               wt_seq,
@@ -354,10 +355,13 @@ def phase3_analyse(jobs: list[dict], all_scores: dict[str, dict[str, float]]) ->
             except Exception:
                 pass
 
-        # Pfam family of this protein
+        # Pfam family of this protein — pfam_map is keyed by gene symbol.
+        # Try molecule_name (often the gene symbol), then the mnemonic prefix
+        # (e.g. "ACE2" from "ACE2_HUMAN"), as the UniProt mnemonic never matches.
         uniprot_id = job["UniProt_ID"]
-        # Try gene-name lookup (pfam_map keys are gene symbols, not UniProt IDs)
-        pfam_family = pfam_map.get(uniprot_id, None)
+        mol_name = job.get("molecule_name", "")
+        mnemonic_prefix = uniprot_id.split("_")[0]
+        pfam_family = pfam_map.get(mol_name) or pfam_map.get(mnemonic_prefix)
 
         per_assay[dms_id] = {
             "skipped":              False,

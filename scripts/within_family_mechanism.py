@@ -256,7 +256,8 @@ def run_feature_set(
     # Majority baseline (per-family, predicting modal class)
     majority_correct = 0
     majority_total = 0
-    for fam, gmap in qualifying.items():
+    for fam in per_family:
+        gmap = qualifying[fam]
         labels = list(gmap.values())
         modal = Counter(labels).most_common(1)[0][0]
         majority_correct += sum(1 for l in labels if l == modal)

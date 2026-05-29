@@ -768,7 +768,7 @@ def _run_secondary_probes(deltas_mean_proj, labels_4class, labels_3class,
                            genes, n_cv_folds, seed):
     """Phase 6: 4-class probe and HI-vs-AR probe."""
     results = {}
-    classes_4 = sorted(set(labels_4class.tolist()))
+    classes_4 = ["GOF", "DN", "HI", "AR"]
 
     le4 = LabelEncoder().fit(classes_4)
     y4 = le4.transform(labels_4class)
@@ -961,9 +961,7 @@ def run(out_dir, seed=0, model_name=ESM2_MODEL_650M, n_stability_components=10,
         "baseline_onehot_macro_f1":       results_baselines.get("onehot_aa",     {}).get("macro_f1_mean", float("nan")),
         "baseline_alphamissense_macro_f1":results_baselines.get("alphamissense", {}).get("macro_f1_mean", float("nan")),
         "neg_ctrl_shuffled_macro_f1":     results_negctrl.get("shuffled_delta",  {}).get("macro_f1_mean", float("nan")),
-        "cosine_GOF_DN_vs_GOF_LOF": ortho_results["cosine_matrix"].get("GOF_vs_DN|GOF_vs_LOF", float("nan")),
-        "cosine_GOF_DN_vs_DN_LOF":  ortho_results["cosine_matrix"].get("GOF_vs_DN|DN_vs_LOF",  float("nan")),
-        "cosine_GOF_LOF_vs_DN_LOF": ortho_results["cosine_matrix"].get("GOF_vs_LOF|DN_vs_LOF", float("nan")),
+        "cosine_matrix":            ortho_results["cosine_matrix"],
         "null_cosine_mean":         ortho_results["null_cosine_mean"],
         "ortho_distinguishable_from_null": str(ortho_results["distinguishable_from_null"]),
         "family_cv_macro_f1":  results_family_cv.get("macro_f1_mean",  float("nan")),

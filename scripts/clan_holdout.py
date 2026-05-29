@@ -71,7 +71,7 @@ def load_pfam(data_dir):
 
 def load_clan_map(clan_file):
     """Parse Pfam-A.clans.tsv.gz -> {pfam_acc: (clan_id, clan_name)}."""
-    result = subprocess.run(["gunzip", "-c", clan_file], capture_output=True)
+    result = subprocess.run(["gunzip", "-c", clan_file], capture_output=True, check=True)
     clan_map = {}
     clan_names = {}
     for line in result.stdout.decode().strip().split("\n"):
@@ -244,8 +244,8 @@ def aggregate(clan_results):
     """Weighted and unweighted aggregates across qualifying clans."""
     mlp_f1s   = [r["mlp"].get("macro_f1", float("nan")) for r in clan_results
                  if "error" not in r["mlp"]]
-    knn_f1s   = [r["knn_macro_f1"] for r in clan_results]
-    maj_f1s   = [r["majority_macro_f1"] for r in clan_results]
+    knn_f1s   = [r["knn_macro_f1"] for r in clan_results if "error" not in r["mlp"]]
+    maj_f1s   = [r["majority_macro_f1"] for r in clan_results if "error" not in r["mlp"]]
     weights   = [r["n_test"] for r in clan_results if "error" not in r["mlp"]]
 
     per_class = defaultdict(list)
@@ -299,7 +299,7 @@ def main():
     print(f"Genes with clan assignment: {len(gene_clan)}/{len(pfam_map)}")
 
     le = LabelEncoder()
-    le.fit(labels)
+    le.fit(["GOF", "DN", "LOF"])
     print(f"Classes: {list(le.classes_)}")
 
     print("\n=== Clan-level holdout evaluation ===")

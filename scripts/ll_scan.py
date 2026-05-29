@@ -315,8 +315,8 @@ def run_probe_analysis():
     ll_X_aligned = np.array([ll_X[ll_idx[g]] for g in gene_list])
     print(f"Genes with LL features: {len(gene_list)}  Classes: {dict(Counter(labels))}")
 
-    # Load mean-pooled delta
-    with open(DATA / "embeddings" / "merged_valid_variants.json") as f:
+    # Load mean-pooled delta — use the same variants file as the label map above
+    with open(DATA / "merged_valid_variants.json") as f:
         mvv = json.load(f)
     wt_emb  = np.load(DATA / "embeddings" / "merged_embeddings_wt_mean.npy")
     mut_emb = np.load(DATA / "embeddings" / "merged_embeddings_mut_mean.npy")
@@ -351,19 +351,23 @@ def run_probe_analysis():
 
     def run_probe(X, labels, splits, seed):
         le = LabelEncoder()
-        y  = le.fit_transform(labels)
+        le.fit(["GOF", "DN", "LOF"])
+        y = le.transform(labels)
         classes = le.classes_
         fold_results = []
         for tr, te in splits:
-            if len(set(y[tr])) < 2: continue
+            if len(set(y[tr])) < len(classes): continue
             sc  = StandardScaler()
             Xtr = sc.fit_transform(X[tr])
             Xte = sc.transform(X[te])
             clf = LogisticRegression(max_iter=2000, C=1.0,
                                      class_weight="balanced", random_state=seed)
             clf.fit(Xtr, y[tr])
-            proba = clf.predict_proba(Xte)
-            pred  = clf.predict(Xte)
+            raw_proba = clf.predict_proba(Xte)
+            proba = np.zeros((len(Xte), len(classes)), dtype=np.float32)
+            for ci, c in enumerate(clf.classes_):
+                proba[:, c] = raw_proba[:, ci]
+            pred  = proba.argmax(axis=1)
             fm = {"macro_f1": float(f1_score(y[te], pred, average="macro", zero_division=0))}
             for i, cls in enumerate(classes):
                 yb = (y[te] == i).astype(int)
