@@ -55,7 +55,8 @@ from typing import Optional
 import numpy as np
 import functools
 print = functools.partial(print, flush=True)
-from utils_probes import family_split_indices
+from esm2_mechanism.utils_probes import family_split_indices
+from esm2_mechanism.utils_paths import DATA_DIR, RESULTS_DIR as _PROJECT_RESULTS_DIR
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -70,12 +71,9 @@ log = logging.getLogger("proteome_pilot")
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
-SCRIPT_DIR = Path(__file__).resolve().parent
-PROJECT_DIR = SCRIPT_DIR.parents[1]
-DATA_DIR = PROJECT_DIR / "data"
 CACHE_DIR = DATA_DIR / "cache" / "proteome_pilot"
 PARALOG_CACHE = CACHE_DIR / "paralogs"
-RESULTS_DIR = PROJECT_DIR / "results" / "proteome_pilot"
+RESULTS_DIR = _PROJECT_RESULTS_DIR / "proteome_pilot"
 
 for d in (CACHE_DIR, PARALOG_CACHE, RESULTS_DIR):
     d.mkdir(parents=True, exist_ok=True)

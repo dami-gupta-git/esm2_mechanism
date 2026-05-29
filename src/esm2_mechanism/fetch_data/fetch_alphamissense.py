@@ -25,10 +25,12 @@ import sys
 from pathlib import Path
 from urllib.request import urlopen
 import functools
+
+from esm2_mechanism.utils_paths import DATA_DIR
+
 print = functools.partial(print, flush=True)
 
-ROOT = Path(__file__).resolve().parents[2]
-DATA = ROOT / "data"
+DATA = DATA_DIR
 
 AM_URL = (
     "https://storage.googleapis.com/dm_alphamissense/"
@@ -118,6 +120,10 @@ def stream_filter(am_gz: Path, index: dict[tuple[str, str], str]) -> dict[str, f
 
 
 def main() -> int:
+    missing = [p for p in [DATA / "merged_valid_variants.json", DATA / "pathogenicity_valid_variants.json"] if not p.exists()]
+    if missing:
+        raise FileNotFoundError("Required input(s) not found:\n" + "\n".join(f"  {p}" for p in missing))
+
     ap = argparse.ArgumentParser()
     ap.add_argument(
         "--am-file",

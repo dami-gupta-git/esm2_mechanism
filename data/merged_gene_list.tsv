@@ -1,0 +1,2428 @@
+gene	mechanism	uniprot_id	source	g2p_disagrees
+AAAS	LOF		g2p	
+AARS1	LOF		g2p	
+AARS2	AR	Q5JTZ9	gerasimavicius	
+AASS	LOF		g2p	
+ABAT	AR	P80404	gerasimavicius	LOF
+ABCA1	AR	O95477	gerasimavicius	LOF
+ABCA12	LOF		g2p	
+ABCA4	LOF		g2p	
+ABCB11	AR	O95342	gerasimavicius	LOF
+ABCC6	LOF		g2p	
+ABCC9	GOF		g2p	
+ABCD1	LOF		g2p	
+ABCD4	AR	O14678	gerasimavicius	LOF
+ABCG5	AR	Q9H222	gerasimavicius	LOF
+ABCG8	AR	Q9H221	gerasimavicius	LOF
+ABHD12	LOF		g2p	
+ABHD16A	LOF		g2p	
+ABHD5	LOF		g2p	
+ABL1	GOF		g2p	
+ACAD8	AR	Q9UKU7	gerasimavicius	
+ACAD9	LOF		g2p	
+ACADM	AR	P11310	gerasimavicius	LOF
+ACADS	AR	P16219	gerasimavicius	
+ACADSB	AR	P45954	gerasimavicius	
+ACADVL	AR	P49748	gerasimavicius	LOF
+ACAN	LOF		g2p	
+ACAT1	AR	P24752	gerasimavicius	LOF
+ACBD5	LOF		g2p	
+ACBD6	LOF		g2p	
+ACE	AR	P12821	gerasimavicius	
+ACER3	AR	Q9NUN7	gerasimavicius	
+ACO2	AR	Q99798	gerasimavicius	LOF
+ACOX1	LOF		g2p	
+ACP5	AR	P13686	gerasimavicius	LOF
+ACSL4	LOF		g2p	
+ACTB	GOF	P60709	g2p	
+ACTG1	GOF	P63261	g2p	
+ACTL6B	LOF		g2p	
+ACVR1	GOF	Q04771	g2p	
+ACVRL1	HI	P37023	gerasimavicius	LOF
+ACY1	AR	Q03154	gerasimavicius	LOF
+ADA	LOF		g2p	
+ADA2	AR	Q9NZK5	gerasimavicius	
+ADAM22	AR	Q9P0K1	gerasimavicius	
+ADAM9	LOF		g2p	
+ADAMTS10	LOF		g2p	
+ADAMTS13	AR	Q76LX8	gerasimavicius	
+ADAMTS17	LOF		g2p	
+ADAMTS18	LOF		g2p	
+ADAMTS19	LOF		g2p	
+ADAMTS2	LOF		g2p	
+ADAMTSL2	LOF		g2p	
+ADAMTSL4	LOF		g2p	
+ADAR	LOF		g2p	
+ADCY5	GOF	O95622	gerasimavicius	
+ADGRG1	AR	Q9Y653	gerasimavicius	LOF
+ADGRG6	LOF		g2p	
+ADGRV1	LOF		g2p	
+ADK	AR	P55263	gerasimavicius	LOF
+ADNP	LOF		g2p	
+ADPRS	LOF		g2p	
+ADSL	AR	P30566	gerasimavicius	
+AFF4	GOF		g2p	
+AFG2A	LOF		g2p	
+AFG3L2	LOF		g2p	
+AGA	AR	P20933	gerasimavicius	LOF
+AGBL5	LOF		g2p	
+AGK	LOF		g2p	
+AGL	LOF		g2p	
+AGPAT2	LOF		g2p	
+AGPS	AR	O00116	gerasimavicius	LOF
+AGRN	AR	O00468	gerasimavicius	
+AGT	AR	P01019	gerasimavicius	
+AGTPBP1	LOF		g2p	
+AGTR1	AR	P30556	gerasimavicius	
+AGXT	AR	P21549	gerasimavicius	LOF
+AHCY	AR	P23526	gerasimavicius	
+AHDC1	LOF		g2p	
+AHI1	LOF		g2p	
+AICDA	AR	Q9GZX7	gerasimavicius	
+AIMP1	LOF		g2p	
+AIP	LOF		g2p	
+AIPL1	LOF		g2p	
+AIRE	LOF		g2p	
+AK1	AR	P00568	gerasimavicius	
+AK2	AR	P54819	gerasimavicius	LOF
+AKR1C2	AR	P52895	gerasimavicius	
+AKR1D1	AR	P51857	gerasimavicius	LOF
+AKT1	GOF		g2p	
+AKT3	GOF	Q9Y243	gerasimavicius	
+ALAD	AR	P13716	gerasimavicius	
+ALDH18A1	DN		g2p	
+ALDH1A3	AR	P47895	gerasimavicius	LOF
+ALDH3A2	AR	P51648	gerasimavicius	LOF
+ALDH4A1	AR	P30038	gerasimavicius	LOF
+ALDH5A1	AR	P51649	gerasimavicius	LOF
+ALDH7A1	AR	P49419	gerasimavicius	LOF
+ALDOB	AR	P05062	gerasimavicius	
+ALG1	LOF		g2p	
+ALG11	LOF		g2p	
+ALG12	LOF		g2p	
+ALG2	LOF		g2p	
+ALG3	LOF		g2p	
+ALG6	LOF		g2p	
+ALG8	LOF		g2p	
+ALG9	LOF		g2p	
+ALK	GOF		g2p	
+ALMS1	LOF		g2p	
+ALOX12B	LOF		g2p	
+ALOXE3	AR	Q9BYJ1	gerasimavicius	LOF
+ALPK3	LOF		g2p	
+ALPL	LOF		g2p	
+ALS2	LOF		g2p	
+ALX1	LOF		g2p	
+ALX3	AR	O95076	gerasimavicius	LOF
+ALX4	LOF		g2p	
+AMACR	LOF		g2p	
+AMER1	LOF		g2p	
+AMN	AR	Q9BXJ7	gerasimavicius	
+AMPD2	LOF		g2p	
+AMT	AR	P48728	gerasimavicius	LOF
+ANAPC1	LOF		g2p	
+ANGPTL3	AR	Q9Y5C1	gerasimavicius	
+ANK2	HI	Q01484	gerasimavicius	
+ANKH	LOF		g2p	
+ANKRD17	LOF		g2p	
+ANO10	AR	Q9NW15	gerasimavicius	
+ANTXR1	LOF		g2p	
+ANTXR2	AR	P58335	gerasimavicius	LOF
+AP1B1	AR	Q10567	gerasimavicius	
+AP1G1	LOF		g2p	
+AP1S2	LOF		g2p	
+AP3B1	LOF		g2p	
+AP3B2	LOF		g2p	
+AP4B1	LOF		g2p	
+AP4E1	LOF		g2p	
+AP4M1	AR	O00189	gerasimavicius	LOF
+AP4S1	LOF		g2p	
+APC	HI	P25054	gerasimavicius	LOF
+APC2	LOF		g2p	
+APOA1	LOF	P02647	g2p	
+APOB	DN		g2p	
+APOC2	LOF		g2p	
+APRT	AR	P07741	gerasimavicius	
+APTX	LOF		g2p	
+AR	DN		g2p	
+ARCN1	LOF		g2p	
+ARFGEF1	LOF		g2p	
+ARFGEF2	LOF		g2p	
+ARG1	AR	P05089	gerasimavicius	LOF
+ARHGAP31	LOF		g2p	
+ARHGAP35	LOF		g2p	
+ARHGDIA	AR	P52565	gerasimavicius	
+ARHGEF9	LOF		g2p	
+ARID1A	HI	O14497	gerasimavicius	LOF
+ARID1B	HI	Q8NFD5	gerasimavicius	LOF
+ARID2	LOF		g2p	
+ARL2BP	LOF		g2p	
+ARL6	AR	Q9H0F7	gerasimavicius	LOF
+ARMC9	LOF		g2p	
+ARPC1B	AR	O15143	gerasimavicius	
+ARSA	AR	P15289	gerasimavicius	LOF
+ARSB	AR	P15848	gerasimavicius	LOF
+ARSL	LOF		g2p	
+ARX	LOF		g2p	
+ASAH1	AR	Q13510	gerasimavicius	LOF
+ASL	AR	P04424	gerasimavicius	LOF
+ASNS	AR	P08243	gerasimavicius	LOF
+ASPA	AR	P45381	gerasimavicius	LOF
+ASPH	AR	Q12797	gerasimavicius	LOF
+ASPM	LOF		g2p	
+ASRGL1	LOF		g2p	
+ASS1	AR	P00966	gerasimavicius	LOF
+ASXL1	LOF		g2p	
+ASXL2	LOF		g2p	
+ASXL3	LOF		g2p	
+ATAD3A	DN		g2p	
+ATF6	LOF		g2p	
+ATG5	AR	Q9H1Y0	gerasimavicius	
+ATG7	LOF		g2p	
+ATIC	AR	P31939	gerasimavicius	LOF
+ATL1	DN	Q8WXF7	gerasimavicius	
+ATL3	DN	Q6DD88	gerasimavicius	
+ATM	AR	Q13315	gerasimavicius	LOF
+ATOH7	LOF		g2p	
+ATP1A2	GOF	P50993	gerasimavicius	LOF
+ATP1A3	GOF	P13637	gerasimavicius	
+ATP2A1	AR	O14983	gerasimavicius	
+ATP2A2	GOF	P16615	gerasimavicius	LOF
+ATP2C1	LOF		g2p	
+ATP5F1A	AR	P25705	gerasimavicius	
+ATP5F1D	AR	P30049	gerasimavicius	
+ATP5F1E	AR	P56381	gerasimavicius	
+ATP6V0A2	LOF		g2p	
+ATP6V0C	LOF		g2p	
+ATP6V1B1	AR	P15313	gerasimavicius	LOF
+ATP6V1B2	DN	P21281	g2p	
+ATP6V1E1	AR	P36543	gerasimavicius	
+ATP7A	LOF		g2p	
+ATP7B	AR	P35670	gerasimavicius	
+ATP8A2	AR	Q9NTI2	gerasimavicius	LOF
+ATP8B1	LOF		g2p	
+ATR	LOF		g2p	
+ATRX	LOF		g2p	
+ATXN7	DN		g2p	
+AUH	AR	Q13825	gerasimavicius	LOF
+AURKC	AR	Q9UQB9	gerasimavicius	
+AUTS2	LOF		g2p	
+B3GALNT2	LOF		g2p	
+B3GALT6	LOF		g2p	
+B3GAT3	AR	O94766	gerasimavicius	
+B3GLCT	LOF		g2p	
+B4GALT1	LOF		g2p	
+B4GALT7	AR	Q9UBV7	gerasimavicius	LOF
+B9D1	LOF		g2p	
+BAG3	HI	O95817	gerasimavicius	
+BANF1	AR	O75531	gerasimavicius	
+BAP1	LOF		g2p	
+BARD1	LOF		g2p	
+BBIP1	LOF		g2p	
+BBS1	LOF		g2p	
+BBS10	LOF		g2p	
+BBS12	LOF		g2p	
+BBS2	AR	Q9BXC9	gerasimavicius	LOF
+BBS4	AR	Q96RK4	gerasimavicius	LOF
+BBS5	AR	Q8N3I7	gerasimavicius	LOF
+BBS7	AR	Q8IWZ6	gerasimavicius	LOF
+BBS9	AR	Q3SYG4	gerasimavicius	LOF
+BCAP31	LOF		g2p	
+BCAS3	LOF		g2p	
+BCAT2	AR	O15382	gerasimavicius	
+BCKDHA	AR	P12694	gerasimavicius	LOF
+BCKDHB	AR	P21953	gerasimavicius	LOF
+BCL10	AR	O95999	gerasimavicius	
+BCL11A	HI	Q9H165	gerasimavicius	LOF
+BCL11B	DN	Q9C0K0	gerasimavicius	LOF
+BCOR	LOF		g2p	
+BCS1L	AR	Q9Y276	gerasimavicius	LOF
+BEST1	LOF	O76090	g2p	
+BFSP1	LOF		g2p	
+BGN	LOF		g2p	
+BHLHA9	DN		g2p	
+BICRA	LOF		g2p	
+BIN1	AR	O00499	gerasimavicius	LOF
+BLM	AR	P54132	gerasimavicius	LOF
+BLOC1S3	LOF		g2p	
+BLOC1S6	LOF		g2p	
+BMP1	AR	P13497	gerasimavicius	
+BMP2	LOF		g2p	
+BMP4	LOF	P12644	g2p	
+BMPER	LOF		g2p	
+BMPR1A	HI	P36894	gerasimavicius	LOF
+BMPR1B	LOF		g2p	
+BMPR2	DN	Q13873	gerasimavicius	
+BNC2	LOF		g2p	
+BOLA3	AR	Q53S33	gerasimavicius	LOF
+BPGM	AR	P07738	gerasimavicius	
+BPNT2	LOF		g2p	
+BPTF	LOF	Q12830	g2p	
+BRAF	GOF	P15056	gerasimavicius	
+BRAT1	LOF		g2p	
+BRCA1	AR	P38398	gerasimavicius	LOF
+BRCA2	LOF		g2p	
+BRD4	LOF		g2p	
+BRF1	LOF		g2p	
+BRIP1	LOF		g2p	
+BRPF1	LOF	P55201	g2p	
+BRSK2	LOF		g2p	
+BRWD3	LOF		g2p	
+BSCL2	LOF		g2p	
+BSND	LOF		g2p	
+BTD	LOF		g2p	
+BUB1B	LOF		g2p	
+C12ORF65	AR	Q9H3J6	gerasimavicius	
+C12orf65	AR	Q9H3J6	gerasimavicius	
+C19ORF12	LOF		g2p	
+C19orf12	LOF		g2p	
+C1QA	AR	P02745	gerasimavicius	
+C1QB	AR	P02746	gerasimavicius	
+C1QBP	AR	Q07021	gerasimavicius	
+C1QC	AR	P02747	gerasimavicius	
+C1R	GOF	P00736	gerasimavicius	
+C1S	GOF	P09871	gerasimavicius	
+C2CD3	LOF		g2p	
+C3	AR	P01024	gerasimavicius	
+CA12	AR	O43570	gerasimavicius	
+CA2	AR	P00918	gerasimavicius	LOF
+CA5A	LOF		g2p	
+CA8	AR	P35219	gerasimavicius	LOF
+CABP2	LOF		g2p	
+CABP4	LOF		g2p	
+CACNA1A	GOF	O00555	gerasimavicius	
+CACNA1B	LOF		g2p	
+CACNA1C	GOF	Q13936	gerasimavicius	
+CACNA1D	GOF		g2p	
+CACNA1E	GOF		g2p	
+CACNA1F	LOF		g2p	
+CACNA1G	GOF	O43497	gerasimavicius	LOF
+CACNA2D4	LOF		g2p	
+CAD	AR	P27708	gerasimavicius	LOF
+CALM3	DN	P0DP25	gerasimavicius	
+CAMK2A	LOF		g2p	
+CAMK2B	LOF	Q13554	g2p	
+CAMTA1	LOF		g2p	
+CANT1	AR	Q8WVQ1	gerasimavicius	LOF
+CAPN1	AR	P07384	gerasimavicius	
+CAPN15	LOF		g2p	
+CAPN5	GOF	O15484	gerasimavicius	
+CARD14	GOF		g2p	
+CARD9	AR	Q9H257	gerasimavicius	
+CARS1	LOF		g2p	
+CARS2	LOF		g2p	
+CASK	LOF		g2p	
+CASP10	DN		g2p	
+CASQ2	AR	O14958	gerasimavicius	LOF
+CBL	GOF		g2p	
+CBLIF	AR	P27352	gerasimavicius	
+CBS	AR	P35520	gerasimavicius	LOF
+CC2D1A	LOF		g2p	
+CC2D2A	LOF		g2p	
+CCBE1	LOF		g2p	
+CCDC32	LOF		g2p	
+CCDC39	LOF		g2p	
+CCDC40	LOF		g2p	
+CCDC47	LOF		g2p	
+CCDC8	LOF		g2p	
+CCDC88C	LOF		g2p	
+CCM2	LOF		g2p	
+CCND2	GOF		g2p	
+CCNO	LOF		g2p	
+CCNQ	LOF		g2p	
+CD151	LOF		g2p	
+CD19	AR	P15391	gerasimavicius	
+CD247	AR	P20963	gerasimavicius	
+CD27	AR	P26842	gerasimavicius	
+CD36	AR	P16671	gerasimavicius	
+CD40	AR	P25942	gerasimavicius	
+CD55	AR	P08174	gerasimavicius	
+CD59	AR	P13987	gerasimavicius	
+CD79B	AR	P40259	gerasimavicius	
+CD8A	AR	P01732	gerasimavicius	
+CDC14A	LOF		g2p	
+CDC42	GOF	P60953	gerasimavicius	
+CDC45	LOF		g2p	
+CDC6	LOF		g2p	
+CDC73	LOF	Q6P1J9	g2p	
+CDH1	HI	P12830	gerasimavicius	LOF
+CDH23	LOF		g2p	
+CDH3	AR	P22223	gerasimavicius	LOF
+CDHR1	LOF		g2p	
+CDK19	DN	Q9BWU1	gerasimavicius	
+CDK4	GOF		g2p	
+CDK5RAP2	AR	Q96SN8	gerasimavicius	LOF
+CDK6	AR	Q00534	gerasimavicius	
+CDKL5	LOF		g2p	
+CDKN1B	LOF		g2p	
+CDKN1C	GOF		g2p	
+CDKN2A	LOF		g2p	
+CDT1	AR	Q9H211	gerasimavicius	LOF
+CEBPA	LOF		g2p	
+CELF2	LOF		g2p	
+CENPE	AR	Q02224	gerasimavicius	
+CENPF	LOF		g2p	
+CEP104	LOF		g2p	
+CEP120	AR	Q8N960	gerasimavicius	LOF
+CEP135	LOF		g2p	
+CEP152	LOF		g2p	
+CEP164	LOF		g2p	
+CEP290	LOF		g2p	
+CEP41	LOF		g2p	
+CEP57	LOF		g2p	
+CEP63	LOF		g2p	
+CEP78	LOF		g2p	
+CEP83	LOF		g2p	
+CEP85L	LOF		g2p	
+CERKL	LOF		g2p	
+CERT1	GOF		g2p	
+CFAP298	LOF		g2p	
+CFAP300	LOF		g2p	
+CFAP410	LOF		g2p	
+CFAP418	LOF		g2p	
+CFB	AR	P00751	gerasimavicius	
+CFC1	LOF		g2p	
+CFI	AR	P05156	gerasimavicius	
+CFL2	AR	Q9Y281	gerasimavicius	
+CFTR	AR	P13569	gerasimavicius	
+CHAMP1	LOF		g2p	
+CHAT	AR	P28329	gerasimavicius	
+CHD1	LOF		g2p	
+CHD2	LOF		g2p	
+CHD4	LOF	Q14839	g2p	
+CHD7	HI	Q9P2D1	gerasimavicius	LOF
+CHD8	LOF		g2p	
+CHEK2	LOF		g2p	
+CHKB	AR	Q9Y259	gerasimavicius	
+CHM	LOF		g2p	
+CHMP1A	LOF		g2p	
+CHN1	GOF	P15882	gerasimavicius	
+CHRDL1	LOF		g2p	
+CHRNA1	LOF		g2p	
+CHRNA3	LOF		g2p	
+CHRNA4	GOF	P43681	g2p	
+CHRNB1	GOF		g2p	
+CHRNB2	GOF		g2p	
+CHRNG	LOF		g2p	
+CHST14	LOF		g2p	
+CHST3	LOF		g2p	
+CHSY1	LOF		g2p	
+CHUK	LOF		g2p	
+CIB2	LOF		g2p	
+CIC	LOF	Q96RK0	g2p	
+CISD2	LOF		g2p	
+CKAP2L	LOF		g2p	
+CLCN2	LOF		g2p	
+CLCN7	LOF		g2p	
+CLCNKB	LOF		g2p	
+CLDN1	LOF		g2p	
+CLDN14	LOF		g2p	
+CLDN19	AR	Q8N6F1	gerasimavicius	
+CLMP	LOF		g2p	
+CLN3	LOF		g2p	
+CLN5	LOF		g2p	
+CLN6	LOF		g2p	
+CLN8	LOF		g2p	
+CLPB	LOF		g2p	
+CLPP	AR	Q16740	gerasimavicius	
+CLRN1	LOF		g2p	
+CLTC	LOF	Q00610	g2p	
+CNBP	DN		g2p	
+CNGA1	LOF		g2p	
+CNGA3	GOF		g2p	
+CNGB1	LOF		g2p	
+CNGB3	GOF		g2p	
+CNKSR2	LOF		g2p	
+CNNM2	LOF		g2p	
+CNNM4	AR	Q6P4Q7	gerasimavicius	LOF
+CNOT2	LOF		g2p	
+CNOT3	LOF		g2p	
+CNPY3	LOF		g2p	
+CNTNAP1	LOF		g2p	
+CNTNAP2	LOF		g2p	
+COA8	LOF		g2p	
+COASY	AR	Q13057	gerasimavicius	LOF
+COG1	LOF		g2p	
+COG4	GOF		g2p	
+COG5	LOF		g2p	
+COG7	LOF		g2p	
+COG8	LOF		g2p	
+COL10A1	DN	Q03692	g2p	
+COL11A1	DN		g2p	
+COL11A2	DN		g2p	
+COL13A1	LOF		g2p	
+COL17A1	LOF		g2p	
+COL18A1	LOF		g2p	
+COL1A1	HI	P02452	gerasimavicius	DN
+COL1A2	DN		g2p	
+COL25A1	LOF		g2p	
+COL27A1	LOF		g2p	
+COL2A1	DN	P02458	gerasimavicius	
+COL3A1	DN		g2p	
+COL4A1	DN	P02462	g2p	
+COL4A3	LOF		g2p	
+COL4A4	LOF		g2p	
+COL4A5	LOF		g2p	
+COL5A1	LOF		g2p	
+COL5A2	DN	P05997	g2p	
+COL6A2	DN		g2p	
+COL6A3	LOF		g2p	
+COL7A1	DN		g2p	
+COL9A1	DN		g2p	
+COL9A2	DN		g2p	
+COL9A3	DN		g2p	
+COLEC10	LOF		g2p	
+COLEC11	AR	Q9BWP8	gerasimavicius	LOF
+COMP	DN	P49747	g2p	
+COPB2	LOF		g2p	
+COQ2	LOF		g2p	
+COQ4	LOF		g2p	
+COQ8A	AR	Q8NI60	gerasimavicius	LOF
+COQ9	LOF		g2p	
+CORO1A	AR	P31146	gerasimavicius	
+COX15	LOF		g2p	
+COX16	LOF		g2p	
+COX4I1	AR	P13073	gerasimavicius	
+COX6B1	AR	P14854	gerasimavicius	LOF
+COX7B	LOF		g2p	
+CP	AR	P00450	gerasimavicius	
+CPAMD8	LOF		g2p	
+CPAP	LOF		g2p	
+CPLANE1	LOF		g2p	
+CPS1	AR	P31327	gerasimavicius	LOF
+CRADD	AR	P78560	gerasimavicius	
+CRAT	AR	P43155	gerasimavicius	
+CRB1	LOF		g2p	
+CRB2	LOF		g2p	
+CRBN	AR	Q96SW2	gerasimavicius	
+CREBBP	HI	Q92793	gerasimavicius	LOF
+CRLF1	LOF		g2p	
+CRPPA	AR	A4D126	gerasimavicius	LOF
+CRX	LOF		g2p	
+CRYAA	LOF		g2p	
+CRYAB	DN		g2p	
+CRYBA1	LOF		g2p	
+CRYBB1	LOF		g2p	
+CRYBB2	LOF	P43320	g2p	
+CRYGC	LOF	P07315	g2p	
+CRYGD	LOF	P07320	g2p	
+CRYGS	LOF	P22914	g2p	
+CSF1R	LOF		g2p	
+CSF2RB	AR	P32927	gerasimavicius	
+CSF3R	AR	Q99062	gerasimavicius	
+CSNK2A1	GOF	P68400	g2p	
+CSNK2B	LOF	P67870	g2p	
+CSPP1	LOF		g2p	
+CSRP3	LOF	P50461	g2p	
+CSTA	LOF		g2p	
+CSTB	AR	P04080	gerasimavicius	LOF
+CTBP1	LOF	Q13363	g2p	
+CTC1	AR	Q2NKJ3	gerasimavicius	LOF
+CTCF	LOF	P49711	g2p	
+CTDP1	LOF		g2p	
+CTH	AR	P32929	gerasimavicius	
+CTNNA2	LOF		g2p	
+CTNNB1	LOF	P35222	g2p	
+CTNND1	LOF	O60716	g2p	
+CTNND2	LOF		g2p	
+CTNS	LOF		g2p	
+CTSA	AR	P10619	gerasimavicius	LOF
+CTSC	AR	P53634	gerasimavicius	LOF
+CTSD	AR	P07339	gerasimavicius	LOF
+CTSF	AR	Q9UBX1	gerasimavicius	
+CTSK	AR	P43235	gerasimavicius	LOF
+CTU2	LOF		g2p	
+CUBN	AR	O60494	gerasimavicius	
+CUL3	LOF	Q13618	g2p	
+CUL4B	LOF		g2p	
+CUL7	LOF		g2p	
+CWC27	LOF		g2p	
+CXCR4	DN		g2p	
+CYB5A	AR	P00167	gerasimavicius	
+CYB5R3	AR	P00387	gerasimavicius	LOF
+CYBA	AR	P13498	gerasimavicius	LOF
+CYBB	LOF		g2p	
+CYC1	AR	P08574	gerasimavicius	
+CYFIP2	GOF	Q96F07	gerasimavicius	
+CYLD	LOF	Q9NQC7	g2p	
+CYP11B2	AR	P19099	gerasimavicius	
+CYP17A1	AR	P05093	gerasimavicius	
+CYP1B1	AR	Q16678	gerasimavicius	
+CYP21A2	AR	P08686	gerasimavicius	
+CYP24A1	AR	Q07973	gerasimavicius	
+CYP27A1	LOF		g2p	
+CYP2R1	AR	Q6VVX0	gerasimavicius	
+CYP2U1	LOF		g2p	
+CYP4V2	LOF		g2p	
+D2HGDH	AR	Q8N465	gerasimavicius	
+DAG1	AR	Q14118	gerasimavicius	LOF
+DARS2	AR	Q6PI48	gerasimavicius	LOF
+DBH	AR	P09172	gerasimavicius	
+DBT	AR	P11182	gerasimavicius	LOF
+DCAF17	LOF		g2p	
+DCC	LOF		g2p	
+DCDC2	LOF		g2p	
+DCHS1	LOF		g2p	
+DCLRE1C	AR	Q96SD1	gerasimavicius	LOF
+DCN	DN		g2p	
+DCPS	AR	Q96C86	gerasimavicius	
+DCX	LOF		g2p	
+DDB2	LOF		g2p	
+DDC	AR	P20711	gerasimavicius	LOF
+DDHD1	LOF		g2p	
+DDHD2	LOF		g2p	
+DDOST	AR	P39656	gerasimavicius	LOF
+DDX11	LOF		g2p	
+DDX3X	LOF		g2p	
+DDX41	LOF		g2p	
+DEAF1	DN		g2p	
+DEGS1	LOF		g2p	
+DENND5A	LOF		g2p	
+DEPDC5	LOF	O75140	g2p	
+DGAT1	AR	O75907	gerasimavicius	
+DGUOK	AR	Q16854	gerasimavicius	
+DHCR24	LOF		g2p	
+DHCR7	LOF		g2p	
+DHFR	AR	P00374	gerasimavicius	
+DHH	AR	O43323	gerasimavicius	
+DHODH	AR	Q02127	gerasimavicius	LOF
+DHTKD1	LOF		g2p	
+DICER1	HI	Q9UPY3	gerasimavicius	LOF
+DIS3L2	AR	Q8IYB7	gerasimavicius	LOF
+DKC1	LOF		g2p	
+DLAT	AR	P10515	gerasimavicius	LOF
+DLD	AR	P09622	gerasimavicius	LOF
+DLG3	LOF		g2p	
+DLG4	LOF		g2p	
+DLL3	LOF		g2p	
+DLL4	LOF	Q9NR61	g2p	
+DMD	LOF		g2p	
+DMGDH	AR	Q9UI17	gerasimavicius	
+DMP1	LOF		g2p	
+DMPK	DN		g2p	
+DNAAF11	LOF		g2p	
+DNAAF19	LOF		g2p	
+DNAAF3	LOF		g2p	
+DNAAF4	LOF		g2p	
+DNAAF6	LOF		g2p	
+DNAH5	LOF		g2p	
+DNAH9	LOF		g2p	
+DNAJB2	AR	P25686	gerasimavicius	
+DNAJB6	DN	O75190	gerasimavicius	
+DNAJC12	AR	Q9UKB3	gerasimavicius	LOF
+DNAJC6	AR	O75061	gerasimavicius	
+DNM1	DN	Q05193	gerasimavicius	
+DNM1L	DN		g2p	
+DNMT3A	GOF	Q9Y6K1	gerasimavicius	
+DNMT3B	AR	Q9UBC3	gerasimavicius	LOF
+DOCK2	LOF		g2p	
+DOCK6	LOF		g2p	
+DOCK7	LOF		g2p	
+DOCK8	AR	Q8NF50	gerasimavicius	LOF
+DOK7	AR	Q18PE1	gerasimavicius	
+DOLK	LOF		g2p	
+DPAGT1	AR	Q9H3H5	gerasimavicius	LOF
+DPF2	DN	Q92785	g2p	
+DPM1	LOF		g2p	
+DPM3	LOF		g2p	
+DPYD	AR	Q12882	gerasimavicius	LOF
+DPYS	AR	Q14117	gerasimavicius	
+DRAM2	LOF		g2p	
+DRC1	LOF		g2p	
+DRC2	LOF		g2p	
+DRC4	LOF		g2p	
+DSE	AR	Q9UL01	gerasimavicius	
+DSG1	LOF		g2p	
+DSG4	LOF		g2p	
+DSP	LOF		g2p	
+DSPP	LOF		g2p	
+DST	AR		gerasimavicius	
+DSTYK	LOF		g2p	
+DTNBP1	LOF		g2p	
+DUOX2	AR	Q9NRD8	gerasimavicius	
+DVL1	GOF		g2p	
+DVL3	DN		g2p	
+DYM	LOF		g2p	
+DYNC1I2	LOF		g2p	
+DYNC2H1	LOF		g2p	
+DYNC2I1	LOF		g2p	
+DYRK1A	LOF		g2p	
+DYSF	AR	O75923	gerasimavicius	
+EBF3	LOF		g2p	
+EBP	LOF		g2p	
+ECEL1	LOF		g2p	
+ECHS1	AR	P30084	gerasimavicius	LOF
+ECM1	LOF		g2p	
+EDA	LOF		g2p	
+EDAR	LOF		g2p	
+EDC3	AR	Q96F86	gerasimavicius	
+EDEM3	LOF		g2p	
+EDN1	LOF		g2p	
+EDN3	LOF		g2p	
+EDNRA	GOF		g2p	
+EDNRB	LOF		g2p	
+EEF1A2	GOF	Q05639	g2p	
+EFEMP2	AR	O95967	gerasimavicius	LOF
+EFL1	AR	Q7Z2Z2	gerasimavicius	LOF
+EFNB1	LOF		g2p	
+EFTUD2	HI	Q15029	gerasimavicius	LOF
+EGFR	GOF		g2p	
+EGLN1	GOF	Q9GZT9	gerasimavicius	
+EGR2	LOF		g2p	
+EHMT1	HI	Q9H9B1	gerasimavicius	LOF
+EIF2AK3	AR	Q9NZJ5	gerasimavicius	LOF
+EIF2AK4	AR	Q9P2K8	gerasimavicius	
+EIF2B1	AR	Q14232	gerasimavicius	
+EIF2B2	AR	P49770	gerasimavicius	
+EIF2B3	AR	Q9NR50	gerasimavicius	
+EIF2B4	AR	Q9UI10	gerasimavicius	LOF
+EIF2B5	AR	Q13144	gerasimavicius	LOF
+EIF2S3	LOF		g2p	
+EIF3F	AR	O00303	gerasimavicius	LOF
+EIF4A3	AR	P38919	gerasimavicius	
+EIF5A	LOF		g2p	
+ELAC2	LOF		g2p	
+ELANE	DN	P08246	gerasimavicius	LOF
+ELMO2	LOF		g2p	
+ELN	LOF		g2p	
+ELOVL4	LOF		g2p	
+ELP1	LOF		g2p	
+ELP4	LOF		g2p	
+EMC1	AR	Q8N766	gerasimavicius	LOF
+EMC10	LOF		g2p	
+EMG1	AR	Q92979	gerasimavicius	
+EML1	AR	O00423	gerasimavicius	
+ENG	HI	P17813	gerasimavicius	LOF
+ENO3	AR	P13929	gerasimavicius	
+ENPP1	LOF		g2p	
+EOGT	LOF		g2p	
+EP300	HI	Q09472	gerasimavicius	LOF
+EPCAM	AR	P16422	gerasimavicius	LOF
+EPG5	LOF		g2p	
+EPHA2	LOF	P29317	g2p	
+EPHB2	AR	P29323	gerasimavicius	
+EPHB4	LOF	P54760	g2p	
+EPRS1	LOF		g2p	
+ERBB3	AR	P21860	gerasimavicius	
+ERCC1	AR	P07992	gerasimavicius	LOF
+ERCC2	AR	P18074	gerasimavicius	LOF
+ERCC3	AR	P19447	gerasimavicius	LOF
+ERCC4	AR	Q92889	gerasimavicius	LOF
+ERCC5	AR	P28715	gerasimavicius	LOF
+ERCC6	LOF		g2p	
+ERCC6L2	LOF		g2p	
+ERCC8	AR	Q13216	gerasimavicius	LOF
+ERF	GOF	P50548	g2p	
+ESCO2	AR	Q56NI9	gerasimavicius	LOF
+ESPN	LOF		g2p	
+ESR1	AR	P03372	gerasimavicius	
+ESR2	DN	Q92731	gerasimavicius	
+ESRRB	AR	O95718	gerasimavicius	LOF
+ETFA	AR	P13804	gerasimavicius	LOF
+ETFB	AR	P38117	gerasimavicius	LOF
+ETFDH	AR	Q16134	gerasimavicius	LOF
+ETHE1	AR	O95571	gerasimavicius	LOF
+ETV6	DN	P41212	gerasimavicius	
+EVC	LOF		g2p	
+EVC2	LOF		g2p	
+EXOSC2	AR	Q13868	gerasimavicius	
+EXOSC3	AR	Q9NQT5	gerasimavicius	
+EXOSC9	LOF		g2p	
+EXPH5	LOF		g2p	
+EXT1	LOF		g2p	
+EXT2	LOF		g2p	
+EYA1	HI	Q99502	gerasimavicius	LOF
+EYA4	HI	O95677	gerasimavicius	LOF
+EYS	LOF		g2p	
+F10	AR	P00742	gerasimavicius	
+F12	GOF		g2p	
+F13A1	AR	P00488	gerasimavicius	
+F7	AR	P08709	gerasimavicius	
+FA2H	LOF		g2p	
+FADD	AR	Q13158	gerasimavicius	
+FAH	AR	P16930	gerasimavicius	LOF
+FAM111A	GOF		g2p	
+FAM126A	AR	Q9BYI3	gerasimavicius	
+FAM149B1	LOF		g2p	
+FAM161A	LOF		g2p	
+FAM20A	LOF		g2p	
+FAM20C	AR	Q8IXL6	gerasimavicius	LOF
+FAN1	AR	Q9Y2M0	gerasimavicius	
+FANCA	LOF		g2p	
+FANCB	LOF		g2p	
+FANCC	LOF		g2p	
+FANCD2	AR	Q9BXW9	gerasimavicius	LOF
+FANCE	AR	Q9HB96	gerasimavicius	LOF
+FANCF	LOF		g2p	
+FANCG	LOF		g2p	
+FANCI	AR	Q9NVI1	gerasimavicius	LOF
+FANCL	LOF		g2p	
+FANCM	LOF		g2p	
+FAR1	LOF		g2p	
+FARS2	AR	O95363	gerasimavicius	LOF
+FARSB	AR	Q9NSD9	gerasimavicius	
+FAS	DN	P25445	gerasimavicius	
+FAT4	LOF		g2p	
+FBLN5	DN		g2p	
+FBN1	HI	P35555	gerasimavicius	LOF
+FBN2	DN		g2p	
+FBP1	AR	P09467	gerasimavicius	LOF
+FBXL3	AR	Q9UKT7	gerasimavicius	
+FBXL4	LOF		g2p	
+FBXO11	LOF	Q86XK2	g2p	
+FDX2	AR	Q6P4F2	gerasimavicius	
+FDXR	AR	P22570	gerasimavicius	LOF
+FECH	AR	P22830	gerasimavicius	
+FERMT1	AR	Q9BQL6	gerasimavicius	LOF
+FEZF1	LOF		g2p	
+FGB	AR	P02675	gerasimavicius	
+FGD1	LOF		g2p	
+FGF10	HI	O15520	gerasimavicius	LOF
+FGF12	GOF	P61328	gerasimavicius	
+FGF13	GOF		g2p	
+FGF14	LOF	Q92915	g2p	
+FGF3	LOF		g2p	
+FGF9	LOF	P31371	g2p	
+FGFR1	GOF	P11362	gerasimavicius	
+FGFR2	GOF	P21802	gerasimavicius	
+FGFR3	GOF		g2p	
+FGG	AR	P02679	gerasimavicius	
+FH	LOF		g2p	
+FHL1	LOF		g2p	
+FIG4	LOF		g2p	
+FKBP14	AR	Q9NWM8	gerasimavicius	LOF
+FKBP15	LOF		g2p	
+FKRP	AR	Q9H9S5	gerasimavicius	LOF
+FKTN	LOF		g2p	
+FLAD1	LOF		g2p	
+FLCN	HI	Q8NFG4	gerasimavicius	LOF
+FLNA	LOF		g2p	
+FLNB	GOF		g2p	
+FLNC	LOF	Q14315	g2p	
+FLT4	LOF	P35916	g2p	
+FLVCR1	LOF		g2p	
+FLVCR2	LOF		g2p	
+FMN2	LOF		g2p	
+FMO3	AR	P31513	gerasimavicius	
+FMR1	GOF		g2p	
+FOLR1	AR	P15328	gerasimavicius	LOF
+FOXC1	HI	Q12948	gerasimavicius	LOF
+FOXC2	GOF	Q99958	gerasimavicius	LOF
+FOXE1	LOF		g2p	
+FOXE3	LOF		g2p	
+FOXF1	LOF		g2p	
+FOXG1	HI	P55316	gerasimavicius	LOF
+FOXJ1	LOF		g2p	
+FOXL2	LOF		g2p	
+FOXN1	LOF		g2p	
+FOXP1	DN	Q9H334	gerasimavicius	LOF
+FOXP2	LOF	O15409	g2p	
+FOXP3	LOF		g2p	
+FOXRED1	LOF		g2p	
+FRAS1	LOF		g2p	
+FREM1	LOF		g2p	
+FREM2	LOF		g2p	
+FRMD7	LOF		g2p	
+FRMPD4	LOF		g2p	
+FRRS1L	LOF		g2p	
+FSHB	AR	P01225	gerasimavicius	
+FTCD	AR	O95954	gerasimavicius	LOF
+FTL	LOF		g2p	
+FTO	AR	Q9C0B1	gerasimavicius	
+FTSJ1	LOF		g2p	
+FUCA1	LOF		g2p	
+FUS	GOF	P35637	gerasimavicius	
+FUT8	LOF		g2p	
+FXN	AR	Q16595	gerasimavicius	LOF
+FXYD2	DN	P54710	gerasimavicius	
+FYCO1	AR	Q9BQS8	gerasimavicius	LOF
+FZD4	HI	Q9ULV1	gerasimavicius	LOF
+FZD5	DN		g2p	
+FZD6	LOF		g2p	
+G6PC1	LOF		g2p	
+GAA	AR	P10253	gerasimavicius	LOF
+GABBR2	DN	O75899	gerasimavicius	
+GABRA1	DN	P14867	gerasimavicius	LOF
+GABRA5	DN	P31644	gerasimavicius	
+GABRG2	LOF	P18507	g2p	
+GAD1	AR	Q99259	gerasimavicius	
+GALC	AR	P54803	gerasimavicius	LOF
+GALE	AR	Q14376	gerasimavicius	LOF
+GALK1	AR	P51570	gerasimavicius	LOF
+GALM	AR	Q96C23	gerasimavicius	
+GALNS	AR	P34059	gerasimavicius	LOF
+GALNT2	AR	Q10471	gerasimavicius	
+GALNT3	AR	Q14435	gerasimavicius	LOF
+GALT	AR	P07902	gerasimavicius	LOF
+GAMT	AR	Q14353	gerasimavicius	LOF
+GAN	AR	Q9H2C0	gerasimavicius	LOF
+GAS2L2	LOF		g2p	
+GATA2	LOF	P23769	g2p	
+GATA3	HI	P23771	gerasimavicius	LOF
+GATA4	HI	P43694	gerasimavicius	LOF
+GATA6	GOF	Q92908	gerasimavicius	LOF
+GATAD2B	LOF		g2p	
+GATM	LOF		g2p	
+GBA	AR	P04062	gerasimavicius	
+GBA1	LOF		g2p	
+GBA2	LOF		g2p	
+GBE1	AR	Q04446	gerasimavicius	LOF
+GCDH	AR	Q92947	gerasimavicius	LOF
+GCNT2	LOF		g2p	
+GCSH	LOF		g2p	
+GDF1	LOF		g2p	
+GDF5	LOF		g2p	
+GEMIN5	LOF		g2p	
+GFAP	GOF	P14136	gerasimavicius	DN
+GFER	AR	P55789	gerasimavicius	
+GFI1	DN	Q99684	gerasimavicius	
+GFM1	LOF		g2p	
+GFPT1	AR	Q06210	gerasimavicius	
+GGCX	LOF		g2p	
+GHR	LOF		g2p	
+GHRHR	AR	Q02643	gerasimavicius	
+GINS1	AR	Q14691	gerasimavicius	
+GJA1	DN		g2p	
+GJB2	LOF		g2p	
+GK	LOF		g2p	
+GLA	LOF		g2p	
+GLB1	AR	P16278	gerasimavicius	LOF
+GLDC	AR	P23378	gerasimavicius	LOF
+GLDN	AR	Q6ZMI3	gerasimavicius	LOF
+GLE1	AR	Q53GS7	gerasimavicius	
+GLI2	LOF		g2p	
+GLI3	HI	P10071	gerasimavicius	DN
+GLIS2	LOF		g2p	
+GLIS3	LOF		g2p	
+GLMN	LOF		g2p	
+GLRA1	LOF		g2p	
+GLRB	LOF		g2p	
+GLRX5	AR	Q86SX6	gerasimavicius	
+GLUD1	GOF	P00367	gerasimavicius	
+GLUL	AR	P15104	gerasimavicius	
+GM2A	AR	P17900	gerasimavicius	LOF
+GMNN	GOF		g2p	
+GMPPA	LOF		g2p	
+GNA11	GOF	P29992	gerasimavicius	
+GNA14	GOF		g2p	
+GNAO1	GOF	P09471	gerasimavicius	LOF
+GNAQ	GOF		g2p	
+GNAS	LOF		g2p	
+GNAT1	LOF		g2p	
+GNAT2	LOF		g2p	
+GNB1	GOF	P62873	g2p	
+GNB3	AR	P16520	gerasimavicius	
+GNB5	AR	O14775	gerasimavicius	LOF
+GNMT	AR	Q14749	gerasimavicius	
+GNPAT	LOF		g2p	
+GNPTAB	AR	Q3T906	gerasimavicius	LOF
+GNPTG	LOF		g2p	
+GNRHR	AR	P30968	gerasimavicius	
+GNS	LOF		g2p	
+GORAB	LOF		g2p	
+GOT2	AR	P00505	gerasimavicius	
+GP1BB	AR	P13224	gerasimavicius	
+GPAA1	LOF		g2p	
+GPC3	LOF		g2p	
+GPC4	LOF		g2p	
+GPC6	LOF		g2p	
+GPD1	AR	P21695	gerasimavicius	
+GPHN	AR	Q9NQX3	gerasimavicius	
+GPI	AR	P06744	gerasimavicius	
+GPIHBP1	AR	Q8IV16	gerasimavicius	
+GPR143	LOF		g2p	
+GPR179	LOF		g2p	
+GPSM2	AR	P81274	gerasimavicius	LOF
+GPT2	AR	Q8TD30	gerasimavicius	
+GPX4	LOF		g2p	
+GREB1L	LOF		g2p	
+GRHL3	LOF		g2p	
+GRHPR	AR	Q9UBQ7	gerasimavicius	
+GRIA2	LOF	P42262	g2p	
+GRIA3	LOF		g2p	
+GRID2	AR	O43424	gerasimavicius	LOF
+GRIK2	AR	Q13002	gerasimavicius	LOF
+GRIN1	LOF		g2p	
+GRIN2A	DN	Q12879	gerasimavicius	LOF
+GRIN2B	GOF	Q13224	gerasimavicius	LOF
+GRIN2D	GOF	O15399	gerasimavicius	
+GRIP1	LOF		g2p	
+GRK1	LOF		g2p	
+GRM1	LOF		g2p	
+GRM6	LOF		g2p	
+GRM7	AR	Q14831	gerasimavicius	
+GRN	LOF		g2p	
+GRXCR1	LOF		g2p	
+GSDME	LOF		g2p	
+GSR	AR	P00390	gerasimavicius	
+GSS	AR	P48637	gerasimavicius	
+GTF2E2	AR	P29084	gerasimavicius	
+GTF2H5	LOF		g2p	
+GTPBP2	LOF		g2p	
+GTPBP3	LOF		g2p	
+GUCA1A	GOF	P43080	gerasimavicius	
+GUCY1A1	AR	Q02108	gerasimavicius	
+GUCY2C	GOF		g2p	
+GUCY2D	LOF		g2p	
+GUSB	AR	P08236	gerasimavicius	LOF
+GYG1	AR	P46976	gerasimavicius	
+GYS2	AR	P54840	gerasimavicius	
+GZF1	LOF		g2p	
+H1-4	LOF		g2p	
+HACD1	LOF		g2p	
+HACE1	LOF		g2p	
+HADH	AR	Q16836	gerasimavicius	LOF
+HADHA	AR	P40939	gerasimavicius	LOF
+HADHB	AR	P55084	gerasimavicius	
+HAMP	LOF		g2p	
+HARS2	AR	P49590	gerasimavicius	
+HAX1	LOF		g2p	
+HCFC1	LOF		g2p	
+HCN4	DN	Q9Y3Q4	gerasimavicius	
+HDAC4	LOF		g2p	
+HDAC8	LOF		g2p	
+HERC1	LOF		g2p	
+HERC2	AR	O95714	gerasimavicius	LOF
+HESX1	LOF		g2p	
+HEXA	AR	P06865	gerasimavicius	LOF
+HEXB	AR	P07686	gerasimavicius	LOF
+HFE	AR	Q30201	gerasimavicius	LOF
+HGD	AR	Q93099	gerasimavicius	
+HGSNAT	LOF		g2p	
+HIBCH	AR	Q6NVY1	gerasimavicius	LOF
+HIKESHI	AR	Q53FT3	gerasimavicius	
+HINT1	AR	P49773	gerasimavicius	LOF
+HIVEP2	LOF		g2p	
+HJV	AR	Q6ZVN8	gerasimavicius	LOF
+HLCS	LOF		g2p	
+HMBS	HI	P08397	gerasimavicius	
+HMGA2	LOF		g2p	
+HMGCL	AR	P35914	gerasimavicius	LOF
+HMGCS2	AR	P54868	gerasimavicius	
+HMX1	LOF		g2p	
+HNF1B	HI	P35680	gerasimavicius	LOF
+HNF4A	LOF	P41235	g2p	
+HNMT	AR	P50135	gerasimavicius	
+HNRNPH1	LOF		g2p	
+HNRNPK	LOF		g2p	
+HNRNPR	LOF		g2p	
+HNRNPU	LOF		g2p	
+HOGA1	AR	Q86XE5	gerasimavicius	
+HOXA1	LOF		g2p	
+HOXA13	GOF	P31271	gerasimavicius	LOF
+HOXB1	AR	P14653	gerasimavicius	
+HOXC13	LOF		g2p	
+HPCA	AR	P84074	gerasimavicius	
+HPD	DN		g2p	
+HPDL	LOF		g2p	
+HPGD	AR	P15428	gerasimavicius	LOF
+HPRT1	LOF		g2p	
+HPS1	LOF		g2p	
+HPS3	LOF		g2p	
+HPS4	LOF		g2p	
+HPS5	LOF		g2p	
+HPS6	LOF		g2p	
+HPSE2	LOF		g2p	
+HR	LOF		g2p	
+HRAS	GOF	P01112	gerasimavicius	
+HS2ST1	LOF		g2p	
+HSD11B1	DN	P28845	gerasimavicius	
+HSD17B4	AR	P51659	gerasimavicius	LOF
+HSD3B7	LOF		g2p	
+HSPD1	LOF		g2p	
+HSPG2	LOF		g2p	
+HYAL1	LOF		g2p	
+HYCC1	LOF		g2p	
+HYDIN	LOF		g2p	
+IARS1	LOF		g2p	
+IBA57	AR	Q5T440	gerasimavicius	
+ICOS	AR	Q9Y6W8	gerasimavicius	
+IDH3A	AR	P50213	gerasimavicius	LOF
+IDH3B	AR	O43837	gerasimavicius	LOF
+IDS	LOF		g2p	
+IDUA	AR	P35475	gerasimavicius	LOF
+IFIH1	GOF	Q9BYX4	gerasimavicius	
+IFNGR2	AR	P38484	gerasimavicius	
+IFT122	LOF		g2p	
+IFT140	LOF		g2p	
+IFT172	LOF		g2p	
+IFT38	LOF		g2p	
+IFT52	AR	Q9Y366	gerasimavicius	LOF
+IFT74	LOF		g2p	
+IGF1	AR	P05019	gerasimavicius	LOF
+IGF1R	LOF		g2p	
+IGF2	GOF	P01344	g2p	
+IGFBP7	LOF		g2p	
+IGHMBP2	AR	P38935	gerasimavicius	LOF
+IGSF1	LOF		g2p	
+IKBKG	LOF		g2p	
+IL10RA	AR	Q13651	gerasimavicius	
+IL11RA	AR	Q14626	gerasimavicius	LOF
+IL17RA	AR	Q96F46	gerasimavicius	
+IL1RAPL1	LOF		g2p	
+IL21	AR	Q9HBE4	gerasimavicius	
+IL2RA	AR	P01589	gerasimavicius	
+IL36RN	AR	Q9UBH0	gerasimavicius	
+IL6R	AR	P08887	gerasimavicius	
+IL6ST	AR	P40189	gerasimavicius	
+IL7R	AR	P16871	gerasimavicius	
+ILDR1	LOF		g2p	
+IMPDH1	DN	P20839	g2p	
+IMPG1	LOF		g2p	
+IMPG2	LOF		g2p	
+INPP5E	AR	Q9NRR6	gerasimavicius	LOF
+INPPL1	AR	O15357	gerasimavicius	
+INSR	DN		g2p	
+INTS1	AR	Q8N201	gerasimavicius	LOF
+IPO13	LOF		g2p	
+IPO8	LOF		g2p	
+IQCB1	LOF		g2p	
+IQSEC2	LOF		g2p	
+IRF2BPL	LOF		g2p	
+IRF6	GOF		g2p	
+ITCH	LOF		g2p	
+ITGA3	LOF		g2p	
+ITGA8	LOF		g2p	
+ITGB2	AR	P05107	gerasimavicius	
+ITGB4	DN		g2p	
+ITGB6	AR	P18564	gerasimavicius	
+ITK	AR	Q08881	gerasimavicius	LOF
+ITPA	AR	Q9BY32	gerasimavicius	
+ITPR1	DN		g2p	
+IVD	AR	P26440	gerasimavicius	LOF
+IYD	AR	Q6PHW0	gerasimavicius	
+JAG1	HI	P78504	gerasimavicius	LOF
+JAG2	LOF		g2p	
+JAGN1	AR	Q8N5M9	gerasimavicius	LOF
+JAK1	GOF	P23458	gerasimavicius	
+JAK3	LOF		g2p	
+JAM3	LOF		g2p	
+JARID2	LOF		g2p	
+KANK2	AR	Q63ZY3	gerasimavicius	
+KANSL1	HI	Q7Z3B3	gerasimavicius	LOF
+KARS1	LOF		g2p	
+KAT6A	LOF		g2p	
+KAT6B	DN		g2p	
+KATNB1	AR	Q9BVA0	gerasimavicius	LOF
+KCNA1	DN	Q09470	gerasimavicius	
+KCNA2	GOF	P16389	g2p	
+KCNB1	DN	Q14721	gerasimavicius	
+KCNC1	GOF		g2p	
+KCNE2	GOF	Q9Y6J6	gerasimavicius	
+KCNH1	GOF	O95259	gerasimavicius	
+KCNH2	DN	Q12809	gerasimavicius	GOF
+KCNJ10	LOF		g2p	
+KCNJ11	GOF		g2p	
+KCNJ13	LOF		g2p	
+KCNJ5	DN	P48544	gerasimavicius	
+KCNJ8	GOF		g2p	
+KCNK4	GOF	Q9NYG8	gerasimavicius	
+KCNMA1	GOF		g2p	
+KCNN3	GOF		g2p	
+KCNQ1	LOF		g2p	
+KCNQ2	DN	O43526	gerasimavicius	GOF
+KCNQ4	DN	P56696	gerasimavicius	
+KCNQ5	GOF	Q9NR82	gerasimavicius	LOF
+KCNT1	GOF		g2p	
+KCNV2	LOF		g2p	
+KCTD7	LOF		g2p	
+KDELR2	LOF		g2p	
+KDM3B	LOF		g2p	
+KDM4B	LOF		g2p	
+KDM5B	LOF		g2p	
+KDM5C	LOF		g2p	
+KDM6A	LOF		g2p	
+KDM6B	LOF		g2p	
+KERA	LOF		g2p	
+KIAA0586	LOF		g2p	
+KIDINS220	LOF		g2p	
+KIF11	LOF		g2p	
+KIF14	LOF		g2p	
+KIF1A	LOF		g2p	
+KIF22	GOF	Q14807	g2p	
+KIF2A	DN	O00139	g2p	
+KIF5A	DN	Q12840	gerasimavicius	LOF
+KIF7	AR	Q2M1P5	gerasimavicius	LOF
+KIFBP	LOF		g2p	
+KIT	LOF		g2p	
+KITLG	GOF	P21583	gerasimavicius	
+KIZ	LOF		g2p	
+KL	AR	Q9UEF7	gerasimavicius	
+KLF1	DN	Q13351	gerasimavicius	
+KLHL40	AR	Q2TBA0	gerasimavicius	LOF
+KLHL41	AR	O60662	gerasimavicius	
+KLHL7	LOF		g2p	
+KLKB1	AR	P03952	gerasimavicius	
+KMT2A	HI	Q03164	gerasimavicius	LOF
+KMT2B	LOF		g2p	
+KMT2C	LOF		g2p	
+KMT2D	HI	O14686	gerasimavicius	LOF
+KMT2E	LOF		g2p	
+KMT5B	LOF	Q4FZB7	g2p	
+KNL1	AR	Q8NG31	gerasimavicius	LOF
+KPTN	LOF		g2p	
+KRAS	GOF	P01116	gerasimavicius	
+KREMEN1	AR	Q96MU8	gerasimavicius	
+KRIT1	LOF	O00522	g2p	
+KRT1	DN		g2p	
+KRT10	DN		g2p	
+KRT12	DN		g2p	
+KRT13	DN		g2p	
+KRT14	DN		g2p	
+KRT16	DN	P08779	gerasimavicius	
+KRT17	DN		g2p	
+KRT2	LOF		g2p	
+KRT3	DN		g2p	
+KRT4	DN		g2p	
+KRT5	DN		g2p	
+KRT6A	DN		g2p	
+KRT6B	DN		g2p	
+KRT85	LOF		g2p	
+KRT9	DN		g2p	
+KYNU	AR	Q16719	gerasimavicius	
+L1CAM	LOF		g2p	
+L2HGDH	LOF		g2p	
+LAMA1	LOF		g2p	
+LAMA2	AR	P24043	gerasimavicius	LOF
+LAMA3	LOF		g2p	
+LAMB1	AR	P07942	gerasimavicius	LOF
+LAMB2	LOF		g2p	
+LAMB3	LOF		g2p	
+LAMC2	LOF		g2p	
+LAMC3	LOF		g2p	
+LAMP2	LOF		g2p	
+LARGE1	LOF		g2p	
+LARP7	AR	Q4G0J3	gerasimavicius	LOF
+LBR	LOF		g2p	
+LCA5	LOF		g2p	
+LCAT	AR	P04180	gerasimavicius	LOF
+LCK	AR	P06239	gerasimavicius	
+LDLR	LOF		g2p	
+LDLRAP1	LOF		g2p	
+LEMD3	HI	Q9Y2U8	gerasimavicius	LOF
+LEP	AR	P41159	gerasimavicius	
+LEPR	AR	P48357	gerasimavicius	
+LGI4	LOF		g2p	
+LHB	AR	P01229	gerasimavicius	
+LHFPL5	AR	Q8TAF8	gerasimavicius	LOF
+LHX3	AR	Q9UBR4	gerasimavicius	LOF
+LHX4	HI	Q969G2	gerasimavicius	LOF
+LIFR	LOF		g2p	
+LIG4	AR	P49917	gerasimavicius	LOF
+LIMS2	AR	Q7Z4I7	gerasimavicius	
+LINGO1	AR	Q96FE5	gerasimavicius	LOF
+LINS1	LOF		g2p	
+LIPA	AR	P38571	gerasimavicius	
+LIPI	LOF		g2p	
+LIPN	LOF		g2p	
+LIPT1	AR	Q9Y234	gerasimavicius	
+LMBRD1	LOF		g2p	
+LMNA	LOF		g2p	
+LMOD3	LOF		g2p	
+LMX1B	LOF		g2p	
+LONP1	AR	P36776	gerasimavicius	LOF
+LOXHD1	LOF		g2p	
+LPL	LOF		g2p	
+LRAT	LOF		g2p	
+LRBA	LOF		g2p	
+LRIG2	LOF		g2p	
+LRIT3	LOF		g2p	
+LRMDA	LOF		g2p	
+LRP2	LOF		g2p	
+LRP4	LOF		g2p	
+LRP5	LOF		g2p	
+LRPAP1	LOF		g2p	
+LRPPRC	LOF		g2p	
+LRRC56	LOF		g2p	
+LSS	AR	P48449	gerasimavicius	
+LTBP1	LOF		g2p	
+LTBP2	LOF		g2p	
+LTBP3	LOF		g2p	
+LYRM4	AR	Q9HD34	gerasimavicius	
+LYSET	LOF		g2p	
+LYST	LOF		g2p	
+LZTFL1	LOF		g2p	
+LZTR1	LOF		g2p	
+MAB21L1	AR	Q13394	gerasimavicius	LOF
+MAB21L2	GOF		g2p	
+MAD2L2	AR	Q9UI95	gerasimavicius	
+MADD	LOF		g2p	
+MAFB	GOF		g2p	
+MAG	AR	P20916	gerasimavicius	
+MAGEL2	LOF		g2p	
+MAK	LOF		g2p	
+MALT1	AR	Q9UDY8	gerasimavicius	
+MAMLD1	LOF		g2p	
+MAN1B1	AR	Q9UKM7	gerasimavicius	
+MAN2B1	AR	O00754	gerasimavicius	LOF
+MANBA	LOF		g2p	
+MAOA	LOF		g2p	
+MAP2K1	GOF	Q02750	gerasimavicius	
+MAP2K2	GOF	P36507	gerasimavicius	
+MAP3K1	LOF	Q13233	g2p	
+MAPK8IP3	LOF	Q9UPT6	g2p	
+MAPKAPK5	LOF		g2p	
+MARVELD2	LOF		g2p	
+MASP1	LOF		g2p	
+MAT1A	LOF		g2p	
+MAX	LOF		g2p	
+MBD5	LOF		g2p	
+MBOAT7	LOF		g2p	
+MBTPS2	LOF		g2p	
+MC2R	LOF		g2p	
+MCCC1	LOF		g2p	
+MCCC2	LOF		g2p	
+MCEE	LOF		g2p	
+MCM5	AR	P33992	gerasimavicius	
+MCOLN1	AR	Q9GZU1	gerasimavicius	LOF
+MCPH1	AR	Q8NEM0	gerasimavicius	LOF
+MDH1	AR	P40925	gerasimavicius	
+MDH2	AR	P40926	gerasimavicius	LOF
+MECOM	GOF		g2p	
+MECP2	LOF		g2p	
+MECR	AR	Q9BV79	gerasimavicius	LOF
+MED12	LOF		g2p	
+MED13	LOF		g2p	
+MED13L	LOF		g2p	
+MED23	AR	Q9ULK4	gerasimavicius	
+MED27	LOF		g2p	
+MEF2C	HI	Q06413	gerasimavicius	LOF
+MEFV	LOF		g2p	
+MEGF10	LOF		g2p	
+MEGF8	LOF		g2p	
+MEIS2	LOF	O14770	g2p	
+MEN1	HI	O00255	gerasimavicius	LOF
+MEOX1	LOF		g2p	
+MERTK	AR	Q12866	gerasimavicius	LOF
+MESD	LOF		g2p	
+MESP2	LOF		g2p	
+MET	AR	P08581	gerasimavicius	GOF
+METTL23	LOF		g2p	
+METTL5	LOF		g2p	
+MFF	LOF		g2p	
+MFRP	LOF		g2p	
+MFSD8	LOF		g2p	
+MGAT2	AR	Q10469	gerasimavicius	LOF
+MGME1	AR	Q9BQP7	gerasimavicius	
+MGP	LOF		g2p	
+MICU1	AR	Q9BPX6	gerasimavicius	LOF
+MID1	LOF		g2p	
+MIP	DN	P30301	gerasimavicius	
+MIR17HG	LOF		g2p	
+MITF	LOF		g2p	
+MKKS	LOF		g2p	
+MKS1	LOF		g2p	
+MLC1	LOF		g2p	
+MLH1	LOF		g2p	
+MLPH	AR	Q9BV36	gerasimavicius	LOF
+MLYCD	AR	O95822	gerasimavicius	LOF
+MMAA	AR	Q8IVH4	gerasimavicius	LOF
+MMAB	AR	Q96EY8	gerasimavicius	LOF
+MMACHC	AR	Q9Y4U1	gerasimavicius	LOF
+MMADHC	AR	Q9H3L0	gerasimavicius	LOF
+MMP2	AR	P08253	gerasimavicius	LOF
+MMP20	AR	O60882	gerasimavicius	
+MMP21	LOF		g2p	
+MMUT	AR	P22033	gerasimavicius	LOF
+MN1	LOF		g2p	
+MNX1	LOF		g2p	
+MOCS1	LOF		g2p	
+MOCS2	AR	O96007	gerasimavicius	LOF
+MOGS	AR	Q13724	gerasimavicius	
+MORC2	GOF	Q9Y6X9	gerasimavicius	
+MPDU1	LOF		g2p	
+MPI	LOF		g2p	
+MPLKIP	LOF		g2p	
+MPO	AR	P05164	gerasimavicius	
+MPV17	LOF		g2p	
+MRAP	LOF		g2p	
+MRAS	GOF	O14807	gerasimavicius	
+MRE11	AR	P49959	gerasimavicius	LOF
+MRPL3	AR	P09001	gerasimavicius	
+MRPL44	AR	Q9H9J2	gerasimavicius	
+MRPS14	AR	O60783	gerasimavicius	
+MRPS2	AR	Q9Y399	gerasimavicius	
+MRPS22	AR	P82650	gerasimavicius	
+MRPS23	AR	Q9Y3D9	gerasimavicius	
+MRPS28	AR	Q9Y2Q9	gerasimavicius	
+MRPS34	LOF		g2p	
+MRPS7	AR	Q9Y2R9	gerasimavicius	
+MSH2	LOF		g2p	
+MSH6	LOF		g2p	
+MSL2	LOF		g2p	
+MSL3	LOF		g2p	
+MSRB3	AR	Q8IXL7	gerasimavicius	
+MSX1	HI	P28360	gerasimavicius	LOF
+MSX2	LOF	P35548	g2p	
+MT-TP	LOF		g2p	
+MTAP	LOF		g2p	
+MTFMT	LOF		g2p	
+MTHFD1	AR	P11586	gerasimavicius	
+MTHFR	AR	P42898	gerasimavicius	LOF
+MTHFS	AR	P49914	gerasimavicius	
+MTM1	LOF		g2p	
+MTMR2	AR	Q13614	gerasimavicius	
+MTO1	LOF		g2p	
+MTOR	GOF	P42345	gerasimavicius	
+MTR	AR	Q99707	gerasimavicius	LOF
+MTRFR	LOF		g2p	
+MTRR	AR	Q9UBK8	gerasimavicius	LOF
+MTTP	AR	P55157	gerasimavicius	LOF
+MUSK	AR	O15146	gerasimavicius	
+MUTYH	AR	Q9UIF7	gerasimavicius	LOF
+MVK	LOF		g2p	
+MYBPC1	LOF		g2p	
+MYBPC3	LOF		g2p	
+MYCN	LOF		g2p	
+MYF5	LOF		g2p	
+MYH3	LOF		g2p	
+MYH8	LOF	P13535	g2p	
+MYH9	DN	P35579	gerasimavicius	LOF
+MYL1	AR	P05976	gerasimavicius	
+MYLK	LOF		g2p	
+MYO15A	LOF		g2p	
+MYO18B	LOF		g2p	
+MYO5A	LOF		g2p	
+MYO5B	AR	Q9ULV0	gerasimavicius	LOF
+MYO7A	LOF		g2p	
+MYOC	DN	Q99972	gerasimavicius	LOF
+MYOCD	LOF		g2p	
+MYPN	LOF		g2p	
+MYRF	LOF	Q9Y2G1	g2p	
+MYT1L	HI	Q9UL68	gerasimavicius	LOF
+NAA10	LOF		g2p	
+NAA15	LOF		g2p	
+NACC1	GOF	Q96RE7	g2p	
+NADSYN1	AR	Q6IA69	gerasimavicius	LOF
+NAGA	AR	P17050	gerasimavicius	LOF
+NAGLU	LOF		g2p	
+NAGS	AR	Q8N159	gerasimavicius	LOF
+NALCN	LOF		g2p	
+NANS	LOF		g2p	
+NAPB	LOF		g2p	
+NARS1	GOF		g2p	
+NARS2	LOF		g2p	
+NAXD	LOF		g2p	
+NAXE	AR	Q8NCW5	gerasimavicius	LOF
+NBAS	LOF		g2p	
+NBEA	LOF		g2p	
+NBN	LOF		g2p	
+NCF1	AR	P14598	gerasimavicius	LOF
+NCF2	AR	P19878	gerasimavicius	LOF
+NCF4	AR	Q15080	gerasimavicius	
+NDE1	LOF		g2p	
+NDNF	LOF		g2p	
+NDP	LOF		g2p	
+NDST1	AR	P52848	gerasimavicius	
+NDUFA1	LOF		g2p	
+NDUFA10	AR	O95299	gerasimavicius	
+NDUFA12	LOF		g2p	
+NDUFA13	AR	Q9P0J0	gerasimavicius	
+NDUFA2	AR	O43678	gerasimavicius	
+NDUFA6	LOF		g2p	
+NDUFA8	LOF		g2p	
+NDUFA9	AR	Q16795	gerasimavicius	
+NDUFAF2	LOF		g2p	
+NDUFAF8	LOF		g2p	
+NDUFB11	LOF		g2p	
+NDUFB3	AR	O43676	gerasimavicius	LOF
+NDUFB8	AR	O95169	gerasimavicius	LOF
+NDUFB9	AR	Q9Y6M9	gerasimavicius	
+NDUFS1	AR	P28331	gerasimavicius	
+NDUFS2	AR	O75306	gerasimavicius	LOF
+NDUFS3	AR	O75489	gerasimavicius	
+NDUFS4	AR	O43181	gerasimavicius	LOF
+NDUFS6	AR	O75380	gerasimavicius	
+NDUFS7	AR	O75251	gerasimavicius	LOF
+NDUFS8	AR	O00217	gerasimavicius	LOF
+NDUFV1	AR	P49821	gerasimavicius	LOF
+NDUFV2	AR	P19404	gerasimavicius	
+NEB	LOF		g2p	
+NECTIN4	AR	Q96NY8	gerasimavicius	LOF
+NEK1	LOF		g2p	
+NEK8	LOF		g2p	
+NEU1	LOF		g2p	
+NEXMIF	LOF		g2p	
+NF1	LOF		g2p	
+NF2	HI	P35240	gerasimavicius	LOF
+NFASC	AR	O94856	gerasimavicius	
+NFE2L2	GOF	Q16236	gerasimavicius	
+NFIA	LOF		g2p	
+NFIB	LOF		g2p	
+NFIX	LOF		g2p	
+NFU1	AR	Q9UMS0	gerasimavicius	LOF
+NGF	AR	P01138	gerasimavicius	
+NGLY1	AR	Q96IV0	gerasimavicius	LOF
+NHLRC2	AR	Q8NBF2	gerasimavicius	
+NHS	LOF		g2p	
+NIPAL4	LOF		g2p	
+NIPBL	HI	Q6KC79	gerasimavicius	LOF
+NKX2-1	LOF	P43699	g2p	
+NKX2-5	DN	P52952	gerasimavicius	
+NKX3-2	LOF		g2p	
+NKX6-2	LOF		g2p	
+NLGN3	LOF		g2p	
+NLGN4X	LOF		g2p	
+NLRP2	LOF		g2p	
+NLRP3	GOF	Q96P20	gerasimavicius	
+NMNAT1	AR	Q9HAN9	gerasimavicius	LOF
+NNT	AR	Q13423	gerasimavicius	
+NOD2	GOF		g2p	
+NODAL	LOF	Q96S42	g2p	
+NOG	HI	Q13253	gerasimavicius	LOF
+NONO	LOF		g2p	
+NOTCH1	LOF	P46531	g2p	
+NOTCH2	GOF	Q04721	g2p	
+NOTCH3	GOF	Q9UM47	g2p	
+NPC1	AR	O15118	gerasimavicius	LOF
+NPC2	AR	P61916	gerasimavicius	LOF
+NPHP1	LOF		g2p	
+NPHP3	LOF		g2p	
+NPHP4	LOF		g2p	
+NPHS1	LOF		g2p	
+NPHS2	LOF		g2p	
+NPR2	LOF		g2p	
+NPR3	LOF		g2p	
+NPRL2	LOF	Q8WTW4	g2p	
+NPRL3	LOF	Q12980	g2p	
+NR0B1	LOF		g2p	
+NR2E3	LOF		g2p	
+NR2F1	LOF	P10589	g2p	
+NR2F2	LOF	P24468	g2p	
+NR3C1	DN	P04150	gerasimavicius	
+NR3C2	DN	P08235	gerasimavicius	
+NR4A2	LOF		g2p	
+NR5A1	DN	Q13285	gerasimavicius	
+NRAS	GOF	P01111	gerasimavicius	
+NRL	LOF		g2p	
+NRROS	LOF		g2p	
+NRXN1	LOF		g2p	
+NSD1	HI	Q96L73	gerasimavicius	LOF
+NSD2	LOF		g2p	
+NSDHL	LOF		g2p	
+NSMCE3	AR	Q96MG7	gerasimavicius	
+NSRP1	LOF		g2p	
+NT5C3A	AR	Q9H0P0	gerasimavicius	LOF
+NT5E	AR	P21589	gerasimavicius	
+NTHL1	LOF		g2p	
+NTNG2	AR	Q96CW9	gerasimavicius	LOF
+NTRK1	AR	P04629	gerasimavicius	LOF
+NUBPL	LOF		g2p	
+NUDT2	LOF		g2p	
+NUP107	AR	P57740	gerasimavicius	LOF
+NUP133	AR	Q8WUM0	gerasimavicius	LOF
+NUP188	LOF		g2p	
+NUP214	LOF		g2p	
+NUP62	AR	P37198	gerasimavicius	
+NUS1	LOF		g2p	
+NYX	LOF		g2p	
+OAT	AR	P04181	gerasimavicius	LOF
+OBSL1	LOF		g2p	
+OCA2	LOF		g2p	
+OCLN	LOF		g2p	
+OCRL	LOF		g2p	
+ODAD1	LOF		g2p	
+ODAD2	LOF		g2p	
+ODAD3	LOF		g2p	
+ODAD4	LOF		g2p	
+ODC1	GOF		g2p	
+OFD1	LOF		g2p	
+OGT	LOF		g2p	
+ONECUT1	LOF		g2p	
+OPA1	LOF		g2p	
+OPA3	LOF		g2p	
+OPHN1	LOF		g2p	
+OPN1LW	LOF		g2p	
+ORC1	AR	Q13415	gerasimavicius	LOF
+ORC4	AR	O43929	gerasimavicius	LOF
+ORC6	AR	Q9Y5N6	gerasimavicius	LOF
+OSGEP	AR	Q9NPF4	gerasimavicius	
+OTC	LOF		g2p	
+OTOF	LOF		g2p	
+OTOGL	LOF		g2p	
+OTUD6B	LOF		g2p	
+OTULIN	AR	Q96BN8	gerasimavicius	LOF
+OTX2	DN	P32243	gerasimavicius	LOF
+OXCT1	AR	P55809	gerasimavicius	LOF
+OXR1	LOF		g2p	
+P3H1	LOF		g2p	
+P3H2	LOF		g2p	
+P4HTM	AR	Q9NXG6	gerasimavicius	LOF
+PACS1	GOF		g2p	
+PADI3	AR	Q9ULW8	gerasimavicius	
+PAFAH1B1	HI	P43034	gerasimavicius	LOF
+PAH	AR	P00439	gerasimavicius	LOF
+PAK1	GOF	Q13153	gerasimavicius	
+PAK3	GOF		g2p	
+PALB2	LOF		g2p	
+PANK2	AR	Q9BZ23	gerasimavicius	LOF
+PAPSS2	AR	O95340	gerasimavicius	LOF
+PARK7	AR	Q99497	gerasimavicius	
+PARN	LOF		g2p	
+PAX1	LOF		g2p	
+PAX2	HI	Q02962	gerasimavicius	LOF
+PAX3	LOF		g2p	
+PAX6	HI	P26367	gerasimavicius	LOF
+PAX8	DN	Q06710	gerasimavicius	LOF
+PAX9	LOF		g2p	
+PBX1	HI	P40424	gerasimavicius	LOF
+PC	AR	P11498	gerasimavicius	LOF
+PCARE	LOF		g2p	
+PCBD1	AR	P61457	gerasimavicius	LOF
+PCCA	AR	P05165	gerasimavicius	LOF
+PCCB	LOF		g2p	
+PCDH12	LOF		g2p	
+PCDH15	LOF		g2p	
+PCDH19	LOF		g2p	
+PCGF2	GOF	P35227	g2p	
+PCK1	AR	P35558	gerasimavicius	
+PCNA	AR	P12004	gerasimavicius	
+PCNT	LOF		g2p	
+PCSK9	GOF	Q8NBP7	gerasimavicius	
+PCYT1A	AR	P49585	gerasimavicius	LOF
+PCYT2	AR	Q99447	gerasimavicius	LOF
+PDCD10	LOF		g2p	
+PDE4D	DN	Q08499	gerasimavicius	GOF
+PDE6A	LOF		g2p	
+PDE6B	GOF		g2p	
+PDE6C	AR	P51160	gerasimavicius	LOF
+PDE6G	LOF		g2p	
+PDE6H	LOF		g2p	
+PDGFRA	GOF		g2p	
+PDGFRB	GOF	P09619	gerasimavicius	
+PDHA1	LOF		g2p	
+PDHB	AR	P11177	gerasimavicius	
+PDHX	LOF		g2p	
+PDSS2	LOF		g2p	
+PDX1	AR	P52945	gerasimavicius	
+PDXK	AR	O00764	gerasimavicius	
+PDYN	DN	P01213	gerasimavicius	
+PDZD7	LOF		g2p	
+PEPD	AR	P12955	gerasimavicius	LOF
+PET100	LOF		g2p	
+PEX1	LOF		g2p	
+PEX10	LOF		g2p	
+PEX11B	LOF		g2p	
+PEX12	LOF		g2p	
+PEX13	AR	Q92968	gerasimavicius	LOF
+PEX14	LOF		g2p	
+PEX16	LOF		g2p	
+PEX19	LOF		g2p	
+PEX2	LOF		g2p	
+PEX26	LOF		g2p	
+PEX3	AR	P56589	gerasimavicius	LOF
+PEX5	AR	P50542	gerasimavicius	LOF
+PEX6	LOF		g2p	
+PEX7	LOF		g2p	
+PFKM	AR	P08237	gerasimavicius	
+PGAM2	AR	P15259	gerasimavicius	
+PGAP1	LOF		g2p	
+PGAP2	LOF		g2p	
+PGAP3	LOF		g2p	
+PGK1	LOF		g2p	
+PGM1	AR	P36871	gerasimavicius	LOF
+PGM2L1	LOF		g2p	
+PGM3	AR	O95394	gerasimavicius	LOF
+PHACTR1	DN		g2p	
+PHEX	LOF		g2p	
+PHF12	LOF		g2p	
+PHF21A	LOF		g2p	
+PHF6	LOF		g2p	
+PHF8	LOF		g2p	
+PHGDH	AR	O43175	gerasimavicius	LOF
+PHIP	LOF	Q8WWQ0	g2p	
+PHKG2	AR	P15735	gerasimavicius	
+PHOX2A	LOF		g2p	
+PHOX2B	DN		g2p	
+PHYH	AR	O14832	gerasimavicius	LOF
+PI4KA	AR	P42356	gerasimavicius	LOF
+PIBF1	LOF		g2p	
+PIDD1	LOF		g2p	
+PIEZO1	LOF		g2p	
+PIEZO2	LOF		g2p	
+PIGA	LOF		g2p	
+PIGB	LOF		g2p	
+PIGG	LOF		g2p	
+PIGH	LOF		g2p	
+PIGK	LOF		g2p	
+PIGL	LOF		g2p	
+PIGN	LOF		g2p	
+PIGO	LOF		g2p	
+PIGS	LOF		g2p	
+PIGV	LOF		g2p	
+PIK3CA	GOF		g2p	
+PIK3CD	GOF	O00329	gerasimavicius	
+PIK3R2	GOF	O00459	g2p	
+PIKFYVE	LOF		g2p	
+PITX1	LOF	P78337	g2p	
+PITX2	LOF		g2p	
+PITX3	LOF		g2p	
+PJVK	LOF		g2p	
+PKD1	HI	P98161	gerasimavicius	
+PKD1L1	LOF		g2p	
+PKD2	HI	Q13563	gerasimavicius	
+PKHD1	LOF		g2p	
+PKP1	LOF		g2p	
+PKP2	LOF	Q99959	g2p	
+PLA2G4A	AR	P47712	gerasimavicius	
+PLA2G5	LOF		g2p	
+PLA2G6	AR	O60733	gerasimavicius	LOF
+PLA2G7	AR	Q13093	gerasimavicius	
+PLAA	AR	Q9Y263	gerasimavicius	LOF
+PLCB1	LOF		g2p	
+PLCE1	AR	Q9P212	gerasimavicius	LOF
+PLCG2	GOF	P16885	gerasimavicius	
+PLD1	AR	Q13393	gerasimavicius	LOF
+PLEC	LOF		g2p	
+PLG	AR	P00747	gerasimavicius	
+PLK4	LOF		g2p	
+PLOD1	LOF		g2p	
+PLOD2	LOF		g2p	
+PLOD3	AR	O60568	gerasimavicius	
+PLP1	LOF		g2p	
+PLPBP	LOF		g2p	
+PLS3	LOF		g2p	
+PMM2	AR	O15305	gerasimavicius	LOF
+PMS2	AR	P54278	gerasimavicius	LOF
+PNKP	AR	Q96T60	gerasimavicius	LOF
+PNLIP	AR	P16233	gerasimavicius	
+PNP	AR	P00491	gerasimavicius	
+PNPLA2	LOF		g2p	
+PNPLA6	LOF		g2p	
+PNPLA8	LOF		g2p	
+PNPO	AR	Q9NVS9	gerasimavicius	LOF
+PNPT1	AR	Q8TCS8	gerasimavicius	LOF
+POC1A	LOF		g2p	
+POC1B	LOF		g2p	
+POGZ	LOF		g2p	
+POLA1	LOF		g2p	
+POLE	LOF		g2p	
+POLG	LOF		g2p	
+POLH	LOF		g2p	
+POLR1A	LOF		g2p	
+POLR1C	AR	O15160	gerasimavicius	LOF
+POLR1D	LOF		g2p	
+POLR3A	AR	O14802	gerasimavicius	LOF
+POLR3B	AR	Q9NW08	gerasimavicius	LOF
+POMGNT1	AR	Q8WZA1	gerasimavicius	LOF
+POMGNT2	LOF		g2p	
+POMK	LOF		g2p	
+POMT1	LOF		g2p	
+POMT2	LOF		g2p	
+POP1	AR	Q99575	gerasimavicius	
+POR	AR	P16435	gerasimavicius	
+PORCN	LOF		g2p	
+POU1F1	LOF		g2p	
+POU3F3	GOF	P20264	gerasimavicius	
+POU4F1	LOF		g2p	
+PPARG	DN		g2p	
+PPCS	AR	Q9HAB8	gerasimavicius	
+PPIB	AR	P23284	gerasimavicius	
+PPIL1	LOF		g2p	
+PPM1D	LOF		g2p	
+PPP1R12A	LOF		g2p	
+PPP1R13L	LOF		g2p	
+PPP1R15B	AR	Q5SWA1	gerasimavicius	
+PPP1R21	LOF		g2p	
+PPP2CA	DN	P67775	gerasimavicius	LOF
+PPP2R1A	DN	P30153	gerasimavicius	
+PPP2R5D	DN	Q14738	gerasimavicius	
+PPP3CA	GOF	Q08209	gerasimavicius	
+PPT1	AR	P50897	gerasimavicius	LOF
+PQBP1	LOF		g2p	
+PRCD	LOF		g2p	
+PRDM12	AR	Q9H4Q4	gerasimavicius	LOF
+PRDM5	LOF		g2p	
+PREPL	LOF		g2p	
+PRIM1	LOF		g2p	
+PRKAR1A	GOF	P10644	g2p	
+PRKDC	AR	P78527	gerasimavicius	
+PRKN	AR	O60260	gerasimavicius	
+PRMT7	AR	Q9NVM4	gerasimavicius	LOF
+PRNP	DN	P04156	gerasimavicius	
+PROM1	LOF		g2p	
+PROP1	LOF		g2p	
+PRPF31	LOF	Q8WWY3	g2p	
+PRPF4	DN	O43172	gerasimavicius	LOF
+PRPH2	LOF		g2p	
+PRPS1	LOF		g2p	
+PRR12	LOF		g2p	
+PRRT2	LOF		g2p	
+PRSS1	GOF	P07477	gerasimavicius	
+PRSS12	LOF		g2p	
+PRSS56	LOF		g2p	
+PRUNE1	LOF		g2p	
+PSAP	AR	P07602	gerasimavicius	LOF
+PSAT1	AR	Q9Y617	gerasimavicius	LOF
+PSEN1	GOF	P49768	gerasimavicius	
+PSEN2	GOF	P49810	gerasimavicius	
+PSMB8	AR	P28062	gerasimavicius	LOF
+PSMB9	AR	P28065	gerasimavicius	
+PSPH	AR	P78330	gerasimavicius	LOF
+PSTPIP1	DN		g2p	
+PTCH1	HI	Q13635	gerasimavicius	LOF
+PTCHD1	LOF		g2p	
+PTDSS1	GOF		g2p	
+PTEN	HI	P60484	gerasimavicius	LOF
+PTF1A	LOF		g2p	
+PTH	LOF		g2p	
+PTH1R	LOF		g2p	
+PTHLH	LOF	P12272	g2p	
+PTPN11	GOF	Q06124	g2p	
+PTPN14	LOF		g2p	
+PTPN23	AR	Q9H3S7	gerasimavicius	
+PTPRQ	LOF		g2p	
+PTRH2	AR	Q9Y3E5	gerasimavicius	LOF
+PTS	AR	Q03393	gerasimavicius	LOF
+PUF60	LOF	Q9UHX1	g2p	
+PURA	LOF		g2p	
+PUS1	AR	Q9Y606	gerasimavicius	LOF
+PUS3	LOF		g2p	
+PUS7	AR	Q96PZ0	gerasimavicius	LOF
+PXDN	LOF		g2p	
+PYCR1	AR	P32322	gerasimavicius	LOF
+PYCR2	AR	Q96C36	gerasimavicius	
+PYGL	AR	P06737	gerasimavicius	LOF
+PYGM	AR	P11217	gerasimavicius	
+PYROXD1	LOF		g2p	
+QDPR	AR	P09417	gerasimavicius	LOF
+QRICH1	LOF		g2p	
+RAB11B	DN	Q15907	gerasimavicius	
+RAB18	AR	Q9NP72	gerasimavicius	LOF
+RAB23	AR	Q9ULC3	gerasimavicius	LOF
+RAB27A	AR	P51159	gerasimavicius	LOF
+RAB28	LOF		g2p	
+RAB33B	AR	Q9H082	gerasimavicius	
+RAB39B	LOF		g2p	
+RAB3GAP1	LOF		g2p	
+RAB3GAP2	LOF		g2p	
+RAD21	LOF		g2p	
+RAD51	DN	Q06609	gerasimavicius	
+RAD51C	LOF		g2p	
+RAD51D	LOF		g2p	
+RAF1	GOF		g2p	
+RAG1	AR	P15918	gerasimavicius	LOF
+RAG2	AR	P55895	gerasimavicius	LOF
+RAI1	LOF		g2p	
+RALGAPA1	LOF		g2p	
+RAPSN	LOF		g2p	
+RARB	GOF		g2p	
+RARS1	LOF		g2p	
+RARS2	LOF		g2p	
+RASA1	HI	P20936	gerasimavicius	
+RASGRP1	AR	O95267	gerasimavicius	
+RASGRP2	AR	Q7LDG7	gerasimavicius	
+RAX	LOF		g2p	
+RAX2	LOF		g2p	
+RB1	LOF		g2p	
+RBCK1	LOF		g2p	
+RBM10	LOF		g2p	
+RBM28	AR	Q9NW13	gerasimavicius	
+RBM8A	LOF		g2p	
+RBP3	AR	P10745	gerasimavicius	LOF
+RBP4	DN		g2p	
+RCBTB1	LOF		g2p	
+RD3	LOF		g2p	
+RDH12	LOF		g2p	
+RDH5	LOF		g2p	
+RECQL4	AR	O94761	gerasimavicius	LOF
+REEP6	LOF		g2p	
+RELN	AR	P78509	gerasimavicius	LOF
+RERE	LOF	Q9P2R6	g2p	
+RET	HI	P07949	gerasimavicius	GOF
+RETREG1	LOF		g2p	
+RFT1	LOF		g2p	
+RFWD3	AR	Q6PCD5	gerasimavicius	
+RFX3	LOF		g2p	
+RFX6	LOF		g2p	
+RFXANK	AR	O14593	gerasimavicius	
+RGS9	LOF		g2p	
+RGS9BP	LOF		g2p	
+RHBDF2	GOF		g2p	
+RHO	DN		g2p	
+RIMS2	LOF		g2p	
+RIN2	LOF		g2p	
+RINT1	LOF		g2p	
+RIPK4	LOF		g2p	
+RIT1	GOF	Q92963	gerasimavicius	
+RLBP1	LOF		g2p	
+RMRP	LOF		g2p	
+RNASEH1	AR	O60930	gerasimavicius	
+RNASEH2A	AR	O75792	gerasimavicius	LOF
+RNASEH2B	AR	Q5TBB1	gerasimavicius	LOF
+RNASEH2C	AR	Q8TDP1	gerasimavicius	LOF
+RNASET2	AR	O00584	gerasimavicius	LOF
+RNF13	GOF		g2p	
+RNPC3	AR	Q96LT9	gerasimavicius	LOF
+RNU4-2	LOF		g2p	
+ROBO3	AR	Q96MS0	gerasimavicius	LOF
+ROBO4	LOF		g2p	
+ROGDI	LOF		g2p	
+ROR1	AR	Q01973	gerasimavicius	
+ROR2	LOF		g2p	
+RORA	LOF	P35398	g2p	
+RP1	LOF		g2p	
+RP1L1	LOF		g2p	
+RP2	LOF		g2p	
+RPE65	LOF		g2p	
+RPGR	LOF		g2p	
+RPGRIP1	AR	Q96KN7	gerasimavicius	LOF
+RPGRIP1L	AR	Q68CZ1	gerasimavicius	LOF
+RPIA	LOF		g2p	
+RPL11	LOF		g2p	
+RPS17	HI	P08708	gerasimavicius	
+RPS19	HI	P39019	gerasimavicius	LOF
+RPS24	HI	P62847	gerasimavicius	
+RPS26	HI	P62854	gerasimavicius	LOF
+RPS6KA3	LOF		g2p	
+RRAS	GOF		g2p	
+RRAS2	GOF	P62070	g2p	
+RRM2B	LOF		g2p	
+RS1	LOF		g2p	
+RSPH1	LOF		g2p	
+RSPH3	LOF		g2p	
+RSPO2	AR	Q6UXX9	gerasimavicius	LOF
+RSPO4	LOF		g2p	
+RSPRY1	LOF		g2p	
+RSRC1	LOF		g2p	
+RTEL1	LOF		g2p	
+RTN4IP1	AR	Q8WWV3	gerasimavicius	LOF
+RUNX1	LOF		g2p	
+RUNX2	LOF	Q13950	g2p	
+RXYLT1	LOF		g2p	
+RYR1	LOF		g2p	
+RYR2	GOF	Q92736	gerasimavicius	
+SACS	AR	Q9NZJ4	gerasimavicius	LOF
+SAG	AR	P10523	gerasimavicius	LOF
+SALL1	LOF		g2p	
+SALL4	LOF		g2p	
+SAMD11	LOF		g2p	
+SAMD9	GOF		g2p	
+SAMHD1	LOF		g2p	
+SAR1B	AR	Q9Y6B6	gerasimavicius	
+SARS2	AR	Q9NP81	gerasimavicius	
+SASS6	AR	Q6UVJ0	gerasimavicius	
+SATB2	HI	Q9UPW6	gerasimavicius	LOF
+SBDS	AR	Q9Y3A5	gerasimavicius	LOF
+SBF2	LOF		g2p	
+SCAF4	LOF		g2p	
+SCAPER	LOF		g2p	
+SCARB2	AR	Q14108	gerasimavicius	
+SCARF2	LOF		g2p	
+SCN10A	GOF	Q9Y5Y9	gerasimavicius	
+SCN11A	GOF		g2p	
+SCN1A	GOF	P35498	gerasimavicius	LOF
+SCN2A	GOF	Q99250	gerasimavicius	LOF
+SCN3A	GOF	Q9NY46	gerasimavicius	
+SCN4A	GOF		g2p	
+SCN5A	GOF		g2p	
+SCN8A	DN		g2p	
+SCN9A	GOF		g2p	
+SCO1	AR	O75880	gerasimavicius	LOF
+SCO2	LOF		g2p	
+SCUBE3	LOF		g2p	
+SCYL1	LOF		g2p	
+SDCCAG8	LOF		g2p	
+SDHA	LOF		g2p	
+SDHB	LOF		g2p	
+SDHC	LOF		g2p	
+SDHD	GOF		g2p	
+SEC23A	AR	Q15436	gerasimavicius	
+SEC23B	LOF		g2p	
+SEC24D	AR	O94855	gerasimavicius	LOF
+SECISBP2	LOF		g2p	
+SELENOI	LOF		g2p	
+SELENON	LOF		g2p	
+SEMA3A	LOF		g2p	
+SEPSECS	AR	Q9HD40	gerasimavicius	LOF
+SERAC1	LOF		g2p	
+SERPINA1	AR	P01009	gerasimavicius	
+SERPINB6	LOF		g2p	
+SERPINH1	AR	P50454	gerasimavicius	
+SET	LOF	Q01105	g2p	
+SETBP1	GOF		g2p	
+SETD1A	HI	O15047	gerasimavicius	LOF
+SETD1B	LOF		g2p	
+SETD2	LOF	Q9BYW2	g2p	
+SETD5	LOF		g2p	
+SF3B4	LOF		g2p	
+SFTPC	GOF	P11686	gerasimavicius	
+SGPL1	AR	O95470	gerasimavicius	
+SGSH	AR	P51688	gerasimavicius	LOF
+SH2D1A	LOF		g2p	
+SH3PXD2B	LOF		g2p	
+SHANK1	LOF		g2p	
+SHANK2	LOF		g2p	
+SHANK3	HI	Q9BYB0	gerasimavicius	LOF
+SHH	DN	Q15465	gerasimavicius	LOF
+SHOC2	GOF		g2p	
+SHOX	LOF		g2p	
+SHROOM3	LOF		g2p	
+SI	AR	P14410	gerasimavicius	
+SIGMAR1	AR	Q99720	gerasimavicius	
+SIK1	GOF		g2p	
+SIL1	LOF		g2p	
+SIM1	LOF		g2p	
+SIN3A	HI	Q96ST3	gerasimavicius	LOF
+SIX1	LOF	Q15475	g2p	
+SIX3	LOF		g2p	
+SIX6	LOF		g2p	
+SKIC2	LOF		g2p	
+SKIC3	LOF		g2p	
+SLC10A7	LOF		g2p	
+SLC12A1	AR	Q13621	gerasimavicius	
+SLC12A5	AR	Q9H2X9	gerasimavicius	
+SLC12A6	LOF		g2p	
+SLC13A5	LOF		g2p	
+SLC16A2	LOF		g2p	
+SLC17A5	LOF		g2p	
+SLC19A3	LOF		g2p	
+SLC1A1	AR	P43005	gerasimavicius	
+SLC22A5	LOF		g2p	
+SLC24A4	LOF		g2p	
+SLC24A5	LOF		g2p	
+SLC25A1	LOF		g2p	
+SLC25A13	LOF		g2p	
+SLC25A15	LOF		g2p	
+SLC25A20	LOF		g2p	
+SLC25A26	LOF		g2p	
+SLC25A38	LOF		g2p	
+SLC25A42	LOF		g2p	
+SLC25A46	LOF		g2p	
+SLC26A2	LOF		g2p	
+SLC27A4	LOF		g2p	
+SLC2A1	LOF		g2p	
+SLC2A10	LOF		g2p	
+SLC2A2	LOF		g2p	
+SLC33A1	LOF		g2p	
+SLC35A1	AR	P78382	gerasimavicius	LOF
+SLC35A2	LOF		g2p	
+SLC35C1	LOF		g2p	
+SLC35D1	LOF		g2p	
+SLC37A4	LOF		g2p	
+SLC38A3	LOF		g2p	
+SLC38A8	LOF		g2p	
+SLC39A14	LOF		g2p	
+SLC39A4	LOF		g2p	
+SLC39A8	LOF		g2p	
+SLC40A1	LOF	Q9NP59	g2p	
+SLC45A2	LOF		g2p	
+SLC46A1	LOF		g2p	
+SLC4A11	LOF		g2p	
+SLC4A4	AR	Q9Y6R1	gerasimavicius	LOF
+SLC52A2	LOF		g2p	
+SLC52A3	LOF		g2p	
+SLC5A5	LOF		g2p	
+SLC6A1	LOF		g2p	
+SLC6A19	LOF		g2p	
+SLC6A3	LOF		g2p	
+SLC6A5	LOF		g2p	
+SLC6A8	LOF		g2p	
+SLC6A9	LOF		g2p	
+SLC9A1	AR	P19634	gerasimavicius	
+SLC9A6	LOF		g2p	
+SLCO2A1	AR	Q92959	gerasimavicius	
+SLITRK6	LOF		g2p	
+SLURP1	AR	P55000	gerasimavicius	LOF
+SLX4	LOF		g2p	
+SMAD3	HI	P84022	gerasimavicius	LOF
+SMAD4	HI	Q13485	gerasimavicius	GOF
+SMAD9	GOF	O15198	gerasimavicius	
+SMARCA4	LOF	P51532	g2p	
+SMARCAL1	LOF		g2p	
+SMARCB1	HI	Q12824	gerasimavicius	LOF
+SMARCC2	LOF		g2p	
+SMARCE1	LOF	Q969G3	g2p	
+SMC1A	LOF		g2p	
+SMCHD1	GOF	A6NHR9	gerasimavicius	
+SMG8	LOF		g2p	
+SMO	AR	Q99835	gerasimavicius	GOF
+SMOC1	LOF		g2p	
+SMOC2	LOF		g2p	
+SMPD1	AR	P17405	gerasimavicius	LOF
+SMPD4	LOF		g2p	
+SMS	LOF		g2p	
+SNAI2	LOF		g2p	
+SNAP25	LOF	P60880	g2p	
+SNAP29	LOF		g2p	
+SNCA	GOF	P37840	gerasimavicius	
+SNORD118	LOF		g2p	
+SNRPB	LOF		g2p	
+SNRPN	LOF		g2p	
+SNUPN	LOF		g2p	
+SNX10	AR	Q9Y5X0	gerasimavicius	
+SNX14	LOF		g2p	
+SON	LOF		g2p	
+SOS1	GOF	Q07889	gerasimavicius	
+SOX10	HI	P56693	gerasimavicius	LOF
+SOX11	HI	P35716	gerasimavicius	
+SOX2	HI	P48431	gerasimavicius	LOF
+SOX3	LOF		g2p	
+SOX5	HI	P35711	gerasimavicius	LOF
+SOX6	LOF		g2p	
+SOX9	LOF	P48436	g2p	
+SPAG1	LOF		g2p	
+SPARC	AR	P09486	gerasimavicius	
+SPAST	GOF	Q9UBP0	gerasimavicius	LOF
+SPATA7	LOF		g2p	
+SPEG	LOF		g2p	
+SPEN	LOF		g2p	
+SPG11	LOF		g2p	
+SPINK5	LOF		g2p	
+SPINT2	LOF		g2p	
+SPOP	DN	O43791	g2p	
+SPR	LOF		g2p	
+SPRED1	HI	Q7Z699	gerasimavicius	LOF
+SPRTN	AR	Q9H040	gerasimavicius	
+SPTAN1	DN	Q13813	g2p	
+SPTBN1	LOF		g2p	
+SPTBN2	DN		g2p	
+SPTBN4	LOF		g2p	
+SRC	GOF	P12931	gerasimavicius	
+SRCAP	DN		g2p	
+SRD5A2	AR	P31213	gerasimavicius	
+SRD5A3	LOF		g2p	
+SRRM2	LOF		g2p	
+SRY	LOF		g2p	
+ST14	AR	Q9Y5Y6	gerasimavicius	
+ST3GAL5	LOF		g2p	
+STAC3	AR	Q96MF2	gerasimavicius	LOF
+STAG1	LOF	Q8WVM7	g2p	
+STAG2	LOF		g2p	
+STAMBP	AR	O95630	gerasimavicius	LOF
+STAR	AR	P49675	gerasimavicius	LOF
+STAT2	AR	P52630	gerasimavicius	
+STAT5B	LOF		g2p	
+STIL	LOF		g2p	
+STK11	HI	Q15831	gerasimavicius	LOF
+STN1	AR	Q9H668	gerasimavicius	LOF
+STRA6	LOF		g2p	
+STRADA	AR	Q7RTN6	gerasimavicius	LOF
+STS	LOF		g2p	
+STT3A	AR	P46977	gerasimavicius	
+STX1B	LOF	P61266	g2p	
+STXBP1	HI	P61764	gerasimavicius	LOF
+SUCLA2	AR	Q9P2R7	gerasimavicius	
+SUCLG1	AR	P53597	gerasimavicius	LOF
+SUFU	LOF		g2p	
+SULT2B1	AR	O00204	gerasimavicius	
+SUMF1	AR	Q8NBK3	gerasimavicius	LOF
+SUOX	AR	P51687	gerasimavicius	LOF
+SURF1	LOF		g2p	
+SUZ12	LOF	Q15022	g2p	
+SYN1	LOF		g2p	
+SYNE1	LOF		g2p	
+SYNGAP1	HI	Q96PV0	gerasimavicius	LOF
+SYP	LOF		g2p	
+SYT1	DN	P21579	gerasimavicius	
+SYT2	DN	Q8N9I0	gerasimavicius	LOF
+SZT2	LOF		g2p	
+TAC3	AR	Q9UHF0	gerasimavicius	
+TACO1	AR	Q9BSH4	gerasimavicius	LOF
+TAF1	LOF		g2p	
+TAF13	AR	Q15543	gerasimavicius	
+TAF2	AR	Q6P1X5	gerasimavicius	
+TAF6	AR	P49848	gerasimavicius	
+TAFAZZIN	LOF		g2p	
+TALDO1	AR	P37837	gerasimavicius	LOF
+TANGO2	LOF		g2p	
+TAOK1	LOF		g2p	
+TAP1	LOF		g2p	
+TAPT1	LOF		g2p	
+TASP1	AR	Q9H6P5	gerasimavicius	LOF
+TAT	AR	P17735	gerasimavicius	LOF
+TBC1D20	LOF		g2p	
+TBC1D23	LOF		g2p	
+TBC1D24	LOF		g2p	
+TBC1D2B	LOF		g2p	
+TBCD	LOF		g2p	
+TBCE	LOF		g2p	
+TBCK	LOF		g2p	
+TBK1	DN	Q9UHD2	gerasimavicius	
+TBL1XR1	HI	Q9BZK7	gerasimavicius	GOF
+TBR1	LOF		g2p	
+TBX1	LOF		g2p	
+TBX15	LOF		g2p	
+TBX18	LOF		g2p	
+TBX19	AR	O60806	gerasimavicius	
+TBX20	LOF		g2p	
+TBX22	LOF		g2p	
+TBX3	HI	O15119	gerasimavicius	LOF
+TBX4	LOF		g2p	
+TBX5	HI	Q99593	gerasimavicius	LOF
+TBXT	AR	O15178	gerasimavicius	
+TCF12	HI	Q99081	gerasimavicius	LOF
+TCF20	LOF		g2p	
+TCF4	HI	P15884	gerasimavicius	LOF
+TCF7L2	LOF		g2p	
+TCN2	LOF		g2p	
+TCOF1	LOF		g2p	
+TCTN1	LOF		g2p	
+TCTN2	LOF		g2p	
+TCTN3	LOF		g2p	
+TDO2	AR	P48775	gerasimavicius	
+TDP1	AR	Q9NUW8	gerasimavicius	
+TECPR2	LOF		g2p	
+TECRL	LOF		g2p	
+TECTA	LOF		g2p	
+TEK	GOF	Q02763	gerasimavicius	
+TENM3	AR	Q9P273	gerasimavicius	LOF
+TENT5A	AR	Q96IP4	gerasimavicius	
+TERC	LOF		g2p	
+TERT	LOF		g2p	
+TET3	LOF		g2p	
+TF	AR	P02787	gerasimavicius	
+TFAM	AR	Q00059	gerasimavicius	
+TFR2	LOF		g2p	
+TG	AR	P01266	gerasimavicius	
+TGDS	LOF		g2p	
+TGFB2	LOF	P61812	g2p	
+TGFB3	LOF	P10600	g2p	
+TGFBR1	GOF	P36897	g2p	
+TGFBR2	LOF	P37173	g2p	
+TGIF1	HI	Q15583	gerasimavicius	LOF
+TGM1	AR	P22735	gerasimavicius	LOF
+TGM5	LOF		g2p	
+TH	AR	P07101	gerasimavicius	LOF
+THAP1	LOF	Q9NVV9	g2p	
+THG1L	AR	Q9NWX6	gerasimavicius	
+THOC6	AR	Q86W42	gerasimavicius	LOF
+THRA	LOF	P10827	g2p	
+TIMM22	AR	Q9Y584	gerasimavicius	
+TIMM8A	LOF		g2p	
+TIMP3	LOF		g2p	
+TINF2	LOF		g2p	
+TJP2	AR	Q9UDY2	gerasimavicius	
+TKT	AR	P29401	gerasimavicius	LOF
+TLK2	LOF	Q86UE8	g2p	
+TMC6	LOF		g2p	
+TMC8	LOF		g2p	
+TMCO1	LOF		g2p	
+TMEM126A	LOF		g2p	
+TMEM126B	LOF		g2p	
+TMEM127	LOF		g2p	
+TMEM138	LOF		g2p	
+TMEM165	LOF		g2p	
+TMEM222	LOF		g2p	
+TMEM231	LOF		g2p	
+TMEM237	LOF		g2p	
+TMEM240	LOF		g2p	
+TMEM260	LOF		g2p	
+TMEM67	LOF		g2p	
+TMEM70	LOF		g2p	
+TMEM94	LOF		g2p	
+TMPRSS6	LOF		g2p	
+TMTC3	LOF		g2p	
+TMX2	AR	Q9Y320	gerasimavicius	LOF
+TNFRSF11B	AR	O00300	gerasimavicius	
+TNFRSF13B	LOF		g2p	
+TNFRSF4	AR	P43489	gerasimavicius	
+TNFSF11	AR	O14788	gerasimavicius	
+TNNI2	GOF	P48788	gerasimavicius	
+TNNT2	DN	P45379	gerasimavicius	
+TNNT3	GOF	P45378	gerasimavicius	LOF
+TNRC6B	LOF		g2p	
+TNXB	LOF		g2p	
+TOE1	LOF		g2p	
+TOGARAM1	LOF		g2p	
+TONSL	AR	Q96HA7	gerasimavicius	LOF
+TOP3A	AR	Q13472	gerasimavicius	LOF
+TOPORS	LOF		g2p	
+TOR1A	LOF		g2p	
+TOR1AIP1	AR	Q5JTV8	gerasimavicius	
+TP53	LOF	P04637	g2p	
+TP53RK	LOF		g2p	
+TP63	DN	Q9H3D4	g2p	
+TP73	LOF		g2p	
+TPI1	AR	P60174	gerasimavicius	
+TPK1	AR	Q9H3S4	gerasimavicius	
+TPM2	GOF	P07951	gerasimavicius	
+TPP1	AR	O14773	gerasimavicius	LOF
+TPP2	LOF		g2p	
+TPRKB	AR	Q9Y3C4	gerasimavicius	
+TPRN	LOF		g2p	
+TRAF3IP1	AR	Q8TDR0	gerasimavicius	
+TRAIP	LOF		g2p	
+TRAPPC11	LOF		g2p	
+TRAPPC12	LOF		g2p	
+TRAPPC2	LOF		g2p	
+TRAPPC4	LOF		g2p	
+TRAPPC6B	LOF		g2p	
+TRAPPC9	LOF		g2p	
+TRDN	LOF		g2p	
+TREM2	AR	Q9NZC2	gerasimavicius	
+TREX1	LOF		g2p	
+TRIM2	AR	Q9C040	gerasimavicius	
+TRIM28	LOF		g2p	
+TRIM32	LOF		g2p	
+TRIM37	AR	O94972	gerasimavicius	LOF
+TRIM8	LOF		g2p	
+TRIO	GOF	O75962	gerasimavicius	
+TRIP11	LOF		g2p	
+TRIP12	LOF		g2p	
+TRIP13	AR	Q15645	gerasimavicius	LOF
+TRIP4	LOF		g2p	
+TRMT10A	AR	Q8TBZ6	gerasimavicius	LOF
+TRMT10C	AR	Q7L0Y3	gerasimavicius	
+TRNT1	AR	Q96Q11	gerasimavicius	LOF
+TRPA1	GOF	O75762	gerasimavicius	
+TRPC3	GOF	Q13507	gerasimavicius	
+TRPM1	LOF		g2p	
+TRPM4	GOF	Q8TD43	gerasimavicius	
+TRPS1	LOF		g2p	
+TRPV3	GOF	Q8NET8	gerasimavicius	
+TRPV4	GOF	Q9HBA0	gerasimavicius	
+TRPV6	AR	Q9H1D0	gerasimavicius	LOF
+TSC1	LOF		g2p	
+TSC2	HI	P49815	gerasimavicius	LOF
+TSEN15	AR	Q8WW01	gerasimavicius	
+TSEN54	LOF		g2p	
+TSFM	AR	P43897	gerasimavicius	
+TSHB	LOF		g2p	
+TSHR	GOF		g2p	
+TSPAN12	LOF		g2p	
+TSPAN7	LOF		g2p	
+TTC12	LOF		g2p	
+TTC19	LOF		g2p	
+TTC5	LOF		g2p	
+TTC7A	LOF		g2p	
+TTC8	AR	Q8TAM2	gerasimavicius	LOF
+TTLL5	LOF		g2p	
+TTN	LOF		g2p	
+TTPA	AR	P49638	gerasimavicius	LOF
+TTR	GOF	P02766	g2p	
+TUBA4A	DN	P68366	gerasimavicius	
+TUBB2B	DN	Q9BVA1	g2p	
+TUBB4A	GOF	P04350	g2p	
+TUBGCP4	AR	Q9UGJ1	gerasimavicius	LOF
+TUBGCP6	AR	Q96RT7	gerasimavicius	LOF
+TUFM	AR	P49411	gerasimavicius	
+TULP1	AR	O00294	gerasimavicius	LOF
+TUSC3	LOF		g2p	
+TWIST1	LOF		g2p	
+TWIST2	DN		g2p	
+TXNL4A	LOF		g2p	
+TYMP	AR	P19971	gerasimavicius	
+TYR	LOF		g2p	
+TYROBP	AR	O43914	gerasimavicius	
+TYRP1	AR	P17643	gerasimavicius	LOF
+UBA2	LOF		g2p	
+UBA5	AR	Q9GZZ9	gerasimavicius	LOF
+UBE2A	LOF		g2p	
+UBE2T	AR	Q9NPD8	gerasimavicius	LOF
+UBE3A	HI	Q05086	gerasimavicius	LOF
+UBE3B	LOF		g2p	
+UBE4A	LOF		g2p	
+UBR1	AR	Q8IWV7	gerasimavicius	LOF
+UBR7	LOF		g2p	
+UBTF	GOF		g2p	
+UCHL1	AR	P09936	gerasimavicius	
+UFC1	AR	Q9Y3C8	gerasimavicius	
+UFM1	AR	P61960	gerasimavicius	LOF
+UGDH	AR	O60701	gerasimavicius	
+UGP2	LOF		g2p	
+UGT1A1	LOF		g2p	
+UMOD	DN	P07911	gerasimavicius	
+UMPS	AR	P11172	gerasimavicius	LOF
+UNC80	LOF		g2p	
+UNG	AR	P13051	gerasimavicius	
+UPF3B	LOF		g2p	
+UQCRB	AR	P14927	gerasimavicius	LOF
+UQCRC2	AR	P22695	gerasimavicius	
+UQCRFS1	AR	P47985	gerasimavicius	LOF
+UQCRQ	AR	O14949	gerasimavicius	
+UROS	AR	P10746	gerasimavicius	LOF
+USB1	AR	Q9BQ65	gerasimavicius	LOF
+USH1C	AR	Q9Y6N9	gerasimavicius	LOF
+USH1G	AR	Q495M9	gerasimavicius	LOF
+USH2A	LOF		g2p	
+USP18	LOF		g2p	
+USP27X	LOF		g2p	
+USP45	LOF		g2p	
+USP7	LOF	Q93009	g2p	
+USP9X	LOF		g2p	
+UVSSA	LOF		g2p	
+VAMP2	DN	P63027	gerasimavicius	
+VAPB	DN	O95292	gerasimavicius	
+VCAN	DN		g2p	
+VDR	AR	P11473	gerasimavicius	LOF
+VHL	GOF		g2p	
+VIPAS39	LOF		g2p	
+VLDLR	LOF		g2p	
+VMA12	LOF		g2p	
+VMA22	LOF		g2p	
+VPS13B	LOF		g2p	
+VPS33A	AR	Q96AX1	gerasimavicius	
+VPS33B	LOF		g2p	
+VPS4A	DN		g2p	
+VPS53	LOF		g2p	
+VRK1	AR	Q99986	gerasimavicius	LOF
+VSX2	LOF		g2p	
+WAC	LOF		g2p	
+WARS2	AR	Q9UGM6	gerasimavicius	
+WASHC5	LOF		g2p	
+WDFY3	LOF		g2p	
+WDPCP	LOF		g2p	
+WDR11	LOF		g2p	
+WDR19	LOF		g2p	
+WDR26	LOF		g2p	
+WDR35	LOF		g2p	
+WDR45	LOF		g2p	
+WDR62	LOF		g2p	
+WDR73	LOF		g2p	
+WEE2	AR	P0C1S8	gerasimavicius	
+WFS1	LOF		g2p	
+WHRN	LOF		g2p	
+WNK1	LOF		g2p	
+WNK4	DN	Q96J92	gerasimavicius	
+WNT1	LOF		g2p	
+WNT10B	LOF		g2p	
+WNT3	AR	P56703	gerasimavicius	LOF
+WNT7A	LOF		g2p	
+WRAP53	LOF		g2p	
+WRN	AR	Q14191	gerasimavicius	LOF
+WT1	DN		g2p	
+WWOX	AR	Q9NZC7	gerasimavicius	LOF
+XDH	AR	P47989	gerasimavicius	
+XPA	AR	P23025	gerasimavicius	LOF
+XPC	LOF		g2p	
+XPNPEP3	AR	Q9NQH7	gerasimavicius	
+XPR1	DN	Q9UBH6	gerasimavicius	
+XRCC4	AR	Q13426	gerasimavicius	LOF
+XYLT1	AR	Q86Y38	gerasimavicius	LOF
+XYLT2	LOF		g2p	
+YAP1	LOF		g2p	
+YARS2	AR	Q9Y2Z4	gerasimavicius	LOF
+YRDC	LOF		g2p	
+YWHAG	GOF	P61981	g2p	
+ZAP70	AR	P43403	gerasimavicius	
+ZBTB11	LOF		g2p	
+ZBTB18	LOF		g2p	
+ZBTB20	DN		g2p	
+ZBTB24	AR	O43167	gerasimavicius	
+ZC4H2	LOF		g2p	
+ZDHHC9	LOF		g2p	
+ZEB1	LOF		g2p	
+ZEB2	LOF		g2p	
+ZFHX4	LOF		g2p	
+ZFP57	LOF		g2p	
+ZFYVE19	LOF		g2p	
+ZFYVE26	LOF		g2p	
+ZIC1	GOF		g2p	
+ZIC2	LOF		g2p	
+ZIC3	LOF		g2p	
+ZMIZ1	LOF	Q9ULJ6	g2p	
+ZMPSTE24	AR	O75844	gerasimavicius	LOF
+ZMYM2	LOF		g2p	
+ZMYND10	LOF		g2p	
+ZMYND11	HI	Q15326	gerasimavicius	LOF
+ZNF142	LOF		g2p	
+ZNF148	LOF		g2p	
+ZNF292	LOF		g2p	
+ZNF335	LOF		g2p	
+ZNF408	DN		g2p	
+ZNF462	LOF		g2p	
+ZNF469	LOF		g2p	
+ZNF711	LOF		g2p	
+ZNHIT3	AR	Q15649	gerasimavicius	
+ZSWIM6	GOF		g2p	

@@ -33,15 +33,13 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import LabelEncoder
-from utils_probes import family_split_indices, run_logreg_cv
+from esm2_mechanism.utils_probes import family_split_indices, run_logreg_cv
+from esm2_mechanism.utils_paths import DATA_DIR, RESULTS_DIR
 import functools
 print = functools.partial(print, flush=True)
 
 warnings.filterwarnings("ignore")
 
-SCRIPT_DIR = Path(__file__).resolve().parent
-PROJECT_DIR = SCRIPT_DIR.parents[1]
-DATA_DIR = PROJECT_DIR / "data"
 EMB_DIR = DATA_DIR / "embeddings"
 
 MERGED_VALID_VARIANTS = EMB_DIR / "merged_valid_variants.json"
@@ -333,7 +331,7 @@ def main():
 
     seeds = [args.seed] if args.seed is not None else list(range(5))
     out_dir = Path(args.out_dir) if args.out_dir \
-        else PROJECT_DIR / "results" / "badonyi_leakage"
+        else RESULTS_DIR / "badonyi_leakage"
     out_dir.mkdir(parents=True, exist_ok=True)
 
     print("=== Loading data ===")

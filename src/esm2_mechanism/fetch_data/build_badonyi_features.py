@@ -16,10 +16,12 @@ import numpy as np
 import pandas as pd
 from pathlib import Path
 import functools
+
+from esm2_mechanism.utils_paths import DATA_DIR
+
 print = functools.partial(print, flush=True)
 
-ROOT = Path(__file__).parents[2]
-DATA = ROOT / "data"
+DATA = DATA_DIR
 CACHE = DATA / "cache" / "badonyi"
 
 S3_PATH = CACHE / "table_S3.xlsx"
@@ -85,6 +87,10 @@ def compute_family_residuals(df, pfam, feature_cols):
 
 
 def main():
+    missing = [p for p in [S3_PATH, MERGED_GENE_LIST, PFAM_FAMILIES] if not p.exists()]
+    if missing:
+        raise FileNotFoundError("Required input(s) not found:\n" + "\n".join(f"  {p}" for p in missing))
+
     CACHE.mkdir(parents=True, exist_ok=True)
 
     bad = load_badonyi_predictions()

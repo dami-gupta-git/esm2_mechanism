@@ -38,12 +38,11 @@ import numpy as np
 from sklearn.metrics import f1_score, roc_auc_score
 from sklearn.neural_network import MLPClassifier
 from sklearn.preprocessing import LabelEncoder, StandardScaler
-from utils_probes import gene_split_cv, family_split_cv
+from esm2_mechanism.utils_probes import gene_split_cv, family_split_cv
+from esm2_mechanism.utils_paths import DATA_DIR, RESULTS_DIR
 
 print = functools.partial(print, flush=True)
 warnings.filterwarnings("ignore")
-
-ROOT = Path(__file__).parents[2]
 
 ENZYME_CLASSES = ["kinase", "protease", "oxidoreductase", "non-enzyme"]
 
@@ -322,9 +321,9 @@ def run_multiseed(X: np.ndarray, y: np.ndarray, genes: list[str],
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data_dir", default=str(ROOT / "data"))
-    parser.add_argument("--emb_dir",  default=str(ROOT / "data" / "embeddings"))
-    parser.add_argument("--out_dir",  default=str(ROOT / "results" / "enzyme_classification"))
+    parser.add_argument("--data_dir", default=str(DATA_DIR))
+    parser.add_argument("--emb_dir",  default=str(DATA_DIR / "embeddings"))
+    parser.add_argument("--out_dir",  default=str(RESULTS_DIR / "enzyme_classification"))
     parser.add_argument("--seeds", type=int, nargs="+", default=[0, 1, 2, 3, 4])
     parser.add_argument("--n_folds", type=int, default=5)
     args = parser.parse_args()

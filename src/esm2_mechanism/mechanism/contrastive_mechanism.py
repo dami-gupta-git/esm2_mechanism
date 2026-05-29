@@ -32,7 +32,7 @@ import numpy as np
 from sklearn.metrics import roc_auc_score, f1_score
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.preprocessing import LabelEncoder
-from utils_probes import gene_split_cv, family_split_cv
+from esm2_mechanism.utils_probes import gene_split_cv, family_split_cv
 import functools
 print = functools.partial(print, flush=True)
 
@@ -159,6 +159,9 @@ def build_cross_family_pairs(labels, gene_pfam, le, max_pairs_per_anchor=10, see
         anchor_list.append(np.full(n_pairs, anchor_i, dtype=np.int64))
         pos_list.append(pos_sample)
         neg_list.append(neg_sample)
+
+    if not anchor_list:
+        return np.array([], dtype=np.int64), np.array([], dtype=np.int64), np.array([], dtype=np.int64)
 
     anchors = np.concatenate(anchor_list)
     positives = np.concatenate(pos_list)

@@ -49,16 +49,15 @@ from sklearn.linear_model import Ridge
 from sklearn.metrics import roc_auc_score
 from sklearn.preprocessing import StandardScaler
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from embeddings.esm2_mechanism import get_esm2_embeddings_for_pairs, ESM2_MODEL_650M
-from utils_sequences import window_sequence, apply_missense
+from esm2_mechanism.embeddings.esm2_mechanism import get_esm2_embeddings_for_pairs, ESM2_MODEL_650M
+from esm2_mechanism.utils_sequences import window_sequence, apply_missense
+from esm2_mechanism.utils_paths import DATA_DIR as _DATA_DIR, RESULTS_DIR as _RESULTS_DIR
 
-ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-DATA = os.path.join(ROOT, "data")
-EMB  = os.path.join(DATA, "embeddings")
-BM_ZIP = os.path.join(DATA, "megascale", "benchmarks.zip")
-PFAM_JSON = os.path.join(DATA, "pfam_families.json")
-OUT = os.path.join(ROOT, "results", "megascale_stability")
+DATA = str(_DATA_DIR)
+EMB  = str(_DATA_DIR / "embeddings")
+BM_ZIP = str(_DATA_DIR / "megascale" / "benchmarks.zip")
+PFAM_JSON = str(_DATA_DIR / "pfam_families.json")
+OUT = str(_RESULTS_DIR / "megascale_stability")
 
 VARIANTS_CACHE = os.path.join(DATA, "megascale_variants.json")
 WT_MEAN_EMB  = os.path.join(EMB, "megascale_wt_mean.npy")
@@ -395,7 +394,7 @@ def run_h3_stability_projection(merged_delta_mean, merged_labels, merged_protein
     from sklearn.linear_model import LogisticRegression, Ridge
     from sklearn.preprocessing import StandardScaler, LabelEncoder
     from sklearn.metrics import f1_score
-    from mechanism.multiseed_v1 import family_split_cv
+    from esm2_mechanism.mechanism.multiseed_v1 import family_split_cv
 
     # Fit stability Ridge on S1724
     sc_s = StandardScaler()

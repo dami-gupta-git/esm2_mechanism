@@ -40,15 +40,12 @@ print = functools.partial(print, flush=True)
 from collections import defaultdict
 from pathlib import Path
 
-ROOT = Path(__file__).parents[2]
-DATA = ROOT / "data"
+from esm2_mechanism.utils_paths import DATA_DIR as DATA, RESULTS_DIR as _RESULTS_DIR
+from esm2_mechanism.embeddings.esm2_mechanism import get_esm2_embeddings_for_pairs, ESM2_MODEL_650M
+from esm2_mechanism.utils_sequences import window_sequence, apply_missense
 EMB  = DATA / "embeddings"
-OUT  = ROOT / "results" / "perturbation_scan"
+OUT  = _RESULTS_DIR / "perturbation_scan"
 OUT.mkdir(parents=True, exist_ok=True)
-
-sys.path.insert(0, str(Path(__file__).parent.parent))
-from embeddings.esm2_mechanism import get_esm2_embeddings_for_pairs, ESM2_MODEL_650M
-from utils_sequences import window_sequence, apply_missense
 
 PROBE_AAS  = ["A", "D", "W"]   # Ala, Asp, Trp
 PROBE_NAMES = ["ala", "asp", "trp"]

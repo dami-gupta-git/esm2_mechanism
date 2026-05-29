@@ -39,18 +39,16 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.neural_network import MLPClassifier
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.preprocessing import StandardScaler
-from utils_probes import compute_metrics, family_split_indices, run_mlp_cv, run_logreg_cv
+from esm2_mechanism.utils_probes import compute_metrics, family_split_indices, run_mlp_cv, run_logreg_cv
+from esm2_mechanism.utils_paths import DATA_DIR, RESULTS_DIR, PROJECT_ROOT
 import functools
 print = functools.partial(print, flush=True)
 
 warnings.filterwarnings("ignore")
 
 # ---------------------------------------------------------------------------
-# Paths (relative to script location)
+# Paths
 # ---------------------------------------------------------------------------
-SCRIPT_DIR = Path(__file__).resolve().parent
-PROJECT_DIR = SCRIPT_DIR.parents[1]
-DATA_DIR = PROJECT_DIR / "data"
 EMB_DIR = DATA_DIR / "embeddings"
 
 MERGED_VALID_VARIANTS = EMB_DIR / "merged_valid_variants.json"
@@ -928,7 +926,7 @@ def main():
 
     seeds = [args.seed] if args.seed is not None else list(range(5))
 
-    out_dir = Path(args.out_dir) if args.out_dir else PROJECT_DIR / "results" / "proteome_mechanism"
+    out_dir = Path(args.out_dir) if args.out_dir else RESULTS_DIR / "proteome_mechanism"
     out_dir.mkdir(parents=True, exist_ok=True)
 
     # ------------------------------------------------------------------

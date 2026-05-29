@@ -28,9 +28,8 @@ from sklearn.metrics import average_precision_score, roc_auc_score
 
 print = functools.partial(print, flush=True)
 
-ROOT = Path(__file__).resolve().parents[2]
-DATA = ROOT / "data"
-RESULTS = ROOT / "results" / "esm1v_family"
+from esm2_mechanism.utils_paths import DATA_DIR as DATA, RESULTS_DIR as _RESULTS_DIR
+RESULTS = _RESULTS_DIR / "esm1v_family"
 
 
 def vkey(v: dict) -> str:

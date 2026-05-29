@@ -29,10 +29,9 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Optional
 
-print = functools.partial(print, flush=True)
+from esm2_mechanism.utils_paths import DATA_DIR
 
-ROOT = Path(__file__).parents[2]
-DATA_DIR = ROOT / "data"
+print = functools.partial(print, flush=True)
 
 UNIPROT_SEARCH_URL = "https://rest.uniprot.org/uniprotkb/{acc}?format=json"
 BATCH_SIZE = 50
@@ -158,6 +157,11 @@ def main():
 
     data_dir = Path(args.data_dir)
     cache_dir = Path(args.cache_dir)
+
+    missing = [p for p in [data_dir / "merged_valid_variants.json", data_dir / "merged_gene_list.tsv"] if not p.exists()]
+    if missing:
+        raise FileNotFoundError("Required input(s) not found:\n" + "\n".join(f"  {p}" for p in missing))
+
     cache_dir.mkdir(parents=True, exist_ok=True)
 
     # Load gene -> uniprot_id from merged_valid_variants

@@ -31,18 +31,16 @@ import argparse, json, os, sys, numpy as np
 from collections import defaultdict
 from pathlib import Path
 
-ROOT = Path(__file__).parents[2]
-DATA = ROOT / "data"
-OUT  = ROOT / "results" / "ll_scan"
+from esm2_mechanism.utils_paths import DATA_DIR as DATA, RESULTS_DIR as _RESULTS_DIR
+from esm2_mechanism.embeddings.esm2_mechanism import ESM2_MODEL_650M
+from esm2_mechanism.utils_sequences import window_sequence
+
+OUT  = _RESULTS_DIR / "ll_scan"
 OUT.mkdir(parents=True, exist_ok=True)
 
 PROBE_AAS   = ["A", "D", "W"]   # Ala, Asp, Trp — same as result_20
 CHECKPOINT_EVERY = 50            # genes between saves
 MIN_POSITIONS = 3
-
-sys.path.insert(0, str(Path(__file__).parent.parent))
-from embeddings.esm2_mechanism import ESM2_MODEL_650M
-from utils_sequences import window_sequence
 
 
 # ── Phase 1: load probe list ──────────────────────────────────────────────────
@@ -282,8 +280,7 @@ def run_probe_analysis():
     from sklearn.metrics import f1_score, roc_auc_score
     from collections import Counter
 
-    sys.path.insert(0, str(Path(__file__).parent.parent))
-    from mechanism.multiseed_v1 import gene_split_cv, family_split_cv
+    from esm2_mechanism.mechanism.multiseed_v1 import gene_split_cv, family_split_cv
 
     DECISION_RULES = {
         "G1": ("ll_only_family_split",        "macro_f1_mean", 0.282),

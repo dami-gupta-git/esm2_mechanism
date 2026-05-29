@@ -41,12 +41,10 @@ import numpy as np
 
 print = functools.partial(print, flush=True)
 
-SCRIPTS = Path(__file__).resolve().parents[1]
-ROOT    = SCRIPTS.parent
-DATA    = ROOT / "data"
+from esm2_mechanism.utils_paths import DATA_DIR as DATA, RESULTS_DIR as _RESULTS_DIR
 EMB     = DATA / "embeddings"
 AF2_DIR = DATA / "cache" / "af2_structures"
-OUT     = ROOT / "results" / "esm3_mechanism"
+OUT     = _RESULTS_DIR / "esm3_mechanism"
 
 GERAS_VARIANTS = DATA / "gerasimavicius_variants.json"
 SEQUENCES_JSON = DATA / "sequences.json"
@@ -492,9 +490,8 @@ def _run_mlp(X: np.ndarray, y: np.ndarray, splits: list, n_classes: int,
 
 
 def phase3_probes() -> None:
-    sys.path.insert(0, str(SCRIPTS))
-    from utils_probes import gene_split_cv, family_split_cv
-    from utils_sequences import window_sequence
+    from esm2_mechanism.utils_probes import gene_split_cv, family_split_cv
+    from esm2_mechanism.utils_sequences import window_sequence
     from sklearn.linear_model import LogisticRegression
     from sklearn.preprocessing import StandardScaler
     from sklearn.metrics import f1_score, roc_auc_score

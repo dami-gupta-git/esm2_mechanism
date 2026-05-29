@@ -39,15 +39,12 @@ import numpy as np
 from sklearn.linear_model import LogisticRegression
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.preprocessing import LabelEncoder, StandardScaler
-from utils_probes import compute_metrics, align_proba
+from esm2_mechanism.utils_probes import compute_metrics, align_proba
+from esm2_mechanism.utils_paths import DATA_DIR, RESULTS_DIR
 import functools
 print = functools.partial(print, flush=True)
 
 warnings.filterwarnings("ignore")
-
-SCRIPT_DIR = Path(__file__).resolve().parent
-PROJECT_DIR = SCRIPT_DIR.parents[1]
-DATA_DIR = PROJECT_DIR / "data"
 
 MERGED_GENE_LIST = DATA_DIR / "merged_gene_list.tsv"
 PFAM_FAMILIES = DATA_DIR / "pfam_families.json"
@@ -363,7 +360,7 @@ def main():
     args = parser.parse_args()
 
     out_dir = Path(args.out_dir) if args.out_dir else \
-        PROJECT_DIR / "results" / "within_family"
+        RESULTS_DIR / "within_family"
     out_dir.mkdir(parents=True, exist_ok=True)
 
     print("=== Loading gene list ===")

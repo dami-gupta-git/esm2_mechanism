@@ -39,10 +39,10 @@ from sklearn.metrics import roc_auc_score
 import functools
 print = functools.partial(print, flush=True)
 
-ROOT = Path(__file__).resolve().parents[2]
-DATA = ROOT / "data" / "cache" / "proteingym"
-RESULTS = ROOT / "results" / "proteingym_alphamissense"
-AM_FILE = ROOT / "data" / "cache" / "AlphaMissense_aa_substitutions.tsv.gz"
+from esm2_mechanism.utils_paths import DATA_DIR as _DATA_DIR, RESULTS_DIR as _RESULTS_DIR
+DATA = _DATA_DIR / "cache" / "proteingym"
+RESULTS = _RESULTS_DIR / "proteingym_alphamissense"
+AM_FILE = _DATA_DIR / "cache" / "AlphaMissense_aa_substitutions.tsv.gz"
 
 DMS_INDEX = DATA / "DMS_substitutions.csv"
 DMS_DIR = DATA / "DMS_ProteinGym_substitutions"

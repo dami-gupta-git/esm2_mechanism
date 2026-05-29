@@ -35,7 +35,7 @@ import argparse
 import json
 import warnings
 from collections import Counter
-from pathlib import Path
+
 
 import numpy as np
 import pandas as pd
@@ -43,18 +43,16 @@ from sklearn.metrics import roc_auc_score
 import functools
 print = functools.partial(print, flush=True)
 
-warnings.filterwarnings("ignore")
+from esm2_mechanism.utils_paths import DATA_DIR, RESULTS_DIR
 
-SCRIPT_DIR = Path(__file__).resolve().parent
-PROJECT_DIR = SCRIPT_DIR.parents[1]
-DATA_DIR = PROJECT_DIR / "data"
+warnings.filterwarnings("ignore")
 
 MERGED_GENE_LIST = DATA_DIR / "merged_gene_list.tsv"
 PFAM_FAMILIES = DATA_DIR / "pfam_families.json"
 MMSEQS_CLUSTERS = DATA_DIR / "mmseqs_clusters.json"
 BADONYI_S3 = DATA_DIR / "cache" / "badonyi" / "table_S3.xlsx"
 
-OUT_DIR = PROJECT_DIR / "results" / "badonyi_survival"
+OUT_DIR = RESULTS_DIR / "badonyi_survival"
 
 CLASSES_3 = ["GOF", "DN", "LOF"]
 N_FOLDS = 5

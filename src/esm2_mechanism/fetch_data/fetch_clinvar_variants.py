@@ -15,13 +15,14 @@ import csv
 import json
 import os
 import re
-import sys
 import time
 import logging
 import requests
 from pathlib import Path
 from typing import Optional
 import functools
+from esm2_mechanism.utils_paths import DATA_DIR
+
 print = functools.partial(print, flush=True)
 
 logging.basicConfig(
@@ -34,16 +35,13 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
-SCRIPT_DIR = Path(__file__).parent
-DATA_DIR   = SCRIPT_DIR.parents[1] / "data"
+
 INPUT_TSV   = DATA_DIR / "merged_gene_list.tsv"
 OUTPUT_TSV  = DATA_DIR / "clinvar_variants.tsv"
 CACHE_DIR   = DATA_DIR / "cache"
 UNIPROT_CACHE = CACHE_DIR / "uniprot"
 CLINVAR_CACHE = CACHE_DIR / "clinvar"
 
-for d in (UNIPROT_CACHE, CLINVAR_CACHE):
-    d.mkdir(parents=True, exist_ok=True)
 
 # ---------------------------------------------------------------------------
 # Rate limiter  (≤3 NCBI requests / second)
@@ -66,15 +64,18 @@ SESSION = requests.Session()
 SESSION.headers.update({"User-Agent": "fetch_clinvar/1.0 (dami.gupta@gmail.com)"})
 
 def get_json(url: str, params: dict, ncbi: bool = False, retries: int = 4) -> Optional[dict]:
+    skip_rate_limit = False
     for attempt in range(retries):
-        if ncbi:
+        if ncbi and not skip_rate_limit:
             _ncbi_wait()
+        skip_rate_limit = False
         try:
             r = SESSION.get(url, params=params, timeout=30)
             if r.status_code == 429 or r.status_code == 503:
                 wait = 10 * (attempt + 1)
                 log.warning("HTTP %s – sleeping %ds", r.status_code, wait)
                 time.sleep(wait)
+                skip_rate_limit = True
                 continue
             r.raise_for_status()
             return r.json()
@@ -84,15 +85,18 @@ def get_json(url: str, params: dict, ncbi: bool = False, retries: int = 4) -> Op
     return None
 
 def get_text(url: str, params: dict, ncbi: bool = False, retries: int = 4) -> Optional[str]:
+    skip_rate_limit = False
     for attempt in range(retries):
-        if ncbi:
+        if ncbi and not skip_rate_limit:
             _ncbi_wait()
+        skip_rate_limit = False
         try:
             r = SESSION.get(url, params=params, timeout=30)
             if r.status_code == 429 or r.status_code == 503:
                 wait = 10 * (attempt + 1)
                 log.warning("HTTP %s – sleeping %ds", r.status_code, wait)
                 time.sleep(wait)
+                skip_rate_limit = True
                 continue
             r.raise_for_status()
             return r.text
@@ -373,65 +377,77 @@ def load_gene_list(path: Path) -> list:
 
 
 def main():
+    if not INPUT_TSV.exists():
+        raise FileNotFoundError(f"Required input not found: {INPUT_TSV}")
+
+    for d in (UNIPROT_CACHE, CLINVAR_CACHE):
+        d.mkdir(parents=True, exist_ok=True)
+
     genes = load_gene_list(INPUT_TSV)
     log.info("Loaded %d genes from %s", len(genes), INPUT_TSV)
 
-    # Determine which genes already have output rows (for partial-resume at output level)
+    # Determine which genes already have output rows (for partial-resume at output level).
+    # Truncate any partial last line caused by a mid-write crash to avoid duplicate rows.
     done_genes: set = set()
-    if OUTPUT_TSV.exists():
+    if OUTPUT_TSV.exists() and OUTPUT_TSV.stat().st_size > 0:
+        raw = OUTPUT_TSV.read_bytes()
+        if not raw.endswith(b"\n"):
+            truncate_at = raw.rfind(b"\n") + 1
+            if truncate_at > 0:
+                log.warning("Output file has partial last line; truncating to last complete row")
+                with open(OUTPUT_TSV, "r+b") as fh:
+                    fh.truncate(truncate_at)
         with open(OUTPUT_TSV, newline="") as fh:
             for row in csv.DictReader(fh, delimiter="\t"):
                 done_genes.add(row.get("gene", ""))
 
     write_header = not OUTPUT_TSV.exists() or OUTPUT_TSV.stat().st_size == 0
-    out_fh = open(OUTPUT_TSV, "a", newline="")
-    writer = csv.writer(out_fh, delimiter="\t")
-    if write_header:
-        writer.writerow(["gene", "uniprot_id", "aa_pos", "aa_wt", "aa_mut", "clinsig"])
-
     total_variants = 0
 
-    for idx, gdata in enumerate(genes, 1):
-        gene = gdata["gene"]
-        prefilled_uniprot = gdata["uniprot_id"]
+    with open(OUTPUT_TSV, "a", newline="") as out_fh:
+        writer = csv.writer(out_fh, delimiter="\t")
+        if write_header:
+            writer.writerow(["gene", "uniprot_id", "aa_pos", "aa_wt", "aa_mut", "clinsig"])
 
-        if gene in done_genes:
-            log.info("[%d/%d] %s – already in output, skipping", idx, len(genes), gene)
-            continue
+        for idx, gdata in enumerate(genes, 1):
+            gene = gdata["gene"]
+            prefilled_uniprot = gdata["uniprot_id"]
 
-        log.info("[%d/%d] %s", idx, len(genes), gene)
-
-        # 1. Resolve UniProt accession
-        uniprot_id = fetch_uniprot_id(gene, prefilled_uniprot)
-        if uniprot_id is None:
-            log.warning("  %s: no UniProt ID found", gene)
-
-        # 2. Fetch protein sequence for WT validation (best-effort)
-        sequence: str | None = None
-        if uniprot_id:
-            sequence = fetch_protein_sequence(uniprot_id)
-
-        # 3. Fetch ClinVar variants
-        variants = fetch_clinvar_variants(gene)
-        log.info("  %s: %d missense P/LP variants", gene, len(variants))
-
-        # 4. Write output rows
-        gene_written = 0
-        for v in variants:
-            if sequence and not validate_wt(v, sequence):
-                log.debug("  WT mismatch %s pos %d: expected %s", gene, v["pos"], v["wt_aa"])
+            if gene in done_genes:
+                log.info("[%d/%d] %s – already in output, skipping", idx, len(genes), gene)
                 continue
+
+            log.info("[%d/%d] %s", idx, len(genes), gene)
+
+            # 1. Resolve UniProt accession
+            uniprot_id = fetch_uniprot_id(gene, prefilled_uniprot)
             if uniprot_id is None:
-                continue  # skip rows with no UniProt ID — downstream can't fetch sequence
-            writer.writerow([gene, uniprot_id, v["pos"], v["wt_aa"], v["mut_aa"], v["clinsig"]])
-            gene_written += 1
+                log.warning("  %s: no UniProt ID found, skipping", gene)
+                continue
 
-        total_variants += gene_written
+            # 2. Fetch protein sequence for WT validation (best-effort)
+            sequence: str | None = fetch_protein_sequence(uniprot_id)
+            if sequence is None:
+                log.warning("  %s: sequence unavailable, writing variants without WT validation", gene)
 
-        # Flush after each gene so partial results are saved even on crash
-        out_fh.flush()
+            # 3. Fetch ClinVar variants
+            variants = fetch_clinvar_variants(gene)
+            log.info("  %s: %d missense P/LP variants", gene, len(variants))
 
-    out_fh.close()
+            # 4. Write output rows
+            gene_written = 0
+            for v in variants:
+                if sequence and not validate_wt(v, sequence):
+                    log.debug("  WT mismatch %s pos %d: expected %s", gene, v["pos"], v["wt_aa"])
+                    continue
+                writer.writerow([gene, uniprot_id, v["pos"], v["wt_aa"], v["mut_aa"], v["clinsig"]])
+                gene_written += 1
+
+            total_variants += gene_written
+
+            # Flush after each gene so partial results are saved even on crash
+            out_fh.flush()
+
     log.info("Done. %d total variants written to %s", total_variants, OUTPUT_TSV)
 
 

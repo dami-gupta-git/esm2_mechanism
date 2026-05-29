@@ -9,18 +9,16 @@ Writes:
   results/pathogenicity_5seed/summary.json
 """
 import json, os, sys, numpy as np
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from esm2_mechanism.utils_paths import DATA_DIR as _DATA_DIR, RESULTS_DIR as _RESULTS_DIR
+from esm2_mechanism.embeddings.esm2_mechanism import get_esm2_embeddings_for_pairs, ESM2_MODEL_650M
+from esm2_mechanism.utils_sequences import window_sequence, apply_missense
+from esm2_mechanism.mechanism.multiseed_v1 import gene_split_cv, family_split_cv, run_mlp_binary
+from esm2_mechanism.utils_probes import run_logreg_binary_cv as run_logreg_binary
 
-ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-DATA = os.path.join(ROOT, "data")
-EMB  = os.path.join(DATA, "embeddings")
-OUT  = os.path.join(ROOT, "results", "pathogenicity_5seed")
+DATA = str(_DATA_DIR)
+EMB  = str(_DATA_DIR / "embeddings")
+OUT  = str(_RESULTS_DIR / "pathogenicity_5seed")
 os.makedirs(OUT, exist_ok=True)
-
-from embeddings.esm2_mechanism import get_esm2_embeddings_for_pairs, ESM2_MODEL_650M
-from utils_sequences import window_sequence, apply_missense
-from mechanism.multiseed_v1 import gene_split_cv, family_split_cv, run_mlp_binary
-from utils_probes import run_logreg_binary_cv as run_logreg_binary
 import functools
 print = functools.partial(print, flush=True)
 

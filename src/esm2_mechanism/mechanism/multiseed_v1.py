@@ -28,17 +28,17 @@ import numpy as np
 from collections import defaultdict
 import functools
 print = functools.partial(print, flush=True)
-from utils_probes import (
+from esm2_mechanism.utils_probes import (
     gene_split_cv, family_split_cv, run_logreg_binary_cv,
 )
+from esm2_mechanism.utils_paths import DATA_DIR as _DATA_DIR, RESULTS_DIR as _RESULTS_DIR
 
 # ── paths ────────────────────────────────────────────────────────────────────
 
-ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-DATA_DIR = os.path.join(ROOT, "data")
-EMB_DIR = os.path.join(DATA_DIR, "embeddings")
-OUT_DIR = os.path.join(ROOT, "results", "v1_multiseed")
-SEED0_DIR = os.path.join(ROOT, "results", "20260524_baseline_run", "run_0")
+DATA_DIR = str(_DATA_DIR)
+EMB_DIR = str(_DATA_DIR / "embeddings")
+OUT_DIR = str(_RESULTS_DIR / "v1_multiseed")
+SEED0_DIR = str(_RESULTS_DIR / "20260524_baseline_run" / "run_0")
 
 PFAM_JSON = os.path.join(DATA_DIR, "pfam_families.json")
 GERAS_VARIANTS = os.path.join(DATA_DIR, "gerasimavicius_variants.json")

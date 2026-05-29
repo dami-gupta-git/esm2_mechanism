@@ -57,9 +57,7 @@ warnings.filterwarnings("ignore")
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
-SCRIPT_DIR = Path(__file__).resolve().parent
-PROJECT_DIR = SCRIPT_DIR.parents[1]
-DATA_DIR = PROJECT_DIR / "data"
+from esm2_mechanism.utils_paths import DATA_DIR, RESULTS_DIR, PROJECT_ROOT
 
 MERGED_GENE_LIST = DATA_DIR / "merged_gene_list.tsv"
 PROTEOME_FEATURES = DATA_DIR / "proteome_features_aligned.npy"
@@ -935,7 +933,7 @@ if __name__ == "__main__":
                         help="Single seed (default: all 5 seeds 0-4)")
     args = parser.parse_args()
 
-    out_dir = PROJECT_DIR / args.out_dir
+    out_dir = PROJECT_ROOT / args.out_dir
     out_dir.mkdir(parents=True, exist_ok=True)
 
     # Load shared data once

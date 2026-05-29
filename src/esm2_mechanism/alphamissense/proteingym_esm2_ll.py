@@ -43,10 +43,9 @@ from sklearn.metrics import roc_auc_score
 
 print = functools.partial(print, flush=True)
 
-ROOT    = Path(__file__).resolve().parents[2]
-DATA    = ROOT / "data"
+from esm2_mechanism.utils_paths import DATA_DIR as DATA, RESULTS_DIR as _RESULTS_DIR
 PG_DIR  = DATA / "cache" / "proteingym"
-OUT     = ROOT / "results" / "proteingym_esm2_ll"
+OUT     = _RESULTS_DIR / "proteingym_esm2_ll"
 
 DMS_INDEX   = PG_DIR / "DMS_substitutions.csv"
 DMS_SUBDIR  = PG_DIR / "DMS_ProteinGym_substitutions"
@@ -430,7 +429,7 @@ def phase3_analyse(jobs: list[dict], all_scores: dict[str, dict[str, float]]) ->
     # ── AM comparison ──────────────────────────────────────────────────────────
     # Result_18 summary: AM median Spearman on human ProteinGym = 0.748 AUROC (not spearman directly)
     # We load per_assay from result_18 if available for direct comparison
-    am_per_assay_path = ROOT / "results" / "proteingym_alphamissense" / "per_assay.json"
+    am_per_assay_path = _RESULTS_DIR / "proteingym_alphamissense" / "per_assay.json"
     am_comparison: dict = {}
     if am_per_assay_path.exists():
         with open(am_per_assay_path) as f:

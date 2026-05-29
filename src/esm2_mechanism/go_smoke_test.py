@@ -20,14 +20,14 @@ Outputs:
 import gzip, io, json, os, sys, urllib.request
 import numpy as np
 from collections import defaultdict
-from utils_probes import gene_split_cv, family_split_cv
+from esm2_mechanism.utils_probes import gene_split_cv, family_split_cv
+from esm2_mechanism.utils_paths import DATA_DIR, RESULTS_DIR
 import functools
 print = functools.partial(print, flush=True)
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DATA = os.path.join(ROOT, "data")
-EMB  = os.path.join(DATA, "embeddings")
-OUT  = os.path.join(ROOT, "results", "go_smoke")
+DATA = str(DATA_DIR)
+EMB  = str(DATA_DIR / "embeddings")
+OUT  = str(RESULTS_DIR / "go_smoke")
 os.makedirs(OUT, exist_ok=True)
 
 GOA_URL = "https://ftp.ebi.ac.uk/pub/databases/GO/goa/HUMAN/goa_human.gaf.gz"

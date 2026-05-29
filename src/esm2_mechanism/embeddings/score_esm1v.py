@@ -30,10 +30,8 @@ import numpy as np
 
 print = functools.partial(print, flush=True)
 
-ROOT = Path(__file__).resolve().parents[2]
-DATA = ROOT / "data"
-
-from utils_sequences import window_sequence
+from esm2_mechanism.utils_paths import DATA_DIR as DATA
+from esm2_mechanism.utils_sequences import window_sequence
 
 CHECKPOINTS = [
     "esm1v_t33_650M_UR90S_1",

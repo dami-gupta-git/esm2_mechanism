@@ -59,6 +59,9 @@ def parse_fasta(text: str) -> dict[str, str]:
 
 
 def main():
+    if not MERGED_VARIANTS.exists():
+        raise FileNotFoundError(f"Required input not found: {MERGED_VARIANTS}")
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--from-scratch", action="store_true",
                         help="Ignore existing cache and re-fetch everything")

@@ -23,8 +23,8 @@ Outputs:
   data/proteome_feature_columns.json       column metadata
 
 Usage:
-  python scripts/build_proteome_features.py
-  python scripts/build_proteome_features.py --force-redownload
+  python -m esm2_mechanism.fetch_data.build_proteome_features
+  python -m esm2_mechanism.fetch_data.build_proteome_features --force-redownload
 """
 
 from __future__ import annotations
@@ -44,6 +44,9 @@ from typing import Optional
 
 import numpy as np
 import functools
+
+from esm2_mechanism.utils_paths import DATA_DIR
+
 print = functools.partial(print, flush=True)
 
 # ---------------------------------------------------------------------------
@@ -59,15 +62,9 @@ log = logging.getLogger("build_proteome_features")
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
-SCRIPT_DIR = Path(__file__).resolve().parent
-PROJECT_DIR = SCRIPT_DIR.parents[1]
-DATA_DIR = PROJECT_DIR / "data"
 CACHE_DIR = DATA_DIR / "cache" / "proteome_features"
 PILOT_CACHE_DIR = DATA_DIR / "cache" / "proteome_pilot"
 PILOT_PARALOG_CACHE = PILOT_CACHE_DIR / "paralogs"
-
-for d in (CACHE_DIR, CACHE_DIR / "paralogs"):
-    d.mkdir(parents=True, exist_ok=True)
 
 MERGED_GENE_LIST = DATA_DIR / "merged_gene_list.tsv"
 PFAM_FAMILIES = DATA_DIR / "pfam_families.json"
@@ -904,6 +901,13 @@ def main():
     )
     args = parser.parse_args()
     force = args.force_redownload
+
+    missing = [p for p in [MERGED_GENE_LIST, PFAM_FAMILIES] if not p.exists()]
+    if missing:
+        raise FileNotFoundError("Required input(s) not found:\n" + "\n".join(f"  {p}" for p in missing))
+
+    for d in (CACHE_DIR, CACHE_DIR / "paralogs"):
+        d.mkdir(parents=True, exist_ok=True)
 
     log.info("=" * 60)
     log.info("build_proteome_features.py — Experiment 11 Phase 1+2")

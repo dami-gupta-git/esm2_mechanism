@@ -54,17 +54,15 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import f1_score, roc_auc_score
 from sklearn.neural_network import MLPClassifier
 from sklearn.preprocessing import LabelEncoder, StandardScaler
-from utils_probes import (
+from esm2_mechanism.utils_probes import (
     family_split_indices, compute_metrics, aggregate_folds, align_proba,
 )
+from esm2_mechanism.utils_paths import DATA_DIR, RESULTS_DIR, PROJECT_ROOT
 import functools
 print = functools.partial(print, flush=True)
 
 warnings.filterwarnings("ignore")
 
-SCRIPT_DIR = Path(__file__).resolve().parent
-PROJECT_DIR = SCRIPT_DIR.parents[1]
-DATA_DIR = PROJECT_DIR / "data"
 EMB_DIR = DATA_DIR / "embeddings"
 
 MERGED_VALID_VARIANTS = EMB_DIR / "merged_valid_variants.json"
@@ -400,7 +398,7 @@ def main():
     parser.add_argument("--out-dir", default="results/proteome_mechanism")
     args = parser.parse_args()
 
-    out_dir = PROJECT_DIR / args.out_dir
+    out_dir = PROJECT_ROOT / args.out_dir
     out_dir.mkdir(parents=True, exist_ok=True)
 
     print("Loading data...")

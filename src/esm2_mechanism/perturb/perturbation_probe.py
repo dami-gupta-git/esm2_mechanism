@@ -23,14 +23,11 @@ Usage:
 import json, os, sys, numpy as np
 from pathlib import Path
 
-ROOT = Path(__file__).parents[2]
-DATA = ROOT / "data"
+from esm2_mechanism.utils_paths import DATA_DIR as DATA, RESULTS_DIR as _RESULTS_DIR
+from esm2_mechanism.mechanism.multiseed_v1 import gene_split_cv, family_split_cv
 EMB  = DATA / "embeddings"
-OUT  = ROOT / "results" / "perturbation_scan"
+OUT  = _RESULTS_DIR / "perturbation_scan"
 OUT.mkdir(parents=True, exist_ok=True)
-
-sys.path.insert(0, str(Path(__file__).parent.parent))
-from mechanism.multiseed_v1 import gene_split_cv, family_split_cv
 
 
 DECISION_RULES = {
