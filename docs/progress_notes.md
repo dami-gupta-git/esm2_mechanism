@@ -152,11 +152,122 @@ ESM-2 delta embeddings predict ClinVar pathogenic vs benign at AUROC 0.88 but ca
 - GOF: 2,825 / DN: 1,716 / LOF: 14,561
 - Files: `esm2_mechanism/data/merged_variants.json`, `esm2_mechanism/data/clinvar_variants.tsv`
 
-### Next steps
-1. Collect MLP family-split results (mlp2)
-2. After embeddings: run linear + MLP probes on merged dataset
-3. Option B: gene-level WT mean embeddings probe
-4. Within-family mechanism analysis (top Pfam families)
-5. Write result_7.md
-6. Multi-seed replication (5 seeds)
-7. Figure for paper
+---
+
+## Session 3+ findings (May 25–28, 2026)
+
+### result_7 — Full nonlinear probe results + merged dataset (May 24–25)
+- MLP delta_mean family-split F1=0.364 on Gerasimavicius; 62% of gene-split signal is family leakage
+- Gene-level WT classifier on merged dataset (1,985 genes): family-split F1=0.393 — same floor as Gerasimavicius
+- **Family-split floor ~0.39 is the stable real signal; everything above is the family-recognition shortcut**
+- DN AUROC stuck at ~0.53 across all classifiers (rarity + mechanistic heterogeneity)
+- Leakage fraction (62%) near-identical on both datasets, confirming it is a structural property of the task
+
+### result_leakage_fraction — Leakage fraction as a diagnostic
+- LF = (gene_split_F1 − family_split_F1) / (gene_split_F1 − chance_F1) = 62.8% on Gerasimavicius mechanism
+- Seed-invariant (std=0.0%) — proposed as a pre-flight diagnostic for published mechanism predictors
+
+### result_8 — Within-family mechanism (May 25)
+- PF00520 ion channel: GOF/DN AUROC=0.659 for delta (directional signal)
+- Most families at chance due to small within-family gene sets — not publishable at single seed
+
+### result_9 — Contrastive metric learning (May 25)
+- Same-mechanism, different-family positive pairs; family-split F1=0.397, MLP floor +0.033
+- Gene-split and family-split lift equal (+0.060 / +0.059) — genuine cross-family signal confirmed
+- Merged dataset replication: F1=0.387
+
+### result_10 — Clan-level holdout (May 25)
+- 21 Pfam clans holdout: F1=0.299 — between majority (0.254) and family-split (0.352)
+- ~Half of family-split signal is clan-level memorisation
+- Heterogeneous per-clan: Cupin 0.536, Death domain 0.378; Ion_channel 0.190, EF_hand 0.163
+
+### result_11 — Gene-level proteome features, Stage 0 pilot (May 25–26)
+- pLI, LOEUF, mis_z, paralog_count on 1,234 genes
+- Family-split F1=0.4171±0.0091 (+0.122 above majority); DN AUROC=0.687±0.009 — **STRONG_SIGNAL on 5/5 seeds**
+
+### result_12 — Phase 1+2 proteome feature matrix (May 26)
+- 2,424×37 gene-level feature matrix from gnomAD, Ensembl, HPA, PaxDb, BioPlex, ClinGen
+- Family-mean-centred residuals computed to mitigate family leakage; coverage 19–100% across features
+
+### result_13 — Phase 3 modelling: proteome vs ESM-2 (May 26)
+- V2 (proteome features) family-split F1=0.462 vs V1 (ESM-2 delta) F1=0.382 — **+0.080 lift**
+- V3 (ESM-2 + proteome combined) fails Gate 2 (passes 2/5 seeds only)
+- DN AUROC improves 0.663→0.740 with proteome; constraint and dosage are load-bearing, PPI degree adds nothing
+
+### result_14 — Clinical utility on ClinGen HI=3 genes (May 26)
+- GOF-vs-LOF AUROC=0.650±0.020 on 369 ClinGen gold-standard genes (marginal)
+- paralog_count alone AUROC=0.746 — beats the full 37-feature model
+- Poor operating point: recall 0.235, precision 0.160 at P_GOF>0.4
+
+### result_15 — Badonyi 2024 structural priors (May 26–27)
+- V_bad (3 Badonyi features: pDN, pGOF, pLOF): F1=0.484, outperforms V1 (0.380) and V2 (0.462)
+- V2+bad (proteome + Badonyi): F1=0.511±0.021, DN AUROC=0.827±0.015 — **best mechanism predictor so far**
+- ESM-2 delta adds nothing to Badonyi (V1+bad=0.441 < V_bad=0.484)
+
+### result_16 — Within-family mechanism from family-residual features (May 27)
+- LOGO CV on 24 families (238 genes): residual proteome F1=0.514 vs raw proteome 0.484
+- Badonyi residuals add nothing; Homeodomain PF00046: F1=0.633, ion channel PF00520: F1=0.417
+- Within-family signal lives in proteome residuals, not structural priors
+
+### result_17 — AlphaMissense family robustness on ClinVar (May 27)
+- 16,334 variants (95% coverage), overall AUROC=0.9404
+- Per-family AUROC (182 families): mean 0.9477±0.0458, no families below 0.70 — family-robust pathogenicity predictor
+
+### result_18 — AlphaMissense on ProteinGym DMS (May 27)
+- 91 human assays: per-assay AUROC mean 0.721±0.150 — much wider variance than ClinVar
+- 32% of assays below AUROC 0.70, 14% below 0.60; worst failures on Tsuboyama mini-protein stability (OOD)
+- ClinVar robustness was partly underwritten by curation-training overlap
+
+### result_19 — ClinVar variant pattern features (May 27)
+- 8 scalar features from spatial distribution of ESM-2 perturbations across observed ClinVar variants
+- GOF AUROC 0.578→0.646 under family-split; near-zero leakage (F1 0.352→0.348)
+- Combined with delta_mean: F1=0.399; ClinVar enrichment bias flagged as limitation
+
+### result_20 — In-silico perturbation scan (May 27)
+- 100 evenly-spaced positions per gene, 3 probe AAs — unbiased, not ClinVar-position-biased
+- Scan-only F1=0.272 (family-split), well below ClinVar-pattern (0.348)
+- Scan+proteome F1=0.413 (passes G3); confirms result_19's signal relied partly on ClinVar position bias
+
+### result_21 — Stability positive control on S1724 benchmark (May 27–28)
+- Linear Ridge loses 0.167 AUROC under protein-holdout (0.764→0.597); GBM recovers it (0.750)
+- **Stability is nonlinearly encoded but cross-family transferable** — unlike mechanism which fails at all levels
+- Per-protein heterogeneity large: mean ρ=0.248±0.274
+
+### result_22 — Log-likelihood scan vs embedding scan (May 28)
+- ΔLL at 100 positions: family-split F1=0.261 — marginally worse than embedding scan (0.272)
+- Neither embedding readout is the bottleneck; sparse sampling is
+- LL+delta achieves F1=0.380
+
+### result_23 — Magnitude vs direction decomposition (May 28)
+- Magnitude-only AUROC=0.664 (weak); direction (d/‖d‖) recovers AUROC=0.896 (family-split)
+- **Pathogenicity is a directional (angular) property; conservation (masked-LL) alone: AUROC=0.891**
+- Transfer gradient: conservation → pathogenicity (0.891) → stability (0.750) → DMS (ρ 0.50) → mechanism (chance)
+
+### result_24 — ESM-2 ΔLL on ProteinGym (May 28)
+- 96 human assays: median Spearman ρ=0.50 — fewer catastrophic failures than AlphaMissense (8% vs 14% below ρ=0.20)
+- Median gap (+0.041) misses G3 threshold (+0.05)
+- Gates: G1 ✓ G2 ✓ G3 ✗ — completes the transferability gradient
+
+### result_25 — Enzyme type classification positive control (May 28)
+- LogReg on WT embeddings: family-split F1=0.655±0.012 (vs mechanism floor 0.385, **Δ=+0.270**)
+- Leakage fraction only 13.7% (vs mechanism 62.8%) — most signal is real cross-family signal
+- LogReg outperforms MLP (0.655 vs 0.597) — enzyme class is **linearly separable** in WT embedding space
+- Proteome features at chance (F1=0.251≈majority 0.228) — enzyme class is not a population-genetics property
+- **Double dissociation**: ESM-2 strong for sequence-level properties (enzyme, pathogenicity); proteome features strong for gene-level properties (mechanism)
+- **Confirms the mechanism null is task-specific, not a pipeline failure**
+
+---
+
+## Current state (May 28, 2026)
+
+### Core scientific claims — status
+1. ESM-2 encodes pathogenicity at AUROC=0.884, linearly, family-split-stable (result_6, result_23) ✓
+2. ESM-2 mechanism floor ~0.385 macro-F1 under family-split; 62.8% of gene-split signal is leakage (result_7) ✓
+3. Proteome features (V2) beat ESM-2 for mechanism by +0.080 F1 (result_13) ✓
+4. Best mechanism predictor: V2+Badonyi F1=0.511±0.021, DN AUROC=0.827±0.015 (result_15) ✓
+5. Mechanism null is task-specific — enzyme type (same pipeline, same CV) achieves F1=0.655 (result_25) ✓
+6. Conservation → pathogenicity → stability → DMS → mechanism: complete transferability gradient (result_23, result_24) ✓
+
+### Remaining work
+- Figure for paper (leakage comparison, task × modality double dissociation, transferability gradient)
+- LaTeX draft
