@@ -28,13 +28,8 @@ from collections import Counter
 from pathlib import Path
 
 import numpy as np
-from sklearn.linear_model import LogisticRegression
-from sklearn.neural_network import MLPClassifier
-from sklearn.preprocessing import LabelEncoder, StandardScaler
-from utils_probes import (
-    family_split_indices, compute_metrics, aggregate_folds, align_proba,
-    per_gene_f1,
-)
+from sklearn.preprocessing import LabelEncoder
+from utils_probes import family_split_indices, run_mlp_cv, run_logreg_cv
 import functools
 print = functools.partial(print, flush=True)
 
@@ -119,86 +114,14 @@ def broadcast_gene_features(genes: np.ndarray, matrix: np.ndarray,
 # ---------------------------------------------------------------------------
 
 def run_logreg_family_split(X, y, genes, groups, n_folds, seed, label) -> dict:
-    fold_results, per_gene_f1s = [], []
-    for fold_i, (tr, te) in enumerate(family_split_indices(groups, n_folds, seed)):
-        X_tr, X_te = X[tr], X[te]
-        y_tr, y_te = y[tr], y[te]
-        if len(set(y_tr.tolist())) < len(CLASSES):
-            continue
-        if len(set(y_te.tolist())) < 2:
-            continue
-        sc = StandardScaler().fit(X_tr)
-        clf = LogisticRegression(max_iter=2000, class_weight="balanced",
-                                 random_state=seed)
-        clf.fit(sc.transform(X_tr), y_tr)
-        proba = align_proba(clf.predict_proba(sc.transform(X_te)), clf.classes_, len(CLASSES))
-        pred = proba.argmax(axis=1)
-        fm = compute_metrics(y_te, pred, proba)
-        fold_results.append(fm)
-        # per-gene F1 for this fold
-        pg = per_gene_f1(y_te, proba, genes[te])
-        per_gene_f1s.append(pg)
-        print(f"    [{label}] Fold {fold_i+1}: macro_f1={fm['macro_f1']:.3f}  "
-              f"per_gene_f1={pg:.3f}  "
-              + "  ".join(
-                  f"{cls}={fm['per_class_auroc'].get(cls, float('nan')):.3f}"
-                  if fm["per_class_auroc"].get(cls) is not None else f"{cls}=NA"
-                  for cls in CLASSES))
-    agg = aggregate_folds(fold_results)
-    if per_gene_f1s:
-        agg["per_gene_f1_mean"] = float(np.mean(per_gene_f1s))
-        agg["per_gene_f1_std"] = float(np.std(per_gene_f1s))
-    return agg
+    splits = list(family_split_indices(groups, n_folds, seed))
+    return run_logreg_cv(X, y, splits, seed=seed, genes=genes, label=label)
 
 
 def run_mlp_family_split(X, y, genes, groups, hidden, n_folds, seed, label) -> dict:
-    fold_results, per_gene_f1s = [], []
-    for fold_i, (tr, te) in enumerate(family_split_indices(groups, n_folds, seed)):
-        X_tr, X_te = X[tr], X[te]
-        y_tr, y_te = y[tr], y[te]
-        if len(set(y_tr.tolist())) < len(CLASSES):
-            continue
-        if len(set(y_te.tolist())) < 2:
-            continue
-        sc = StandardScaler().fit(X_tr)
-        X_tr_s = sc.transform(X_tr)
-        X_te_s = sc.transform(X_te)
-        # oversample to balance
-        counts = np.bincount(y_tr, minlength=len(CLASSES))
-        max_c = counts.max()
-        rng = np.random.RandomState(seed)
-        os_idx = []
-        for c in range(len(CLASSES)):
-            ci = np.where(y_tr == c)[0]
-            if len(ci) == 0:
-                continue
-            os_idx.append(np.tile(ci, max_c // len(ci)))
-            rem = max_c % len(ci)
-            if rem:
-                os_idx.append(rng.choice(ci, rem, replace=False))
-        os_idx = np.concatenate(os_idx)
-        rng.shuffle(os_idx)
-        clf = MLPClassifier(hidden_layer_sizes=hidden, max_iter=500,
-                            early_stopping=True, validation_fraction=0.15,
-                            random_state=seed)
-        clf.fit(X_tr_s[os_idx], y_tr[os_idx])
-        proba = align_proba(clf.predict_proba(X_te_s), clf.classes_, len(CLASSES))
-        pred = proba.argmax(axis=1)
-        fm = compute_metrics(y_te, pred, proba)
-        fold_results.append(fm)
-        pg = per_gene_f1(y_te, proba, genes[te])
-        per_gene_f1s.append(pg)
-        print(f"    [{label}] Fold {fold_i+1}: macro_f1={fm['macro_f1']:.3f}  "
-              f"per_gene_f1={pg:.3f}  "
-              + "  ".join(
-                  f"{cls}={fm['per_class_auroc'].get(cls, float('nan')):.3f}"
-                  if fm["per_class_auroc"].get(cls) is not None else f"{cls}=NA"
-                  for cls in CLASSES))
-    agg = aggregate_folds(fold_results)
-    if per_gene_f1s:
-        agg["per_gene_f1_mean"] = float(np.mean(per_gene_f1s))
-        agg["per_gene_f1_std"] = float(np.std(per_gene_f1s))
-    return agg
+    splits = list(family_split_indices(groups, n_folds, seed))
+    return run_mlp_cv(X, y, splits, hidden=hidden, seed=seed,
+                      genes=genes, label=label)
 
 
 # ---------------------------------------------------------------------------

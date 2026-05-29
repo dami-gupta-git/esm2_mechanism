@@ -28,10 +28,8 @@ from collections import Counter
 from pathlib import Path
 
 import numpy as np
-from sklearn.linear_model import LogisticRegression
-from sklearn.neural_network import MLPClassifier
-from sklearn.preprocessing import LabelEncoder, StandardScaler
-from utils_probes import compute_metrics, per_gene_f1
+from sklearn.preprocessing import LabelEncoder
+from utils_probes import run_mlp_cv, run_logreg_cv
 import functools
 print = functools.partial(print, flush=True)
 
@@ -109,106 +107,15 @@ def cluster_split_indices(groups, n_folds, seed):
         yield train, test
 
 
-def _align_proba(proba, clf_classes):
-    out = np.zeros((len(proba), len(CLASSES)), dtype=np.float32)
-    for ci, c in enumerate(list(clf_classes)):
-        if c < len(CLASSES):
-            out[:, c] = proba[:, ci]
-    return out
-
-
-
-def aggregate(fold_list):
-    if not fold_list:
-        return {"error": "no folds"}
-    out = {"n_folds": len(fold_list)}
-    vals = [f["macro_f1"] for f in fold_list]
-    out["macro_f1_mean"] = float(np.mean(vals))
-    out["macro_f1_std"] = float(np.std(vals))
-    for cls in CLASSES:
-        v = [f["per_class_auroc"][cls] for f in fold_list
-             if f["per_class_auroc"].get(cls) is not None]
-        out[f"auroc_{cls}_mean"] = float(np.mean(v)) if v else None
-        out[f"auroc_{cls}_std"] = float(np.std(v)) if v else None
-    return out
-
-
 def run_logreg(X, y, genes, groups, n_folds, seed, label):
-    fold_results, pgs = [], []
-    for fi, (tr, te) in enumerate(cluster_split_indices(groups, n_folds, seed)):
-        X_tr, X_te = X[tr], X[te]
-        y_tr, y_te = y[tr], y[te]
-        if len(set(y_tr.tolist())) < len(CLASSES):
-            continue
-        if len(set(y_te.tolist())) < 2:
-            continue
-        sc = StandardScaler().fit(X_tr)
-        clf = LogisticRegression(max_iter=2000, class_weight="balanced",
-                                 random_state=seed)
-        clf.fit(sc.transform(X_tr), y_tr)
-        proba = _align_proba(clf.predict_proba(sc.transform(X_te)), clf.classes_)
-        pred = proba.argmax(axis=1)
-        fm = compute_metrics(y_te, pred, proba)
-        fold_results.append(fm)
-        pgs.append(per_gene_f1(y_te, proba, genes[te]))
-        print(f"      [{label}] Fold {fi+1}: n_te={len(te)} F1={fm['macro_f1']:.3f}"
-              f" pgF1={pgs[-1]:.3f} " + " ".join(
-                  f"{c}={fm['per_class_auroc'].get(c, float('nan')):.3f}"
-                  if fm['per_class_auroc'].get(c) is not None else f"{c}=NA"
-                  for c in CLASSES))
-    agg = aggregate(fold_results)
-    if pgs:
-        agg["per_gene_f1_mean"] = float(np.mean(pgs))
-        agg["per_gene_f1_std"] = float(np.std(pgs))
-    return agg
+    splits = list(cluster_split_indices(groups, n_folds, seed))
+    return run_logreg_cv(X, y, splits, seed=seed, genes=genes, label=label)
 
 
 def run_mlp(X, y, genes, groups, hidden, n_folds, seed, label):
-    fold_results, pgs = [], []
-    for fi, (tr, te) in enumerate(cluster_split_indices(groups, n_folds, seed)):
-        X_tr, X_te = X[tr], X[te]
-        y_tr, y_te = y[tr], y[te]
-        if len(set(y_tr.tolist())) < len(CLASSES):
-            continue
-        if len(set(y_te.tolist())) < 2:
-            continue
-        sc = StandardScaler().fit(X_tr)
-        X_tr_s = sc.transform(X_tr)
-        X_te_s = sc.transform(X_te)
-        # Oversample to balance
-        counts = np.bincount(y_tr, minlength=len(CLASSES))
-        max_c = counts.max()
-        rng = np.random.RandomState(seed)
-        os_idx = []
-        for c in range(len(CLASSES)):
-            ci = np.where(y_tr == c)[0]
-            if len(ci) == 0:
-                continue
-            os_idx.append(np.tile(ci, max_c // len(ci)))
-            rem = max_c % len(ci)
-            if rem:
-                os_idx.append(rng.choice(ci, rem, replace=False))
-        os_idx = np.concatenate(os_idx)
-        rng.shuffle(os_idx)
-        clf = MLPClassifier(hidden_layer_sizes=hidden, max_iter=500,
-                            early_stopping=True, validation_fraction=0.15,
-                            random_state=seed)
-        clf.fit(X_tr_s[os_idx], y_tr[os_idx])
-        proba = _align_proba(clf.predict_proba(X_te_s), clf.classes_)
-        pred = proba.argmax(axis=1)
-        fm = compute_metrics(y_te, pred, proba)
-        fold_results.append(fm)
-        pgs.append(per_gene_f1(y_te, proba, genes[te]))
-        print(f"      [{label}] Fold {fi+1}: n_te={len(te)} F1={fm['macro_f1']:.3f}"
-              f" pgF1={pgs[-1]:.3f} " + " ".join(
-                  f"{c}={fm['per_class_auroc'].get(c, float('nan')):.3f}"
-                  if fm['per_class_auroc'].get(c) is not None else f"{c}=NA"
-                  for c in CLASSES))
-    agg = aggregate(fold_results)
-    if pgs:
-        agg["per_gene_f1_mean"] = float(np.mean(pgs))
-        agg["per_gene_f1_std"] = float(np.std(pgs))
-    return agg
+    splits = list(cluster_split_indices(groups, n_folds, seed))
+    return run_mlp_cv(X, y, splits, hidden=hidden, seed=seed,
+                      genes=genes, label=label)
 
 
 def run_seed(seed, n_folds, labels, genes, delta, X_prot, X_bad, gene_to_cluster):

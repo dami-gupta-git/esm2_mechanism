@@ -39,7 +39,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.neural_network import MLPClassifier
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.preprocessing import LabelEncoder, StandardScaler
-from utils_probes import compute_metrics, family_split_indices
+from utils_probes import compute_metrics, family_split_indices, run_mlp_cv, run_logreg_cv
 import functools
 print = functools.partial(print, flush=True)
 
@@ -265,80 +265,8 @@ def run_family_split_mlp(
     seed: int,
     label: str,
 ) -> dict:
-    """
-    5-fold family-split CV with StandardScaler (fit on train fold) and
-    MLPClassifier.  Class weights are balanced (1/count).
-    """
-    fold_results = []
-
-    for fold_i, (train_idx, test_idx) in enumerate(
-        family_split_indices(groups, n_folds, seed)
-    ):
-        X_tr, X_te = X[train_idx], X[test_idx]
-        y_tr, y_te = y[train_idx], y[test_idx]
-
-        if len(set(y_tr.tolist())) < len(CLASSES):
-            print(f"    [{label}] Fold {fold_i+1}: skipped (missing class in train)")
-            continue
-        if len(set(y_te.tolist())) < 2:
-            print(f"    [{label}] Fold {fold_i+1}: skipped (< 2 classes in test)")
-            continue
-
-        scaler = StandardScaler().fit(X_tr)
-        X_tr_s = scaler.transform(X_tr)
-        X_te_s = scaler.transform(X_te)
-
-        # Oversample minority classes to approximate balanced class weighting
-        # (MLPClassifier has no class_weight parameter)
-        counts = np.bincount(y_tr, minlength=len(CLASSES))
-        max_count = counts.max()
-        os_idx = []
-        rng_os = np.random.RandomState(seed)
-        for c in range(len(CLASSES)):
-            c_idx = np.where(y_tr == c)[0]
-            if len(c_idx) == 0:
-                continue
-            repeats = max_count // len(c_idx)
-            remainder = max_count % len(c_idx)
-            os_idx.append(np.tile(c_idx, repeats))
-            if remainder > 0:
-                os_idx.append(rng_os.choice(c_idx, remainder, replace=False))
-        os_idx = np.concatenate(os_idx)
-        rng_os.shuffle(os_idx)
-        X_tr_bal = X_tr_s[os_idx]
-        y_tr_bal = y_tr[os_idx]
-
-        clf = MLPClassifier(
-            hidden_layer_sizes=hidden_layer_sizes,
-            max_iter=500,
-            early_stopping=True,
-            validation_fraction=0.15,
-            random_state=seed,
-        )
-        clf.fit(X_tr_bal, y_tr_bal)
-
-        proba = clf.predict_proba(X_te_s)
-        # Align proba columns to CLASSES order
-        clf_classes = list(clf.classes_)
-        proba_aligned = np.zeros((len(X_te_s), len(CLASSES)), dtype=np.float32)
-        for ci, c in enumerate(clf_classes):
-            if c < len(CLASSES):
-                proba_aligned[:, c] = proba[:, ci]
-        pred = proba_aligned.argmax(axis=1)
-
-        fm = compute_metrics(y_te, pred, proba_aligned)
-        fold_results.append(fm)
-        print(
-            f"    [{label}] Fold {fold_i+1}: macro_f1={fm['macro_f1']:.3f}  "
-            + "  ".join(
-                f"{cls}={fm['per_class_auroc'].get(cls, float('nan')):.3f}"
-                if fm["per_class_auroc"].get(cls) is not None
-                else f"{cls}=NA"
-                for cls in CLASSES
-            )
-        )
-
-    return aggregate_fold_results(fold_results)
+    splits = list(family_split_indices(groups, n_folds, seed))
+    return run_mlp_cv(X, y, splits, hidden=hidden_layer_sizes, seed=seed, label=label)
 
 
 def run_family_split_logreg(
@@ -349,56 +277,8 @@ def run_family_split_logreg(
     seed: int,
     label: str,
 ) -> dict:
-    """
-    5-fold family-split CV with LogisticRegression (balanced class weight).
-    """
-    fold_results = []
-
-    for fold_i, (train_idx, test_idx) in enumerate(
-        family_split_indices(groups, n_folds, seed)
-    ):
-        X_tr, X_te = X[train_idx], X[test_idx]
-        y_tr, y_te = y[train_idx], y[test_idx]
-
-        if len(set(y_tr.tolist())) < len(CLASSES):
-            print(f"    [{label}] Fold {fold_i+1}: skipped (missing class in train)")
-            continue
-        if len(set(y_te.tolist())) < 2:
-            print(f"    [{label}] Fold {fold_i+1}: skipped (< 2 classes in test)")
-            continue
-
-        scaler = StandardScaler().fit(X_tr)
-        X_tr_s = scaler.transform(X_tr)
-        X_te_s = scaler.transform(X_te)
-
-        clf = LogisticRegression(
-            max_iter=2000,
-            class_weight="balanced",
-            random_state=seed,
-        )
-        clf.fit(X_tr_s, y_tr)
-
-        proba = clf.predict_proba(X_te_s)
-        clf_classes = list(clf.classes_)
-        proba_aligned = np.zeros((len(X_te_s), len(CLASSES)), dtype=np.float32)
-        for ci, c in enumerate(clf_classes):
-            if c < len(CLASSES):
-                proba_aligned[:, c] = proba[:, ci]
-        pred = proba_aligned.argmax(axis=1)
-
-        fm = compute_metrics(y_te, pred, proba_aligned)
-        fold_results.append(fm)
-        print(
-            f"    [{label}] Fold {fold_i+1}: macro_f1={fm['macro_f1']:.3f}  "
-            + "  ".join(
-                f"{cls}={fm['per_class_auroc'].get(cls, float('nan')):.3f}"
-                if fm["per_class_auroc"].get(cls) is not None
-                else f"{cls}=NA"
-                for cls in CLASSES
-            )
-        )
-
-    return aggregate_fold_results(fold_results)
+    splits = list(family_split_indices(groups, n_folds, seed))
+    return run_logreg_cv(X, y, splits, seed=seed, label=label)
 
 
 # ---------------------------------------------------------------------------
@@ -485,65 +365,8 @@ def run_gene_split_mlp(
     label: str,
     pfam_map: dict | None = None,
 ) -> dict:
-    fold_results = []
-
-    for fold_i, (train_idx, test_idx) in enumerate(
-        gene_split_indices(genes, n_folds, seed, pfam_map=pfam_map)
-    ):
-        X_tr, X_te = X[train_idx], X[test_idx]
-        y_tr, y_te = y[train_idx], y[test_idx]
-
-        if len(set(y_tr.tolist())) < len(CLASSES):
-            print(f"    [{label}] GS Fold {fold_i+1}: skipped (missing class)")
-            continue
-        if len(set(y_te.tolist())) < 2:
-            print(f"    [{label}] GS Fold {fold_i+1}: skipped (< 2 test classes)")
-            continue
-
-        scaler = StandardScaler().fit(X_tr)
-        X_tr_s = scaler.transform(X_tr)
-        X_te_s = scaler.transform(X_te)
-
-        counts = np.bincount(y_tr, minlength=len(CLASSES))
-        max_count = counts.max()
-        os_idx = []
-        rng_os = np.random.RandomState(seed)
-        for c in range(len(CLASSES)):
-            c_idx = np.where(y_tr == c)[0]
-            if len(c_idx) == 0:
-                continue
-            repeats = max_count // len(c_idx)
-            remainder = max_count % len(c_idx)
-            os_idx.append(np.tile(c_idx, repeats))
-            if remainder > 0:
-                os_idx.append(rng_os.choice(c_idx, remainder, replace=False))
-        os_idx = np.concatenate(os_idx)
-        rng_os.shuffle(os_idx)
-        X_tr_bal = X_tr_s[os_idx]
-        y_tr_bal = y_tr[os_idx]
-
-        clf = MLPClassifier(
-            hidden_layer_sizes=hidden_layer_sizes,
-            max_iter=500,
-            early_stopping=True,
-            validation_fraction=0.15,
-            random_state=seed,
-        )
-        clf.fit(X_tr_bal, y_tr_bal)
-
-        proba = clf.predict_proba(X_te_s)
-        clf_classes = list(clf.classes_)
-        proba_aligned = np.zeros((len(X_te_s), len(CLASSES)), dtype=np.float32)
-        for ci, c in enumerate(clf_classes):
-            if c < len(CLASSES):
-                proba_aligned[:, c] = proba[:, ci]
-        pred = proba_aligned.argmax(axis=1)
-
-        fm = compute_metrics(y_te, pred, proba_aligned)
-        fold_results.append(fm)
-        print(f"    [{label}] GS Fold {fold_i+1}: macro_f1={fm['macro_f1']:.3f}")
-
-    return aggregate_fold_results(fold_results)
+    splits = list(gene_split_indices(genes, n_folds, seed, pfam_map=pfam_map))
+    return run_mlp_cv(X, y, splits, hidden=hidden_layer_sizes, seed=seed, label=label)
 
 
 # ---------------------------------------------------------------------------
