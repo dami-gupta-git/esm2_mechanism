@@ -8,7 +8,7 @@ leaving singletons (genes whose family has only 1 member in the dataframe) at 0.
 import numpy as np
 import pandas as pd
 import pytest
-from build_badonyi_features import compute_family_residuals
+from esm2_mechanism.fetch_data.build_badonyi_features import compute_family_residuals
 
 
 def make_df(genes, pDN, pGOF, pLOF):

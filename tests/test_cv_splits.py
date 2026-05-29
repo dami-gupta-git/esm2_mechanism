@@ -20,7 +20,7 @@ Key invariants checked:
 
 import numpy as np
 import pytest
-from utils_probes import (
+from esm2_mechanism.utils_probes import (
     gene_split_cv, family_split_cv, family_split_indices,
     compute_metrics, aggregate_folds, align_proba,
     run_logreg_cv, run_logreg_binary_cv, run_ridge_cv,
