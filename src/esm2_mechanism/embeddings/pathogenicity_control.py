@@ -37,13 +37,12 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.neural_network import MLPClassifier
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import roc_auc_score, f1_score, precision_recall_curve, auc
-from utils_probes import gene_split_cv, family_split_cv
+from esm2_mechanism.utils_probes import gene_split_cv, family_split_cv
+from esm2_mechanism.embeddings.esm2_mechanism import fetch_gerasimavicius_dataset, get_esm2_embeddings_for_pairs, ESM2_MODEL_650M
+from esm2_mechanism.utils_sequences import build_sequence_cache, fetch_pfam_families, window_sequence, apply_missense
 
 import functools
 print = functools.partial(print, flush=True)
-
-from embeddings.esm2_mechanism import fetch_gerasimavicius_dataset, get_esm2_embeddings_for_pairs, ESM2_MODEL_650M
-from utils_sequences import build_sequence_cache, fetch_pfam_families, window_sequence, apply_missense
 
 
 CLINVAR_URL = "https://ftp.ncbi.nlm.nih.gov/pub/clinvar/tab_delimited/variant_summary.txt.gz"

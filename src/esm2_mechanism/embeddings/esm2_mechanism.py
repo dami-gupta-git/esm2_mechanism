@@ -36,8 +36,8 @@ from sklearn.metrics import roc_auc_score, f1_score, precision_recall_curve, auc
 from sklearn.preprocessing import LabelEncoder
 from sklearn.decomposition import PCA
 
-from utils_probes import gene_split_cv, family_split_cv, run_logreg_cv
-from utils_sequences import (
+from esm2_mechanism.utils_probes import gene_split_cv, family_split_cv, run_logreg_cv
+from esm2_mechanism.utils_sequences import (
     build_sequence_cache, fetch_pfam_families,
     apply_missense, window_sequence,
 )

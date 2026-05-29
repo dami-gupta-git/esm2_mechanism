@@ -18,9 +18,9 @@ from collections import Counter
 
 import numpy as np
 
-from embeddings.esm2_mechanism import fetch_gerasimavicius_dataset, fetch_alphamissense_scores, ESM2_MODEL_650M
-from utils_sequences import build_sequence_cache, window_sequence, apply_missense, fetch_pfam_families
-from utils_probes import gene_split_cv, family_split_cv
+from esm2_mechanism.embeddings.esm2_mechanism import fetch_gerasimavicius_dataset, fetch_alphamissense_scores, ESM2_MODEL_650M
+from esm2_mechanism.utils_sequences import build_sequence_cache, window_sequence, apply_missense, fetch_pfam_families
+from esm2_mechanism.utils_probes import gene_split_cv, family_split_cv
 
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import roc_auc_score, f1_score, precision_recall_curve, auc

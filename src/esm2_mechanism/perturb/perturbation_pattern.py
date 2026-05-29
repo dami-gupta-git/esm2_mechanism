@@ -28,14 +28,13 @@ Outputs:
 import json, os, sys, numpy as np
 from collections import Counter, defaultdict
 
-ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-DATA = os.path.join(ROOT, 'data')
-EMB  = os.path.join(DATA, 'embeddings')
-OUT  = os.path.join(ROOT, 'results', 'perturbation_pattern')
-os.makedirs(OUT, exist_ok=True)
+from esm2_mechanism.utils_paths import DATA_DIR as _DATA_DIR, RESULTS_DIR as _RESULTS_DIR
+from esm2_mechanism.mechanism.multiseed_v1 import family_split_cv, gene_split_cv
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from mechanism.multiseed_v1 import family_split_cv, gene_split_cv
+DATA = str(_DATA_DIR)
+EMB  = str(_DATA_DIR / 'embeddings')
+OUT  = str(_RESULTS_DIR / 'perturbation_pattern')
+os.makedirs(OUT, exist_ok=True)
 
 
 def load_data():
@@ -132,7 +131,6 @@ def build_gene_features(variants, delta_pos, delta_mean):
     labels = np.array(labels)
     print(f'Built gene features: {len(gene_list)} genes, {X.shape[1]} features')
     print(f'  Scalar features: 8  |  Mean-pooled delta: 1280  |  Total: {X.shape[1]}')
-    from collections import Counter
     print(f'  Class distribution: {dict(Counter(labels))}')
     return gene_list, X, labels, len(scalar_feats)
 

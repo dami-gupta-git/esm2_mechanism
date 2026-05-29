@@ -31,9 +31,9 @@ from scipy.stats import pearsonr
 import functools
 print = functools.partial(print, flush=True)
 
-from embeddings.esm2_mechanism import fetch_gerasimavicius_dataset, ESM2_MODEL_650M
-from utils_sequences import build_sequence_cache, window_sequence, apply_missense, fetch_pfam_families
-from utils_probes import gene_split_cv
+from esm2_mechanism.embeddings.esm2_mechanism import fetch_gerasimavicius_dataset, ESM2_MODEL_650M
+from esm2_mechanism.utils_sequences import build_sequence_cache, window_sequence, apply_missense, fetch_pfam_families
+from esm2_mechanism.utils_probes import gene_split_cv
 
 
 def gene_level_embeddings(emb, genes_arr):

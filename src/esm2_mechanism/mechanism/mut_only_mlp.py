@@ -45,11 +45,10 @@ import sys
 import numpy as np
 
 # Reuse helpers from experiment_mlp.py to guarantee identical methodology
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import functools
 print = functools.partial(print, flush=True)
 
-from mechanism.experiment_mlp import (
+from esm2_mechanism.mechanism.experiment_mlp import (
     load_variants_and_labels,
     gene_split_cv,
     make_family_splits,

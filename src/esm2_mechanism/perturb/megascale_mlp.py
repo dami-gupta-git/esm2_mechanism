@@ -26,12 +26,10 @@ from sklearn.metrics import roc_auc_score
 from sklearn.preprocessing import StandardScaler
 from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from embeddings.megascale_stability import (
+from esm2_mechanism.embeddings.megascale_stability import (
     load_s1724_variants, assign_protein_clusters,
     random_split_cv, protein_split_cv, cluster_split_cv,
     per_protein_spearman,
-
 )
 
 PFAM = {
@@ -44,10 +42,10 @@ PFAM = {
     '3BDC': 'PF00565', '3HHR': 'PF00103', '4HXJ': 'PF00870'
 }
 
-ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-DATA = os.path.join(ROOT, "data")
-EMB  = os.path.join(DATA, "embeddings")
-OUT  = os.path.join(ROOT, "results", "megascale_stability")
+from esm2_mechanism.utils_paths import DATA_DIR as _DATA_DIR, RESULTS_DIR as _RESULTS_DIR
+DATA = str(_DATA_DIR)
+EMB  = str(_DATA_DIR / "embeddings")
+OUT  = str(_RESULTS_DIR / "megascale_stability")
 
 WT_MEAN_EMB  = os.path.join(EMB, "megascale_wt_mean.npy")
 MUT_MEAN_EMB = os.path.join(EMB, "megascale_mut_mean.npy")

@@ -31,8 +31,8 @@ parser.add_argument("--model", default="esm2_t33_650M_UR50D")
 parser.add_argument("--batch_size", type=int, default=32)
 args = parser.parse_args()
 
-from embeddings.esm2_mechanism import get_esm2_embeddings_for_pairs
-from utils_sequences import window_sequence, apply_missense, fetch_uniprot_sequence
+from esm2_mechanism.embeddings.esm2_mechanism import get_esm2_embeddings_for_pairs
+from esm2_mechanism.utils_sequences import window_sequence, apply_missense, fetch_uniprot_sequence
 
 # Load merged variants
 variants_path = os.path.join(args.data_dir, "merged_variants.json")

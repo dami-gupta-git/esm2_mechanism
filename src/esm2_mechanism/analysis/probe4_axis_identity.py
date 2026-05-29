@@ -28,14 +28,12 @@ import numpy as np
 import functools
 print = functools.partial(print, flush=True)
 
-SCRIPTS = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-ROOT = os.path.dirname(SCRIPTS)
-DATA = os.path.join(ROOT, "data")
-EMB = os.path.join(DATA, "embeddings")
-OUT = os.path.join(ROOT, "results", "magnitude_direction")
+from esm2_mechanism.utils_paths import DATA_DIR as _DATA_DIR, RESULTS_DIR as _RESULTS_DIR
+import esm2_mechanism.mechanism.multiseed_v1 as ms
 
-sys.path.insert(0, SCRIPTS)
-import mechanism.multiseed_v1 as ms
+DATA = str(_DATA_DIR)
+EMB = str(_DATA_DIR / "embeddings")
+OUT = str(_RESULTS_DIR / "magnitude_direction")
 
 AA = "ARNDCQEGHILKMFPSTWYV"
 

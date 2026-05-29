@@ -21,7 +21,7 @@ import warnings
 import numpy as np
 from sklearn.metrics import roc_auc_score, f1_score
 from sklearn.preprocessing import LabelEncoder
-from utils_probes import gene_split_cv
+from esm2_mechanism.utils_probes import gene_split_cv
 import functools
 print = functools.partial(print, flush=True)
 
