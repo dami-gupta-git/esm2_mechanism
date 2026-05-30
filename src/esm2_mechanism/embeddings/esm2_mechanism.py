@@ -107,8 +107,8 @@ def get_esm2_embeddings_for_pairs(wt_seqs, mut_seqs, aa_positions,
             wt_mean_list.append(wt_rep[1:len(wt)+1].mean(0).numpy())
             mut_mean_list.append(mut_rep[1:len(mut)+1].mean(0).numpy())
 
-            var_idx_token = var_pos  # 1-indexed; token index = var_pos (BOS at 0)
-            if 0 < var_idx_token <= reps.shape[1] - 1:
+            var_idx_token = var_pos  # 1-indexed; BOS occupies token 0, so sequence tokens are 1..len(wt)
+            if 0 < var_idx_token <= len(wt):
                 wt_pos_list.append(wt_rep[var_idx_token].numpy())
                 mut_pos_list.append(mut_rep[var_idx_token].numpy())
             else:
@@ -397,26 +397,43 @@ def run_baselines(embeddings_wt, deltas_mean, foldx_ddg, y, genes,
         if mut_idx is not None:
             onehot[i, 20 + mut_idx] = 1.0
 
-    ddg_feat = np.nan_to_num(foldx_ddg, nan=0.0).reshape(-1, 1)
-
-    configs = [
-        ("wt_only",     embeddings_wt,  True),
-        ("onehot_aa",   onehot,         True),
-        ("foldx_ddg_only", ddg_feat,    ddg_feat.std() > 0),
-    ]
-    if alphamissense_scores is not None and not np.all(np.isnan(alphamissense_scores)):
-        am_feat = np.nan_to_num(alphamissense_scores, nan=0.0).reshape(-1, 1)
-        configs.append(("alphamissense", am_feat, am_feat.std() > 0))
+    # FoldX and AlphaMissense baselines are restricted to variants with observed values.
+    # Missing values are not imputed — a variant with no FoldX ΔΔG is excluded from
+    # that baseline entirely so the probe only sees real measurements.
+    foldx_mask = ~np.isnan(foldx_ddg)
+    if foldx_mask.sum() >= 20:
+        ddg_splits = gene_split_cv(genes[foldx_mask], seed=seed)
+        ddg_feat = foldx_ddg[foldx_mask].reshape(-1, 1)
+        foldx_config = ("foldx_ddg_only", ddg_feat, y[foldx_mask], ddg_splits,
+                        ddg_feat.std() > 0)
     else:
-        configs.append(("alphamissense", None, False))
+        foldx_config = ("foldx_ddg_only", None, None, None, False)
+
+    if alphamissense_scores is not None:
+        am_mask = ~np.isnan(alphamissense_scores)
+        if am_mask.sum() >= 20:
+            am_splits = gene_split_cv(genes[am_mask], seed=seed)
+            am_feat = alphamissense_scores[am_mask].reshape(-1, 1)
+            am_config = ("alphamissense", am_feat, y[am_mask], am_splits,
+                         am_feat.std() > 0)
+        else:
+            am_config = ("alphamissense", None, None, None, False)
+    else:
+        am_config = ("alphamissense", None, None, None, False)
+
+    # Full-data baselines use the shared splits computed above
+    full_configs = [
+        ("wt_only",   embeddings_wt, y, splits, True),
+        ("onehot_aa", onehot,        y, splits, True),
+    ]
 
     results = {}
-    for name, X_bl, runnable in configs:
+    for name, X_bl, y_bl, spl, runnable in full_configs + [foldx_config, am_config]:
         if not runnable or X_bl is None:
             results[name] = {"note": f"{name} unavailable or zero-variance"}
             continue
-        print(f"  Baseline: {name}")
-        results[name] = run_logreg_cv(X_bl, y, splits, classes=CLASSES_3,
+        print(f"  Baseline: {name} (n={len(y_bl)})")
+        results[name] = run_logreg_cv(X_bl, y_bl, spl, classes=CLASSES_3,
                                        seed=seed, label=name)
     return results
 
@@ -518,10 +535,16 @@ def _load_or_extract_embeddings(wt_seqs, mut_seqs, var_positions,
     }
     if os.path.exists(emb_cache["wt"]) and os.path.exists(emb_cache["mut"]):
         print("\n=== Loading cached embeddings ===")
+        for key in ("wt_pos", "mut_pos"):
+            if not os.path.exists(emb_cache[key]):
+                raise FileNotFoundError(
+                    f"Mean embeddings found but positional embeddings missing: {emb_cache[key]}\n"
+                    f"Re-run embed_variants.py to regenerate the full embedding set."
+                )
         emb_wt_mean  = np.load(emb_cache["wt"])
         emb_mut_mean = np.load(emb_cache["mut"])
-        emb_wt_pos   = np.load(emb_cache["wt_pos"])  if os.path.exists(emb_cache["wt_pos"])  else emb_wt_mean
-        emb_mut_pos  = np.load(emb_cache["mut_pos"]) if os.path.exists(emb_cache["mut_pos"]) else emb_mut_mean
+        emb_wt_pos   = np.load(emb_cache["wt_pos"])
+        emb_mut_pos  = np.load(emb_cache["mut_pos"])
     else:
         print(f"\n=== Extracting ESM-2 embeddings ({model_name}) ===")
         os.makedirs(emb_dir, exist_ok=True)

@@ -1,16 +1,36 @@
 """
 Extract ESM-2 embeddings for the merged variant dataset.
 
-Reads  data/merged_variants.json  (built by fetch_data/fetch_variants.py --step merge)
-and    data/cache/sequences.json  (built by fetch_data/fetch_annotations.py --step uniprot).
-Fetches UniProt sequences for any IDs not yet in the cache (incremental update).
+Reads data/merged_variants.json (a list of missense variants, each with a UniProt ID,
+amino acid position, wild-type AA, mutant AA, and pathogenicity label) and produces
+dense vector representations of each variant for downstream ML classification.
+
+Pipeline
+--------
+1. Load variants from data/merged_variants.json.
+2. Fetch canonical protein sequences from UniProt for each variant's UniProt ID,
+   using data/cache/sequences.json as an incremental local cache.
+3. For each variant, extract a window of up to 1022 residues centred on the mutation
+   site (ESM-2's token limit), apply the missense substitution to build the mutant
+   sequence, and discard variants where the sequence is unavailable or the WT amino
+   acid does not match the reference sequence.
+4. Run WT and mutant sequences through a pretrained ESM-2 model (650M or 3B),
+   interleaved in the same batch to halve the number of forward passes.
+5. Extract two embedding types per variant from the final transformer layer:
+     - Mean-pooled: average over all residue embeddings; captures global protein context.
+     - Position-specific: embedding at the exact mutation site; captures local context.
 
 Outputs (under data/embeddings/<model>/):
-  embeddings_wt_mean.npy        (N, D)  mean-pooled WT
-  embeddings_mut_mean.npy       (N, D)  mean-pooled mutant
-  embeddings_wt_pos.npy         (N, D)  per-residue WT at variant position
-  embeddings_mut_pos.npy        (N, D)  per-residue mutant at variant position
+  embeddings_wt_mean.npy        (N, D)  mean-pooled WT embeddings
+  embeddings_mut_mean.npy       (N, D)  mean-pooled mutant embeddings
+  embeddings_wt_pos.npy         (N, D)  per-residue WT embedding at variant position
+  embeddings_mut_pos.npy        (N, D)  per-residue mutant embedding at variant position
   valid_variants.json           filtered variant list aligned with the arrays
+
+The four arrays and valid_variants.json are aligned by row: index i in each array
+corresponds to valid_variants[i]. Together they provide WT and mutant state at two
+granularities (global and local), ready to train a pathogenicity classifier on the
+difference between them.
 
 Usage (requires GPU):
     python -m esm2_mechanism.embeddings.embed_variants \\
@@ -22,12 +42,12 @@ import functools
 import json
 import os
 import time
-
+from collections import Counter
 import numpy as np
 
 print = functools.partial(print, flush=True)
 
-from esm2_mechanism.utils_sequences import fetch_uniprot_sequence, window_sequence, apply_missense
+from esm2_mechanism.utils_sequences import fetch_uniprot_sequence, TransientFetchError, window_sequence, apply_missense
 
 ESM2_MODEL_650M = "esm2_t33_650M_UR50D"
 ESM2_MODEL_3B = "esm2_t36_3B_UR50D"
@@ -92,8 +112,8 @@ def get_esm2_embeddings_for_pairs(
             wt_mean_list.append(wt_rep[1:len(wt) + 1].mean(0).numpy())
             mut_mean_list.append(mut_rep[1:len(mut) + 1].mean(0).numpy())
 
-            # var_pos is 1-indexed; token index = var_pos (BOS occupies index 0)
-            if 0 < var_pos <= reps.shape[1] - 1:
+            # var_pos is 1-indexed; BOS occupies token 0, so sequence tokens are 1..len(wt)
+            if 0 < var_pos <= len(wt):
                 wt_pos_list.append(wt_rep[var_pos].numpy())
                 mut_pos_list.append(mut_rep[var_pos].numpy())
             else:
@@ -136,17 +156,26 @@ def _update_sequence_cache(variants: list[dict], cache_path: str) -> dict[str, s
         return seq_cache
 
     print(f"Fetching {len(needed)} missing UniProt sequences...")
+    transient_failures = 0
     for i, uid in enumerate(sorted(needed)):
         if i % 100 == 0:
             print(f"  {i}/{len(needed)}")
-        seq = fetch_uniprot_sequence(uid)
+        try:
+            seq = fetch_uniprot_sequence(uid)
+        except TransientFetchError:
+            transient_failures += 1
+            continue
         if seq:
             seq_cache[uid] = seq
         time.sleep(0.3)
+    if transient_failures:
+        print(f"  WARNING: {transient_failures} UIDs skipped due to transient failures — not cached, will retry next run")
 
     os.makedirs(os.path.dirname(cache_path) or ".", exist_ok=True)
-    with open(cache_path, "w") as f:
+    tmp_path = cache_path + ".tmp"
+    with open(tmp_path, "w") as f:
         json.dump(seq_cache, f)
+    os.replace(tmp_path, cache_path)
     print(f"  Sequences cached: {len(seq_cache)}")
     return seq_cache
 
@@ -216,7 +245,7 @@ def main() -> None:
 
     valid, wt_seqs, mut_seqs, positions = _build_valid_pairs(variants, seq_cache)
 
-    from collections import Counter
+
     print(f"3-class distribution: {dict(Counter(v['label_3class'] for v in valid))}")
 
     out_dir = os.path.join(args.data_dir, "embeddings", args.model)
@@ -246,13 +275,17 @@ def main() -> None:
         model_name=args.model, device=device, batch_size=args.batch_size,
     )
 
-    # Write arrays before valid_variants.json so its presence signals a complete set
+    # Write arrays before valid_variants.json so its presence signals a complete set.
+    # valid_variants.json is written atomically so a crash mid-write leaves it absent
+    # rather than corrupt — the next run will re-extract cleanly.
     np.save(ckpt_wt_mean, wt_mean)
     np.save(ckpt_mut_mean, mut_mean)
     np.save(ckpt_wt_pos,  wt_pos)
     np.save(ckpt_mut_pos, mut_pos)
-    with open(ckpt_valid, "w") as f:
+    tmp_valid = ckpt_valid + ".tmp"
+    with open(tmp_valid, "w") as f:
         json.dump(valid, f)
+    os.replace(tmp_valid, ckpt_valid)
 
     print(f"\nSaved embeddings: {wt_mean.shape} -> {out_dir}")
     print("Done.")

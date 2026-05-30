@@ -10,12 +10,13 @@ Covers:
 - megascale_stability.cluster_split_cv: no cluster leakage, min-size respected
 - megascale_stability.auroc_at_median: above-median positive, single-class → nan
 - megascale_stability.apply_decision_rule: all five outcomes
-- family_clustering.knn_family_purity: single-family → nan, purity in [0,1]
+- family_clustering.knn_family_purity: too-few-points → nan, purity in [0,1], single-family → 1.0
 - family_clustering.within_between_ratio: too few pairs → nan, ratio correct sign
 - family_clustering.gene_level_embeddings: shape, averaging
 - esm2_mechanism._load_alphamissense_scores: key lookup, missing file, corrupt JSON
 - esm2_mechanism._load_data: missing file raises, filtering drops invalid rows
 - embed_variants._build_valid_pairs: filters no-uid, missing seq, bad mutation
+- utils_sequences.fetch_uniprot_sequence: returns None on 404, raises TransientFetchError on network error
 """
 
 import numpy as np
@@ -522,3 +523,95 @@ class TestBuildValidPairs:
         ]
         valid, *_ = self._build(variants, seq_cache)
         assert len(valid) == 2
+
+
+# ---------------------------------------------------------------------------
+# utils_sequences.fetch_uniprot_sequence
+# ---------------------------------------------------------------------------
+
+class TestFetchUniprotSequence:
+
+    def setup_method(self):
+        from esm2_mechanism.utils_sequences import fetch_uniprot_sequence, TransientFetchError
+        self.fetch = fetch_uniprot_sequence
+        self.TransientFetchError = TransientFetchError
+
+    def _make_handler(self, status, body=b""):
+        """Return a urllib opener that always responds with the given HTTP status."""
+        import urllib.request
+        import urllib.error
+        import io
+
+        class _FakeResponse:
+            def __init__(self):
+                self.status = status
+                self._body = body
+            def read(self):
+                return self._body
+            def __enter__(self):
+                return self
+            def __exit__(self, *_):
+                pass
+
+        class _Handler(urllib.request.BaseHandler):
+            def http_open(self, req):
+                if status == 404:
+                    raise urllib.error.HTTPError(
+                        req.full_url, 404, "Not Found", {}, io.BytesIO(b"")
+                    )
+                return _FakeResponse()
+            https_open = http_open
+
+        opener = urllib.request.OpenerDirector()
+        opener.add_handler(_Handler())
+        return opener
+
+    def test_404_returns_none(self, monkeypatch):
+        import urllib.request
+        opener = self._make_handler(404)
+        monkeypatch.setattr(urllib.request, "urlopen", opener.open)
+        result = self.fetch("P99999", retries=1)
+        assert result is None
+
+    def test_network_error_raises_transient(self, monkeypatch):
+        import urllib.request
+
+        def _fail(url, timeout=None):
+            raise OSError("network unreachable")
+
+        monkeypatch.setattr(urllib.request, "urlopen", _fail)
+        with pytest.raises(self.TransientFetchError):
+            self.fetch("P99999", retries=1, delay=0)
+
+    def test_success_returns_uppercase_sequence(self, monkeypatch):
+        import urllib.request
+        import io
+
+        fasta = b">sp|P12345|GENE_HUMAN Some protein\nMKTAY\nIAKQR\n"
+
+        class _FakeResp:
+            def read(self):
+                return fasta
+            def __enter__(self):
+                return self
+            def __exit__(self, *_):
+                pass
+
+        monkeypatch.setattr(urllib.request, "urlopen", lambda *a, **kw: _FakeResp())
+        result = self.fetch("P12345", retries=1)
+        assert result == "MKTAYIAKQR"
+
+    def test_empty_fasta_body_returns_none(self, monkeypatch):
+        import urllib.request
+
+        class _FakeResp:
+            def read(self):
+                return b">sp|P12345|GENE_HUMAN\n"
+            def __enter__(self):
+                return self
+            def __exit__(self, *_):
+                pass
+
+        monkeypatch.setattr(urllib.request, "urlopen", lambda *a, **kw: _FakeResp())
+        result = self.fetch("P12345", retries=1)
+        assert result is None

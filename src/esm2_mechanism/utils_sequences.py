@@ -20,24 +20,45 @@ MAX_SEQ_LEN = 1022   # ESM-2 token limit
 WINDOW_HALF = 500    # half-window size for sequences > MAX_SEQ_LEN
 
 
+class TransientFetchError(Exception):
+    """Raised by fetch_uniprot_sequence when all retries fail due to a transient
+    network or server error (not a definitive 404). Callers must not cache the
+    result — the next run should retry."""
+
+
 # ---------------------------------------------------------------------------
 # UniProt sequence fetching
 # ---------------------------------------------------------------------------
 
 def fetch_uniprot_sequence(uniprot_id: str, retries: int = 3, delay: float = 1.0) -> str | None:
-    """Fetch canonical protein sequence from UniProt. Returns None on failure."""
+    """Fetch canonical protein sequence from UniProt.
+
+    Returns the sequence string on success, or None when the server definitively
+    reports that the accession does not exist (HTTP 404).
+
+    Raises TransientFetchError when all retries are exhausted due to a transient
+    network or server error. Callers must not cache this outcome.
+    """
+    import urllib.error
     url = f"{UNIPROT_REST}/{uniprot_id}.fasta"
+    last_exc: Exception | None = None
     for attempt in range(retries):
         try:
             with urllib.request.urlopen(url, timeout=30) as resp:
                 fasta = resp.read().decode()
             lines = fasta.strip().split("\n")
-            seq = "".join(l for l in lines if not l.startswith(">"))
+            seq = "".join(line for line in lines if not line.startswith(">"))
             return seq.upper() if seq else None
-        except Exception:
-            if attempt < retries - 1:
-                time.sleep(delay)
-    return None
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:
+                return None
+            last_exc = exc
+        except Exception as exc:
+            last_exc = exc
+        if attempt < retries - 1:
+            time.sleep(delay)
+    print(f"  WARNING: transient fetch failure for {uniprot_id}: {last_exc} — will retry next run")
+    raise TransientFetchError(uniprot_id) from last_exc
 
 
 def build_sequence_cache(variants: list[dict], cache_dir: str) -> dict[str, str]:
@@ -47,24 +68,38 @@ def build_sequence_cache(variants: list[dict], cache_dir: str) -> dict[str, str]
     """
     cache_path = os.path.join(cache_dir, "sequences.json")
     if os.path.exists(cache_path):
-        with open(cache_path) as f:
-            return json.load(f)
+        try:
+            with open(cache_path) as f:
+                return json.load(f)
+        except json.JSONDecodeError:
+            print(f"WARNING: corrupt sequence cache at {cache_path} — re-fetching")
+            os.remove(cache_path)
 
     os.makedirs(cache_dir, exist_ok=True)
     sequences: dict[str, str] = {}
-    unique_uniprots = {v["uniprot_id"] for v in variants if v["uniprot_id"]}
+    unique_uniprots = {v["uniprot_id"] for v in variants if v.get("uniprot_id")}
     print(f"Fetching sequences for {len(unique_uniprots)} UniProt IDs...")
 
+    transient_failures = 0
     for i, uid in enumerate(sorted(unique_uniprots)):
         if i % 50 == 0:
             print(f"  {i}/{len(unique_uniprots)}")
-        seq = fetch_uniprot_sequence(uid)
+        try:
+            seq = fetch_uniprot_sequence(uid)
+        except TransientFetchError:
+            transient_failures += 1
+            continue
         if seq:
             sequences[uid] = seq
         time.sleep(0.3)
+    if transient_failures:
+        print(f"  WARNING: {transient_failures} UIDs had transient failures — skipping cache write, will retry next run")
+        return sequences
 
-    with open(cache_path, "w") as f:
+    tmp_path = cache_path + ".tmp"
+    with open(tmp_path, "w") as f:
         json.dump(sequences, f)
+    os.replace(tmp_path, cache_path)
 
     print(f"  Fetched {len(sequences)}/{len(unique_uniprots)} sequences")
     return sequences
@@ -77,17 +112,26 @@ def build_sequence_cache(variants: list[dict], cache_dir: str) -> dict[str, str]
 def fetch_pfam_families(variants: list[dict], cache_dir: str) -> dict[str, str | None]:
     """Fetch primary Pfam family for each unique gene via UniProt.
 
-    Returns dict: gene -> pfam_id (or None if not found).
+    Returns dict: gene -> pfam_id (or None when the protein has no Pfam annotation).
+    Genes that fail with a transient network error are omitted from the returned dict
+    and not written to cache, so the next run retries them.
     """
+    import urllib.error
+
     cache_path = os.path.join(cache_dir, "pfam_families.json")
     if os.path.exists(cache_path):
-        with open(cache_path) as f:
-            return json.load(f)
+        try:
+            with open(cache_path) as f:
+                return json.load(f)
+        except json.JSONDecodeError:
+            print(f"WARNING: corrupt Pfam cache at {cache_path} — re-fetching")
+            os.remove(cache_path)
 
     pfam_map: dict[str, str | None] = {}
-    unique_pairs = {(v["gene"], v["uniprot_id"]) for v in variants if v["uniprot_id"]}
+    unique_pairs = {(v["gene"], v["uniprot_id"]) for v in variants if v.get("uniprot_id")}
     print(f"Fetching Pfam families for {len(unique_pairs)} genes...")
 
+    transient_failures = 0
     for gene, uniprot_id in sorted(unique_pairs):
         url = f"{UNIPROT_REST}/{uniprot_id}.json"
         pfam_id = None
@@ -99,13 +143,28 @@ def fetch_pfam_families(variants: list[dict], cache_dir: str) -> dict[str, str |
                 if xref.get("database") == "Pfam":
                     pfam_id = xref.get("id")
                     break
-        except Exception:
-            pass
-        pfam_map[gene] = pfam_id
+            pfam_map[gene] = pfam_id
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:
+                pfam_map[gene] = None
+            else:
+                print(f"  WARNING: transient HTTP {exc.code} for {uniprot_id} — skipping, will retry next run")
+                transient_failures += 1
+        except Exception as exc:
+            print(f"  WARNING: transient fetch failure for {uniprot_id}: {exc} — skipping, will retry next run")
+            transient_failures += 1
         time.sleep(0.3)
 
-    with open(cache_path, "w") as f:
+    if transient_failures:
+        print(f"  WARNING: {transient_failures} genes had transient failures — skipping cache write, will retry next run")
+        n_annotated = sum(1 for v in pfam_map.values() if v is not None)
+        print(f"  Pfam annotations so far: {n_annotated}/{len(pfam_map)} genes (partial)")
+        return pfam_map
+
+    tmp_path = cache_path + ".tmp"
+    with open(tmp_path, "w") as f:
         json.dump(pfam_map, f)
+    os.replace(tmp_path, cache_path)
 
     n_annotated = sum(1 for v in pfam_map.values() if v is not None)
     print(f"  Pfam annotations: {n_annotated}/{len(pfam_map)} genes")

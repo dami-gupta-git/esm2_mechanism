@@ -38,7 +38,8 @@ from sklearn.neural_network import MLPClassifier
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import roc_auc_score, f1_score, precision_recall_curve, auc
 from esm2_mechanism.utils_probes import gene_split_cv, family_split_cv
-from esm2_mechanism.embeddings.esm2_mechanism import fetch_gerasimavicius_dataset, get_esm2_embeddings_for_pairs, ESM2_MODEL_650M
+from esm2_mechanism.embeddings.esm2_mechanism import _load_data, ESM2_MODEL_650M
+from esm2_mechanism.embeddings.embed_variants import get_esm2_embeddings_for_pairs
 from esm2_mechanism.utils_sequences import build_sequence_cache, fetch_pfam_families, window_sequence, apply_missense
 
 import functools
@@ -77,9 +78,14 @@ def fetch_clinvar_variants(target_genes, cache_dir,
     """
     cache = os.path.join(cache_dir, "clinvar_pathogenicity_variants.json")
     if os.path.exists(cache):
-        with open(cache) as f:
+        try:
+            with open(cache) as f:
+                data = json.load(f)
             print(f"  Loading cached ClinVar variants from {cache}")
-            return json.load(f)
+            return data
+        except json.JSONDecodeError:
+            print(f"  WARNING: corrupt cache {cache} — re-fetching")
+            os.remove(cache)
 
     print(f"  Downloading ClinVar variant_summary.txt.gz "
           f"(this is ~150 MB compressed) ...")
@@ -159,8 +165,10 @@ def fetch_clinvar_variants(target_genes, cache_dir,
           f"{sum(1 for v in chosen if v['label']=='benign')} benign, "
           f"{len(set(v['gene'] for v in chosen))} genes)")
 
-    with open(cache, "w") as f:
+    tmp_cache = cache + ".tmp"
+    with open(tmp_cache, "w") as f:
         json.dump(chosen, f)
+    os.replace(tmp_cache, cache)
     return chosen
 
 
@@ -187,10 +195,15 @@ def attach_uniprot_ids(variants, gerasimavicius_variants):
 # --------------------------------------------------------------------------- #
 
 def build_wt_mut_pairs(variants, seq_cache):
-    """Apply each missense to its WT sequence, with windowing for long proteins."""
+    """Apply each missense to its WT sequence, with windowing for long proteins.
+
+    Returns valid variants, sequences, positions, and the original indices into
+    variants so callers can record which rows survived filtering.
+    """
     valid = []
+    valid_indices = []
     wt_seqs, mut_seqs, var_positions = [], [], []
-    for v in variants:
+    for idx, v in enumerate(variants):
         uid = v.get("uniprot_id")
         if uid not in seq_cache:
             continue
@@ -203,21 +216,29 @@ def build_wt_mut_pairs(variants, seq_cache):
         mut_seqs.append(mut_win)
         var_positions.append(new_pos)
         valid.append(v)
-    return valid, wt_seqs, mut_seqs, var_positions
+        valid_indices.append(idx)
+    return valid, valid_indices, wt_seqs, mut_seqs, var_positions
 
 
 def get_or_extract_embeddings(variants, seq_cache, data_dir, model_name,
                                batch_size=32):
     """Cache key is a SHA-ish suffix derived from variant count + model.
     If the cache exists and matches the variant count, reuse it."""
-    suffix = f"pathogenicity_{model_name}_n{len(variants)}"
-    wt_p   = os.path.join(data_dir, f"emb_wt_mean_{suffix}.npy")
-    mut_p  = os.path.join(data_dir, f"emb_mut_mean_{suffix}.npy")
-    meta_p = os.path.join(data_dir, f"emb_meta_{suffix}.json")
+    emb_dir = os.path.join(data_dir, "embeddings", model_name)
+    os.makedirs(emb_dir, exist_ok=True)
+    suffix = f"pathogenicity_n{len(variants)}"
+    wt_p   = os.path.join(emb_dir, f"emb_wt_mean_{suffix}.npy")
+    mut_p  = os.path.join(emb_dir, f"emb_mut_mean_{suffix}.npy")
+    meta_p = os.path.join(emb_dir, f"emb_meta_{suffix}.json")
 
     if os.path.exists(wt_p) and os.path.exists(mut_p) and os.path.exists(meta_p):
-        with open(meta_p) as _f:
-            meta = json.load(_f)
+        try:
+            with open(meta_p) as _f:
+                meta = json.load(_f)
+        except json.JSONDecodeError:
+            print(f"  WARNING: corrupt embedding metadata {meta_p} — re-extracting")
+            os.remove(meta_p)
+            meta = {}
         if meta.get("n") == len(variants):
             print(f"  Cached pathogenicity embeddings found: {wt_p}")
             return (np.load(wt_p), np.load(mut_p),
@@ -236,7 +257,7 @@ def get_or_extract_embeddings(variants, seq_cache, data_dir, model_name,
             "Once cached, phase 3 (the probe) runs anywhere."
         )
 
-    valid, wt_seqs, mut_seqs, var_positions = build_wt_mut_pairs(
+    valid, valid_indices, wt_seqs, mut_seqs, var_positions = build_wt_mut_pairs(
         variants, seq_cache)
     print(f"  Embedding {len(valid)} WT/mut pairs at batch_size={batch_size} ...")
 
@@ -244,13 +265,14 @@ def get_or_extract_embeddings(variants, seq_cache, data_dir, model_name,
         wt_seqs, mut_seqs, var_positions,
         model_name=model_name, device=device, batch_size=batch_size,
     )
-    valid_indices = [variants.index(v) for v in valid]
     np.save(wt_p, wt_mean)
     np.save(mut_p, mut_mean)
-    with open(meta_p, "w") as _f:
+    tmp_meta = meta_p + ".tmp"
+    with open(tmp_meta, "w") as _f:
         json.dump({"n": len(variants), "n_valid": len(valid),
                    "valid_indices": valid_indices,
                    "model": model_name}, _f)
+    os.replace(tmp_meta, meta_p)
     print(f"  Cached: {wt_p}")
     return wt_mean, mut_mean, valid
 
@@ -313,7 +335,7 @@ def main():
 
     # ----- Phase 1: data --------------------------------------------------- #
     print("\n=== Phase 1: ClinVar variant fetch ===")
-    gerasimavicius = fetch_gerasimavicius_dataset(data_dir)
+    gerasimavicius = _load_data(data_dir)
     target_genes = sorted(set(v["gene"].upper() for v in gerasimavicius
                                 if v.get("gene")))
     print(f"  Target gene set: {len(target_genes)} genes from Gerasimavicius")
@@ -349,7 +371,7 @@ def main():
         [{"gene": g, "uniprot_id": next((v["uniprot_id"] for v in valid
                                           if v["gene"] == g), None)}
          for g in set(genes)],
-        seq_cache, data_dir,
+        data_dir,
     )
     gs = gene_split_cv(genes, seed=args.seed)
     fs = family_split_cv(genes, pfam_map, seed=args.seed)

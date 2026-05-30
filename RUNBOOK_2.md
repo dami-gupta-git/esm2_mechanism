@@ -114,3 +114,90 @@ If all five output files exist and `valid_variants.json` covers the same number 
 | `esm2_t36_3B_UR50D` | 3B | Requires more GPU memory |
 
 **prerequisite** — `alphamissense_scores_full.json` must be present before running the analysis scripts (not the embedding step itself). Run embedding first, then step 11, then analysis.
+
+---
+
+## Analysis
+
+Run after embeddings and step 11 (AlphaMissense) are complete. No GPU required — all scripts load cached `.npy` files.
+
+The analysis scripts expect `--out_dir` to be the same run directory used for embeddings, with `data/` as a subdirectory. `--data_dir` (where used) should point to `<out_dir>/data`.
+
+### Primary mechanism probe
+
+Fits stability subspace, runs linear probes (gene-split and family-split CV), baselines, negative controls, and probe direction orthogonality analysis.
+
+```
+python -m esm2_mechanism.embeddings.esm2_mechanism \
+    --out_dir run_0 \
+    --model esm2_t33_650M_UR50D \
+    --seeds 0 1 2 3 4
+```
+
+Reads from `run_0/data/`:
+
+| Input | Source |
+|---|---|
+| `merged_variants.json` | fetch pipeline step 4 |
+| `embeddings/<model>/embeddings_wt_mean.npy` | embed_variants |
+| `embeddings/<model>/embeddings_mut_mean.npy` | embed_variants |
+| `embeddings/<model>/embeddings_wt_pos.npy` | embed_variants |
+| `embeddings/<model>/embeddings_mut_pos.npy` | embed_variants |
+| `embeddings/<model>/valid_variants.json` | embed_variants |
+| `alphamissense_scores_full.json` | fetch pipeline step 11 |
+
+Writes to `run_0/`:
+
+| Output | Description |
+|---|---|
+| `final_info_seed<N>.json` | Per-seed headline metrics |
+| `detailed_results_seed<N>.json` | Full CV fold results |
+| `final_info.json` | Mean ± stderr across seeds |
+
+### Family split baselines
+
+Runs gene-family-split CV for WT-only, mutant-only, delta, one-hot, FoldX and AlphaMissense baselines.
+
+```
+python -m esm2_mechanism.mechanism.family_split_baselines \
+    --run_dir run_0 \
+    --model esm2_t33_650M_UR50D \
+    --seed 0
+```
+
+### Family clustering diagnostic
+
+Tests whether embeddings cluster by Pfam family (leakage check).
+
+```
+python -m esm2_mechanism.mechanism.family_clustering \
+    --run_dir run_0 \
+    --model esm2_t33_650M_UR50D \
+    --out run_0/family_clustering.json
+```
+
+### MLP probe
+
+```
+python -m esm2_mechanism.mechanism.experiment_mlp \
+    --data_dir run_0/data \
+    --emb_dir run_0/data/embeddings/esm2_t33_650M_UR50D \
+    --out_dir run_0 \
+    --model esm2_t33_650M_UR50D \
+    --seed 0
+```
+
+### Contrastive mechanism
+
+```
+python -m esm2_mechanism.mechanism.contrastive_mechanism \
+    --data_dir run_0/data \
+    --emb_dir run_0/data/embeddings/esm2_t33_650M_UR50D \
+    --out_dir run_0
+```
+
+---
+
+### Scripts with stale embedding paths (not yet updated)
+
+`multiseed_v1.py` still references the old flat `data/embeddings/embeddings_wt_esm2_t33_650M_UR50D.npy` naming convention rather than the new `data/embeddings/<model>/embeddings_wt_mean.npy` layout. Do not run it until that is fixed.
