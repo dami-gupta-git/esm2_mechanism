@@ -26,9 +26,12 @@ from esm2_mech.utils.sequences import window_sequence, apply_missense
 from esm2_mech.utils.splits import gene_split_cv, family_split_cv
 from esm2_mech.utils.embed import unpack_run_data
 
+from sklearn.decomposition import PCA
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import roc_auc_score, f1_score, precision_recall_curve, auc
 import functools
+
+PCA_COMPONENTS = 256  # applied to embedding features (dim > PCA_COMPONENTS)
 
 print = functools.partial(print, flush=True)
 
@@ -119,12 +122,22 @@ def run(data: dict, out_dir: str, seed: int = 0, n_folds: int = 5) -> dict:
     foldx_mask = ~np.isnan(foldx_ddg)
     am_mask = ~np.isnan(alphamissense_scores)
 
+    # Reduce high-dimensional embeddings with PCA before probing.
+    # Fit PCA on the full set (no label leakage — PCA is unsupervised).
+    print(f"\n=== PCA reduction to {PCA_COMPONENTS} components ===")
+    pca = PCA(n_components=PCA_COMPONENTS, random_state=seed)
+    emb_wt_mean_pca = pca.fit_transform(emb_wt_mean)
+    emb_mut_mean_pca = pca.transform(emb_mut_mean)
+    deltas_mean_pca = pca.transform(deltas_mean)
+    deltas_pos_pca = pca.transform(deltas_pos)
+    print(f"  Variance explained: {pca.explained_variance_ratio_.sum():.3f}")
+
     features: dict = {
-        "wt_only_mean": emb_wt_mean,
-        "mut_only_mean": emb_mut_mean,
-        "delta_mean": deltas_mean,
-        "delta_per_residue": deltas_pos,
-        "wt_concat_mut": np.concatenate([emb_wt_mean, emb_mut_mean], axis=1),
+        "wt_only_mean": emb_wt_mean_pca,
+        "mut_only_mean": emb_mut_mean_pca,
+        "delta_mean": deltas_mean_pca,
+        "delta_per_residue": deltas_pos_pca,
+        "wt_concat_mut": np.concatenate([emb_wt_mean_pca, emb_mut_mean_pca], axis=1),
         "onehot_aa": build_onehot(aa_wt_list, aa_mut_list),
     }
 

@@ -20,7 +20,7 @@ import pytest
 from unittest.mock import MagicMock, patch
 from pathlib import Path
 
-from esm2_mechanism.fetch_data.fetch_variants import (
+from esm2_mech.fetch_data.fetch_variants import (
     _parse_hgvsp,
     validate_wt,
     fetch_clinvar_variants,
@@ -128,7 +128,7 @@ class TestFetchClinvarVariantsCache:
 
     def test_cache_hit_returns_cached_data(self, tmp_path, monkeypatch):
         monkeypatch.setattr(
-            "esm2_mechanism.fetch_data.fetch_variants.CLINVAR_CACHE",
+            "esm2_mech.fetch_data.fetch_variants.CLINVAR_CACHE",
             tmp_path,
         )
         cached = [
@@ -147,12 +147,12 @@ class TestFetchClinvarVariantsCache:
 
     def test_cache_hit_does_not_call_network(self, tmp_path, monkeypatch):
         monkeypatch.setattr(
-            "esm2_mechanism.fetch_data.fetch_variants.CLINVAR_CACHE",
+            "esm2_mech.fetch_data.fetch_variants.CLINVAR_CACHE",
             tmp_path,
         )
         (tmp_path / "BRAF.json").write_text(json.dumps([]))
 
-        with patch("esm2_mechanism.fetch_data.fetch_variants._get_json") as mock_get:
+        with patch("esm2_mech.fetch_data.fetch_variants._get_json") as mock_get:
             fetch_clinvar_variants("BRAF")
             mock_get.assert_not_called()
 
@@ -166,7 +166,7 @@ class TestFetchUniprotId:
 
     def test_prefilled_value_returned_and_cached(self, tmp_path, monkeypatch):
         monkeypatch.setattr(
-            "esm2_mechanism.fetch_data.fetch_variants.UNIPROT_CACHE",
+            "esm2_mech.fetch_data.fetch_variants.UNIPROT_CACHE",
             tmp_path,
         )
         result = fetch_uniprot_id("BRAF", "P15056")
@@ -176,23 +176,23 @@ class TestFetchUniprotId:
 
     def test_cache_hit_returns_without_api_call(self, tmp_path, monkeypatch):
         monkeypatch.setattr(
-            "esm2_mechanism.fetch_data.fetch_variants.UNIPROT_CACHE",
+            "esm2_mech.fetch_data.fetch_variants.UNIPROT_CACHE",
             tmp_path,
         )
         (tmp_path / "BRAF.json").write_text(json.dumps({"uniprot_id": "P15056"}))
 
-        with patch("esm2_mechanism.fetch_data.fetch_variants._get_json") as mock_get:
+        with patch("esm2_mech.fetch_data.fetch_variants._get_json") as mock_get:
             result = fetch_uniprot_id("BRAF", None)
             mock_get.assert_not_called()
         assert result == "P15056"
 
     def test_network_failure_not_cached(self, tmp_path, monkeypatch):
         monkeypatch.setattr(
-            "esm2_mechanism.fetch_data.fetch_variants.UNIPROT_CACHE",
+            "esm2_mech.fetch_data.fetch_variants.UNIPROT_CACHE",
             tmp_path,
         )
         with patch(
-            "esm2_mechanism.fetch_data.fetch_variants._get_json",
+            "esm2_mech.fetch_data.fetch_variants._get_json",
             return_value=None,
         ):
             result = fetch_uniprot_id("UNKNOWN_GENE", None)
@@ -201,7 +201,7 @@ class TestFetchUniprotId:
 
     def test_exact_gene_match_preferred_over_first_result(self, tmp_path, monkeypatch):
         monkeypatch.setattr(
-            "esm2_mechanism.fetch_data.fetch_variants.UNIPROT_CACHE",
+            "esm2_mech.fetch_data.fetch_variants.UNIPROT_CACHE",
             tmp_path,
         )
         api_response = {
@@ -217,7 +217,7 @@ class TestFetchUniprotId:
             ]
         }
         with patch(
-            "esm2_mechanism.fetch_data.fetch_variants._get_json",
+            "esm2_mech.fetch_data.fetch_variants._get_json",
             return_value=api_response,
         ):
             result = fetch_uniprot_id("BRAF", None)
@@ -225,7 +225,7 @@ class TestFetchUniprotId:
 
     def test_no_exact_match_returns_none(self, tmp_path, monkeypatch):
         monkeypatch.setattr(
-            "esm2_mechanism.fetch_data.fetch_variants.UNIPROT_CACHE",
+            "esm2_mech.fetch_data.fetch_variants.UNIPROT_CACHE",
             tmp_path,
         )
         api_response = {
@@ -237,7 +237,7 @@ class TestFetchUniprotId:
             ]
         }
         with patch(
-            "esm2_mechanism.fetch_data.fetch_variants._get_json",
+            "esm2_mech.fetch_data.fetch_variants._get_json",
             return_value=api_response,
         ):
             result = fetch_uniprot_id("BRAF", None)

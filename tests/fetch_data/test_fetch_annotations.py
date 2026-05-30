@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from esm2_mechanism.fetch_data.fetch_alphamissense import (
+from esm2_mech.fetch_data.fetch_alphamissense import (
     _stream_am_filter
 )
 
@@ -111,7 +111,7 @@ def _write_variants(path: Path, rows: list[dict]) -> None:
 
 
 def test_build_am_gene_uniprot_map_single_id(tmp_path, monkeypatch):
-    import esm2_mechanism.fetch_data.fetch_alphamissense as fa
+    import esm2_mech.fetch_data.fetch_alphamissense as fa
 
     vf = tmp_path / "merged_valid_variants.json"
     _write_variants(
@@ -127,7 +127,7 @@ def test_build_am_gene_uniprot_map_single_id(tmp_path, monkeypatch):
 
 
 def test_build_am_gene_uniprot_map_most_frequent_wins(tmp_path, monkeypatch):
-    import esm2_mechanism.fetch_data.fetch_alphamissense as fa
+    import esm2_mech.fetch_data.fetch_alphamissense as fa
 
     vf = tmp_path / "merged_valid_variants.json"
     _write_variants(
@@ -144,7 +144,7 @@ def test_build_am_gene_uniprot_map_most_frequent_wins(tmp_path, monkeypatch):
 
 
 def test_build_am_gene_uniprot_map_skips_empty_uniprot(tmp_path, monkeypatch):
-    import esm2_mechanism.fetch_data.fetch_alphamissense as fa
+    import esm2_mech.fetch_data.fetch_alphamissense as fa
 
     vf = tmp_path / "merged_valid_variants.json"
     _write_variants(
@@ -160,7 +160,7 @@ def test_build_am_gene_uniprot_map_skips_empty_uniprot(tmp_path, monkeypatch):
 
 
 def test_build_am_gene_uniprot_map_multiple_genes(tmp_path, monkeypatch):
-    import esm2_mechanism.fetch_data.fetch_alphamissense as fa
+    import esm2_mech.fetch_data.fetch_alphamissense as fa
 
     vf = tmp_path / "merged_valid_variants.json"
     _write_variants(

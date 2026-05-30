@@ -14,8 +14,8 @@ import json
 import numpy as np
 import pytest
 
-from esm2_mechanism.fetch_data import build_proteome_features as bpf
-from esm2_mechanism.fetch_data.build_proteome_features import (
+from esm2_mech.fetch_data import build_proteome_features as bpf
+from esm2_mech.fetch_data.build_proteome_features import (
     _load_paralog_cache,
     build_aligned_matrix,
     get_bioplex_degree,

@@ -59,9 +59,16 @@ def main():
         out_f = os.path.join(OUT, f"seed{seed}.json")
         if os.path.exists(out_f):
             print(f"seed {seed}: loading cached result")
-            with open(out_f) as _f:
-            all_results[seed] = json.load(_f)
-            continue
+            try:
+                with open(out_f) as _f:
+                    all_results[seed] = json.load(_f)
+            except json.JSONDecodeError:
+                print(
+                    f"  WARNING: corrupt cached result at {out_f} — deleting and recomputing"
+                )
+                os.remove(out_f)
+            else:
+                continue
         print(f"\n=== seed {seed} ===")
         gs = gene_split_cv(genes, seed=seed)
         fs = family_split_cv(genes, pfam_map, seed=seed)

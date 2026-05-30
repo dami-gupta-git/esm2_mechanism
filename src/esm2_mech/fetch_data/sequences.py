@@ -10,7 +10,7 @@ import urllib.request
 
 from esm2_mech.utils.constants import UNIPROT_REST
 from esm2_mech.utils.io import atomic_write_json
-from esm2_mech.utils.paths import PFAM_FILE
+from esm2_mech.utils.paths import PFAM_JSON
 
 print = functools.partial(print, flush=True)
 
@@ -66,7 +66,7 @@ def fetch_pfam_families(variants: list[dict]) -> dict[str, str | None]:
     """
     import urllib.error
 
-    cache_path = PFAM_FILE
+    cache_path = PFAM_JSON
     if os.path.exists(cache_path):
         try:
             with open(cache_path, newline="") as f:

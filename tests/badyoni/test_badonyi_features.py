@@ -8,7 +8,7 @@ not zero) with _familyresid_missing=1.
 
 import numpy as np
 import pandas as pd
-from esm2_mechanism.fetch_data.build_badonyi_features import compute_family_residuals
+from esm2_mech.fetch_data.build_badonyi_features import compute_family_residuals
 
 
 def make_df(genes, pDN, pGOF, pLOF):

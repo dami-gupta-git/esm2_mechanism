@@ -16,7 +16,7 @@ from unittest.mock import MagicMock, call, patch
 
 import pytest
 
-from esm2_mechanism.fetch_data.run_fetch_pipeline import (
+from esm2_mech.fetch_data.run_fetch_pipeline import (
     FIRST_STEP,
     LAST_STEP,
     _load_state,
@@ -71,15 +71,15 @@ def _run_main(argv: list[str], step_side_effects: dict[int, Exception | None] = 
     with (
         patch("sys.argv", ["run_pipeline"] + argv),
         patch(
-            "esm2_mechanism.fetch_data.run_fetch_pipeline._make_steps",
+            "esm2_mech.fetch_data.run_fetch_pipeline._make_steps",
             side_effect=fake_make_steps,
         ),
         patch(
-            "esm2_mechanism.fetch_data.run_fetch_pipeline._save_state",
+            "esm2_mech.fetch_data.run_fetch_pipeline._save_state",
             side_effect=fake_save_state,
         ),
     ):
-        from esm2_mechanism.fetch_data import run_fetch_pipeline
+        from esm2_mech.fetch_data import run_fetch_pipeline
 
         try:
             run_fetch_pipeline.main()
@@ -95,14 +95,14 @@ def _run_main(argv: list[str], step_side_effects: dict[int, Exception | None] = 
 
 def test_load_state_missing_file(tmp_path):
     state_path = tmp_path / ".pipeline_state.json"
-    with patch("esm2_mechanism.fetch_data.run_fetch_pipeline.STATE_FILE", state_path):
+    with patch("esm2_mech.fetch_data.run_fetch_pipeline.STATE_FILE", state_path):
         assert _load_state() == {}
 
 
 def test_save_and_load_state_roundtrip(tmp_path):
     state_path = tmp_path / ".pipeline_state.json"
     data = {"last_completed_step": 5, "last_completed_at": "2024-01-01T00:00:00"}
-    with patch("esm2_mechanism.fetch_data.run_fetch_pipeline.STATE_FILE", state_path):
+    with patch("esm2_mech.fetch_data.run_fetch_pipeline.STATE_FILE", state_path):
         _save_state(data)
         assert state_path.exists()
         loaded = _load_state()
@@ -111,7 +111,7 @@ def test_save_and_load_state_roundtrip(tmp_path):
 
 def test_save_state_is_atomic(tmp_path):
     state_path = tmp_path / ".pipeline_state.json"
-    with patch("esm2_mechanism.fetch_data.run_fetch_pipeline.STATE_FILE", state_path):
+    with patch("esm2_mech.fetch_data.run_fetch_pipeline.STATE_FILE", state_path):
         _save_state({"last_completed_step": 3})
     # tmp file must not remain
     assert not state_path.with_suffix(".json.tmp").exists()
@@ -121,7 +121,7 @@ def test_save_state_is_atomic(tmp_path):
 def test_load_state_corrupt_file(tmp_path):
     state_path = tmp_path / ".pipeline_state.json"
     state_path.write_text("{ not valid json")
-    with patch("esm2_mechanism.fetch_data.run_fetch_pipeline.STATE_FILE", state_path):
+    with patch("esm2_mech.fetch_data.run_fetch_pipeline.STATE_FILE", state_path):
         state = _load_state()
     assert state == {}
 
@@ -134,9 +134,9 @@ def test_load_state_corrupt_file(tmp_path):
 def test_auto_resume_no_prior_state(tmp_path):
     state_path = tmp_path / ".pipeline_state.json"
     with (
-        patch("esm2_mechanism.fetch_data.run_fetch_pipeline.STATE_FILE", state_path),
+        patch("esm2_mech.fetch_data.run_fetch_pipeline.STATE_FILE", state_path),
         patch(
-            "esm2_mechanism.fetch_data.run_fetch_pipeline._load_state", return_value={}
+            "esm2_mech.fetch_data.run_fetch_pipeline._load_state", return_value={}
         ),
     ):
         mocks, saved, exit_code = _run_main([])
@@ -150,9 +150,9 @@ def test_auto_resume_from_last_completed(tmp_path):
     state_path = tmp_path / ".pipeline_state.json"
     prior_state = {"last_completed_step": 5, "last_completed_at": "2024-01-01T00:00:00"}
     with (
-        patch("esm2_mechanism.fetch_data.run_fetch_pipeline.STATE_FILE", state_path),
+        patch("esm2_mech.fetch_data.run_fetch_pipeline.STATE_FILE", state_path),
         patch(
-            "esm2_mechanism.fetch_data.run_fetch_pipeline._load_state",
+            "esm2_mech.fetch_data.run_fetch_pipeline._load_state",
             return_value=prior_state,
         ),
     ):
@@ -170,7 +170,7 @@ def test_auto_resume_all_done(tmp_path, capsys):
         "last_completed_at": "2024-01-01T00:00:00",
     }
     with patch(
-        "esm2_mechanism.fetch_data.run_fetch_pipeline._load_state",
+        "esm2_mech.fetch_data.run_fetch_pipeline._load_state",
         return_value=prior_state,
     ):
         mocks, saved, exit_code = _run_main([])
@@ -189,7 +189,7 @@ def test_auto_resume_all_done(tmp_path, capsys):
 def test_from_step_overrides_saved_state(tmp_path):
     prior_state = {"last_completed_step": 8}
     with patch(
-        "esm2_mechanism.fetch_data.run_fetch_pipeline._load_state",
+        "esm2_mech.fetch_data.run_fetch_pipeline._load_state",
         return_value=prior_state,
     ):
         mocks, saved, exit_code = _run_main(["--from-step", "3"])
@@ -202,7 +202,7 @@ def test_from_step_overrides_saved_state(tmp_path):
 
 def test_from_step_invalid_value():
     with patch(
-        "esm2_mechanism.fetch_data.run_fetch_pipeline._load_state", return_value={}
+        "esm2_mech.fetch_data.run_fetch_pipeline._load_state", return_value={}
     ):
         _, _, exit_code = _run_main(["--from-step", "99"])
     assert exit_code != 0
@@ -210,7 +210,7 @@ def test_from_step_invalid_value():
 
 def test_from_step_boundary_first(tmp_path):
     with patch(
-        "esm2_mechanism.fetch_data.run_fetch_pipeline._load_state", return_value={}
+        "esm2_mech.fetch_data.run_fetch_pipeline._load_state", return_value={}
     ):
         mocks, saved, exit_code = _run_main(["--from-step", str(FIRST_STEP)])
     assert exit_code == 0
@@ -220,7 +220,7 @@ def test_from_step_boundary_first(tmp_path):
 
 def test_from_step_boundary_last(tmp_path):
     with patch(
-        "esm2_mechanism.fetch_data.run_fetch_pipeline._load_state", return_value={}
+        "esm2_mech.fetch_data.run_fetch_pipeline._load_state", return_value={}
     ):
         mocks, saved, exit_code = _run_main(["--from-step", str(LAST_STEP)])
     assert exit_code == 0
@@ -236,7 +236,7 @@ def test_from_step_boundary_last(tmp_path):
 
 def test_state_saved_after_each_step():
     with patch(
-        "esm2_mechanism.fetch_data.run_fetch_pipeline._load_state", return_value={}
+        "esm2_mech.fetch_data.run_fetch_pipeline._load_state", return_value={}
     ):
         mocks, saved, exit_code = _run_main(["--from-step", "1"])
     assert exit_code == 0
@@ -250,7 +250,7 @@ def test_state_saved_after_each_step():
 def test_state_not_updated_before_step_runs():
     # Only steps 1 and 2 run; step 3 fails — state should show last_completed = 2
     with patch(
-        "esm2_mechanism.fetch_data.run_fetch_pipeline._load_state", return_value={}
+        "esm2_mech.fetch_data.run_fetch_pipeline._load_state", return_value={}
     ):
         mocks, saved, exit_code = _run_main(
             ["--from-step", "1"],
@@ -267,7 +267,7 @@ def test_state_not_updated_before_step_runs():
 
 def test_pipeline_exits_on_step_failure():
     with patch(
-        "esm2_mechanism.fetch_data.run_fetch_pipeline._load_state", return_value={}
+        "esm2_mech.fetch_data.run_fetch_pipeline._load_state", return_value={}
     ):
         mocks, saved, exit_code = _run_main(
             ["--from-step", "1"],
@@ -278,7 +278,7 @@ def test_pipeline_exits_on_step_failure():
 
 def test_steps_after_failure_not_called():
     with patch(
-        "esm2_mechanism.fetch_data.run_fetch_pipeline._load_state", return_value={}
+        "esm2_mech.fetch_data.run_fetch_pipeline._load_state", return_value={}
     ):
         mocks, saved, exit_code = _run_main(
             ["--from-step", "1"],
@@ -291,7 +291,7 @@ def test_steps_after_failure_not_called():
 
 def test_failed_step_state_not_saved():
     with patch(
-        "esm2_mechanism.fetch_data.run_fetch_pipeline._load_state", return_value={}
+        "esm2_mech.fetch_data.run_fetch_pipeline._load_state", return_value={}
     ):
         mocks, saved, exit_code = _run_main(
             ["--from-step", "1"],
@@ -308,7 +308,7 @@ def test_rerun_after_failure_resumes_at_failed_step():
     # State file shows last_completed = 4. Next run should start at 5.
     prior_state = {"last_completed_step": 4}
     with patch(
-        "esm2_mechanism.fetch_data.run_fetch_pipeline._load_state",
+        "esm2_mech.fetch_data.run_fetch_pipeline._load_state",
         return_value=prior_state,
     ):
         mocks, saved, exit_code = _run_main([])
