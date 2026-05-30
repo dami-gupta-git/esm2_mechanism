@@ -123,8 +123,8 @@ class TestFamilyResiduals:
         assert "pfam_family" in out.columns
 
     def test_observed_mask_excludes_imputed_from_family_mean(self):
-        """Family mean must be computed only over observed genes; imputed gene gets
-        residual relative to that mean, not one contaminated by its own imputed value."""
+        """Family mean computed from observed-only; imputed gene gets correct residual
+        and _familyresid_missing=0 (residual exists, even though score was imputed)."""
         # A and B are observed; C is imputed (value = global median = 0.5)
         # True family mean of FAM1 from observed = (0.2 + 0.6) / 2 = 0.4
         # C residual should be 0.5 - 0.4 = 0.1, not 0 as it would be if C were included
@@ -134,6 +134,8 @@ class TestFamilyResiduals:
         observed_mask = pd.Series([True, True, False], index=df.index)
         out = compute_family_residuals(df, pfam, FEATURE_COLS, observed_mask=observed_mask)
         np.testing.assert_allclose(out["pDN_familyresid"].values, [-0.2, 0.2, 0.1], atol=1e-10)
+        # All three have a valid residual — missing flag must be 0 for all
+        assert list(out["pDN_familyresid_missing"].values) == [0, 0, 0]
 
     def test_observed_mask_none_uses_all_genes(self):
         """With no mask, behaviour is identical to treating all genes as observed."""

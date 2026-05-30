@@ -54,13 +54,13 @@ def compute_family_residuals(df, pfam, feature_cols, observed_mask=None):
     contaminate the family mean. If None, all genes are treated as observed.
 
     Residual assignment rules:
-    - Observed genes in a family with ≥2 observed members: residual = value − observed family mean.
-      _familyresid_missing = 0.
-    - Imputed genes whose family has ≥2 observed members: residual = imputed_value − observed
-      family mean. _familyresid_missing = 1.
+    - All genes in a family with ≥2 observed members: residual = value − observed family mean.
+      _familyresid_missing = 0. (Family mean computed from observed-only genes.)
     - Singletons or families with ≤1 observed member: residual = NaN, _familyresid_missing = 1.
     is_singleton_family_badonyi = 1 when the gene has no Pfam entry or its family has ≤1 observed
     member — exactly matching the condition that produces NaN residuals above.
+    The raw _missing column (e.g. pDN_missing) already records whether the score was imputed;
+    _familyresid_missing records only whether a residual exists, not how the score was obtained.
     """
     df = df.copy()
     df["pfam_family"] = df["gene"].map(pfam)
@@ -92,7 +92,7 @@ def compute_family_residuals(df, pfam, feature_cols, observed_mask=None):
                 continue
             fam_mean = df.loc[observed_in_fam, col].mean()
             df.loc[fam_idx, resid_col] = df.loc[fam_idx, col] - fam_mean
-            df.loc[observed_in_fam, resid_missing_col] = 0
+            df.loc[fam_idx, resid_missing_col] = 0
 
     return df
 

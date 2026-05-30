@@ -307,15 +307,20 @@ def fetch_protein_sequence(uniprot_id: str) -> Optional[str]:
     seq_file = UNIPROT_CACHE / f"{uniprot_id}_seq.txt"
     if seq_file.exists():
         seq = seq_file.read_text().strip()
-        _seq_cache[uniprot_id] = seq
-        return seq
+        if seq:
+            _seq_cache[uniprot_id] = seq
+            return seq
+        print(f"  WARNING: empty sequence cache for {uniprot_id} — re-fetching")
+        seq_file.unlink()
     time.sleep(0.1)
     text = _get_text(UNIPROT_FASTA.format(acc=uniprot_id), {})
     if not text:
         return None
     lines = text.strip().splitlines()
     seq = "".join(line for line in lines if not line.startswith(">"))
-    seq_file.write_text(seq)
+    tmp = seq_file.with_suffix(".tmp")
+    tmp.write_text(seq)
+    os.replace(tmp, seq_file)
     _seq_cache[uniprot_id] = seq
     return seq
 

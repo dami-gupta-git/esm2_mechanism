@@ -699,16 +699,20 @@ def run_seed(
     )
     results["V2_mlp_family_split"] = v2_mlp_res
 
-    v2_f1 = max(
-        v2_logreg_res.get("macro_f1_mean", 0.0),
-        v2_lgbm_res.get("macro_f1_mean", 0.0),
-        v2_mlp_res.get("macro_f1_mean", 0.0),
-    )
-    v2_label = max(
-        [("LogReg", v2_logreg_res), ("LGBM", v2_lgbm_res), ("MLP", v2_mlp_res)],
-        key=lambda x: x[1].get("macro_f1_mean", 0.0)
-    )[0]
-    print(f"  V2 best family-split macro-F1 = {v2_f1:.4f}  ({v2_label})")
+    # Only consider models that actually produced an F1. A run with no folds
+    # returns {"error": "no folds"} (no "macro_f1_mean" key); treating that as
+    # F1=0.0 would fabricate a metric and corrupt the Gate-1 decision / averages.
+    v2_candidates = [
+        (label, res["macro_f1_mean"])
+        for label, res in [("LogReg", v2_logreg_res), ("LGBM", v2_lgbm_res), ("MLP", v2_mlp_res)]
+        if res.get("macro_f1_mean") is not None and not np.isnan(res["macro_f1_mean"])
+    ]
+    if v2_candidates:
+        v2_label, v2_f1 = max(v2_candidates, key=lambda x: x[1])
+        print(f"  V2 best family-split macro-F1 = {v2_f1:.4f}  ({v2_label})")
+    else:
+        v2_label, v2_f1 = None, float("nan")
+        print("  V2 best family-split macro-F1 = N/A (no model produced folds)")
     results["V2_best_macro_f1_mean"] = v2_f1
     results["V2_best_model"] = v2_label
 
@@ -846,7 +850,9 @@ def aggregate_seeds(all_seed_results: list[dict]) -> dict:
     v2_vals = [
         r["V2_best_macro_f1_mean"]
         for r in all_seed_results
-        if "V2_best_macro_f1_mean" in r and r["V2_best_macro_f1_mean"] is not None
+        if "V2_best_macro_f1_mean" in r
+        and r["V2_best_macro_f1_mean"] is not None
+        and not np.isnan(r["V2_best_macro_f1_mean"])
     ]
     summary["V2_best_macro_f1_mean"] = float(np.mean(v2_vals)) if v2_vals else None
     summary["V2_best_macro_f1_std"] = float(np.std(v2_vals)) if v2_vals else None

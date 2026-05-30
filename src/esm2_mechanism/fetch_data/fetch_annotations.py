@@ -151,11 +151,11 @@ def main_pfam(from_scratch: bool = False) -> None:
         time.sleep(_PFAM_DELAY)
         if (i + 1) % 100 == 0 or (i + 1) == len(to_fetch):
             print(f"  {i+1}/{len(to_fetch)} fetched")
-            PFAM_OUT.write_text(json.dumps(results))
+            _atomic_write_json(PFAM_OUT, results)
 
     if not to_fetch:
         print("Nothing to fetch.")
-        PFAM_OUT.write_text(json.dumps(results))
+        _atomic_write_json(PFAM_OUT, results)
 
     n_annotated = sum(1 for v in results.values() if v is not None)
     print(f"\nPfam annotations: {n_annotated}/{len(results)} genes assigned")
@@ -419,15 +419,22 @@ def main_enzyme() -> None:
     unique_accs = list(set(gene_to_uniprot.values()))
     acc_to_data: dict[str, Optional[dict]] = {}
     fetched = 0
+    loaded_from_cache = 0
+    fetch_errors = 0
 
     for i, acc in enumerate(unique_accs):
         cache_file = ENZYME_CACHE_DIR / f"{acc}.json"
         if cache_file.exists():
-            with open(cache_file) as f:
-                acc_to_data[acc] = json.load(f)
-            if (i + 1) % 50 == 0:
-                print(f"  Loaded {i+1}/{len(unique_accs)} accessions (cached)...")
-            continue
+            try:
+                with open(cache_file) as f:
+                    acc_to_data[acc] = json.load(f)
+                loaded_from_cache += 1
+                if (i + 1) % 50 == 0:
+                    print(f"  Loaded {i+1}/{len(unique_accs)} accessions (cached)...")
+                continue
+            except Exception as e:
+                print(f"  WARNING: corrupt cache for {acc}: {e} — re-fetching")
+                cache_file.unlink(missing_ok=True)
 
         if (i + 1) % 50 == 0:
             print(f"  Fetched {i+1}/{len(unique_accs)} accessions...")
@@ -435,6 +442,7 @@ def main_enzyme() -> None:
         try:
             entry = _fetch_uniprot_entry(acc)
         except _TransientFetchError:
+            fetch_errors += 1
             time.sleep(0.35)
             continue  # not cached — will be retried next run
         with open(cache_file, "w") as f:
@@ -445,7 +453,8 @@ def main_enzyme() -> None:
 
     n_found = sum(1 for v in acc_to_data.values() if v is not None)
     print(f"Done: {n_found}/{len(unique_accs)} entries found "
-          f"({fetched} fetched from network, {len(unique_accs) - fetched} from cache)")
+          f"({fetched} fetched from network, {loaded_from_cache} from cache"
+          + (f", {fetch_errors} transient errors — will retry next run" if fetch_errors else "") + ")")
 
     rows = []
     class_counts: dict[str, int] = defaultdict(int)
@@ -473,9 +482,25 @@ def main_enzyme() -> None:
         ec_numbers, keyword_ids = parse_ec_and_keywords(entry)
         enzyme_class = assign_4class(ec_numbers, keyword_ids)
 
+        # Check each class independently using the same evidence rules as assign_4class,
+        # but without priority resolution. A gene with kinase + protease evidence is
+        # flagged multi even though enzyme_4class resolves to "kinase".
+        def _ec_class(ec: str) -> str:
+            parts = ec.split(".")
+            if len(parts) >= 2 and parts[1]:
+                if parts[0] == "2" and ec.startswith("2.7."):
+                    return "kinase"
+                if parts[0] == "3" and ec.startswith("3.4."):
+                    return "protease"
+                if parts[0] == "1":
+                    return "oxidoreductase"
+            return "non-enzyme"
+
         mapped_classes = set()
+        if "KW-0418" in keyword_ids:
+            mapped_classes.add("kinase")
         for ec in ec_numbers:
-            c = assign_4class([ec], [])
+            c = _ec_class(ec)
             if c != "non-enzyme":
                 mapped_classes.add(c)
         is_multi = len(mapped_classes) > 1
@@ -495,9 +520,11 @@ def main_enzyme() -> None:
     fieldnames = ["gene", "uniprot_id", "ec_numbers", "keyword_ids",
                   "enzyme_4class", "multi_class_flag", "uniprot_missing_flag"]
     with open(ENZYME_OUT, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames, delimiter="\t")
+        writer = csv.DictWriter(f, fieldnames=fieldnames, delimiter="\t",
+                                extrasaction="ignore")
         writer.writeheader()
-        writer.writerows(rows)
+        for row in rows:
+            writer.writerow({k: ("" if v is None else v) for k, v in row.items()})
 
     print(f"\nWrote {len(rows)} rows to {ENZYME_OUT}")
     print("\nClass distribution:")
@@ -533,18 +560,34 @@ def _build_am_gene_uniprot_map() -> dict[str, str]:
     return g2u
 
 
-def _build_am_lookup(variants: list[dict], g2u: dict[str, str]) -> tuple[dict, list]:
+def _build_am_lookup(variants: list[dict], g2u: dict[str, str]) -> tuple[dict, list, list]:
+    """
+    Returns (index, skipped_no_uniprot, skipped_key_collision).
+
+    skipped_no_uniprot: variants whose gene has no UniProt mapping.
+    skipped_key_collision: variants dropped because another gene shares the same
+        (uniprot, protein_variant) key — they will receive no AM score.
+    """
     index: dict[tuple[str, str], str] = {}
-    skipped = []
+    skipped_no_uniprot = []
+    skipped_key_collision = []
     for v in variants:
         uniprot = g2u.get(v["gene"])
         if not uniprot:
-            skipped.append(v)
+            skipped_no_uniprot.append(v)
             continue
         pv = f"{v['aa_wt']}{v['aa_pos']}{v['aa_mut']}"
         vkey = f"{v['gene']}_{v['aa_pos']}_{v['aa_wt']}_{v['aa_mut']}"
-        index[(uniprot, pv)] = vkey
-    return index, skipped
+        key = (uniprot, pv)
+        if key in index and index[key] != vkey:
+            skipped_key_collision.append(v)
+            continue
+        index[key] = vkey
+    if skipped_key_collision:
+        print(f"  WARNING: {len(skipped_key_collision)} variants dropped due to duplicate "
+              f"(uniprot, protein_variant) key — these will have no AM score. "
+              f"First 5: {[v['gene'] for v in skipped_key_collision[:5]]}")
+    return index, skipped_no_uniprot, skipped_key_collision
 
 
 def _download_am(url: str, dest: Path) -> None:
@@ -612,10 +655,12 @@ def main_alphamissense(am_file: Optional[Path] = None, no_download: bool = False
     with open(AM_PATHOGENICITY_VARIANTS) as f:
         variants = json.load(f)
     print(f"target variants: {len(variants):,}")
-    index, skipped = _build_am_lookup(variants, g2u)
+    index, skipped_no_uniprot, skipped_key_collision = _build_am_lookup(variants, g2u)
     print(f"variants with UniProt mapping: {len(index):,}")
-    if skipped:
-        print(f"variants missing UniProt mapping (first 5): {[s['gene'] for s in skipped[:5]]}")
+    if skipped_no_uniprot:
+        print(f"variants missing UniProt mapping (first 5): {[s['gene'] for s in skipped_no_uniprot[:5]]}")
+    if skipped_key_collision:
+        print(f"variants dropped due to key collision: {len(skipped_key_collision)}")
 
     if not am_file.exists():
         if no_download:

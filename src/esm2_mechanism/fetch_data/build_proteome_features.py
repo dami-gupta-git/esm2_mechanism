@@ -37,6 +37,7 @@ import io
 import itertools
 import json
 import math
+import os
 import re
 import time
 import urllib.request
@@ -599,8 +600,12 @@ def _load_ensg_to_symbol() -> dict[str, str]:
     """
     if GNOMAD_V2_ENSG_CACHE.exists() and GNOMAD_V2_ENSG_CACHE.stat().st_size > 1000:
         print(f"  ensg→symbol map: loading from cache {GNOMAD_V2_ENSG_CACHE}")
-        with open(GNOMAD_V2_ENSG_CACHE) as f:
-            return json.load(f)
+        try:
+            with open(GNOMAD_V2_ENSG_CACHE) as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"WARNING: corrupt ENSG cache ({e}) — deleting and re-parsing")
+            GNOMAD_V2_ENSG_CACHE.unlink()
 
     if not GNOMAD_V2_MANUAL.exists() or GNOMAD_V2_MANUAL.stat().st_size < 1000:
         print(
@@ -630,7 +635,9 @@ def _load_ensg_to_symbol() -> dict[str, str]:
                 if ensg and gene and ensg not in mapping:
                     mapping[ensg] = gene
         GNOMAD_V2_ENSG_CACHE.parent.mkdir(parents=True, exist_ok=True)
-        GNOMAD_V2_ENSG_CACHE.write_text(json.dumps(mapping))
+        tmp = GNOMAD_V2_ENSG_CACHE.with_suffix(".tmp")
+        tmp.write_text(json.dumps(mapping))
+        os.replace(tmp, GNOMAD_V2_ENSG_CACHE)
         print(f"  ensg→symbol map: {len(mapping)} entries cached")
     except Exception as e:
         print(f"WARNING: could not build ensg→symbol map: {e}")

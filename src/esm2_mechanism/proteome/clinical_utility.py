@@ -180,10 +180,12 @@ def run_family_split_cv(
             aligned[:, c] = raw_proba[:, ci]
         probs[test_idx] = aligned
 
-    # Any genes still NaN (edge case): assign uniform
-    nan_mask = np.isnan(probs[:, 0])
-    if nan_mask.any():
-        probs[nan_mask] = 1.0 / len(CLASSES)
+    # Any genes never assigned to a test fold keep NaN — they received no
+    # prediction. Do NOT fabricate a uniform probability; downstream AUROC/ECE
+    # must drop these rows rather than score a made-up prediction.
+    n_unpredicted = int(np.isnan(probs[:, 0]).sum())
+    if n_unpredicted:
+        print(f"  WARNING: {n_unpredicted} genes received no LR prediction (left as NaN)")
 
     return probs
 
@@ -245,9 +247,11 @@ def run_mlp_cv(
             aligned[:, c] = raw_proba[:, ci]
         probs[test_idx] = aligned
 
-    nan_mask = np.isnan(probs[:, 0])
-    if nan_mask.any():
-        probs[nan_mask] = 1.0 / len(CLASSES)
+    # Genes never assigned to a test fold keep NaN (no prediction). Do NOT
+    # fabricate a uniform probability; downstream AUROC/ECE drop these rows.
+    n_unpredicted = int(np.isnan(probs[:, 0]).sum())
+    if n_unpredicted:
+        print(f"  WARNING: {n_unpredicted} genes received no MLP prediction (left as NaN)")
 
     return probs
 
@@ -336,8 +340,12 @@ def hi3_analysis(
         ("LR_NOMISS", "P_GOF_lr_nomiss"),
         ("MLP_FULL", "P_GOF_mlp_full"),
     ]:
-        if len(np.unique(y_gof)) == 2:
-            pt, lo, hi_ = bootstrap_auroc(y_gof, hi3_gl[col].values)
+        # Drop genes with no prediction (NaN score) — never score a fabricated value.
+        scores = hi3_gl[col].values
+        valid = ~np.isnan(scores)
+        y_v, scores_v = y_gof[valid], scores[valid]
+        if len(np.unique(y_v)) == 2:
+            pt, lo, hi_ = bootstrap_auroc(y_v, scores_v)
             results[f"H1_GOF_vs_LOF_AUROC_{label}"] = pt
             results[f"H1_GOF_vs_LOF_CI95_{label}"] = [lo, hi_]
         else:
@@ -366,8 +374,12 @@ def hi3_analysis(
         ("LR_NOMISS", "P_DN_lr_nomiss"),
         ("MLP_FULL", "P_DN_mlp_full"),
     ]:
-        if len(np.unique(y_dn)) == 2:
-            pt, lo, hi_ = bootstrap_auroc(y_dn, hi3_dl[col].values)
+        # Drop genes with no prediction (NaN score) — never score a fabricated value.
+        scores = hi3_dl[col].values
+        valid = ~np.isnan(scores)
+        y_v, scores_v = y_dn[valid], scores[valid]
+        if len(np.unique(y_v)) == 2:
+            pt, lo, hi_ = bootstrap_auroc(y_v, scores_v)
             results[f"H2_DN_vs_LOF_AUROC_{label}"] = pt
             results[f"H2_DN_vs_LOF_CI95_{label}"] = [lo, hi_]
 
@@ -384,7 +396,9 @@ def hi3_analysis(
     # --- Calibration (GOF binary, LR_FULL) ---
     y_cal = (hi3["mechanism_3class"] == "GOF").astype(int).values
     p_cal = hi3["P_GOF_lr_full"].values
-    ece = compute_ece(y_cal, p_cal)
+    # Drop genes with no prediction (NaN) — calibrate over real predictions only.
+    cal_valid = ~np.isnan(p_cal)
+    ece = compute_ece(y_cal[cal_valid], p_cal[cal_valid]) if cal_valid.any() else float("nan")
     results["calibration_ECE_GOF_LR_FULL"] = ece
 
     # --- Named outlier gene report ---
@@ -693,9 +707,13 @@ def feature_importance_plot(
 # Decision rule
 # ---------------------------------------------------------------------------
 def apply_decision_rule(hi3_results: dict) -> str:
-    auroc = hi3_results.get("H1_GOF_vs_LOF_AUROC_LR_FULL", 0.0)
+    # Missing/uncomputable AUROC must stay NaN, not 0.0 — a fabricated 0.0 would
+    # emit a confident "NULL" verdict for a metric that was never computed.
+    auroc = hi3_results.get("H1_GOF_vs_LOF_AUROC_LR_FULL", float("nan"))
     ci = hi3_results.get("H1_GOF_vs_LOF_CI95_LR_FULL", [None, None])
     ci_str = f" [95% CI {ci[0]:.3f}–{ci[1]:.3f}]" if ci[0] is not None else ""
+    if auroc is None or np.isnan(auroc):
+        return "UNDETERMINED: GOF AUROC within HI=3 could not be computed"
     if auroc >= 0.65:
         return f"INFORMATIVE: GOF AUROC within HI=3 = {auroc:.3f}{ci_str} ≥ 0.65"
     elif auroc >= 0.55:
