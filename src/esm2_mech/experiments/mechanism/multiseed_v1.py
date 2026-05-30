@@ -30,7 +30,7 @@ import functools
 
 print = functools.partial(print, flush=True)
 from esm2_mech.utils.splits import gene_split_cv, family_split_cv
-from esm2_mech.utils.probes import run_logreg_binary_cv
+from esm2_mech.utils.probes import run_logreg_binary_cv, run_mlp_probe_cv
 from esm2_mech.utils.paths import (
     DATA_DIR as _DATA_DIR,
     RESULTS_DIR as _RESULTS_DIR,
@@ -72,121 +72,6 @@ PATH_VARIANTS = os.path.join(DATA_DIR, "clinvar_pathogenicity_variants.json")
 # ── CV helpers ───────────────────────────────────────────────────────────────
 
 
-# ── MLP probe (PyTorch) ──────────────────────────────────────────────────────
-
-
-def run_mlp_probe(
-    X,
-    labels,
-    splits,
-    seed=42,
-    hidden=(256, 64),
-    dropout=0.3,
-    lr=1e-3,
-    max_epochs=100,
-    patience=10,
-    batch_size=256,
-):
-    import torch
-    import torch.nn as nn
-    from torch.utils.data import DataLoader, TensorDataset
-    from sklearn.preprocessing import LabelEncoder
-    from sklearn.metrics import roc_auc_score, f1_score
-
-    le = LabelEncoder()
-    le.fit(["GOF", "DN", "LOF"])
-    y = le.transform(labels)
-    classes = le.classes_
-    n_classes = len(classes)
-    fold_results = []
-
-    for fold_i, (train_idx, test_idx) in enumerate(splits):
-        X_tr = X[train_idx].astype(np.float32)
-        X_te = X[test_idx].astype(np.float32)
-        y_tr, y_te = y[train_idx], y[test_idx]
-        if len(set(y_tr)) < 2:
-            continue
-
-        tr_genes_local = np.arange(len(train_idx))
-        rng = np.random.RandomState(seed + fold_i)
-        rng.shuffle(tr_genes_local)
-        n_val = max(1, int(0.15 * len(tr_genes_local)))
-        val_idx_local = tr_genes_local[:n_val]
-        fit_idx_local = tr_genes_local[n_val:]
-        X_fit, y_fit = X_tr[fit_idx_local], y_tr[fit_idx_local]
-        X_val, y_val = X_tr[val_idx_local], y_tr[val_idx_local]
-        if len(X_fit) < 10 or len(X_val) < 5:
-            continue
-
-        mu = X_fit.mean(0)
-        std = X_fit.std(0) + 1e-8
-        X_fit = (X_fit - mu) / std
-        X_val = (X_val - mu) / std
-        X_te_n = (X_te - mu) / std
-
-        class_counts = np.bincount(y_tr, minlength=n_classes).astype(np.float32)
-        cw = torch.tensor(1.0 / (class_counts + 1e-8))
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-        layers = []
-        prev = X_fit.shape[1]
-        for h in hidden:
-            layers += [nn.Linear(prev, h), nn.ReLU(), nn.Dropout(dropout)]
-            prev = h
-        layers.append(nn.Linear(prev, n_classes))
-        model = nn.Sequential(*layers).to(device)
-        cw = cw.to(device)
-        opt = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=1e-3)
-        crit = nn.CrossEntropyLoss(weight=cw)
-
-        ds = TensorDataset(torch.tensor(X_fit), torch.tensor(y_fit, dtype=torch.long))
-        loader = DataLoader(ds, batch_size=batch_size, shuffle=True)
-        best_val, patience_cnt, best_state = float("inf"), 0, None
-        for epoch in range(max_epochs):
-            model.train()
-            for xb, yb in loader:
-                opt.zero_grad()
-                crit(model(xb.to(device)), yb.to(device)).backward()
-                opt.step()
-            model.eval()
-            with torch.no_grad():
-                vl = crit(
-                    model(torch.tensor(X_val).to(device)),
-                    torch.tensor(y_val, dtype=torch.long).to(device),
-                ).item()
-            if vl < best_val - 1e-4:
-                best_val, patience_cnt = vl, 0
-                best_state = {k: v.clone() for k, v in model.state_dict().items()}
-            else:
-                patience_cnt += 1
-                if patience_cnt >= patience:
-                    break
-        if best_state:
-            model.load_state_dict(best_state)
-
-        model.eval()
-        with torch.no_grad():
-            proba = (
-                torch.softmax(model(torch.tensor(X_te_n).to(device)), 1).cpu().numpy()
-            )
-        pred = proba.argmax(1)
-        fm = {"macro_f1": float(f1_score(y_te, pred, average="macro", zero_division=0))}
-        for i, cls in enumerate(classes):
-            yb = (y_te == i).astype(int)
-            if yb.sum() > 0 and (1 - yb).sum() > 0:
-                fm[f"auroc_{cls}"] = float(roc_auc_score(yb, proba[:, i]))
-        fold_results.append(fm)
-        print(f"    fold {fold_i+1}: macro_f1={fm['macro_f1']:.3f}")
-
-    if not fold_results:
-        return {}
-    agg = {}
-    for key in set().union(*[set(f) for f in fold_results]):
-        vals = [f[key] for f in fold_results if key in f and not np.isnan(f[key])]
-        if vals:
-            agg[f"{key}_mean"] = float(np.mean(vals))
-            agg[f"{key}_std"] = float(np.std(vals))
-    return agg
 
 
 # ── Logistic regression probe (binary, for pathogenicity) ────────────────────
@@ -285,12 +170,12 @@ def run_seed(seed, pfam_map, out_dir):
         geras_results = {}
         for feat_name, X in [("delta_mean", dm), ("delta_pos", dp)]:
             print(f"  MLP gene-split {feat_name}")
-            geras_results[f"mlp_{feat_name}_gene"] = run_mlp_probe(
-                X, labels, gs, seed=seed
+            geras_results[f"mlp_{feat_name}_gene"] = run_mlp_probe_cv(
+                X, labels, gs, seed=seed, genes=genes, label=f"{feat_name}_gene"
             )
             print(f"  MLP family-split {feat_name}")
-            geras_results[f"mlp_{feat_name}_family"] = run_mlp_probe(
-                X, labels, fs, seed=seed
+            geras_results[f"mlp_{feat_name}_family"] = run_mlp_probe_cv(
+                X, labels, fs, seed=seed, genes=genes, label=f"{feat_name}_family"
             )
         with open(geras_out, "w") as f:
             json.dump(geras_results, f, indent=2)
@@ -309,10 +194,12 @@ def run_seed(seed, pfam_map, out_dir):
         fs = family_split_cv(genes, pfam_map, seed=seed)
         merged_results = {}
         print(f"  MLP gene-split delta_mean")
-        merged_results["mlp_delta_mean_gene"] = run_mlp_probe(dm, labels, gs, seed=seed)
+        merged_results["mlp_delta_mean_gene"] = run_mlp_probe_cv(
+            dm, labels, gs, seed=seed, genes=genes, label="delta_mean_gene"
+        )
         print(f"  MLP family-split delta_mean")
-        merged_results["mlp_delta_mean_family"] = run_mlp_probe(
-            dm, labels, fs, seed=seed
+        merged_results["mlp_delta_mean_family"] = run_mlp_probe_cv(
+            dm, labels, fs, seed=seed, genes=genes, label="delta_mean_family"
         )
         with open(merged_out, "w") as f:
             json.dump(merged_results, f, indent=2)

@@ -42,8 +42,8 @@ from esm2_mech.experiments.mechanism.mlp import (
     load_variants_and_labels,
     gene_split_cv,
     make_family_splits,
-    run_mlp_probe,
 )
+from esm2_mech.utils.probes import run_mlp_probe_cv
 from esm2_mech.utils.paths import DATA_DIR, EMB_MUT_MEAN, EMB_WT_MEAN, RESULTS_DIR
 
 
@@ -153,14 +153,15 @@ def main():
         print(
             f"\n{'='*60}\n=== MLP gene-split: {feat_name} (dim={X.shape[1]}) ===\n{'='*60}"
         )
-        gs = run_mlp_probe(
+        gs = run_mlp_probe_cv(
             X,
             labels,
-            genes,
+            gene_splits,
             seed=args.seed,
-            splits=gene_splits,
+            genes=genes,
             max_epochs=args.max_epochs,
             patience=args.patience,
+            label=f"{feat_name}_gene",
         )
         results[f"mlp_{feat_name}_gene"] = gs
         print(
@@ -172,14 +173,15 @@ def main():
 
         if family_splits:
             print(f"\n=== MLP family-split: {feat_name} ===")
-            fs = run_mlp_probe(
+            fs = run_mlp_probe_cv(
                 X,
                 labels,
-                genes,
+                family_splits,
                 seed=args.seed,
-                splits=family_splits,
+                genes=genes,
                 max_epochs=args.max_epochs,
                 patience=args.patience,
+                label=f"{feat_name}_family",
             )
             results[f"mlp_{feat_name}_family"] = fs
             print(

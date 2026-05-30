@@ -48,21 +48,35 @@ def load_data() -> dict:
     with open(SEQUENCES_JSON) as f:
         seq_cache = json.load(f)
 
+    # Filter to variants with a valid sequence and a viable WT/mut window.
+    # Variants missing a UniProt ID or sequence are skipped with a warning.
     valid_variants = []
+    skipped_no_uid = 0
+    skipped_no_seq = 0
     for v in variants:
-        uid = v["uniprot_id"]
-        if uid not in seq_cache:
+        uid = v.get("uniprot_id")
+        if not uid:
+            skipped_no_uid += 1
             continue
+        if uid not in seq_cache:
+            skipped_no_seq += 1
+            continue
+        # Window the sequence around the mutation site (ESM-2 has a 1022-token limit).
         wt_win, new_pos = window_sequence(seq_cache[uid], v["aa_pos"])
         mut_win = apply_missense(wt_win, new_pos, v["aa_wt"], v["aa_mut"])
         if mut_win is None:
             continue
         valid_variants.append(v)
 
+    if skipped_no_uid:
+        print(f"WARNING: {skipped_no_uid} variants skipped — missing UniProt ID")
+    if skipped_no_seq:
+        print(f"WARNING: {skipped_no_seq} variants skipped — UniProt ID not in sequence cache")
     print(f"Valid variant pairs: {len(valid_variants)}")
     if len(valid_variants) < 50:
         print("WARNING: Very few valid variants. Results may not be reliable.")
 
+    # Four embedding arrays, all aligned by row to valid_variants.
     print("\n=== Loading embeddings ===")
     for path in [EMB_WT_MEAN, EMB_MUT_MEAN, EMB_WT_POS, EMB_MUT_POS]:
         if not os.path.exists(path):
@@ -72,15 +86,18 @@ def load_data() -> dict:
     emb_wt_pos = np.load(EMB_WT_POS)
     emb_mut_pos = np.load(EMB_MUT_POS)
 
+    # Build label and metadata arrays aligned to valid_variants.
     labels_3class = np.array([v["label_3class"] for v in valid_variants])
     labels_4class = np.array([v["mechanism"] for v in valid_variants])
     genes_arr = np.array([v["gene"] for v in valid_variants])
+    # FoldX ΔΔG: NaN where missing — never impute, restrict subset at probe time.
     foldx_ddg = np.array(
         [v["foldx_ddg"] if v["foldx_ddg"] is not None else np.nan for v in valid_variants]
     )
     aa_wt_list = [v["aa_wt"] for v in valid_variants]
     aa_mut_list = [v["aa_mut"] for v in valid_variants]
 
+    # AlphaMissense: NaN where score unavailable.
     print("\n=== Loading AlphaMissense scores ===")
     alphamissense_scores = _load_alphamissense_scores(valid_variants)
 

@@ -34,6 +34,7 @@ from sklearn.decomposition import PCA
 
 from esm2_mech.utils.splits import gene_split_cv, family_split_cv
 from esm2_mech.utils.probes import run_logreg_cv
+from esm2_mech.utils.embed import unpack_run_data
 from esm2_mech.utils.sequences import (
     apply_missense,
     window_sequence,
@@ -647,6 +648,7 @@ def run(
     # ------------------------------------------------------------------
     # 1–3. Extract pre-loaded data
     # ------------------------------------------------------------------
+    data = unpack_run_data(data)
     valid_variants = data["valid_variants"]
     emb_wt_mean = data["emb_wt_mean"]
     emb_mut_mean = data["emb_mut_mean"]
@@ -659,10 +661,8 @@ def run(
     aa_wt_list = data["aa_wt_list"]
     aa_mut_list = data["aa_mut_list"]
     alphamissense_scores = data["alphamissense_scores"]
-
-    deltas_mean = emb_mut_mean - emb_wt_mean
-    deltas_pos = emb_mut_pos - emb_wt_pos
-    print(f"Delta embedding shape: {deltas_mean.shape}")
+    deltas_mean = data["deltas_mean"]
+    deltas_pos = data["deltas_pos"]
 
     le3 = LabelEncoder().fit(CLASSES_3)
     y3 = le3.transform(labels_3class)

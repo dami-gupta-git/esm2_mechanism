@@ -5,8 +5,7 @@ Purpose: run the full pipeline using the refactored `esm2_mech` package after th
 project root with the package installed (`pip install -e .`). The old
 `esm2_mechanism` package is now deleted; all scripts live under `src/esm2_mech/`.
 
-**GPU vs CPU:** only the embedding extraction steps need a GPU (RunPod A100/H100).
-Everything else is local CPU. Run GPU steps inside a `tmux` session on RunPod.
+**RunPod:** embedding extraction and analysis steps both run on RunPod (A100/H100). Run inside a `tmux` session. Fetch/data steps run locally on CPU.
 
 ---
 
@@ -70,6 +69,14 @@ python -m esm2_mech.fetch_data.build_gene_list
 | `python -m esm2_mech.embeddings.embed_variants --model esm2_t33_650M_UR50D --batch_size 32` | Extract ESM-2 embeddings | `variants.json`, `cache/sequences.json` | `embeddings_wt_mean.npy`, `embeddings_mut_mean.npy`, `embeddings_wt_pos.npy`, `embeddings_mut_pos.npy`, `valid_variants.json` |
 
 After completion, `scp` the `.npy` files and `valid_variants.json` back to `data/embeddings/esm2_t33_650M_UR50D/` locally.
+
+### Step 3 — run analysis (RunPod)
+
+| Command | Description | Inputs | Outputs |
+|---|---|---|---|
+| `python -m esm2_mech.experiments.mechanism_delta_cv` | Gene-split vs family-split baseline comparison (result 2) | `variants.json`, `cache/sequences.json`, `pfam_families.json`, `embeddings_*.npy`, `alphamissense_scores_full.json` | `results/run1/family_split_baselines_seed{0..4}.json` |
+
+Run inside a `tmux` session on RunPod. `scp` results back to `results/run1/` locally.
 
 ---
 

@@ -22,6 +22,7 @@ from sklearn.metrics import roc_auc_score, f1_score
 from sklearn.preprocessing import LabelEncoder
 from esm2_mech.utils.splits import gene_split_cv
 from esm2_mech.utils.paths import EMB_MUT_MEAN, EMB_MUT_POS, EMB_WT_MEAN, EMB_WT_POS, RESULTS_DIR, SEQUENCES_JSON, VARIANTS_JSON
+from esm2_mech.utils.probes import run_mlp_probe_cv
 import functools
 
 print = functools.partial(print, flush=True)
@@ -131,155 +132,6 @@ def make_family_splits(genes, pfam_map, n_folds=5, seed=42):
             splits.append((np.where(tr)[0], np.where(te)[0]))
     print(f"  Family-split: {len(splits)} folds, {len(unique_fams)} families")
     return splits
-
-
-def run_mlp_probe(
-    X,
-    labels,
-    genes,
-    n_folds=5,
-    seed=42,
-    hidden=(256, 64),
-    dropout=0.3,
-    lr=1e-3,
-    max_epochs=100,
-    patience=10,
-    batch_size=256,
-    splits=None,
-):
-    import torch
-    import torch.nn as nn
-    from torch.utils.data import DataLoader, TensorDataset
-
-    le = LabelEncoder()
-    y = le.fit_transform(labels)
-    classes = le.classes_
-    n_classes = len(classes)
-    if splits is None:
-        splits = gene_split_cv(genes, n_folds=n_folds, seed=seed)
-
-    fold_results = []
-
-    for fold_i, (train_idx, test_idx) in enumerate(splits):
-        X_tr, X_te = X[train_idx].astype(np.float32), X[test_idx].astype(np.float32)
-        y_tr, y_te = y[train_idx], y[test_idx]
-
-        if len(set(y_tr)) < 2:
-            continue
-
-        # Hold out 15% of training genes as validation for early stopping
-        train_genes = genes[train_idx]
-        unique_tr_genes = np.array(sorted(set(train_genes)))
-        rng = np.random.RandomState(seed + fold_i)
-        rng.shuffle(unique_tr_genes)
-        n_val_genes = max(1, int(0.15 * len(unique_tr_genes)))
-        val_gene_set = set(unique_tr_genes[:n_val_genes])
-        val_mask = np.array([g in val_gene_set for g in train_genes])
-        fit_mask = ~val_mask
-
-        X_fit = X_tr[fit_mask]
-        y_fit = y_tr[fit_mask]
-        X_val = X_tr[val_mask]
-        y_val = y_tr[val_mask]
-
-        if len(X_fit) < 10 or len(X_val) < 5:
-            continue
-
-        # Normalize using fit-set stats
-        mu = X_fit.mean(0)
-        std = X_fit.std(0) + 1e-8
-        X_fit = (X_fit - mu) / std
-        X_val = (X_val - mu) / std
-        X_te_norm = (X_te - mu) / std
-
-        # Class weights from full training fold (y_tr), not the fit subset,
-        # to avoid weight explosion when a rare class is absent from y_fit.
-        class_counts = np.bincount(y_tr, minlength=n_classes).astype(np.float32)
-        class_weights = torch.tensor(1.0 / (class_counts + 1e-8))
-
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        model = _build_mlp(X_fit.shape[1], hidden, dropout, n_classes).to(device)
-        class_weights = class_weights.to(device)
-        optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=1e-3)
-        criterion = nn.CrossEntropyLoss(weight=class_weights)
-
-        fit_ds = TensorDataset(
-            torch.tensor(X_fit), torch.tensor(y_fit, dtype=torch.long)
-        )
-        fit_loader = DataLoader(fit_ds, batch_size=batch_size, shuffle=True)
-
-        best_val_loss = float("inf")
-        patience_count = 0
-        best_state = None
-
-        for epoch in range(max_epochs):
-            model.train()
-            for xb, yb in fit_loader:
-                xb, yb = xb.to(device), yb.to(device)
-                optimizer.zero_grad()
-                loss = criterion(model(xb), yb)
-                loss.backward()
-                optimizer.step()
-
-            model.eval()
-            with torch.no_grad():
-                val_loss = criterion(
-                    model(torch.tensor(X_val).to(device)),
-                    torch.tensor(y_val, dtype=torch.long).to(device),
-                ).item()
-
-            if val_loss < best_val_loss - 1e-4:
-                best_val_loss = val_loss
-                patience_count = 0
-                best_state = {k: v.clone() for k, v in model.state_dict().items()}
-            else:
-                patience_count += 1
-                if patience_count >= patience:
-                    break
-
-        if best_state is not None:
-            model.load_state_dict(best_state)
-
-        model.eval()
-        with torch.no_grad():
-            logits = model(torch.tensor(X_te_norm).to(device))
-            proba = torch.softmax(logits, dim=1).cpu().numpy()
-        pred = proba.argmax(1)
-
-        fm = {"macro_f1": float(f1_score(y_te, pred, average="macro", zero_division=0))}
-        for i, cls in enumerate(classes):
-            y_bin = (y_te == i).astype(int)
-            if y_bin.sum() > 0 and (1 - y_bin).sum() > 0:
-                fm[f"auroc_{cls}"] = float(roc_auc_score(y_bin, proba[:, i]))
-        fm["epochs_run"] = epoch + 1
-        fold_results.append(fm)
-        print(
-            f"  Fold {fold_i+1}: macro_f1={fm['macro_f1']:.3f}, epochs={fm['epochs_run']}"
-        )
-
-    if not fold_results:
-        return {"error": "insufficient data"}
-
-    agg = {}
-    all_keys = set().union(*[set(f.keys()) for f in fold_results]) - {"epochs_run"}
-    for key in all_keys:
-        vals = [f[key] for f in fold_results if key in f and not np.isnan(f[key])]
-        if vals:
-            agg[f"{key}_mean"] = float(np.mean(vals))
-            agg[f"{key}_std"] = float(np.std(vals))
-    return agg
-
-
-def _build_mlp(in_dim, hidden, dropout, n_classes):
-    import torch.nn as nn
-
-    layers = []
-    prev = in_dim
-    for h in hidden:
-        layers += [nn.Linear(prev, h), nn.ReLU(), nn.Dropout(dropout)]
-        prev = h
-    layers.append(nn.Linear(prev, n_classes))
-    return nn.Sequential(*layers)
 
 
 # ---------------------------------------------------------------------------
@@ -483,14 +335,15 @@ def main():
 
     for feat_name, X in [("delta_mean", delta_mean), ("delta_pos", delta_pos)]:
         print(f"\n=== MLP gene-split: {feat_name} ===")
-        results[f"mlp_{feat_name}_gene"] = run_mlp_probe(
+        results[f"mlp_{feat_name}_gene"] = run_mlp_probe_cv(
             X,
             labels,
-            genes,
+            gene_splits,
             seed=args.seed,
-            splits=gene_splits,
+            genes=genes,
             max_epochs=args.max_epochs,
             patience=args.patience,
+            label=f"{feat_name}_gene",
         )
         print(
             f"  macro_f1={results[f'mlp_{feat_name}_gene'].get('macro_f1_mean', float('nan')):.3f}"
@@ -498,14 +351,15 @@ def main():
 
         if family_splits:
             print(f"\n=== MLP family-split: {feat_name} ===")
-            results[f"mlp_{feat_name}_family"] = run_mlp_probe(
+            results[f"mlp_{feat_name}_family"] = run_mlp_probe_cv(
                 X,
                 labels,
-                genes,
+                family_splits,
                 seed=args.seed,
-                splits=family_splits,
+                genes=genes,
                 max_epochs=args.max_epochs,
                 patience=args.patience,
+                label=f"{feat_name}_family",
             )
             print(
                 f"  macro_f1={results[f'mlp_{feat_name}_family'].get('macro_f1_mean', float('nan')):.3f}"

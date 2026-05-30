@@ -24,6 +24,7 @@ from esm2_mech.utils.paths import (
 )
 from esm2_mech.utils.sequences import window_sequence, apply_missense
 from esm2_mech.utils.splits import gene_split_cv, family_split_cv
+from esm2_mech.utils.embed import unpack_run_data
 
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import roc_auc_score, f1_score, precision_recall_curve, auc
@@ -91,6 +92,7 @@ def run(data: dict, out_dir: str, seed: int = 0, n_folds: int = 5) -> dict:
     # ------------------------------------------------------------------
     # 1–3. Extract pre-loaded data
     # ------------------------------------------------------------------
+    data = unpack_run_data(data)
     valid_variants = data["valid_variants"]
     emb_wt_mean = data["emb_wt_mean"]
     emb_mut_mean = data["emb_mut_mean"]
@@ -102,9 +104,8 @@ def run(data: dict, out_dir: str, seed: int = 0, n_folds: int = 5) -> dict:
     aa_wt_list = data["aa_wt_list"]
     aa_mut_list = data["aa_mut_list"]
     alphamissense_scores = data["alphamissense_scores"]
-
-    deltas_mean = emb_mut_mean - emb_wt_mean
-    deltas_pos = emb_mut_pos - emb_wt_pos
+    deltas_mean = data["deltas_mean"]
+    deltas_pos = data["deltas_pos"]
     print(f"Embedding shape: {emb_wt_mean.shape}")
     print(f"Valid variants: {len(valid_variants)}")
     print(f"Class distribution: {dict(Counter(labels_3class))}")

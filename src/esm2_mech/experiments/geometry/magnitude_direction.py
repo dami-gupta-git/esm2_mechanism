@@ -52,7 +52,7 @@ from esm2_mech.utils.paths import (
 
 from esm2_mech.utils.paths import PFAM_JSON
 from esm2_mech.utils.splits import gene_split_cv, family_split_cv
-from esm2_mech.utils.probes import run_mlp_binary_cv, run_mlp_probe_cv
+from esm2_mech.utils.probes import run_mlp_binary_cv, run_mlp_probe_cv, run_logreg_cv
 from esm2_mech.utils.probes import run_logreg_binary_cv
 
 DATA = str(_DATA_DIR)
@@ -110,47 +110,7 @@ def decompose(delta):
 
 
 def run_logreg_multi(X, labels, splits, seed=42):
-    from sklearn.linear_model import LogisticRegression
-    from sklearn.preprocessing import StandardScaler, LabelEncoder
-    from sklearn.metrics import roc_auc_score, f1_score
-
-    le = LabelEncoder()
-    le.fit(["GOF", "DN", "LOF"])
-    y = le.transform(labels)
-    classes = le.classes_
-    fold = []
-    for tr, te in splits:
-        if len(set(y[tr])) < len(classes):
-            continue
-        sc = StandardScaler()
-        Xtr = sc.fit_transform(X[tr])
-        Xte = sc.transform(X[te])
-        clf = LogisticRegression(
-            max_iter=2000, C=1.0, class_weight="balanced", random_state=seed
-        )
-        clf.fit(Xtr, y[tr])
-        raw_proba = clf.predict_proba(Xte)
-        proba = np.zeros((len(Xte), len(classes)), dtype=np.float32)
-        for ci, c in enumerate(clf.classes_):
-            proba[:, c] = raw_proba[:, ci]
-        pred = proba.argmax(axis=1)
-        fm = {
-            "macro_f1": float(f1_score(y[te], pred, average="macro", zero_division=0))
-        }
-        for i, cls in enumerate(classes):
-            yb = (y[te] == i).astype(int)
-            if yb.sum() > 0 and (1 - yb).sum() > 0:
-                fm[f"auroc_{cls}"] = float(roc_auc_score(yb, proba[:, i]))
-        fold.append(fm)
-    if not fold:
-        return {}
-    agg = {}
-    for k in set().union(*[set(f) for f in fold]):
-        vals = [f[k] for f in fold if k in f and not np.isnan(f[k])]
-        if vals:
-            agg[f"{k}_mean"] = float(np.mean(vals))
-            agg[f"{k}_std"] = float(np.std(vals))
-    return agg
+    return run_logreg_cv(X, labels, splits, seed=seed)
 
 
 def chance_floor_multi(labels, splits):

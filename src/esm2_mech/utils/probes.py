@@ -258,8 +258,15 @@ def run_mlp_probe_cv(
     max_epochs: int = 100,
     patience: int = 10,
     batch_size: int = 256,
+    genes: np.ndarray | None = None,
+    label: str = "",
 ) -> dict:
-    """PyTorch MLP multi-class CV returning macro-F1 and per-class AUROC mean ± std."""
+    """PyTorch MLP multi-class CV returning macro-F1 and per-class AUROC mean ± std.
+
+    genes : if provided, the 15% validation split is gene-disjoint (recommended);
+            otherwise 15% of samples are held out randomly.
+    label : prefix for per-fold log lines.
+    """
     import torch
     import torch.nn as nn
     from torch.utils.data import DataLoader, TensorDataset
@@ -269,24 +276,36 @@ def run_mlp_probe_cv(
     n_classes = len(classes)
     cls_to_idx = {cls: idx for idx, cls in enumerate(classes)}
     y = np.array([cls_to_idx[lab] for lab in labels])
-    fold_results = []
+    fold_results, pg_f1s = [], []
 
     for fold_i, (train_idx, test_idx) in enumerate(splits):
         X_tr = X[train_idx].astype(np.float32)
         X_te = X[test_idx].astype(np.float32)
         y_tr, y_te = y[train_idx], y[test_idx]
         labels_te = labels[test_idx]
-        if len(set(labels[train_idx])) < n_classes:
+
+        if len(set(y_tr.tolist())) < 2:
+            print(f"    [{label}] Fold {fold_i+1}: skipped (< 2 classes in train)")
             continue
 
         rng = np.random.RandomState(seed + fold_i)
-        order = np.arange(len(train_idx))
-        rng.shuffle(order)
-        n_val = max(1, int(0.15 * len(order)))
-        val_idx_local = order[:n_val]
-        fit_idx_local = order[n_val:]
-        X_fit, y_fit = X_tr[fit_idx_local], y_tr[fit_idx_local]
-        X_val, y_val = X_tr[val_idx_local], y_tr[val_idx_local]
+        if genes is not None:
+            tr_genes = genes[train_idx]
+            unique_tr_genes = np.array(sorted(set(tr_genes)))
+            rng.shuffle(unique_tr_genes)
+            n_val_genes = max(1, int(0.15 * len(unique_tr_genes)))
+            val_gene_set = set(unique_tr_genes[:n_val_genes])
+            val_mask = np.array([g in val_gene_set for g in tr_genes])
+        else:
+            order = np.arange(len(train_idx))
+            rng.shuffle(order)
+            n_val = max(1, int(0.15 * len(order)))
+            val_mask = np.zeros(len(train_idx), dtype=bool)
+            val_mask[order[:n_val]] = True
+        fit_mask = ~val_mask
+
+        X_fit, y_fit = X_tr[fit_mask], y_tr[fit_mask]
+        X_val, y_val = X_tr[val_mask], y_tr[val_mask]
         if len(X_fit) < 10 or len(X_val) < 5:
             continue
 
@@ -296,11 +315,13 @@ def run_mlp_probe_cv(
         X_val = (X_val - mu) / std
         X_te_n = (X_te - mu) / std
 
+        # Class weights from full training fold to avoid weight explosion when a
+        # rare class is absent from the fit subset.
         class_counts = np.bincount(y_tr, minlength=n_classes).astype(np.float32)
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         cw = torch.tensor(1.0 / (class_counts + 1e-8)).to(device)
 
-        layers = []
+        layers: list = []
         prev = X_fit.shape[1]
         for h in hidden:
             layers += [nn.Linear(prev, h), nn.ReLU(), nn.Dropout(dropout)]
@@ -345,16 +366,25 @@ def run_mlp_probe_cv(
             if y_bin.sum() > 0 and (1 - y_bin).sum() > 0:
                 fm[f"auroc_{cls}"] = float(roc_auc_score(y_bin, proba[:, col_idx]))
         fold_results.append(fm)
-        print(f"    fold {fold_i+1}: macro_f1={fm['macro_f1']:.3f}")
+
+        pg_str = ""
+        if genes is not None:
+            pg = _per_gene_f1(labels_te, proba, genes[test_idx])
+            pg_f1s.append(pg)
+            pg_str = f"  per_gene_f1={pg:.3f}"
+        print(f"    [{label}] Fold {fold_i+1}: macro_f1={fm['macro_f1']:.3f}{pg_str}")
 
     if not fold_results:
         return {}
-    agg = {}
+    agg: dict = {}
     for key in set().union(*[set(f) for f in fold_results]):
         vals = [f[key] for f in fold_results if key in f and not np.isnan(f[key])]
         if vals:
             agg[f"{key}_mean"] = float(np.mean(vals))
             agg[f"{key}_std"] = float(np.std(vals))
+    if pg_f1s:
+        agg["per_gene_f1_mean"] = float(np.mean(pg_f1s))
+        agg["per_gene_f1_std"] = float(np.std(pg_f1s))
     return agg
 
 

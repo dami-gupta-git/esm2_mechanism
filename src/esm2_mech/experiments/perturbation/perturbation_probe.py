@@ -26,6 +26,8 @@ from pathlib import Path
 
 from esm2_mech.utils.paths import DATA_DIR as DATA, RESULTS_DIR as _RESULTS_DIR, VALID_VARIANTS_JSON, EMB_WT_MEAN, EMB_MUT_MEAN, GENE_LIST_TSV
 from esm2_mech.utils.splits import gene_split_cv, family_split_cv
+from esm2_mech.utils.embed import load_gene_delta
+from esm2_mech.utils.probes import run_logreg_cv
 
 print = functools.partial(print, flush=True)
 EMB = DATA / "embeddings"
@@ -56,17 +58,7 @@ def load_all_features(gene_list):
     scan_idx = {g: i for i, g in enumerate(scan_genes)}
 
     # 2. Mean-pooled delta index
-    with open(VALID_VARIANTS_JSON) as f:
-        variants = json.load(f)
-    wt_emb = np.load(EMB_WT_MEAN)
-    mut_emb = np.load(EMB_MUT_MEAN)
-    delta = mut_emb - wt_emb
-
-    from collections import defaultdict
-
-    gene_delta = defaultdict(list)
-    for i, v in enumerate(variants):
-        gene_delta[v["gene"].upper()].append(delta[i])
+    gene_delta = load_gene_delta(VALID_VARIANTS_JSON, EMB_WT_MEAN, EMB_MUT_MEAN)
 
     # 3. Proteome / Badonyi gene-to-row index
     proteome_path = DATA / "proteome_features_aligned.npy"
@@ -128,49 +120,7 @@ def load_all_features(gene_list):
 
 
 def run_probe(X, labels, splits, seed=42):
-    from sklearn.linear_model import LogisticRegression
-    from sklearn.preprocessing import StandardScaler
-    from sklearn.metrics import roc_auc_score, f1_score
-    from sklearn.preprocessing import LabelEncoder
-
-    le = LabelEncoder()
-    le.fit(["GOF", "DN", "LOF"])
-    y = le.transform(labels)
-    classes = le.classes_
-    fold_results = []
-
-    for tr, te in splits:
-        if len(set(y[tr])) < len(classes):
-            continue
-        sc = StandardScaler()
-        Xtr = sc.fit_transform(X[tr])
-        Xte = sc.transform(X[te])
-        clf = LogisticRegression(
-            max_iter=2000, C=1.0, class_weight="balanced", random_state=seed
-        )
-        clf.fit(Xtr, y[tr])
-        raw_proba = clf.predict_proba(Xte)
-        proba = np.zeros((len(Xte), len(classes)), dtype=np.float32)
-        for ci, c in enumerate(clf.classes_):
-            proba[:, c] = raw_proba[:, ci]
-        pred = proba.argmax(axis=1)
-        fm = {
-            "macro_f1": float(f1_score(y[te], pred, average="macro", zero_division=0))
-        }
-        for i, cls in enumerate(classes):
-            yb = (y[te] == i).astype(int)
-            if yb.sum() > 0 and (1 - yb).sum() > 0:
-                fm[f"auroc_{cls}"] = float(roc_auc_score(yb, proba[:, i]))
-        fold_results.append(fm)
-
-    if not fold_results:
-        return {}
-    agg = {}
-    for key in set().union(*[set(f) for f in fold_results]):
-        vals = [f[key] for f in fold_results if key in f]
-        agg[f"{key}_mean"] = float(np.mean(vals))
-        agg[f"{key}_std"] = float(np.std(vals))
-    return agg
+    return run_logreg_cv(X, labels, splits, seed=seed)
 
 
 def main():
