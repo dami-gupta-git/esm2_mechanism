@@ -245,6 +245,20 @@ def _build_gene_universe(merged_path: Path, pfam_path: Path, out_path: Path) -> 
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+def main_gene_list() -> None:
+    for path in [XLSX, G2P_CSV]:
+        if not path.exists():
+            raise FileNotFoundError(f"Required input not found: {path}")
+    build(XLSX, G2P_CSV, MERGED_GENE_LIST)
+
+
+def main_universe() -> None:
+    for path in [MERGED_GENE_LIST, PFAM_FAMILIES]:
+        if not path.exists():
+            raise FileNotFoundError(f"Required input not found: {path}")
+    _build_gene_universe(MERGED_GENE_LIST, PFAM_FAMILIES, GENE_UNIVERSE)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Build gene universe files. See module docstring for step order."
@@ -261,15 +275,9 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.step == "gene-list":
-        for path in [XLSX, G2P_CSV]:
-            if not path.exists():
-                raise FileNotFoundError(f"Required input not found: {path}")
-        build(XLSX, G2P_CSV, MERGED_GENE_LIST)
+        main_gene_list()
     else:
-        for path in [MERGED_GENE_LIST, PFAM_FAMILIES]:
-            if not path.exists():
-                raise FileNotFoundError(f"Required input not found: {path}")
-        _build_gene_universe(MERGED_GENE_LIST, PFAM_FAMILIES, GENE_UNIVERSE)
+        main_universe()
 
 
 if __name__ == "__main__":

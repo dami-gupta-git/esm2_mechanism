@@ -26,3 +26,13 @@ These files were manually downloaded before the pipeline ran — not produced by
 | 5 | A5 | `python -m esm2_mechanism.fetch_data.build_merged_dataset --pathogenic_only` | `gerasimavicius_variants.json`, `merged_gene_list.tsv`, `clinvar_variants.tsv` | `merged_variants.json` | ✅ 2026-05-29 | 17,268 variants, 1916 genes; sources: gerasimavicius=10233, clinvar_g2p=7035 |
 | 6 | A6 | `python -m esm2_mechanism.fetch_data.fetch_clingen` | — | `downloads/ClinGen_gene_curation_list_GRCh38.tsv` | ✅ 2026-05-29 | 1642 data rows; gene=0, HI=5, TS=13 |
 | 7 | A7 | `python -m esm2_mechanism.fetch_data.fetch_uniprot_sequences` | `merged_variants.json` | `cache/uniprot_sequences_extended.json` | ✅ 2026-05-29 | 1914/1914 sequences fetched; ~30s |
+
+---
+
+## Run 2 — started 2026-05-29
+
+| # | Step | Command | Inputs | Outputs | Status | Notes |
+|---|---|---|---|---|---|---|
+| 1 | 1 | `python -m esm2_mechanism.fetch_data.build_gene_universe --step gene-list` | `downloads/DiseaseMech_Stability_VEPS.xlsx`, `downloads/AllG2P.csv` | `merged_gene_list.tsv` | ✅ 2026-05-29 | 2376 genes (gerasimavicius=950, g2p=1426); 475 g2p_disagrees; 61 genes excluded for unresolvable conflicting G2P mechanism |
+| 2 | 2 | `python -m esm2_mechanism.fetch_data.fetch_variants --step gerasimavicius` | `downloads/DiseaseMech_Stability_VEPS.xlsx` | `gerasimavicius_variants.json` | ✅ 2026-05-29 | 10,233 variants, 948 genes; AR=5678, GOF=1983, HI=1678, DN=894 |
+| 3 | 3 | `python -m esm2_mechanism.fetch_data.fetch_variants --step clinvar` | `merged_gene_list.tsv` | `clinvar_variants.tsv` | 🔄 running | |
