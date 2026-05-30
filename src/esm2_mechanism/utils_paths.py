@@ -24,6 +24,11 @@ ESM3_EMB_DIR = DATA_DIR / "embeddings" / ESM3_MODEL
 VARIANTS_JSON = DATA_DIR / "variants.json"
 GENE_LIST_TSV = DATA_DIR / "gene_list.tsv"
 
+# ── Cache directory and cached UniProt sequences ─────────────────────────────
+CACHE_DIR = DATA_DIR / "cache"
+SEQUENCES_JSON = CACHE_DIR / "sequences.json"
+SEQUENCES_EXTENDED_JSON = CACHE_DIR / "uniprot_sequences_extended.json"
+
 # ── ESM-2 Gerasimavicius embeddings (embed_variants.py) ──────────────────────
 VALID_VARIANTS_JSON = EMB_DIR / "valid_variants.json"
 EMB_WT_MEAN = EMB_DIR / "embeddings_wt_mean.npy"

@@ -35,10 +35,13 @@ difference between them.
 Checkpointing
 -------------
 Embeddings are flushed atomically every checkpoint_every variants so a GPU job can
-survive an interrupt. On restart, if all five output files exist and their row counts
-match the current valid variant list, extraction is skipped entirely. A corrupt
-checkpoint (truncated JSON or mismatched row counts) is detected and deleted so the
-run starts cleanly from scratch.
+survive an interrupt. On restart:
+- If all five output files exist and row counts match the full valid variant list,
+  extraction is skipped entirely.
+- If a partial checkpoint exists (row count < full list, arrays and JSON agree),
+  extraction resumes from where it left off.
+- If the checkpoint is corrupt (truncated JSON or mismatched row counts), it is
+  deleted and extraction starts from scratch.
 
 Usage (requires GPU):
     python -m esm2_mechanism.embeddings.embed_variants \\
@@ -108,6 +111,7 @@ def get_esm2_embeddings_for_pairs(
     device: str = "cuda",
     batch_size: int = 32,
     checkpoint_every: int = 100,
+    resume_arrays: tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray] | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
     Extract ESM-2 embeddings for WT/mutant sequence pairs.
@@ -131,11 +135,19 @@ def get_esm2_embeddings_for_pairs(
     batch_converter = alphabet.get_batch_converter()
     n_layers = model.num_layers
 
-    wt_mean_list, mut_mean_list = [], []
-    wt_pos_list, mut_pos_list = [], []
+    if resume_arrays is not None:
+        wt_mean_r, mut_mean_r, wt_pos_r, mut_pos_r = resume_arrays
+        wt_mean_list = [wt_mean_r[i] for i in range(len(wt_mean_r))]
+        mut_mean_list = [mut_mean_r[i] for i in range(len(mut_mean_r))]
+        wt_pos_list = [wt_pos_r[i] for i in range(len(wt_pos_r))]
+        mut_pos_list = [mut_pos_r[i] for i in range(len(mut_pos_r))]
+    else:
+        wt_mean_list, mut_mean_list = [], []
+        wt_pos_list, mut_pos_list = [], []
 
     total = len(wt_seqs)
-    n_done = 0
+    n_done = len(wt_mean_list)
+    last_flush = n_done
     for batch_start in range(0, total, batch_size):
         pairs = list(
             zip(
@@ -167,16 +179,13 @@ def get_esm2_embeddings_for_pairs(
                 wt_pos_list.append(wt_rep[var_pos].numpy())
                 mut_pos_list.append(mut_rep[var_pos].numpy())
             else:
-                print(
-                    f"  WARNING: var_pos={var_pos} out of range for sequence length {len(wt)}"
-                    f" (batch item {j}) — falling back to mean pooling for position embedding",
-                    flush=True,
+                raise ValueError(
+                    f"var_pos={var_pos} out of range for sequence length {len(wt)}"
+                    f" (batch item {j}) — this should have been caught by _build_valid_pairs"
                 )
-                wt_pos_list.append(wt_rep[1 : len(wt) + 1].mean(0).numpy())
-                mut_pos_list.append(mut_rep[1 : len(mut) + 1].mean(0).numpy())
 
         n_done = len(wt_mean_list)
-        if n_done % checkpoint_every == 0:
+        if n_done - last_flush >= checkpoint_every:
             if out_dir is not None:
                 _flush_checkpoint(
                     out_dir, wt_mean_list, mut_mean_list, wt_pos_list, mut_pos_list,
@@ -184,12 +193,16 @@ def get_esm2_embeddings_for_pairs(
                 )
             else:
                 print(f"  Embedded {n_done}/{total} variant pairs", flush=True)
+            last_flush = n_done
 
-    if out_dir is not None and n_done % checkpoint_every != 0:
-        _flush_checkpoint(
-            out_dir, wt_mean_list, mut_mean_list, wt_pos_list, mut_pos_list,
-            (valid_variants or [])[:n_done], n_done,
-        )
+    if n_done > last_flush:
+        if out_dir is not None:
+            _flush_checkpoint(
+                out_dir, wt_mean_list, mut_mean_list, wt_pos_list, mut_pos_list,
+                (valid_variants or [])[:n_done], n_done,
+            )
+        else:
+            print(f"  Embedded {n_done}/{total} variant pairs", flush=True)
 
     return (
         np.stack(wt_mean_list),
@@ -280,6 +293,8 @@ def main() -> None:
     ckpt_valid = os.path.join(out_dir, "valid_variants.json")
 
     all_ckpts = [ckpt_wt_mean, ckpt_mut_mean, ckpt_wt_pos, ckpt_mut_pos, ckpt_valid]
+    resume_arrays = None
+    resume_start = 0
     if all(os.path.exists(p) for p in all_ckpts):
         try:
             with open(ckpt_valid) as f:
@@ -288,6 +303,23 @@ def main() -> None:
             if len(prev) == n_on_disk == len(valid):
                 print("Embeddings already complete — nothing to do.")
                 return
+            if n_on_disk == len(prev) and n_on_disk < len(valid):
+                print(f"Partial checkpoint: {n_on_disk}/{len(valid)} rows — resuming")
+                resume_arrays = (
+                    np.load(ckpt_wt_mean),
+                    np.load(ckpt_mut_mean),
+                    np.load(ckpt_wt_pos),
+                    np.load(ckpt_mut_pos),
+                )
+                resume_start = n_on_disk
+            else:
+                print(
+                    f"WARNING: checkpoint row count mismatch "
+                    f"(arrays={n_on_disk}, valid_variants.json={len(prev)}) — re-extracting"
+                )
+                for ckpt in all_ckpts:
+                    if os.path.exists(ckpt):
+                        os.remove(ckpt)
         except (json.JSONDecodeError, ValueError):
             print("WARNING: corrupt checkpoint — re-extracting")
             for ckpt in all_ckpts:
@@ -296,15 +328,16 @@ def main() -> None:
 
     print(f"\nExtracting ESM-2 embeddings ({args.model})...")
     wt_mean, mut_mean, wt_pos, mut_pos = get_esm2_embeddings_for_pairs(
-        wt_seqs,
-        mut_seqs,
-        positions,
+        wt_seqs[resume_start:],
+        mut_seqs[resume_start:],
+        positions[resume_start:],
         valid_variants=valid,
         out_dir=out_dir,
         model_name=args.model,
         device=device,
         batch_size=args.batch_size,
         checkpoint_every=args.checkpoint_every,
+        resume_arrays=resume_arrays,
     )
 
     # Write arrays before valid_variants.json so its presence signals a complete set.

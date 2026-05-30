@@ -71,7 +71,28 @@ def embed_scan(batch_size: int = 128) -> None:
             seqs.update(json.load(f))
     print(f"Sequences loaded: {len(seqs)}")
 
-    # Resume from checkpoint
+    # Build the full filtered sequence list first so CKPT_IDX unambiguously
+    # counts embedding rows (not raw probes). Probes that fail the WT-match are
+    # dropped here; the checkpoint index is an offset into wt_seqs/mut_seqs.
+    wt_seqs, mut_seqs, positions = [], [], []
+    skipped_mismatch = 0
+    for p in probes:
+        seq = seqs[p["uniprot_id"]]
+        wt_win, new_pos = window_sequence(seq, p["aa_pos"])
+        mut_win = apply_missense(wt_win, new_pos, p["aa_wt"], p["aa_mut"])
+        if mut_win is None:
+            skipped_mismatch += 1
+            continue
+        wt_seqs.append(wt_win)
+        mut_seqs.append(mut_win)
+        positions.append(new_pos)
+    if skipped_mismatch:
+        print(f"WARNING: skipped {skipped_mismatch} probes where WT AA did not match reference sequence")
+
+    n_filtered = len(wt_seqs)
+    print(f"Total filtered probes: {n_filtered} ({skipped_mismatch} skipped)")
+
+    # Resume from checkpoint — start_idx is a row count into the filtered lists
     start_idx = 0
     all_wt, all_mut = [], []
     if CKPT_IDX.exists():
@@ -98,26 +119,13 @@ def embed_scan(batch_size: int = 128) -> None:
             else:
                 all_wt = [wt_arr]
                 all_mut = [mut_arr]
-                print(f"Resuming from checkpoint: {start_idx}/{len(probes)} done")
+                print(f"Resuming from checkpoint: {start_idx}/{n_filtered} filtered rows done")
 
-    # Build sequences for remaining probes
-    remaining = probes[start_idx:]
-    wt_seqs, mut_seqs, positions = [], [], []
-    skipped_mismatch = 0
-    for p in remaining:
-        seq = seqs[p["uniprot_id"]]
-        wt_win, new_pos = window_sequence(seq, p["aa_pos"])
-        mut_win = apply_missense(wt_win, new_pos, p["aa_wt"], p["aa_mut"])
-        if mut_win is None:
-            skipped_mismatch += 1
-            continue
-        wt_seqs.append(wt_win)
-        mut_seqs.append(mut_win)
-        positions.append(new_pos)
-    if skipped_mismatch:
-        print(f"WARNING: skipped {skipped_mismatch} probes where WT AA did not match reference sequence")
+    wt_seqs = wt_seqs[start_idx:]
+    mut_seqs = mut_seqs[start_idx:]
+    positions = positions[start_idx:]
 
-    print(f"Extracting {len(wt_seqs)} probe embeddings on {device}...")
+    print(f"Extracting {len(wt_seqs)} remaining probe embeddings on {device}...")
 
     EMB_DIR.mkdir(parents=True, exist_ok=True)
     chunk_size = CHECKPOINT_EVERY * batch_size
@@ -133,13 +141,15 @@ def embed_scan(batch_size: int = 128) -> None:
         )
         all_wt.append(wt_emb)
         all_mut.append(mut_emb)
+        # n_done counts rows written into the embedding arrays — same coordinate
+        # system as CKPT_IDX so resume slicing is consistent.
         n_done = start_idx + chunk_end
         # Checkpoint commit order: write both arrays atomically (save_npy uses
         # .tmp + os.replace internally), then update CKPT_IDX last and
         # atomically. CKPT_IDX is the commit signal: its value is only advanced
-        # after both arrays are on disk. On resume, _load_checkpoint validates
-        # that both array row counts match CKPT_IDX — a mismatch means a crash
-        # occurred between the two save_npy calls and the checkpoint is discarded.
+        # after both arrays are on disk. On resume, the array row counts are
+        # validated against CKPT_IDX — a mismatch means a crash occurred between
+        # the two save_npy calls and the checkpoint is discarded.
         save_npy(SCAN_CKPT_WT, np.vstack(all_wt))
         save_npy(SCAN_CKPT_MUT, np.vstack(all_mut))
         ckpt_idx_tmp = str(CKPT_IDX) + ".tmp"
@@ -149,11 +159,11 @@ def embed_scan(batch_size: int = 128) -> None:
             mem_used = torch.cuda.memory_allocated() / 1e9
             mem_res = torch.cuda.memory_reserved() / 1e9
             print(
-                f"  Checkpoint: {n_done}/{len(probes)} probes done  "
+                f"  Checkpoint: {n_done}/{n_filtered} filtered rows done  "
                 f"[GPU mem: {mem_used:.1f}GB alloc / {mem_res:.1f}GB reserved]"
             )
         except Exception:
-            print(f"  Checkpoint: {n_done}/{len(probes)} probes done")
+            print(f"  Checkpoint: {n_done}/{n_filtered} filtered rows done")
 
     wt_final = np.vstack(all_wt)
     mut_final = np.vstack(all_mut)
