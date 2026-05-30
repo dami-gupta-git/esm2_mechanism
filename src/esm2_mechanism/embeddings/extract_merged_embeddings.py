@@ -96,7 +96,8 @@ ckpt_wt_pos  = os.path.join(args.data_dir, "merged_embeddings_wt_pos.npy")
 ckpt_mut_pos = os.path.join(args.data_dir, "merged_embeddings_mut_pos.npy")
 if (os.path.exists(ckpt_valid) and os.path.exists(ckpt_wt) and os.path.exists(ckpt_mut)
         and os.path.exists(ckpt_wt_pos) and os.path.exists(ckpt_mut_pos)):
-    prev = json.load(open(ckpt_valid))
+    with open(ckpt_valid) as _f:
+        prev = json.load(_f)
     if len(prev) == len(valid):
         print("Embeddings already complete — loading from cache.")
         wt_mean  = np.load(ckpt_wt)

@@ -70,7 +70,8 @@ PATH_CANON_MUT_EMB = os.path.join(EMB, "emb_mut_mean_path_canonical_n16576.npy")
 
 def load_pathogenicity_canonical():
     """Load the canonical n=16,576 pathogenicity set (matches result_6)."""
-    variants = json.load(open(PATH_CANON_VARIANTS))
+    with open(PATH_CANON_VARIANTS) as _f:
+        variants = json.load(_f)
     wt = np.load(PATH_CANON_WT_EMB)
     mut = np.load(PATH_CANON_MUT_EMB)
     delta = mut - wt
@@ -250,7 +251,8 @@ def run_biophysical_direction(seeds):
     print("PROBE C  biophysical direction (S1724 signed ddG, protein-holdout)")
     print("=" * 60)
     from scipy.stats import spearmanr
-    variants = json.load(open(S1724_VARIANTS))
+    with open(S1724_VARIANTS) as _f:
+        variants = json.load(_f)
     ddg = np.array([v["ddg"] for v in variants], dtype=np.float64)
     proteins = np.array([v["protein"] for v in variants])
     wt = np.load(S1724_WT_EMB); mut = np.load(S1724_MUT_EMB)
@@ -342,7 +344,8 @@ def main():
     ap.add_argument("--seeds", type=int, nargs="+", default=[0, 1, 2, 3, 4])
     args = ap.parse_args()
 
-    pfam_map = json.load(open(ms.PFAM_JSON))
+    with open(ms.PFAM_JSON) as _f:
+        pfam_map = json.load(_f)
 
     path_res = run_pathogenicity(pfam_map, args.seeds)
     mech_res = run_mechanism(pfam_map, args.seeds)

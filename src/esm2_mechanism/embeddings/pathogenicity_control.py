@@ -216,7 +216,8 @@ def get_or_extract_embeddings(variants, seq_cache, data_dir, model_name,
     meta_p = os.path.join(data_dir, f"emb_meta_{suffix}.json")
 
     if os.path.exists(wt_p) and os.path.exists(mut_p) and os.path.exists(meta_p):
-        meta = json.load(open(meta_p))
+        with open(meta_p) as _f:
+            meta = json.load(_f)
         if meta.get("n") == len(variants):
             print(f"  Cached pathogenicity embeddings found: {wt_p}")
             return (np.load(wt_p), np.load(mut_p),
@@ -246,9 +247,10 @@ def get_or_extract_embeddings(variants, seq_cache, data_dir, model_name,
     valid_indices = [variants.index(v) for v in valid]
     np.save(wt_p, wt_mean)
     np.save(mut_p, mut_mean)
-    json.dump({"n": len(variants), "n_valid": len(valid),
-               "valid_indices": valid_indices,
-               "model": model_name}, open(meta_p, "w"))
+    with open(meta_p, "w") as _f:
+        json.dump({"n": len(variants), "n_valid": len(valid),
+                   "valid_indices": valid_indices,
+                   "model": model_name}, _f)
     print(f"  Cached: {wt_p}")
     return wt_mean, mut_mean, valid
 

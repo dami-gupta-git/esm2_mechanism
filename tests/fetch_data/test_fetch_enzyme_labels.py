@@ -4,7 +4,7 @@ fetch_uniprot_entry makes network calls and is not tested here.
 """
 
 import pytest
-from esm2_mechanism.fetch_data.fetch_enzyme_labels import parse_ec_and_keywords, assign_4class
+from esm2_mechanism.fetch_data.fetch_annotations import parse_ec_and_keywords, assign_4class
 
 
 # ---------------------------------------------------------------------------

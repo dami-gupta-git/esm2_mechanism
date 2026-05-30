@@ -17,7 +17,7 @@ import openpyxl
 import pandas as pd
 import pytest
 
-from esm2_mechanism.fetch_data.build_merged_gene_list import (
+from esm2_mechanism.fetch_data.build_gene_universe import (
     LEGACY_GENE_ALIASES,
     _load_functional_protein_class,
     _load_clinvar_gene_level,

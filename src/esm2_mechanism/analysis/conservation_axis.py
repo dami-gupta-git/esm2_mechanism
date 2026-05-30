@@ -127,8 +127,9 @@ def extract_conservation(variants, seqs, batch_size=64, ckpt_every=2000):
             print(f"  {done}/{N} done (checkpointed)")
 
     np.save(CONS_CACHE, out)
-    json.dump({"n": N, "coverage": done, "features": ["logP_wt", "logP_mut", "entropy"],
-               "model": ESM2_MODEL_650M}, open(CONS_META, "w"))
+    with open(CONS_META, "w") as _f:
+        json.dump({"n": N, "coverage": done, "features": ["logP_wt", "logP_mut", "entropy"],
+                   "model": ESM2_MODEL_650M}, _f)
     print(f"Saved {CONS_CACHE}: {done}/{N} variants with conservation scores")
     return out
 
@@ -162,10 +163,12 @@ def analyse():
                                 f"python3 scripts/conservation_axis.py --extract (needs GPU)")
 
     import mechanism.multiseed_v1 as ms
-    variants = json.load(open(VARIANTS))
+    with open(VARIANTS) as _f:
+        variants = json.load(_f)
     delta = np.load(MUT_EMB) - np.load(WT_EMB)
     cons = np.load(CONS_CACHE)
-    pfam = json.load(open(ms.PFAM_JSON))
+    with open(ms.PFAM_JSON) as _f:
+        pfam = json.load(_f)
     genes_all = np.array([v["gene"] for v in variants])
     y_all = np.array([1 if v["label"] == "pathogenic" else 0 for v in variants])
 
@@ -213,7 +216,8 @@ def analyse():
     result = {"n_valid": int(valid.sum()), "k3_spearman_axis_vs": k3,
               "auroc_family_split": auroc, "gates": gates,
               "thresholds": {"K1": K1_CONS_MIN, "K2": K2_ADD_MIN}}
-    json.dump(result, open(os.path.join(OUT, "conservation_axis.json"), "w"), indent=2)
+    with open(os.path.join(OUT, "conservation_axis.json"), "w") as _f:
+        json.dump(result, _f, indent=2)
 
     print("\n" + "=" * 60)
     print("CONSERVATION DECIDER")
@@ -238,8 +242,10 @@ def main():
     args = ap.parse_args()
 
     if args.extract:
-        variants = json.load(open(VARIANTS))
-        seqs = json.load(open(SEQS))
+        with open(VARIANTS) as _f:
+            variants = json.load(_f)
+        with open(SEQS) as _f:
+            seqs = json.load(_f)
         print(f"Variants: {len(variants)}  Sequences available: {len(seqs)}")
         extract_conservation(variants, seqs, batch_size=args.batch_size)
 

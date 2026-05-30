@@ -2,8 +2,8 @@
 Phase 1 + 2 feature collection — Experiment 11
 ===============================================
 
-Collects gene-level proteome features for all 1985 genes in
-data/merged_gene_list.tsv.  Sources:
+Collects gene-level proteome features for all genes in
+data/gene_universe.tsv.  Sources:
 
   1. gnomAD v4.1 constraint  (pLI, LOEUF, mis_z)
   2. Ensembl Compara         (paralog_count)
@@ -34,8 +34,10 @@ import csv
 import functools
 import gzip
 import io
+import itertools
 import json
 import math
+import re
 import time
 import urllib.request
 from pathlib import Path
@@ -54,8 +56,7 @@ CACHE_DIR = DATA_DIR / "cache" / "proteome_features"
 PILOT_CACHE_DIR = DATA_DIR / "cache" / "proteome_pilot"
 PILOT_PARALOG_CACHE = PILOT_CACHE_DIR / "paralogs"
 
-MERGED_GENE_LIST = DATA_DIR / "merged_gene_list.tsv"
-PFAM_FAMILIES = DATA_DIR / "pfam_families.json"
+GENE_UNIVERSE = DATA_DIR / "gene_universe.tsv"
 
 OUT_TSV = DATA_DIR / "gene_proteome_features.tsv"
 OUT_NPY = DATA_DIR / "proteome_features_aligned.npy"
@@ -135,34 +136,24 @@ def _fnum(v: str) -> Optional[float]:
 
 
 # ---------------------------------------------------------------------------
-# Step 1 — Load full gene universe from merged_gene_list.tsv
+# Step 1 — Load gene universe from gene_universe.tsv
 # ---------------------------------------------------------------------------
-def load_gene_universe(tsv_path: Path) -> list[str]:
+def load_gene_universe(tsv_path: Path) -> tuple[list[str], dict[str, str]]:
     """
-    Return all gene symbols in order of first appearance in the TSV.
-    Includes ALL genes (labeled or not) — 1985 entries, deduplicated preserving order.
+    Return (genes_in_order, {gene: pfam_family}) from gene_universe.tsv.
+    All genes in the file have a pfam_family (filtered upstream by build_gene_universe.py).
     """
-    seen: set[str] = set()
     genes: list[str] = []
+    families: dict[str, str] = {}
     with open(tsv_path) as f:
         reader = csv.DictReader(f, delimiter="\t")
         for row in reader:
             g = row["gene"].strip()
-            if g and g not in seen:
-                seen.add(g)
+            if g and g not in families:
                 genes.append(g)
-    print(f"Gene universe: {len(genes)} unique genes from {tsv_path.name}")
-    return genes
-
-
-# ---------------------------------------------------------------------------
-# Step 2 — Pfam family lookup
-# ---------------------------------------------------------------------------
-def load_pfam_families(path: Path) -> dict[str, Optional[str]]:
-    with open(path) as f:
-        d = json.load(f)
-    print(f"Pfam families loaded: {len(d)} genes")
-    return d
+                families[g] = row["pfam_family"].strip()
+    print(f"Gene universe: {len(genes)} genes from {tsv_path.name}")
+    return genes, families
 
 
 # ---------------------------------------------------------------------------
@@ -232,14 +223,18 @@ def get_gnomad_constraint(force: bool = False) -> dict[str, dict]:
         i for i in (idx_gene, idx_pli, idx_loeuf, idx_misz, idx_mane, idx_lof_exp)
         if i is not None
     )
+    n_skipped = 0
     with open(cache_path) as f:
         next(f)
         for line in f:
+            n_rows += 1
             parts = line.rstrip("\n").split("\t")
             if len(parts) <= needed:
+                n_skipped += 1
                 continue
             gene = parts[idx_gene].strip()
             if not gene or gene == "NA":
+                n_skipped += 1
                 continue
             is_mane = (
                 parts[idx_mane].strip().lower() in ("true", "1", "yes")
@@ -263,9 +258,8 @@ def get_gnomad_constraint(force: bool = False) -> dict[str, dict]:
                 (row["_lof_exp"] is not None and prev["_lof_exp"] is not None and row["_lof_exp"] > prev["_lof_exp"])
             ):
                 by_gene[gene] = row
-            n_rows += 1
 
-    print(f"  parsed {n_rows} rows → {len(by_gene)} unique genes")
+    print(f"  parsed {n_rows} rows ({n_skipped} skipped) → {len(by_gene)} unique genes")
     return by_gene
 
 
@@ -325,8 +319,7 @@ def _fetch_paralog_count_rest(gene: str, own_cache_dir: Path) -> Optional[int]:
         cache_file.write_text(json.dumps({"paralog_count": count}))
         return count
     except Exception as e:
-        print(f"  paralog fetch failed for {gene}: {e}")
-        cache_file.write_text(json.dumps({"paralog_count": None, "error": str(e)}))
+        print(f"  paralog fetch failed for {gene}: {e} — not caching, will retry next run")
         return None
 
 
@@ -391,7 +384,8 @@ def get_hpa_features(genes: list[str], force: bool = False) -> dict[str, dict]:
         "group enriched": 0.7,
         "tissue enhanced": 0.6,
         "low tissue specificity": 0.2,
-        "not detected": 0.0,
+        # "not detected" is absent from the map — it means no tissue data, not tau=0.
+        # Leaving it unmapped returns None, which the _missing indicator will flag correctly.
     }
 
     ok = _download_file(HPA_PROTEINATLAS_URL, HPA_PROTEINATLAS_CACHE, force=force)
@@ -460,7 +454,8 @@ def get_hpa_features(genes: list[str], force: bool = False) -> dict[str, dict]:
 # ---------------------------------------------------------------------------
 def get_paxdb_abundance(genes: list[str], force: bool = False) -> dict[str, Optional[float]]:
     """
-    Returns {gene: log10(abundance_ppm + 1e-3)} or {gene: None}.
+    Returns {gene: log10(abundance_ppm)} or {gene: None}.
+    Genes with abundance_ppm < 1e-3 (below detection floor) are returned as None.
 
     The manually placed file (data/downloads/9606-WHOLE_ORGANISM-integrated.txt)
     has been pre-processed to: gene_symbol\tstring_id\tabundance_ppm.
@@ -493,17 +488,21 @@ def get_paxdb_abundance(genes: list[str], force: bool = False) -> dict[str, Opti
 
     try:
         with open(paxdb_path) as f:
+            header_skipped = False
             for line in f:
                 line = line.strip()
                 if not line or line.startswith("#"):
+                    continue
+                if not header_skipped:
+                    header_skipped = True
                     continue
                 parts = line.split("\t")
                 if len(parts) < 3:
                     continue
                 gene = parts[0].strip()
                 abund = _fnum(parts[2])
-                if gene in genes_set and abund is not None and result[gene] is None:
-                    result[gene] = math.log10(abund + 1e-3)
+                if gene in genes_set and abund is not None and abund >= 1e-3 and result[gene] is None:
+                    result[gene] = math.log10(abund)
         n_covered = sum(1 for v in result.values() if v is not None)
         print(f"  PaxDb coverage: {n_covered}/{len(genes)} genes assigned log_abundance_ppm")
         return result
@@ -561,29 +560,25 @@ def get_bioplex_degree(genes: list[str], force: bool = False) -> dict[str, Optio
                 degree.setdefault(ga, set()).add(gb)
                 degree.setdefault(gb, set()).add(ga)
 
-        # Sanity check: even with a matched column name, the values themselves
-        # may not be HGNC symbols (e.g. a future BioPlex release could ship
-        # UniProt or Ensembl IDs under a column called "GeneA"). If the overlap
-        # with our gene universe is implausibly small, refuse to silently
-        # produce a near-zero-coverage matrix.
+        # Sanity check: verify matched column values look like HGNC gene symbols,
+        # not database IDs (ENSG*, 6-char UniProt). Sample the first 50 keys from
+        # the degree dict — they come directly from the matched columns.
+        _ENSG_RE = re.compile(r'^ENSG\d{8,}$')
+        _UNIPROT_RE = re.compile(r'^[A-NR-Z]\d[A-Z\d]{3}\d$|^[OPQ]\d[A-Z\d]{3}\d$')
+        _sample = list(itertools.islice(degree, 50))
+        _n_db_ids = sum(1 for k in _sample if _ENSG_RE.match(k) or _UNIPROT_RE.match(k))
+        if degree and _n_db_ids > len(_sample) * 0.5:
+            print(
+                f"WARNING: BioPlex: column values look like database IDs, not HGNC symbols "
+                f"(sample: {_sample[:5]}). Discarding to avoid fabricated degrees."
+            )
+            return {g: None for g in genes}
+
         n_hit = 0
         for gene in genes_set:
             if gene in degree:
                 result[gene] = len(degree[gene])
                 n_hit += 1
-
-        # BioPlex 3.0 in HEK293T covers ~10k genes; even niche universes overlap
-        # by hundreds. <5% overlap almost certainly means we matched ID-type
-        # columns, not symbols.
-        coverage_frac = n_hit / len(genes) if genes else 0.0
-        if degree and coverage_frac < 0.05:
-            print(
-                f"WARNING: BioPlex: only {n_hit}/{len(genes)} ({coverage_frac:.1%}) "
-                f"of universe genes match — columns '{col_a}'/'{col_b}' may not "
-                f"contain HGNC symbols. Discarding to avoid fabricated zero degrees. "
-                f"Sample values: ga={next(iter(degree), None)!r}"
-            )
-            return {g: None for g in genes}
 
         print(f"  BioPlex coverage: {n_hit}/{len(genes)} genes with PPI_degree")
     except Exception as e:
@@ -630,7 +625,7 @@ def _load_ensg_to_symbol() -> dict[str, str]:
                 parts = line.decode().strip().split("\t")
                 if len(parts) <= needed:
                     continue
-                ensg = parts[idx_ensg].strip()
+                ensg = parts[idx_ensg].strip().split(".")[0]
                 gene = parts[idx_gene].strip()
                 if ensg and gene and ensg not in mapping:
                     mapping[ensg] = gene
@@ -669,7 +664,7 @@ def get_shet(genes: list[str]) -> dict[str, Optional[float]]:
         with open(SHET_MANUAL) as f:
             reader = csv.DictReader(f, delimiter="\t")
             for row in reader:
-                ensg = row.get("ensg", "").strip()
+                ensg = row.get("ensg", "").strip().split(".")[0]
                 gene = ensg_to_gene.get(ensg)
                 if gene is None or gene not in genes_set:
                     continue
@@ -840,20 +835,17 @@ def build_aligned_matrix(
                 except (ValueError, TypeError):
                     pass
 
-    # Median imputation column-wise. A fully-missing column means the source
-    # genuinely produced no data — we must not fabricate a value (a 0.0 default
-    # is also semantically wrong, e.g. pLI=0 means LoF-tolerant, not "unknown").
+    # Median imputation column-wise. Fully-missing columns (source failed entirely)
+    # are left as NaN — imputing them would fabricate values with no basis.
     for j in range(X.shape[1]):
         col_data = X[:, j]
         nan_mask = np.isnan(col_data)
         if nan_mask.any():
             finite = col_data[~nan_mask]
             if finite.size == 0:
-                raise ValueError(
-                    f"Column '{num_cols[j]}' has no observed values across all "
-                    f"{len(rows)} genes — the source likely failed to load. Refusing "
-                    f"to fabricate an imputation value; fix the source and rerun."
-                )
+                print(f"WARNING: column '{num_cols[j]}' has no observed values — "
+                      f"source likely failed; leaving as NaN in matrix.")
+                continue
             X[nan_mask, j] = float(np.median(finite))
 
     return X.astype(np.float32), num_cols
@@ -898,9 +890,11 @@ def main():
     args = parser.parse_args()
     force = args.force_redownload
 
-    missing = [p for p in [MERGED_GENE_LIST, PFAM_FAMILIES] if not p.exists()]
-    if missing:
-        raise FileNotFoundError("Required input(s) not found:\n" + "\n".join(f"  {p}" for p in missing))
+    if not GENE_UNIVERSE.exists():
+        raise FileNotFoundError(
+            f"Required input not found: {GENE_UNIVERSE}\n"
+            "  Run: python -m esm2_mechanism.fetch_data.build_gene_universe --step universe"
+        )
 
     for d in (CACHE_DIR, CACHE_DIR / "paralogs"):
         d.mkdir(parents=True, exist_ok=True)
@@ -909,18 +903,8 @@ def main():
     print("build_proteome_features.py — Experiment 11 Phase 1+2")
     print("=" * 60)
 
-    # 1. Gene universe
-    genes = load_gene_universe(MERGED_GENE_LIST)
-
-    # 2. Pfam families
-    families = load_pfam_families(PFAM_FAMILIES)
-
-    # Drop genes with no Pfam family — family residuals are undefined for them
-    # and there are too few (~33) to impute meaningfully
-    genes_no_family = [g for g in genes if families.get(g) is None]
-    genes = [g for g in genes if families.get(g) is not None]
-    if genes_no_family:
-        print(f"Dropped {len(genes_no_family)} genes with no Pfam family: {sorted(genes_no_family)}")
+    # 1. Gene universe + Pfam families (gene_universe.tsv already filtered to Pfam-annotated genes)
+    genes, families = load_gene_universe(GENE_UNIVERSE)
     print(f"Proceeding with {len(genes)} genes")
 
     # 3. Sources — each wrapped in try/except so one failure doesn't abort
@@ -983,7 +967,7 @@ def main():
         "n_genes": len(genes),
         "n_numerical_cols": len(num_cols),
         "notes": {
-            "gene_order": "Same as merged_gene_list.tsv order of first appearance",
+            "gene_order": "Same as gene_universe.tsv row order",
             "imputation": "Median imputation applied only to .npy; raw NaN kept in TSV",
             "residuals": "family-mean-centred, named <feat>_familyresid",
             "missingness": "Binary <feat>_missing indicators included",

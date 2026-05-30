@@ -10,7 +10,7 @@ Covers:
 - select_extended: excludes base, excludes unneeded IDs, new overrides existing
 """
 
-from esm2_mechanism.fetch_data.fetch_uniprot_sequences import parse_fasta, select_extended
+from esm2_mechanism.fetch_data.fetch_annotations import parse_fasta, select_extended
 
 
 ISOFORM_FASTA = """\

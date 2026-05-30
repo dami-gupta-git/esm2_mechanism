@@ -1,53 +1,56 @@
 """
-Build merged_gene_list.tsv from Gerasimavicius and G2P datasets.
+Build the canonical gene universe for downstream feature scripts.
 
-Sources
--------
-Gerasimavicius  data/downloads/DiseaseMech_Stability_VEPS.xlsx
-G2P             data/downloads/AllG2P.csv
+Two pipeline steps, run in order:
 
-Logic
------
-1. Gerasimavicius genes (non-Unknown mechanism) → source=gerasimavicius
-   - Mechanism from Functional_protein_class sheet; fallback to ClinVar_gene_level
-   - UniProt from ClinVar_gene_level sheet
-   - g2p_disagrees filled when G2P (definitive/strong) disagrees
+  Step 1 — gene-list  (run before variant fetching)
+    Merges Gerasimavicius et al. and G2P datasets → merged_gene_list.tsv.
+    Inputs : data/downloads/DiseaseMech_Stability_VEPS.xlsx
+             data/downloads/AllG2P.csv
+    Output : data/merged_gene_list.tsv
 
-2. All other genes with definitive/strong G2P entries → source=g2p
-   - Includes genes not in Gerasimavicius AND genes in Gerasimavicius with Unknown mechanism
+  Step 2 — universe  (run after fetch_annotations --step pfam)
+    Filters merged_gene_list.tsv to genes with a Pfam family assignment.
+    The output gene_universe.tsv is the canonical aligned row order for all
+    feature matrices (proteome_features_aligned.npy, etc.).
+    Inputs : data/merged_gene_list.tsv
+             data/pfam_families.json
+    Output : data/gene_universe.tsv
+             Columns: gene, mechanism, uniprot_id, source, g2p_disagrees, pfam_family
 
-3. Genes with only Unknown mechanism in Gerasimavicius AND no G2P entry are excluded.
-
-G2P mechanism mapping
----------------------
-  loss of function            → LOF
-  gain of function            → GOF
-  dominant negative           → DN
-  undetermined / other        → excluded
-
-Output columns: gene, mechanism, uniprot_id, source, g2p_disagrees
-
-Usage
------
-    python -m esm2_mechanism.fetch_data.build_merged_gene_list
+Usage:
+    python -m esm2_mechanism.fetch_data.build_gene_universe --step gene-list
+    python -m esm2_mechanism.fetch_data.build_gene_universe --step universe
 """
 
+from __future__ import annotations
+
+import argparse
 import csv
 import functools
+import json
 from collections import Counter
 from pathlib import Path
 
-import pandas as pd
 import openpyxl
+import pandas as pd
 
 from esm2_mechanism.utils_paths import DATA_DIR
 
 print = functools.partial(print, flush=True)
 
+# ---------------------------------------------------------------------------
+# Paths
+# ---------------------------------------------------------------------------
 XLSX = DATA_DIR / "downloads" / "DiseaseMech_Stability_VEPS.xlsx"
 G2P_CSV = DATA_DIR / "downloads" / "AllG2P.csv"
-OUT_PATH = DATA_DIR / "merged_gene_list.tsv"
+MERGED_GENE_LIST = DATA_DIR / "merged_gene_list.tsv"
+PFAM_FAMILIES = DATA_DIR / "pfam_families.json"
+GENE_UNIVERSE = DATA_DIR / "gene_universe.tsv"
 
+# ---------------------------------------------------------------------------
+# Step 1 constants
+# ---------------------------------------------------------------------------
 G2P_MECH_MAP = {
     "loss of function": "LOF",
     "gain of function": "GOF",
@@ -55,27 +58,21 @@ G2P_MECH_MAP = {
 }
 G2P_CONFIDENCE_KEEP = {"definitive", "strong"}
 
-# Legacy gene names present in the original merged list that no longer appear under
-# these symbols in either source dataset (renamed in HGNC after the manual merge).
-# Kept verbatim so downstream scripts that depend on these identifiers still work.
 LEGACY_GENE_ALIASES: list[dict] = [
     {"gene": "C12ORF65", "mechanism": "AR",  "uniprot_id": "Q9H3J6", "source": "gerasimavicius", "g2p_disagrees": ""},
     {"gene": "C19ORF12", "mechanism": "LOF", "uniprot_id": "",        "source": "g2p",            "g2p_disagrees": ""},
 ]
 
-# ClinVar_gene_level Disease_mechanism → canonical label
 CV_MECH_MAP = {
-    "AR, Het": "AR",
-    "AR": "AR",
-    "HI": "HI",
-    "GOF": "GOF",
-    "DN": "DN",
-    "Unknown": "Unknown",
+    "AR, Het": "AR", "AR": "AR", "HI": "HI",
+    "GOF": "GOF", "DN": "DN", "Unknown": "Unknown",
 }
 
 
+# ---------------------------------------------------------------------------
+# Step 1 helpers
+# ---------------------------------------------------------------------------
 def _load_functional_protein_class(wb) -> dict[str, str]:
-    """Gene → mechanism from Functional_protein_class sheet (most curated)."""
     ws = wb["Functional_protein_class"]
     out: dict[str, str] = {}
     for row in ws.iter_rows(min_row=2, values_only=True):
@@ -87,16 +84,16 @@ def _load_functional_protein_class(wb) -> dict[str, str]:
 
 
 def _load_clinvar_gene_level(wb) -> tuple[dict[str, str], dict[str, str]]:
-    """Gene → (uniprot_id, mechanism) from ClinVar_gene_level sheet."""
     ws = wb["ClinVar_gene_level"]
     uid_map: dict[str, str] = {}
     mech_raw: dict[str, list[str]] = {}
     for row in ws.iter_rows(min_row=2, values_only=True):
+        if len(row) < 10:
+            continue
         gene, uid, mech = row[0], row[1], row[9]
         if gene:
             uid_map[gene] = uid or ""
             mech_raw.setdefault(gene, []).append(mech or "Unknown")
-
     mech_map: dict[str, str] = {
         gene: CV_MECH_MAP.get(Counter(mechs).most_common(1)[0][0], "Unknown")
         for gene, mechs in mech_raw.items()
@@ -110,8 +107,7 @@ def _load_g2p(path: Path) -> dict[str, str]:
 
     Tiebreaking: if a gene has conflicting mechanisms, use only its 'definitive'
     entries. If that resolves to a single mechanism, accept it. If the conflict
-    persists even at definitive confidence (or there are no definitive entries),
-    exclude the gene entirely rather than apply an arbitrary rule.
+    persists even at definitive confidence, exclude the gene.
     """
     df = pd.read_csv(path)
     filtered = df[
@@ -127,7 +123,6 @@ def _load_g2p(path: Path) -> dict[str, str]:
         if len(unique) == 1:
             out[gene] = unique[0]
             continue
-        # Conflict — try restricting to definitive entries only
         definitive = group[group["confidence"] == "definitive"]["mech_short"].unique()
         if len(definitive) == 1:
             out[gene] = definitive[0]
@@ -157,48 +152,34 @@ def build(xlsx_path: Path, g2p_path: Path, out_path: Path) -> None:
     emitted_genes: set[str] = set()
 
     for gene in sorted(all_gera_genes):
-        # Best mechanism: prefer Functional_protein_class, fallback to ClinVar
         mech = func_mechs.get(gene)
         if not mech or mech == "Unknown":
             mech = cv_mechs.get(gene)
-
         uid = cv_uid.get(gene, "")
         g2p_mech = g2p_best.get(gene)
 
         if mech and mech != "Unknown":
             disagrees = g2p_mech if (g2p_mech and g2p_mech != mech) else None
             rows.append({
-                "gene": gene,
-                "mechanism": mech,
-                "uniprot_id": uid,
-                "source": "gerasimavicius",
-                "g2p_disagrees": disagrees or "",
+                "gene": gene, "mechanism": mech, "uniprot_id": uid,
+                "source": "gerasimavicius", "g2p_disagrees": disagrees or "",
             })
             emitted_genes.add(gene)
         elif g2p_mech:
-            # Unknown mechanism in Gerasimavicius — use G2P instead
             rows.append({
-                "gene": gene,
-                "mechanism": g2p_mech,
-                "uniprot_id": uid,
-                "source": "g2p",
-                "g2p_disagrees": "",
+                "gene": gene, "mechanism": g2p_mech, "uniprot_id": uid,
+                "source": "g2p", "g2p_disagrees": "",
             })
             emitted_genes.add(gene)
-        # else: Unknown in both sources — excluded
 
-    # Add G2P genes not covered by Gerasimavicius at all
     for gene in sorted(g2p_best):
         if gene not in emitted_genes:
             rows.append({
-                "gene": gene,
-                "mechanism": g2p_best[gene],
-                "uniprot_id": "",
-                "source": "g2p",
-                "g2p_disagrees": "",
+                "gene": gene, "mechanism": g2p_best[gene], "uniprot_id": "",
+                "source": "g2p", "g2p_disagrees": "",
             })
+            emitted_genes.add(gene)
 
-    # Inject legacy aliases unless a current symbol already covers them
     present_genes = {r["gene"] for r in rows}
     for alias in LEGACY_GENE_ALIASES:
         if alias["gene"] not in present_genes:
@@ -222,11 +203,73 @@ def build(xlsx_path: Path, g2p_path: Path, out_path: Path) -> None:
     print(f"  g2p_disagrees: {n_disagree} genes")
 
 
+# ---------------------------------------------------------------------------
+# Step 2 — gene_universe.tsv
+# ---------------------------------------------------------------------------
+def _build_gene_universe(merged_path: Path, pfam_path: Path, out_path: Path) -> None:
+    """Filter merged_gene_list to Pfam-annotated genes → gene_universe.tsv."""
+    with open(pfam_path) as f:
+        pfam: dict[str, str | None] = json.load(f)
+    n_annotated = sum(1 for v in pfam.values() if v is not None)
+    print(f"Pfam families loaded: {len(pfam)} genes, {n_annotated} annotated")
+
+    rows_in: list[dict] = []
+    with open(merged_path) as f:
+        reader = csv.DictReader(f, delimiter="\t")
+        for row in reader:
+            rows_in.append(row)
+    print(f"merged_gene_list: {len(rows_in)} genes")
+
+    rows_out: list[dict] = []
+    dropped: list[str] = []
+    for row in rows_in:
+        gene = row["gene"]
+        pfam_family = pfam.get(gene)
+        if pfam_family is None:
+            dropped.append(gene)
+            continue
+        rows_out.append({**row, "pfam_family": pfam_family})
+
+    if dropped:
+        print(f"Dropped {len(dropped)} genes with no Pfam annotation: {sorted(dropped)}")
+    print(f"gene_universe: {len(rows_out)} genes retained")
+
+    fieldnames = ["gene", "mechanism", "uniprot_id", "source", "g2p_disagrees", "pfam_family"]
+    with open(out_path, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames, delimiter="\t")
+        writer.writeheader()
+        writer.writerows(rows_out)
+    print(f"Wrote {out_path}")
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
 def main() -> None:
-    for path in [XLSX, G2P_CSV]:
-        if not path.exists():
-            raise FileNotFoundError(f"Required input not found: {path}")
-    build(XLSX, G2P_CSV, OUT_PATH)
+    parser = argparse.ArgumentParser(
+        description="Build gene universe files. See module docstring for step order."
+    )
+    parser.add_argument(
+        "--step",
+        choices=["gene-list", "universe"],
+        required=True,
+        help=(
+            "gene-list: merge Gerasimavicius + G2P → merged_gene_list.tsv  |  "
+            "universe: filter to Pfam-annotated genes → gene_universe.tsv"
+        ),
+    )
+    args = parser.parse_args()
+
+    if args.step == "gene-list":
+        for path in [XLSX, G2P_CSV]:
+            if not path.exists():
+                raise FileNotFoundError(f"Required input not found: {path}")
+        build(XLSX, G2P_CSV, MERGED_GENE_LIST)
+    else:
+        for path in [MERGED_GENE_LIST, PFAM_FAMILIES]:
+            if not path.exists():
+                raise FileNotFoundError(f"Required input not found: {path}")
+        _build_gene_universe(MERGED_GENE_LIST, PFAM_FAMILIES, GENE_UNIVERSE)
 
 
 if __name__ == "__main__":

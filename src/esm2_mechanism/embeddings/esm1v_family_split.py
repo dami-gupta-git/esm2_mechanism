@@ -75,9 +75,12 @@ def main() -> int:
 
     RESULTS.mkdir(parents=True, exist_ok=True)
 
-    variants = json.load(open(DATA / "pathogenicity_valid_variants.json"))
-    scores = json.load(open(args.scores))
-    pfam = json.load(open(DATA / "pfam_families.json"))
+    with open(DATA / "pathogenicity_valid_variants.json") as _f:
+        variants = json.load(_f)
+    with open(args.scores) as _f:
+        scores = json.load(_f)
+    with open(DATA / "pfam_families.json") as _f:
+        pfam = json.load(_f)
 
     rows = []
     miss_score = miss_pfam = 0

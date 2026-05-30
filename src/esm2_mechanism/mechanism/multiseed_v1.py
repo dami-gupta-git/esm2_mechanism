@@ -280,7 +280,8 @@ def run_seed(seed, pfam_map, out_dir):
     geras_out = os.path.join(out_dir, f"mechanism_geras_seed{seed}.json")
     if os.path.exists(geras_out):
         print(f"  [skip] {geras_out} already exists")
-        geras_results = json.load(open(geras_out))
+        with open(geras_out) as _f:
+            geras_results = json.load(_f)
     else:
         print("\n--- Gerasimavicius mechanism ---")
         dm, dp, labels, genes = load_geras(pfam_map)
@@ -300,7 +301,8 @@ def run_seed(seed, pfam_map, out_dir):
     merged_out = os.path.join(out_dir, f"mechanism_merged_seed{seed}.json")
     if os.path.exists(merged_out):
         print(f"  [skip] {merged_out} already exists")
-        merged_results = json.load(open(merged_out))
+        with open(merged_out) as _f:
+            merged_results = json.load(_f)
     else:
         print("\n--- Merged dataset mechanism ---")
         dm, labels, genes = load_merged(pfam_map)
@@ -319,7 +321,8 @@ def run_seed(seed, pfam_map, out_dir):
     path_out = os.path.join(out_dir, f"pathogenicity_seed{seed}.json")
     if os.path.exists(path_out):
         print(f"  [skip] {path_out} already exists")
-        path_results = json.load(open(path_out))
+        with open(path_out) as _f:
+            path_results = json.load(_f)
     else:
         print("\n--- Pathogenicity control ---")
         delta, y, genes = load_pathogenicity(pfam_map)
@@ -461,9 +464,12 @@ def main():
     all_seeds = []
 
     # Always include seed 0 from existing results
-    seed0_geras = json.load(open(os.path.join(SEED0_DIR, "mlp_results_seed0.json")))
-    seed0_merged = json.load(open(os.path.join(SEED0_DIR, "mlp_merged_results_seed0.json")))
-    seed0_path = json.load(open(os.path.join(SEED0_DIR, "pathogenicity_control.json")))
+    with open(os.path.join(SEED0_DIR, "mlp_results_seed0.json")) as _f:
+        seed0_geras = json.load(_f)
+    with open(os.path.join(SEED0_DIR, "mlp_merged_results_seed0.json")) as _f:
+        seed0_merged = json.load(_f)
+    with open(os.path.join(SEED0_DIR, "pathogenicity_control.json")) as _f:
+        seed0_path = json.load(_f)
 
     # Reformat seed 0 pathogenicity to match our schema
     def reformat_path_seed0(d):
@@ -490,10 +496,11 @@ def main():
             mf = os.path.join(OUT_DIR, f"mechanism_merged_seed{seed}.json")
             pf = os.path.join(OUT_DIR, f"pathogenicity_seed{seed}.json")
             if os.path.exists(gf) and os.path.exists(mf) and os.path.exists(pf):
-                all_seeds.append((seed,
-                                   json.load(open(gf)),
-                                   json.load(open(mf)),
-                                   json.load(open(pf))))
+                with open(gf) as _f1, open(mf) as _f2, open(pf) as _f3:
+                    all_seeds.append((seed,
+                                      json.load(_f1),
+                                      json.load(_f2),
+                                      json.load(_f3)))
             else:
                 print(f"Warning: seed {seed} results not found, skipping")
 

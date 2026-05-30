@@ -45,11 +45,13 @@ PATH_MUT = os.path.join(EMB, "emb_mut_mean_path_canonical_n16576.npy")
 
 
 def load():
-    variants = json.load(open(PATH_VARIANTS))
+    with open(PATH_VARIANTS) as _f:
+        variants = json.load(_f)
     delta = np.load(PATH_MUT) - np.load(PATH_WT)
     genes = np.array([v["gene"] for v in variants])
     y = np.array([1 if v["label"] == "pathogenic" else 0 for v in variants])
-    pfam = json.load(open(ms.PFAM_JSON))
+    with open(ms.PFAM_JSON) as _f:
+        pfam = json.load(_f)
     fam = np.array([(pfam.get(g) or "NA") for g in genes])  # coerce missing/None
     print(f"Loaded {len(y)} variants, {len(set(genes))} genes, "
           f"{int(y.sum())} path / {int((1-y).sum())} benign, "
@@ -195,7 +197,8 @@ def probe2_universal(delta, y, genes, fam, n_partitions=10, seeds=(0,)):
 
 def main():
     delta, y, genes, fam = load()
-    pfam_map = json.load(open(ms.PFAM_JSON))
+    with open(ms.PFAM_JSON) as _f:
+        pfam_map = json.load(_f)
 
     r1 = probe1_rank(delta, y, genes, pfam_map)
     r2 = probe2_universal(delta, y, genes, fam)
@@ -203,7 +206,8 @@ def main():
     result = {"probe1_rank": r1, "probe2_universal": r2,
               "n_variants": int(len(y))}
     out_path = os.path.join(OUT, "geometry_results.json")
-    json.dump(result, open(out_path, "w"), indent=2)
+    with open(out_path, "w") as _f:
+        json.dump(result, _f, indent=2)
     print(f"\nResults -> {out_path}")
 
     print("\n" + "=" * 60)

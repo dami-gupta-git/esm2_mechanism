@@ -91,10 +91,12 @@ def main():
     from sklearn.metrics import roc_auc_score, r2_score
     from scipy.stats import spearmanr
 
-    v = json.load(open(os.path.join(DATA, "pathogenicity_valid_variants_canonical.json")))
+    with open(os.path.join(DATA, "pathogenicity_valid_variants_canonical.json")) as _f:
+        v = json.load(_f)
     delta = (np.load(os.path.join(EMB, "emb_mut_mean_path_canonical_n16576.npy"))
              - np.load(os.path.join(EMB, "emb_wt_mean_path_canonical_n16576.npy")))
-    pfam = json.load(open(ms.PFAM_JSON))
+    with open(ms.PFAM_JSON) as _f:
+        pfam = json.load(_f)
 
     bio, keep = [], []
     for i, x in enumerate(v):
@@ -169,7 +171,8 @@ def main():
               "C_auroc_family_split": {"context_free": [cm, cstd],
                                         "esm2_delta": [em, estd],
                                         "esm2_plus_biochem": [bm, bstd]}}
-    json.dump(result, open(os.path.join(OUT, "probe4_axis_identity.json"), "w"), indent=2)
+    with open(os.path.join(OUT, "probe4_axis_identity.json"), "w") as _f:
+        json.dump(result, _f, indent=2)
     print(f"\nResults -> {os.path.join(OUT, 'probe4_axis_identity.json')}")
 
     print("\n=== READ ===")

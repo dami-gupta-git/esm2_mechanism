@@ -23,8 +23,7 @@ print = functools.partial(print, flush=True)
 
 DATA = DATA_DIR
 S3_PATH = DATA / "downloads" / "table_S3.xlsx"
-MERGED_GENE_LIST = DATA / "merged_gene_list.tsv"
-PFAM_FAMILIES = DATA / "pfam_families.json"
+GENE_UNIVERSE = DATA / "gene_universe.tsv"
 
 OUT_TSV = DATA / "badonyi_features.tsv"
 OUT_NPY = DATA / "badonyi_features_aligned.npy"
@@ -41,17 +40,10 @@ def load_badonyi_predictions():
     return df
 
 
-def load_merged_genes():
-    genes = pd.read_csv(MERGED_GENE_LIST, sep="\t")
-    print(f"  Merged gene list: {len(genes)} genes")
-    return genes
-
-
-def load_pfam_families():
-    with open(PFAM_FAMILIES) as f:
-        pfam = json.load(f)
-    # pfam maps gene_symbol -> pfam_family string
-    return pfam
+def load_gene_universe():
+    df = pd.read_csv(GENE_UNIVERSE, sep="\t")
+    print(f"  Gene universe: {len(df)} genes")
+    return df
 
 
 def compute_family_residuals(df, pfam, feature_cols, observed_mask=None):
@@ -65,11 +57,10 @@ def compute_family_residuals(df, pfam, feature_cols, observed_mask=None):
     - Observed genes in a family with ≥2 observed members: residual = value − observed family mean.
       _familyresid_missing = 0.
     - Imputed genes whose family has ≥2 observed members: residual = imputed_value − observed
-      family mean (non-zero artifact, but correctly flagged). _familyresid_missing = 1.
-    - Singletons (family size 1) or families with ≤1 observed member: residual = 0.0.
-      _familyresid_missing = 1.
-    - Genes with no Pfam entry: residual = 0.0, is_singleton_family_badonyi = 1,
-      _familyresid_missing = 1.
+      family mean. _familyresid_missing = 1.
+    - Singletons or families with ≤1 observed member: residual = NaN, _familyresid_missing = 1.
+    is_singleton_family_badonyi = 1 when the gene has no Pfam entry or its family has ≤1 observed
+    member — exactly matching the condition that produces NaN residuals above.
     """
     df = df.copy()
     df["pfam_family"] = df["gene"].map(pfam)
@@ -77,41 +68,43 @@ def compute_family_residuals(df, pfam, feature_cols, observed_mask=None):
     if observed_mask is None:
         observed_mask = pd.Series(True, index=df.index)
 
-    # Precompute family membership counts (all genes, not just observed)
-    family_counts = df["pfam_family"].value_counts().to_dict()
+    # Count observed genes per family — mirrors the residual loop's ≥2 observed condition.
+    observed_family_counts = (
+        df.loc[observed_mask, "pfam_family"]
+        .dropna()
+        .value_counts()
+        .to_dict()
+    )
     df["is_singleton_family_badonyi"] = df["pfam_family"].map(
-        lambda f: 1 if (f is None or pd.isna(f) or family_counts.get(f, 0) <= 1) else 0
+        lambda f: 1 if (f is None or pd.isna(f) or observed_family_counts.get(f, 0) <= 1) else 0
     )
 
     for col in feature_cols:
         resid_col = f"{col}_familyresid"
         resid_missing_col = f"{resid_col}_missing"
-        df[resid_col] = 0.0        # default: 0.0 (singletons / no-observed-mean)
-        df[resid_missing_col] = 1  # default: missing
+        df[resid_col] = float("nan")
+        df[resid_missing_col] = 1
 
         for fam, fam_df in df.groupby("pfam_family", dropna=True):
             fam_idx = fam_df.index
             observed_in_fam = fam_idx[observed_mask.loc[fam_idx]]
             if len(observed_in_fam) <= 1:
-                # singleton or only one observed member — leave residual=0, missing=1
                 continue
             fam_mean = df.loc[observed_in_fam, col].mean()
-            # All family members get residual relative to the observed mean
             df.loc[fam_idx, resid_col] = df.loc[fam_idx, col] - fam_mean
-            # Only observed members are flagged as non-missing
             df.loc[observed_in_fam, resid_missing_col] = 0
 
     return df
 
 
 def main():
-    missing = [p for p in [S3_PATH, MERGED_GENE_LIST, PFAM_FAMILIES] if not p.exists()]
+    missing = [p for p in [S3_PATH, GENE_UNIVERSE] if not p.exists()]
     if missing:
         raise FileNotFoundError("Required input(s) not found:\n" + "\n".join(f"  {p}" for p in missing))
 
     bad = load_badonyi_predictions()
-    merged = load_merged_genes()
-    pfam = load_pfam_families()
+    merged = load_gene_universe()
+    pfam = dict(zip(merged["gene"], merged["pfam_family"]))
 
     # Join on gene symbol (case-sensitive exact match)
     bad_lookup = bad.set_index("gene_badonyi")[["pDN", "pGOF", "pLOF"]]
@@ -161,7 +154,7 @@ def main():
     result.to_csv(OUT_TSV, sep="\t", index=False)
     print(f"\nSaved TSV: {OUT_TSV} ({result.shape})")
 
-    # Build aligned numpy matrix (same row order as merged_gene_list.tsv)
+    # Build aligned numpy matrix (same row order as gene_universe.tsv)
     numeric_cols = (
         feature_cols
         + [f"{c}_missing" for c in feature_cols]

@@ -74,7 +74,8 @@ def main():
         out_f = os.path.join(OUT, f"seed{seed}.json")
         if os.path.exists(out_f):
             print(f"seed {seed}: loading cached result")
-            all_results[seed] = json.load(open(out_f))
+            with open(out_f) as _f:
+            all_results[seed] = json.load(_f)
             continue
         print(f"\n=== seed {seed} ===")
         gs = gene_split_cv(genes, seed=seed)

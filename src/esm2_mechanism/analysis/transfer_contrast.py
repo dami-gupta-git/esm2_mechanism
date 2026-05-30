@@ -99,10 +99,12 @@ def transfer_test(delta, y, groups, kind="linear", n_partitions=10, seed=0, min_
 # ── Task loaders ─────────────────────────────────────────────────────────────
 
 def load_pathogenicity():
-    v = json.load(open(os.path.join(DATA, "pathogenicity_valid_variants_canonical.json")))
+    with open(os.path.join(DATA, "pathogenicity_valid_variants_canonical.json")) as _f:
+        v = json.load(_f)
     delta = (np.load(os.path.join(EMB, "emb_mut_mean_path_canonical_n16576.npy"))
              - np.load(os.path.join(EMB, "emb_wt_mean_path_canonical_n16576.npy")))
-    pfam = json.load(open(ms.PFAM_JSON))
+    with open(ms.PFAM_JSON) as _f:
+        pfam = json.load(_f)
     genes = [x["gene"] for x in v]
     groups = np.array([(pfam.get(g) or "NA") for g in genes])
     y = np.array([1 if x["label"] == "pathogenic" else 0 for x in v])
@@ -114,7 +116,8 @@ def load_stability():
     vpath = os.path.join(DATA, "megascale_variants.json")
     if not os.path.exists(vpath):
         return None
-    v = json.load(open(vpath))
+    with open(vpath) as _f:
+        v = json.load(_f)
     delta = (np.load(os.path.join(EMB, "megascale_mut_mean.npy"))
              - np.load(os.path.join(EMB, "megascale_wt_mean.npy")))
     n = min(len(v), len(delta))
@@ -126,8 +129,9 @@ def load_stability():
 
 
 def load_mechanism_gof():
-    dm, _dp, labels, genes = ms.load_geras(json.load(open(ms.PFAM_JSON)))
-    pfam = json.load(open(ms.PFAM_JSON))
+    with open(ms.PFAM_JSON) as _f:
+        pfam = json.load(_f)
+    dm, _dp, labels, genes = ms.load_geras(pfam)
     groups = np.array([(pfam.get(g) or "NA") for g in genes])
     y = (np.asarray(labels) == "GOF").astype(int)
     m = groups != "NA"
@@ -159,7 +163,8 @@ def main():
             pm, ps, _ = r["pooled_auroc"]; tm, ts, tn = r["transfer_auroc"]
             print(f"{name:42s} {kind:7s} {pm:.3f}±{ps:.3f}  {tm:.3f}±{ts:.3f}  (n={tn})")
 
-    json.dump(results, open(os.path.join(OUT, "transfer_contrast.json"), "w"), indent=2)
+    with open(os.path.join(OUT, "transfer_contrast.json"), "w") as _f:
+        json.dump(results, _f, indent=2)
     print(f"\nResults -> {os.path.join(OUT, 'transfer_contrast.json')}")
     print("\nRead: 'pooled' = random-split (easy). 'transfer' = probe fit on one")
     print("group-half, scored on the disjoint half. linear vs gbm shows whether")

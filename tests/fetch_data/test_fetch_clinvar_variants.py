@@ -20,7 +20,7 @@ import pytest
 from unittest.mock import MagicMock, patch
 from pathlib import Path
 
-from esm2_mechanism.fetch_data.fetch_clinvar_variants import (
+from esm2_mechanism.fetch_data.fetch_variants import (
     _parse_hgvsp,
     validate_wt,
     fetch_clinvar_variants,
@@ -126,7 +126,7 @@ class TestFetchClinvarVariantsCache:
 
     def test_cache_hit_returns_cached_data(self, tmp_path, monkeypatch):
         monkeypatch.setattr(
-            "esm2_mechanism.fetch_data.fetch_clinvar_variants.CLINVAR_CACHE",
+            "esm2_mechanism.fetch_data.fetch_variants.CLINVAR_CACHE",
             tmp_path,
         )
         cached = [{"hgvs_p": "p.Val600Glu", "wt_aa": "V", "pos": 600, "mut_aa": "E", "clinsig": "pathogenic"}]
@@ -137,12 +137,12 @@ class TestFetchClinvarVariantsCache:
 
     def test_cache_hit_does_not_call_network(self, tmp_path, monkeypatch):
         monkeypatch.setattr(
-            "esm2_mechanism.fetch_data.fetch_clinvar_variants.CLINVAR_CACHE",
+            "esm2_mechanism.fetch_data.fetch_variants.CLINVAR_CACHE",
             tmp_path,
         )
         (tmp_path / "BRAF.json").write_text(json.dumps([]))
 
-        with patch("esm2_mechanism.fetch_data.fetch_clinvar_variants.get_json") as mock_get:
+        with patch("esm2_mechanism.fetch_data.fetch_variants._get_json") as mock_get:
             fetch_clinvar_variants("BRAF")
             mock_get.assert_not_called()
 
@@ -155,7 +155,7 @@ class TestFetchUniprotId:
 
     def test_prefilled_value_returned_and_cached(self, tmp_path, monkeypatch):
         monkeypatch.setattr(
-            "esm2_mechanism.fetch_data.fetch_clinvar_variants.UNIPROT_CACHE",
+            "esm2_mechanism.fetch_data.fetch_variants.UNIPROT_CACHE",
             tmp_path,
         )
         result = fetch_uniprot_id("BRAF", "P15056")
@@ -165,33 +165,32 @@ class TestFetchUniprotId:
 
     def test_cache_hit_returns_without_api_call(self, tmp_path, monkeypatch):
         monkeypatch.setattr(
-            "esm2_mechanism.fetch_data.fetch_clinvar_variants.UNIPROT_CACHE",
+            "esm2_mechanism.fetch_data.fetch_variants.UNIPROT_CACHE",
             tmp_path,
         )
         (tmp_path / "BRAF.json").write_text(json.dumps({"uniprot_id": "P15056"}))
 
-        with patch("esm2_mechanism.fetch_data.fetch_clinvar_variants.get_json") as mock_get:
+        with patch("esm2_mechanism.fetch_data.fetch_variants._get_json") as mock_get:
             result = fetch_uniprot_id("BRAF", None)
             mock_get.assert_not_called()
         assert result == "P15056"
 
-    def test_cache_stores_none_when_api_returns_none(self, tmp_path, monkeypatch):
+    def test_network_failure_not_cached(self, tmp_path, monkeypatch):
         monkeypatch.setattr(
-            "esm2_mechanism.fetch_data.fetch_clinvar_variants.UNIPROT_CACHE",
+            "esm2_mechanism.fetch_data.fetch_variants.UNIPROT_CACHE",
             tmp_path,
         )
         with patch(
-            "esm2_mechanism.fetch_data.fetch_clinvar_variants.get_json",
+            "esm2_mechanism.fetch_data.fetch_variants._get_json",
             return_value=None,
         ):
             result = fetch_uniprot_id("UNKNOWN_GENE", None)
         assert result is None
-        cached = json.loads((tmp_path / "UNKNOWN_GENE.json").read_text())
-        assert cached["uniprot_id"] is None
+        assert not (tmp_path / "UNKNOWN_GENE.json").exists()
 
     def test_exact_gene_match_preferred_over_first_result(self, tmp_path, monkeypatch):
         monkeypatch.setattr(
-            "esm2_mechanism.fetch_data.fetch_clinvar_variants.UNIPROT_CACHE",
+            "esm2_mechanism.fetch_data.fetch_variants.UNIPROT_CACHE",
             tmp_path,
         )
         api_response = {
@@ -207,15 +206,15 @@ class TestFetchUniprotId:
             ]
         }
         with patch(
-            "esm2_mechanism.fetch_data.fetch_clinvar_variants.get_json",
+            "esm2_mechanism.fetch_data.fetch_variants._get_json",
             return_value=api_response,
         ):
             result = fetch_uniprot_id("BRAF", None)
         assert result == "P15056"
 
-    def test_first_result_used_when_no_exact_match(self, tmp_path, monkeypatch):
+    def test_no_exact_match_returns_none(self, tmp_path, monkeypatch):
         monkeypatch.setattr(
-            "esm2_mechanism.fetch_data.fetch_clinvar_variants.UNIPROT_CACHE",
+            "esm2_mechanism.fetch_data.fetch_variants.UNIPROT_CACHE",
             tmp_path,
         )
         api_response = {
@@ -227,8 +226,10 @@ class TestFetchUniprotId:
             ]
         }
         with patch(
-            "esm2_mechanism.fetch_data.fetch_clinvar_variants.get_json",
+            "esm2_mechanism.fetch_data.fetch_variants._get_json",
             return_value=api_response,
         ):
             result = fetch_uniprot_id("BRAF", None)
-        assert result == "Q11111"
+        assert result is None
+        cached = json.loads((tmp_path / "BRAF.json").read_text())
+        assert cached["uniprot_id"] is None

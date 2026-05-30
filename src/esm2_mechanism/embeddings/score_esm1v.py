@@ -42,11 +42,13 @@ CHECKPOINT_EVERY = 50   # genes between saves
 
 def build_gene_maps() -> tuple[dict[str, str], dict[str, str]]:
     """Return (gene->uniprot, uniprot->sequence)."""
-    merged = json.load(open(DATA / "merged_valid_variants.json"))
+    with open(DATA / "merged_valid_variants.json") as _f:
+        merged = json.load(_f)
     g2u: dict[str, str] = {}
     for r in merged:
         g2u.setdefault(r["gene"], r["uniprot_id"])
-    seqs: dict[str, str] = json.load(open(DATA / "sequences.json"))
+    with open(DATA / "sequences.json") as _f:
+        seqs: dict[str, str] = json.load(_f)
     return g2u, seqs
 
 
@@ -143,7 +145,8 @@ def main() -> int:
 
     g2u, seqs = build_gene_maps()
 
-    variants_raw: list[dict] = json.load(open(DATA / "pathogenicity_valid_variants.json"))
+    with open(DATA / "pathogenicity_valid_variants.json") as _f:
+        variants_raw: list[dict] = json.load(_f)
     print(f"variants: {len(variants_raw):,}")
 
     # Index by gene.
@@ -167,7 +170,8 @@ def main() -> int:
     ckpt_done: dict[str, set[str]] = {c: set() for c in CHECKPOINTS}
 
     if ckpt_path.exists():
-        saved = json.load(open(ckpt_path))
+        with open(ckpt_path) as _f:
+            saved = json.load(_f)
         per_ckpt = saved.get("per_ckpt", per_ckpt)
         for c in CHECKPOINTS:
             ckpt_done[c] = set(saved.get("ckpt_done", {}).get(c, []))

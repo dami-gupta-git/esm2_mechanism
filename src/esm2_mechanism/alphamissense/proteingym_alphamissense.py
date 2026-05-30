@@ -53,7 +53,8 @@ SCORE_CACHE = DATA / "am_scores_proteingym.json"
 def load_mnemonic_map(mnemonics: list[str]) -> dict[str, str]:
     cache: dict[str, str] = {}
     if MAP_CACHE.exists():
-        cache = json.load(open(MAP_CACHE))
+        with open(MAP_CACHE) as _f:
+            cache = json.load(_f)
     missing = [m for m in mnemonics if m not in cache]
     if not missing:
         return cache
@@ -75,7 +76,8 @@ def load_mnemonic_map(mnemonics: list[str]) -> dict[str, str]:
             print(f"  {i}/{len(missing)}", file=sys.stderr)
         time.sleep(0.05)
     MAP_CACHE.parent.mkdir(parents=True, exist_ok=True)
-    json.dump(cache, open(MAP_CACHE, "w"), indent=2, sort_keys=True)
+    with open(MAP_CACHE, "w") as _f:
+        json.dump(cache, _f, indent=2, sort_keys=True)
     return cache
 
 
@@ -152,7 +154,8 @@ def main() -> int:
     RESULTS.mkdir(parents=True, exist_ok=True)
     DATA.mkdir(parents=True, exist_ok=True)
 
-    assays = list(csv.DictReader(open(DMS_INDEX)))
+    with open(DMS_INDEX) as _f:
+        assays = list(csv.DictReader(_f))
     human = [a for a in assays if a["taxon"] == args.taxon]
     print(f"{args.taxon} assays in index: {len(human)}")
 
@@ -165,13 +168,14 @@ def main() -> int:
           f"{sum(1 for m in meta.values() if not m['skipped'])} usable assays")
 
     if args.use_score_cache and SCORE_CACHE.exists():
-        cached = json.load(open(SCORE_CACHE))
+        with open(SCORE_CACHE) as _f:
+            cached = json.load(_f)
         scores = {tuple(k.split("|", 1)): float(v) for k, v in cached.items()}
         print(f"loaded {len(scores):,} cached scores from {SCORE_CACHE}")
     else:
         scores = stream_am(index)
-        json.dump({f"{a}|{v}": s for (a, v), s in scores.items()},
-                  open(SCORE_CACHE, "w"))
+        with open(SCORE_CACHE, "w") as _f:
+            json.dump({f"{a}|{v}": s for (a, v), s in scores.items()}, _f)
         print(f"cached {len(scores):,} scores to {SCORE_CACHE}")
 
     # Per-assay metrics.

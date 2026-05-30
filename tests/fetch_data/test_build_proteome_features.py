@@ -45,9 +45,9 @@ def test_median_imputes_partial_missing():
     assert X[2, 0] == pytest.approx(0.4)
 
 
-def test_fully_missing_column_raises():
-    with pytest.raises(ValueError, match="no observed values"):
-        build_aligned_matrix(_rows([None, None, None]), COLS)
+def test_fully_missing_column_left_as_nan():
+    X, _ = build_aligned_matrix(_rows([None, None, None]), COLS)
+    assert np.all(np.isnan(X[:, 0]))
 
 
 def test_observed_values_unchanged():
