@@ -4,7 +4,7 @@ Shared probe utilities: CV splits, metrics, and regression helpers.
 Used by badonyi_mechanism, per_gene_ablation, within_family_mechanism,
 multiseed_v1, pathogenicity_control, contrastive_mechanism, megascale_stability,
 badonyi_leakage_analysis, mmseqs_cluster_holdout, proteome_mechanism,
-experiment_mlp, enzyme_classification, go_smoke_test.
+mlp, enzyme_classification, go_smoke_test.
 """
 
 from __future__ import annotations

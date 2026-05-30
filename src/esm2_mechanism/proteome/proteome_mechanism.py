@@ -75,7 +75,7 @@ PFAM_FAMILIES = DATA_DIR / "pfam_families.json"
 CLASSES = ["GOF", "DN", "LOF"]
 
 # ---------------------------------------------------------------------------
-# Gene-split CV (from experiment_mlp.py / contrastive_mechanism.py)
+# Gene-split CV (from mlp.py / contrastive_mechanism.py)
 # ---------------------------------------------------------------------------
 
 

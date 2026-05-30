@@ -15,7 +15,7 @@ Three features tested:
   2. wt_only_mean    — WT sequence embedding, mean-pooled (1280-D)
   3. concat_wt_mut   — [WT; mut] concatenation (2560-D)
 
-Uses the EXACT same PyTorch MLP and class-weighting as experiment_mlp.py
+Uses the EXACT same PyTorch MLP and class-weighting as mlp.py
 (imports `run_mlp_probe`), so numbers are directly comparable to the
 delta_mean MLP family-split F1 = 0.364 / 0.352 published in result_7.
 
@@ -29,16 +29,16 @@ Usage:
 import argparse
 import json
 import os
-import sys
+
 
 import numpy as np
 
-# Reuse helpers from experiment_mlp.py to guarantee identical methodology
+# Reuse helpers from mlp.py to guarantee identical methodology
 import functools
 
 print = functools.partial(print, flush=True)
 
-from esm2_mechanism.mechanism.experiment_mlp import (
+from esm2_mechanism.mechanism.mlp import (
     load_variants_and_labels,
     gene_split_cv,
     make_family_splits,
@@ -127,7 +127,7 @@ def main():
     print(f"Class distribution: {dict(zip(*np.unique(labels, return_counts=True)))}")
     print(f"Unique genes: {len(set(genes))}")
 
-    # CV splits — identical to experiment_mlp.py
+    # CV splits — identical to mlp.py
     gene_splits = gene_split_cv(genes, seed=args.seed)
     family_splits = None
     if args.family_split:

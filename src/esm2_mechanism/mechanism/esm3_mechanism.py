@@ -475,7 +475,7 @@ def _run_mlp(
         if len(set(y_tr)) < 3:
             continue
 
-        # 15% gene-disjoint validation split — matches run_mlp_probe in experiment_mlp.py
+        # 15% gene-disjoint validation split — matches run_mlp_probe in mlp.py
         rng = np.random.RandomState(seed + fold_i)
         if genes is not None:
             tr_genes = genes[tr]
