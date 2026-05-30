@@ -31,6 +31,8 @@ from esm2_mechanism.utils_paths import (
     SCAN_CKPT_MUT,
     EMB_DIR,
     ESM2_MODEL,
+    SEQUENCES_JSON,
+    SEQUENCES_EXTENDED_JSON,
 )
 from esm2_mechanism.embeddings.embed_variants import get_esm2_embeddings_for_pairs
 from esm2_mechanism.utils_sequences import window_sequence, apply_missense
@@ -63,11 +65,10 @@ def embed_scan(batch_size: int = 128) -> None:
         return
 
     # Load sequences
-    with open(DATA / "sequences.json") as f:
+    with open(SEQUENCES_JSON) as f:
         seqs = json.load(f)
-    ext_path = DATA / "cache" / "uniprot_sequences_extended.json"
-    if ext_path.exists():
-        with open(ext_path) as f:
+    if SEQUENCES_EXTENDED_JSON.exists():
+        with open(SEQUENCES_EXTENDED_JSON) as f:
             seqs.update(json.load(f))
     print(f"Sequences loaded: {len(seqs)}")
 

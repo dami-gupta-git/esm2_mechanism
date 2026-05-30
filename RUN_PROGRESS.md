@@ -55,3 +55,13 @@ Uses `run_fetch_pipeline.py` with step 3 (ClinVar) commented out — already com
 | 8 | 8 | `run_fetch_pipeline` step 8 | `variants.json`, `gene_list.tsv` | `enzyme_labels.tsv` | ✅ 2026-05-30 | 2376 rows; kinase=131, protease=68, oxidoreductase=123, non-enzyme=1619, missing=436 |
 | 9 | 9 | `run_fetch_pipeline` step 9 | `gene_universe.tsv` + manual files | `gene_proteome_features.tsv`, `proteome_features_aligned.npy`, `proteome_feature_columns.json` | ✅ 2026-05-30 | 1908 genes × 35 cols; matrix shape (1908, 33) |
 | 10 | 10 | `run_fetch_pipeline` step 10 | `downloads/table_S3.xlsx`, `gene_universe.tsv` | `badonyi_features.tsv`, `badonyi_features_aligned.npy`, `badonyi_feature_columns.json` | ✅ 2026-05-30 | 1900/1908 genes covered (99.6%); 8 missing |
+
+---
+
+## Run 3 — Embeddings
+
+| # | Stage | Command | Inputs | Outputs | Status | Notes |
+|---|---|---|---|---|---|---|
+| 1 | embed_variants | `python -m esm2_mechanism.embeddings.embed_variants --data_dir data --model esm2_t33_650M_UR50D --batch_size 32` | `data/variants.json`, `data/cache/sequences.json` | `data/embeddings/esm2_t33_650M_UR50D/embeddings_wt_mean.npy`, `embeddings_mut_mean.npy`, `embeddings_wt_pos.npy`, `embeddings_mut_pos.npy`, `valid_variants.json` | ✅ 2026-05-30 | 17,826 valid variants; shape (17826, 1280); run on RunPod H100 |
+| 2 | perturbation_scan phase 1 | `python -m esm2_mechanism.perturb.perturbation_scan --run_phase 1` | `data/cache/sequences.json`, `data/cache/uniprot_sequences_extended.json` | `data/cache/scan_probes.json` | ✅ 2026-05-30 | 553,476 probes for 1,935 genes; run locally (CPU) |
+| 3 | embed_scan | `python -m esm2_mechanism.embeddings.embed_scan --batch_size 128` | `data/cache/scan_probes.json`, `data/cache/sequences.json` | `data/embeddings/esm2_t33_650M_UR50D/scan_wt.npy`, `scan_mut.npy` | 🔄 2026-05-30 | ~553k forward passes; running on RunPod H100 |

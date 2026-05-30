@@ -49,6 +49,8 @@ from esm2_mechanism.utils_paths import (
     VALID_VARIANTS_JSON,
     SCAN_EMB_WT,
     SCAN_EMB_MUT,
+    SEQUENCES_JSON,
+    SEQUENCES_EXTENDED_JSON,
 )
 from esm2_mechanism.utils_sequences import window_sequence, apply_missense
 
@@ -66,11 +68,10 @@ MIN_GENE_LEN = 10  # skip very short sequences
 
 def load_sequences():
     """Merge sequences.json + extended cache."""
-    with open(DATA / "sequences.json") as f:
+    with open(SEQUENCES_JSON) as f:
         seqs = json.load(f)
-    ext_path = DATA / "cache" / "uniprot_sequences_extended.json"
-    if ext_path.exists():
-        with open(ext_path) as f:
+    if SEQUENCES_EXTENDED_JSON.exists():
+        with open(SEQUENCES_EXTENDED_JSON) as f:
             seqs.update(json.load(f))
     print(f"Sequences loaded: {len(seqs)}")
     return seqs

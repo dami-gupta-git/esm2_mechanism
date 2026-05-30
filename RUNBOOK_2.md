@@ -83,7 +83,9 @@ python -m esm2_mechanism.fetch_data.run_fetch_pipeline
 
 ## Extracting embeddings
 
-Run after the fetch pipeline completes (see above). Requires a GPU and the `esm` package.
+Run the steps below in order. GPU steps require the `esm` package and a CUDA device.
+
+### 1. Mechanism embeddings (GPU)
 
 ```
 python -m esm2_mechanism.embeddings.embed_variants \
@@ -92,7 +94,7 @@ python -m esm2_mechanism.embeddings.embed_variants \
     --batch_size 32
 ```
 
-Reads `data/variants.json` and `data/cache/sequences.json`. Fetches any UniProt sequences not yet in the cache (incremental — safe to re-run). Outputs are written to `data/embeddings/<model>/`:
+Reads `data/variants.json` and `data/cache/sequences.json`. Outputs are written to `data/embeddings/<model>/`:
 
 | File | Description |
 |---|---|
@@ -102,15 +104,7 @@ Reads `data/variants.json` and `data/cache/sequences.json`. Fetches any UniProt 
 | `embeddings_mut_pos.npy` | (N, D) per-residue mutant embedding at variant position |
 | `valid_variants.json` | Filtered variant list aligned with the arrays (rows in same order) |
 
-If all five output files exist and `valid_variants.json` covers the same number of variants as the current `variants.json` after filtering, the step is skipped automatically.
-
-Then fetch AlphaMissense scores (requires `valid_variants.json` produced above):
-
-```
-python -m esm2_mechanism.fetch_data.fetch_alphamissense
-```
-
-Downloads the ~5 GB AlphaMissense bulk file on first run; subsequent runs reuse the cache. Writes `data/alphamissense_scores_full.json`, which is required by the analysis scripts.
+If all five output files exist and row counts match, the step is skipped automatically.
 
 **Model options**
 
@@ -119,19 +113,9 @@ Downloads the ~5 GB AlphaMissense bulk file on first run; subsequent runs reuse 
 | `esm2_t33_650M_UR50D` | 650M | Default |
 | `esm2_t36_3B_UR50D` | 3B | Requires more GPU memory |
 
-### ESM-3 embeddings (optional)
+---
 
-Tests whether ESM-3 structure tokens rescue the mechanism null from ESM-2. Two conditions: sequence-only (`seq`) and sequence + AlphaFold2 structure tokens (`seq_struct`).
-
-```
-# Phase 1 — CPU: download AF2 structures
-python -m esm2_mechanism.mechanism.esm3_mechanism --phase 1 --run_dir run_0
-
-# Phase 2 — GPU: extract ESM-3 embeddings
-python -m esm2_mechanism.mechanism.esm3_mechanism --phase 2 --run_dir run_0
-```
-
-### Perturbation scan embeddings
+### 2. Perturbation scan embeddings (phase 1: CPU, GPU, phase 3: CPU)
 
 In-silico perturbation scan: mutates 100 evenly-spaced positions per gene to 3 probe amino acids (Ala, Asp, Trp) and extracts ESM-2 650M delta embeddings (~600k forward passes, ~3h on A100).
 
@@ -148,9 +132,47 @@ python -m esm2_mechanism.perturb.perturbation_scan --run_phase 3
 
 Outputs `data/scan_features.npy` with 5 pre-registered scalar features per gene.
 
-### ESM-1v scores
+---
 
-Scores ClinVar pathogenic/benign variants with ESM-1v masked-marginal ΔLL using checkpoints 1 and 2. Requires GPU. Reads `data/pathogenicity_valid_variants.json` (produced by the pathogenicity control step above).
+### 3. ESM-3 embeddings (optional; phase 1: CPU, phase 2: GPU)
+
+Tests whether ESM-3 structure tokens rescue the mechanism null from ESM-2. Two conditions: sequence-only (`seq`) and sequence + AlphaFold2 structure tokens (`seq_struct`).
+
+```
+# Phase 1 — CPU: download AF2 structures
+python -m esm2_mechanism.mechanism.esm3_mechanism --phase 1 --run_dir run_0
+
+# Phase 2 — GPU: extract ESM-3 embeddings
+python -m esm2_mechanism.mechanism.esm3_mechanism --phase 2 --run_dir run_0
+```
+
+---
+
+### 4. Pathogenicity control embeddings (GPU)
+
+Extracts embeddings for ClinVar pathogenic vs benign variants. Produces `pathogenicity_valid_variants.json`, which is required by `fetch_alphamissense` and `score_esm1v`.
+
+```
+python -m esm2_mechanism.embeddings.pathogenicity_control --phase 2
+```
+
+---
+
+### 5. Fetch AlphaMissense scores (CPU)
+
+Requires `valid_variants.json` (step 1) and `pathogenicity_valid_variants.json` (step 4).
+
+```
+python -m esm2_mechanism.fetch_data.fetch_alphamissense
+```
+
+Downloads the ~5 GB AlphaMissense bulk file on first run; subsequent runs reuse the cache. Writes `data/alphamissense_scores_full.json`, which is required by the analysis scripts.
+
+---
+
+### 6. ESM-1v scores (GPU)
+
+Requires `pathogenicity_valid_variants.json` (step 4).
 
 ```
 python -m esm2_mechanism.embeddings.score_esm1v
@@ -162,7 +184,7 @@ Writes `data/esm1v_scores_full.json`.
 
 ## Analysis
 
-Run after embeddings and AlphaMissense are complete. No GPU required — all scripts load cached `.npy` files.
+Run after all embeddings and AlphaMissense scores are complete. No GPU required — all scripts load cached `.npy` files.
 
 The analysis scripts expect `--out_dir` to be the same run directory used for embeddings, with `data/` as a subdirectory. `--data_dir` (where used) should point to `<out_dir>/data`.
 
@@ -187,7 +209,7 @@ Reads from `run_0/data/`:
 | `embeddings/<model>/embeddings_wt_pos.npy` | embed_variants |
 | `embeddings/<model>/embeddings_mut_pos.npy` | embed_variants |
 | `embeddings/<model>/valid_variants.json` | embed_variants |
-| `alphamissense_scores_full.json` | fetch pipeline step 11 |
+| `alphamissense_scores_full.json` | fetch_alphamissense |
 
 Writes to `run_0/`:
 
@@ -241,7 +263,7 @@ python -m esm2_mechanism.mechanism.contrastive_mechanism \
 
 ### Pathogenicity control
 
-Validates the pipeline: runs gene-split and family-split probes for ClinVar pathogenic vs benign. Requires embeddings from `esm2_mechanism.embeddings.pathogenicity_control` (phase 2). No GPU required for the probe phase.
+Validates the pipeline: runs gene-split and family-split probes for ClinVar pathogenic vs benign. Requires pathogenicity control embeddings from step 4 above.
 
 ```
 python -m esm2_mechanism.mechanism.pathogenicity_control \
@@ -251,7 +273,7 @@ python -m esm2_mechanism.mechanism.pathogenicity_control \
 
 ### ESM-3 mechanism analysis
 
-Runs the probe comparison for ESM-3 conditions (CPU only). Requires ESM-3 embeddings from phase 2 above.
+Runs the probe comparison for ESM-3 conditions (CPU only). Requires ESM-3 embeddings from step 3 above.
 
 ```
 python -m esm2_mechanism.mechanism.esm3_mechanism --phase 3 --run_dir run_0
@@ -267,7 +289,7 @@ python -m esm2_mechanism.analysis.megascale_stability --run_dir run_0 --model es
 
 ### ESM-1v family split analysis
 
-Per-Pfam-family AUROC analysis of ESM-1v ΔLL. Requires `data/esm1v_scores_full.json` from the ESM-1v scores step above.
+Per-Pfam-family AUROC analysis of ESM-1v ΔLL. Requires `data/esm1v_scores_full.json` from step 6 above.
 
 ```
 python -m esm2_mechanism.analysis.esm1v_family_split
