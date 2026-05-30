@@ -13,6 +13,9 @@ Covers:
 - family_clustering.knn_family_purity: single-family → nan, purity in [0,1]
 - family_clustering.within_between_ratio: too few pairs → nan, ratio correct sign
 - family_clustering.gene_level_embeddings: shape, averaging
+- esm2_mechanism._load_alphamissense_scores: key lookup, missing file, corrupt JSON
+- esm2_mechanism._load_data: missing file raises, filtering drops invalid rows
+- embed_variants._build_valid_pairs: filters no-uid, missing seq, bad mutation
 """
 
 import numpy as np
@@ -344,3 +347,178 @@ class TestGeneLevelEmbeddings:
         genes_arr = np.array(["SOLO"])
         unique_genes, gene_emb = self.gene_level_embeddings(emb, genes_arr)
         np.testing.assert_allclose(gene_emb[0], [5.0, 3.0], atol=1e-5)
+
+
+# ---------------------------------------------------------------------------
+# esm2_mechanism._load_alphamissense_scores
+# ---------------------------------------------------------------------------
+
+class TestLoadAlphaMissenseScores:
+
+    def setup_method(self):
+        from esm2_mechanism.embeddings.esm2_mechanism import _load_alphamissense_scores
+        self._load = _load_alphamissense_scores
+
+    def _variant(self, gene="TP53", aa_pos=100, aa_wt="A", aa_mut="V"):
+        return {"gene": gene, "aa_pos": aa_pos, "aa_wt": aa_wt, "aa_mut": aa_mut}
+
+    def test_scores_loaded_for_matching_keys(self, tmp_path):
+        v = self._variant()
+        key = f"{v['gene']}_{v['aa_pos']}_{v['aa_wt']}_{v['aa_mut']}"
+        (tmp_path / "alphamissense_scores_full.json").write_text(
+            f'{{"{key}": 0.87}}'
+        )
+        scores = self._load([v], str(tmp_path))
+        assert scores.shape == (1,)
+        assert scores[0] == pytest.approx(0.87)
+
+    def test_missing_key_gives_nan(self, tmp_path):
+        (tmp_path / "alphamissense_scores_full.json").write_text('{}')
+        scores = self._load([self._variant()], str(tmp_path))
+        assert np.isnan(scores[0])
+
+    def test_missing_file_returns_all_nan(self, tmp_path):
+        scores = self._load([self._variant()], str(tmp_path))
+        assert scores.shape == (1,)
+        assert np.isnan(scores[0])
+
+    def test_corrupt_json_returns_all_nan(self, tmp_path):
+        (tmp_path / "alphamissense_scores_full.json").write_text('{not valid json')
+        scores = self._load([self._variant()], str(tmp_path))
+        assert np.all(np.isnan(scores))
+
+    def test_multiple_variants_partial_coverage(self, tmp_path):
+        v1 = self._variant("BRCA1", 50, "M", "K")
+        v2 = self._variant("BRCA2", 80, "G", "D")
+        key1 = f"BRCA1_50_M_K"
+        (tmp_path / "alphamissense_scores_full.json").write_text(
+            f'{{"{key1}": 0.55}}'
+        )
+        scores = self._load([v1, v2], str(tmp_path))
+        assert scores[0] == pytest.approx(0.55)
+        assert np.isnan(scores[1])
+
+
+# ---------------------------------------------------------------------------
+# esm2_mechanism._load_data
+# ---------------------------------------------------------------------------
+
+class TestLoadData:
+
+    def setup_method(self):
+        from esm2_mechanism.embeddings.esm2_mechanism import _load_data
+        self._load_data = _load_data
+
+    def _write_variants(self, tmp_path, variants):
+        import json
+        (tmp_path / "merged_variants.json").write_text(json.dumps(variants))
+
+    def _valid_variant(self, **overrides):
+        v = {
+            "gene": "TP53", "uniprot_id": "P04637",
+            "aa_pos": 100, "aa_wt": "A", "aa_mut": "V",
+            "mechanism": "GOF", "label_3class": "GOF",
+        }
+        v.update(overrides)
+        return v
+
+    def test_missing_file_raises(self, tmp_path):
+        with pytest.raises(FileNotFoundError):
+            self._load_data(str(tmp_path))
+
+    def test_returns_valid_variants(self, tmp_path):
+        self._write_variants(tmp_path, [self._valid_variant()])
+        result = self._load_data(str(tmp_path))
+        assert len(result) == 1
+
+    def test_drops_missing_uniprot_id(self, tmp_path):
+        self._write_variants(tmp_path, [
+            self._valid_variant(),
+            self._valid_variant(uniprot_id=""),
+            self._valid_variant(uniprot_id=None),
+        ])
+        result = self._load_data(str(tmp_path))
+        assert len(result) == 1
+
+    def test_drops_zero_aa_pos(self, tmp_path):
+        self._write_variants(tmp_path, [
+            self._valid_variant(),
+            self._valid_variant(aa_pos=0),
+        ])
+        result = self._load_data(str(tmp_path))
+        assert len(result) == 1
+
+    def test_drops_missing_aa_wt_or_mut(self, tmp_path):
+        self._write_variants(tmp_path, [
+            self._valid_variant(),
+            self._valid_variant(aa_wt=""),
+            self._valid_variant(aa_mut=None),
+        ])
+        result = self._load_data(str(tmp_path))
+        assert len(result) == 1
+
+
+# ---------------------------------------------------------------------------
+# embed_variants._build_valid_pairs
+# ---------------------------------------------------------------------------
+
+class TestBuildValidPairs:
+
+    def setup_method(self):
+        from esm2_mechanism.embeddings.embed_variants import _build_valid_pairs
+        self._build = _build_valid_pairs
+
+    def _variant(self, uniprot_id="P04637", aa_pos=2, aa_wt="K", aa_mut="R"):
+        return {
+            "uniprot_id": uniprot_id,
+            "aa_pos": aa_pos,
+            "aa_wt": aa_wt,
+            "aa_mut": aa_mut,
+        }
+
+    def test_valid_variant_included(self):
+        seq_cache = {"P04637": "MKACD"}
+        valid, wt_seqs, mut_seqs, positions = self._build(
+            [self._variant()], seq_cache
+        )
+        assert len(valid) == 1
+        assert len(wt_seqs) == len(mut_seqs) == len(positions) == 1
+
+    def test_missing_uniprot_id_skipped(self):
+        seq_cache = {"P04637": "MKACD"}
+        valid, *_ = self._build([self._variant(uniprot_id="")], seq_cache)
+        assert len(valid) == 0
+
+    def test_uniprot_id_not_in_cache_skipped(self):
+        seq_cache = {}
+        valid, *_ = self._build([self._variant()], seq_cache)
+        assert len(valid) == 0
+
+    def test_wt_mismatch_skipped(self):
+        # aa_wt="K" but position 2 in "MXACD" is "X"
+        seq_cache = {"P04637": "MXACD"}
+        valid, *_ = self._build([self._variant()], seq_cache)
+        assert len(valid) == 0
+
+    def test_position_returned_is_valid_index(self):
+        seq_cache = {"P04637": "MKACD"}
+        valid, wt_seqs, _, positions = self._build([self._variant()], seq_cache)
+        assert len(valid) == 1
+        assert 1 <= positions[0] <= len(wt_seqs[0])
+
+    def test_mutant_sequence_differs_at_position(self):
+        seq_cache = {"P04637": "MKACD"}
+        _, wt_seqs, mut_seqs, positions = self._build([self._variant()], seq_cache)
+        pos = positions[0] - 1  # 0-indexed
+        assert wt_seqs[0][pos] != mut_seqs[0][pos]
+        assert mut_seqs[0][pos] == "R"
+
+    def test_multiple_variants_mixed(self):
+        seq_cache = {"P04637": "MKACD", "P99999": "ACDEF"}
+        variants = [
+            self._variant(),                          # valid
+            self._variant(uniprot_id="MISSING"),      # no sequence
+            self._variant(uniprot_id="P99999", aa_pos=1, aa_wt="A", aa_mut="G"),  # valid
+        ]
+        valid, *_ = self._build(variants, seq_cache)
+        assert len(valid) == 2

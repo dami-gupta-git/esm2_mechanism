@@ -31,7 +31,7 @@ from scipy.stats import pearsonr
 import functools
 print = functools.partial(print, flush=True)
 
-from esm2_mechanism.embeddings.esm2_mechanism import fetch_gerasimavicius_dataset, ESM2_MODEL_650M
+from esm2_mechanism.embeddings.esm2_mechanism import _load_data, ESM2_MODEL_650M
 from esm2_mechanism.utils_sequences import build_sequence_cache, window_sequence, apply_missense, fetch_pfam_families
 from esm2_mechanism.utils_probes import gene_split_cv
 
@@ -166,11 +166,7 @@ def main():
 
     # Rebuild valid_variants identically to experiment.py
     print("=== Loading dataset and embeddings ===")
-    variants = fetch_gerasimavicius_dataset(data_dir)
-    for v in variants:
-        v["label_3class"] = "LOF" if v["mechanism"] in ("HI", "AR") else v["mechanism"]
-    variants = [v for v in variants
-                if v["uniprot_id"] and v["aa_wt"] and v["aa_mut"] and v["aa_pos"] > 0]
+    variants = _load_data(data_dir)
     seq_cache = build_sequence_cache(variants, data_dir)
 
     valid_variants = []
@@ -185,8 +181,9 @@ def main():
             continue
         valid_variants.append(v)
 
-    emb_wt = np.load(os.path.join(data_dir, f"embeddings_wt_{args.model}.npy"))
-    emb_mut = np.load(os.path.join(data_dir, f"embeddings_mut_{args.model}.npy"))
+    emb_dir = os.path.join(data_dir, "embeddings", args.model)
+    emb_wt = np.load(os.path.join(emb_dir, "embeddings_wt_mean.npy"))
+    emb_mut = np.load(os.path.join(emb_dir, "embeddings_mut_mean.npy"))
     emb_delta = emb_mut - emb_wt
     print(f"Variants: {len(valid_variants)}  Embedding dim: {emb_wt.shape[1]}")
     assert len(valid_variants) == emb_wt.shape[0]

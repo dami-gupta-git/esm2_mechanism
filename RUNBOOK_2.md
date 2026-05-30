@@ -1,9 +1,9 @@
 # Fetch Pipeline Runbook
 
-## Running the pipeline
+## Running the fetch pipeline
 
 ```
-python -m esm2_mechanism.fetch_data.run_pipeline
+python -m esm2_mechanism.fetch_data.run_fetch_pipeline
 ```
 
 Resumes automatically from the step after the last recorded success (`data/.pipeline_state.json`).
@@ -17,7 +17,7 @@ Exits immediately if any step fails; re-run the same command to retry from that 
 
 ---
 
-## Prerequisites — manually placed files
+### Prerequisites — manually placed files
 
 These must be in `data/downloads/` before the pipeline starts. None are fetched automatically.
 
@@ -32,7 +32,7 @@ These must be in `data/downloads/` before the pipeline starts. None are fetched 
 
 ---
 
-## Step reference
+### Step reference
 
 | Step | Description | Inputs | Outputs |
 |---|---|---|---|
@@ -55,7 +55,7 @@ Downloads the ~5 GB AlphaMissense bulk file on first run; subsequent runs reuse 
 
 ---
 
-## Running steps individually
+### Running steps individually
 
 ```
 python -m esm2_mechanism.fetch_data.build_gene_universe --step gene-list
@@ -73,10 +73,44 @@ python -m esm2_mechanism.fetch_data.fetch_annotations --step alphamissense
 
 ---
 
-## Re-running from scratch
+### Re-running from scratch
 
 Delete `data/.pipeline_state.json` and the generated files in `data/`, then run:
 
 ```
-python -m esm2_mechanism.fetch_data.run_pipeline
+python -m esm2_mechanism.fetch_data.run_fetch_pipeline
 ```
+
+---
+
+## Extracting embeddings
+
+Run after the fetch pipeline completes (see above). Requires a GPU and the `esm` package.
+
+```
+python -m esm2_mechanism.embeddings.embed_variants \
+    --data_dir data \
+    --model esm2_t33_650M_UR50D \
+    --batch_size 32
+```
+
+Reads `data/merged_variants.json` and `data/cache/sequences.json`. Fetches any UniProt sequences not yet in the cache (incremental — safe to re-run). Outputs are written to `data/embeddings/<model>/`:
+
+| File | Description |
+|---|---|
+| `embeddings_wt_mean.npy` | (N, D) mean-pooled WT embeddings |
+| `embeddings_mut_mean.npy` | (N, D) mean-pooled mutant embeddings |
+| `embeddings_wt_pos.npy` | (N, D) per-residue WT embedding at variant position |
+| `embeddings_mut_pos.npy` | (N, D) per-residue mutant embedding at variant position |
+| `valid_variants.json` | Filtered variant list aligned with the arrays (rows in same order) |
+
+If all five output files exist and `valid_variants.json` covers the same number of variants as the current `merged_variants.json` after filtering, the step is skipped automatically.
+
+**Model options**
+
+| `--model` | Parameters | Notes |
+|---|---|---|
+| `esm2_t33_650M_UR50D` | 650M | Default |
+| `esm2_t36_3B_UR50D` | 3B | Requires more GPU memory |
+
+**prerequisite** — `alphamissense_scores_full.json` must be present before running the analysis scripts (not the embedding step itself). Run embedding first, then step 11, then analysis.

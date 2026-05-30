@@ -6,9 +6,9 @@ By default the pipeline resumes from the step after the last recorded success.
 Use --from-step N to override.
 
 Usage:
-    python -m esm2_mechanism.fetch_data.run_pipeline
-    python -m esm2_mechanism.fetch_data.run_pipeline --from-step 5
-    python -m esm2_mechanism.fetch_data.run_pipeline --from-step 5 --pathogenic-only
+    python -m esm2_mechanism.fetch_data.run_fetch_pipeline
+    python -m esm2_mechanism.fetch_data.run_fetch_pipeline --from-step 5
+    python -m esm2_mechanism.fetch_data.run_fetch_pipeline --from-step 5 --pathogenic-only
 
 Steps:
      1  build_gene_universe  gene-list   — merge Gerasimavicius + G2P

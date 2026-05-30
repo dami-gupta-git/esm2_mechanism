@@ -18,7 +18,7 @@ from collections import Counter
 
 import numpy as np
 
-from esm2_mechanism.embeddings.esm2_mechanism import fetch_gerasimavicius_dataset, fetch_alphamissense_scores, ESM2_MODEL_650M
+from esm2_mechanism.embeddings.esm2_mechanism import _load_data, _load_alphamissense_scores, ESM2_MODEL_650M
 from esm2_mechanism.utils_sequences import build_sequence_cache, window_sequence, apply_missense, fetch_pfam_families
 from esm2_mechanism.utils_probes import gene_split_cv, family_split_cv
 
@@ -97,11 +97,7 @@ def main():
     # 1. Rebuild the valid_variants list IDENTICALLY to experiment.py
     # ------------------------------------------------------------------
     print("=== Loading cached dataset and sequences ===")
-    variants = fetch_gerasimavicius_dataset(data_dir)
-    for v in variants:
-        v["label_3class"] = "LOF" if v["mechanism"] in ("HI", "AR") else v["mechanism"]
-    variants = [v for v in variants
-                if v["uniprot_id"] and v["aa_wt"] and v["aa_mut"] and v["aa_pos"] > 0]
+    variants = _load_data(data_dir)
 
     seq_cache = build_sequence_cache(variants, data_dir)
 
@@ -122,10 +118,11 @@ def main():
     # ------------------------------------------------------------------
     # 2. Load cached embeddings
     # ------------------------------------------------------------------
-    emb_cache_wt = os.path.join(data_dir, f"embeddings_wt_{args.model}.npy")
-    emb_cache_mut = os.path.join(data_dir, f"embeddings_mut_{args.model}.npy")
-    emb_cache_wt_pos = os.path.join(data_dir, f"embeddings_wt_pos_{args.model}.npy")
-    emb_cache_mut_pos = os.path.join(data_dir, f"embeddings_mut_pos_{args.model}.npy")
+    emb_dir = os.path.join(data_dir, "embeddings", args.model)
+    emb_cache_wt     = os.path.join(emb_dir, "embeddings_wt_mean.npy")
+    emb_cache_mut    = os.path.join(emb_dir, "embeddings_mut_mean.npy")
+    emb_cache_wt_pos = os.path.join(emb_dir, "embeddings_wt_pos.npy")
+    emb_cache_mut_pos = os.path.join(emb_dir, "embeddings_mut_pos.npy")
 
     for p in [emb_cache_wt, emb_cache_mut]:
         if not os.path.exists(p):
@@ -164,7 +161,7 @@ def main():
     print(f"Class distribution: {dict(Counter(labels_3class))}")
     print(f"Unique genes: {len(set(genes_arr))}")
 
-    alphamissense_scores = fetch_alphamissense_scores(valid_variants, data_dir)
+    alphamissense_scores = _load_alphamissense_scores(valid_variants, data_dir)
 
     # ------------------------------------------------------------------
     # 4. Build feature matrices

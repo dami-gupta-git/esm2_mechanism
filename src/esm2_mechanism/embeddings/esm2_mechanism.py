@@ -4,28 +4,24 @@ ESM-2 delta-embedding mechanism geometry experiment.
 Tests whether ESM-2 delta-embeddings (mutant - wildtype) organize by molecular
 disease mechanism class (GOF / DN / LOF) after removing protein stability signal.
 
-Data: Gerasimavicius et al. 2022 (NatComms 13:3895), OSF: 10.17605/OSF.IO/H62FQ
-  - Pathogenic ClinVar missense variants, gene-level mechanism labels
+Data: merged_variants.json (built by fetch_data/fetch_variants.py --step merge)
+  - Gerasimavicius et al. 2022 + ClinVar missense variants, gene-level mechanism labels
   - GOF, DN, HI, AR classes; FoldX ΔΔG provided
   - Primary: 3-class GOF / DN / LOF (HI+AR collapsed)
 
 Pipeline:
-  1. Fetch Gerasimavicius dataset from OSF
-  2. Fetch protein sequences from UniProt for each gene
-  3. Extract ESM-2 650M embeddings for WT and mutant sequences
-  4. Compute delta-embeddings (mutant - WT), mean-pooled and per-residue
-  5. Fit stability nuisance subspace on Megascale data; validate transfer
-  6. Linear probe (LR) with gene-split CV
-  7. Baselines, negative controls, probe direction orthogonality analysis
+  1. Load merged_variants.json
+  2. Load embeddings from data/embeddings/<model>/ (built by embed_variants.py)
+  3. Compute delta-embeddings (mutant - WT), mean-pooled and per-residue
+  4. Fit stability nuisance subspace on Megascale data; validate transfer
+  5. Linear probe (LR) with gene-split CV
+  6. Baselines, negative controls, probe direction orthogonality analysis
 """
 
 import argparse
 import json
 import os
-import time
 import warnings
-import urllib.request
-import urllib.error
 import functools
 
 import numpy as np
@@ -48,7 +44,6 @@ warnings.filterwarnings("ignore")
 # Constants
 # ---------------------------------------------------------------------------
 
-OSF_DATASET_URL = "https://osf.io/rct6d/download"  # Gerasimavicius et al. DiseaseMech_Stability_VEPS.xlsx
 ESM2_MODEL_650M = "esm2_t33_650M_UR50D"
 ESM2_MODEL_3B = "esm2_t36_3B_UR50D"
 
@@ -60,244 +55,6 @@ SCALE_INVARIANT_THRESHOLD = 0.03        # macro-F1 difference 650M vs 3B
 SCALE_EMERGENT_THRESHOLD = 0.05
 VARIANCE_ASYMMETRY_THRESHOLD = 0.30    # GOF ≥ 30% less variance explained than HI+AR
 BENIGN_LEAK_THRESHOLD = 0.50           # benign AUROC as fraction of pathogenic AUROC
-
-
-# ---------------------------------------------------------------------------
-# Data loading: Gerasimavicius et al. OSF dataset
-# ---------------------------------------------------------------------------
-
-def fetch_gerasimavicius_dataset(cache_dir):
-    """
-    Download and parse the Gerasimavicius et al. variant table from OSF.
-    File: DiseaseMech_Stability_VEPS.xlsx, sheet: ClinVar_gene_level
-    Columns used: Gene, Uniprot_id, Uniprot_variant, Disease_mechanism, raw_FoldX_Monomer
-    Returns list of dicts with keys: gene, uniprot_id, aa_pos, aa_wt, aa_mut,
-    mechanism (GOF/DN/HI/AR), foldx_ddg.
-    Falls back to a minimal synthetic dataset for testing if download fails.
-    """
-    cache_path = os.path.join(cache_dir, "gerasimavicius_variants.json")
-    if os.path.exists(cache_path):
-        print("Loading cached Gerasimavicius dataset...")
-        with open(cache_path) as f:
-            return json.load(f)
-
-    os.makedirs(cache_dir, exist_ok=True)
-    print("Downloading Gerasimavicius et al. dataset from OSF...")
-
-    variants = []
-    try:
-        import io
-        import re
-        try:
-            import openpyxl
-        except ImportError:
-            import subprocess, sys
-            subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", "openpyxl"])
-            import openpyxl
-
-        req = urllib.request.Request(OSF_DATASET_URL, headers={"User-Agent": "Mozilla/5.0"})
-        with urllib.request.urlopen(req, timeout=300) as resp:
-            data = resp.read()
-
-        wb = openpyxl.load_workbook(io.BytesIO(data), read_only=True)
-        ws = wb["ClinVar_gene_level"]
-        rows = list(ws.iter_rows(values_only=True))
-        header = [str(h).strip() if h is not None else "" for h in rows[0]]
-        col = {h: i for i, h in enumerate(header)}
-        print(f"  Columns: {header[:10]}")
-
-        variant_pat = re.compile(r"^([A-Z])(\d+)([A-Z])$")
-
-        mech_map = {
-            "GOF": "GOF", "DN": "DN", "HI": "HI",
-            "AR": "AR", "AR, HET": "AR", "AR, HOM": "AR",
-        }
-
-        for row in rows[1:]:
-            try:
-                row_class = str(row[col.get("Class", -1)] or "").strip().upper()
-                if "CLINVAR" not in row_class:
-                    continue
-
-                gene = row[col["Gene"]]
-                uniprot = row[col["Uniprot_id"]]
-                variant_str = row[col["Uniprot_variant"]]
-                mech_raw = row[col["Disease_mechanism"]]
-                foldx_raw = row[col["raw_FoldX_Monomer"]] if "raw_FoldX_Monomer" in col else None
-
-                if not all([gene, uniprot, variant_str, mech_raw]):
-                    continue
-
-                mech = mech_map.get(str(mech_raw).strip().upper())
-                if mech is None:
-                    continue
-
-                m = variant_pat.match(str(variant_str).strip())
-                if not m:
-                    continue
-                aa_wt, aa_pos_str, aa_mut = m.groups()
-                aa_pos = int(aa_pos_str)
-
-                foldx_ddg = None
-                if foldx_raw is not None:
-                    try:
-                        foldx_ddg = float(foldx_raw)
-                    except (ValueError, TypeError):
-                        pass
-
-                variants.append({
-                    "gene": str(gene).upper(),
-                    "uniprot_id": str(uniprot).strip(),
-                    "aa_pos": aa_pos,
-                    "aa_wt": aa_wt.upper(),
-                    "aa_mut": aa_mut.upper(),
-                    "mechanism": mech,
-                    "foldx_ddg": foldx_ddg,
-                    "clinvar_id": "",
-                })
-            except Exception:
-                continue
-
-        print(f"  Parsed {len(variants)} variants from OSF Excel (ClinVar_gene_level sheet)")
-
-    except Exception as e:
-        print(f"  OSF download failed: {e}")
-        print("  Falling back to synthetic test dataset (small, for pipeline validation only)")
-        variants = _make_synthetic_dataset()
-
-    if not variants:
-        print("  No variants parsed — using synthetic dataset")
-        variants = _make_synthetic_dataset()
-
-    with open(cache_path, "w") as f:
-        json.dump(variants, f)
-
-    _print_dataset_stats(variants)
-    return variants
-
-
-def _make_synthetic_dataset():
-    """
-    Minimal synthetic dataset for pipeline testing when OSF is unavailable.
-    Uses real human proteins but fake variant positions/mechanisms.
-    NOT for scientific use — only validates the pipeline runs end-to-end.
-    """
-    print("  WARNING: Using synthetic dataset. Results are not scientifically valid.")
-    aa_list = list("ACDEFGHIKLMNPQRSTVWY")
-    rng = np.random.RandomState(42)
-    genes_mechanisms = [
-        ("TP53", "P04637", "GOF"), ("KRAS", "P01116", "GOF"),
-        ("EGFR", "P00533", "GOF"), ("BRAF", "P15056", "GOF"),
-        ("PIK3CA", "P42336", "GOF"), ("MYC", "P01106", "GOF"),
-        ("CTNNB1", "P35222", "GOF"), ("IDH1", "O75874", "GOF"),
-        ("TP53", "P04637", "DN"), ("SMAD2", "Q15796", "DN"),
-        ("SMAD3", "P84022", "DN"), ("SMAD4", "Q13485", "DN"),
-        ("RUNX1", "Q01196", "DN"), ("PAX5", "Q02548", "DN"),
-        ("WT1", "P19544", "DN"), ("SOX9", "P48436", "DN"),
-        ("BRCA1", "P38398", "HI"), ("BRCA2", "P51587", "HI"),
-        ("RB1", "P06400", "HI"), ("PTEN", "P60484", "HI"),
-        ("VHL", "P40337", "AR"), ("CFTR", "P13569", "AR"),
-        ("HEXA", "P06865", "AR"), ("MUTYH", "Q9UIF7", "AR"),
-    ]
-    variants = []
-    for gene, uniprot, mech in genes_mechanisms:
-        for _ in range(15):
-            pos = int(rng.randint(1, 300))
-            wt = rng.choice(aa_list)
-            mut = rng.choice([a for a in aa_list if a != wt])
-            variants.append({
-                "gene": gene,
-                "uniprot_id": uniprot,
-                "aa_pos": pos,
-                "aa_wt": wt,
-                "aa_mut": mut,
-                "mechanism": mech,
-                "foldx_ddg": float(rng.randn()),
-                "clinvar_id": f"SYNTH_{gene}_{pos}{wt}{mut}",
-            })
-    return variants
-
-
-def _print_dataset_stats(variants):
-    from collections import Counter
-    mechs = Counter(v["mechanism"] for v in variants)
-    genes = len(set(v["gene"] for v in variants))
-    print(f"  Variants: {len(variants)} | Genes: {genes}")
-    for m, n in sorted(mechs.items()):
-        print(f"    {m}: {n}")
-
-
-# ---------------------------------------------------------------------------
-# AlphaMissense score fetching
-# ---------------------------------------------------------------------------
-
-def fetch_alphamissense_scores(variants, cache_dir, retries=3, delay=1.0):
-    """
-    Fetch per-variant AlphaMissense pathogenicity scores via MyVariant.info.
-    Returns numpy array of scores, NaN where unavailable.
-    """
-    cache_path = os.path.join(cache_dir, "alphamissense_scores.json")
-    if os.path.exists(cache_path):
-        with open(cache_path) as f:
-            cached = json.load(f)
-    else:
-        cached = {}
-
-    scores = np.full(len(variants), np.nan)
-    to_fetch = []
-    for i, v in enumerate(variants):
-        key = f"{v['gene']}_{v['aa_pos']}_{v['aa_wt']}_{v['aa_mut']}"
-        if key in cached:
-            val = cached[key]
-            if val is not None:
-                scores[i] = float(val)
-        else:
-            to_fetch.append((i, v, key))
-
-    if to_fetch:
-        print(f"  Fetching {len(to_fetch)} AlphaMissense scores from MyVariant.info...")
-        base_url = "https://myvariant.info/v1/hg38/query"
-        fetched = 0
-        deadline = time.time() + 300
-        for i, v, key in to_fetch:
-            if time.time() > deadline:
-                print(f"  AlphaMissense fetch timeout — saving {fetched} fetched, continuing")
-                break
-            query = f"{v['gene']} p.{v['aa_wt']}{v['aa_pos']}{v['aa_mut']}"
-            score = None
-            for attempt in range(retries):
-                try:
-                    url = (f"{base_url}?q={urllib.request.quote(query)}"
-                           f"&fields=dbnsfp.alphamissense&size=1")
-                    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-                    with urllib.request.urlopen(req, timeout=15) as resp:
-                        data = json.loads(resp.read().decode())
-                    hits = data.get("hits", [])
-                    if hits:
-                        am = hits[0].get("dbnsfp", {}).get("alphamissense", {})
-                        raw_score = am.get("score")
-                        if isinstance(raw_score, list):
-                            raw_score = raw_score[0] if raw_score else None
-                        if raw_score is not None:
-                            score = float(raw_score)
-                    break
-                except Exception:
-                    if attempt < retries - 1:
-                        time.sleep(delay)
-            cached[key] = score
-            if score is not None:
-                scores[i] = score
-            fetched += 1
-            if fetched % 500 == 0:
-                print(f"    {fetched}/{len(to_fetch)}")
-            time.sleep(0.2)
-
-        with open(cache_path, "w") as f:
-            json.dump(cached, f)
-
-    n_valid = int(np.sum(~np.isnan(scores)))
-    print(f"  AlphaMissense scores: {n_valid}/{len(variants)} available")
-    return scores
 
 
 # ---------------------------------------------------------------------------
@@ -681,13 +438,46 @@ def run_negative_controls(deltas_mean, y, genes, seed=42):
 # Phase helpers for run()
 # ---------------------------------------------------------------------------
 
+def _load_alphamissense_scores(variants: list, data_dir: str) -> np.ndarray:
+    """Load AlphaMissense scores from fetch_data output (alphamissense_scores_full.json).
+
+    Returns a float array of length len(variants), NaN where no score is available.
+    Keys in the JSON are gene_aapos_aawt_aamut (same format used by fetch_annotations.py).
+    """
+    am_path = os.path.join(data_dir, "alphamissense_scores_full.json")
+    if not os.path.exists(am_path):
+        print(f"  WARNING: {am_path} not found — AlphaMissense scores unavailable")
+        return np.full(len(variants), np.nan)
+    try:
+        with open(am_path) as f:
+            am_scores = json.load(f)
+    except json.JSONDecodeError:
+        print(f"  WARNING: corrupt {am_path} — AlphaMissense scores unavailable")
+        return np.full(len(variants), np.nan)
+
+    scores = np.full(len(variants), np.nan)
+    for idx, v in enumerate(variants):
+        key = f"{v['gene']}_{v['aa_pos']}_{v['aa_wt']}_{v['aa_mut']}"
+        val = am_scores.get(key)
+        if val is not None:
+            scores[idx] = float(val)
+
+    n_valid = int(np.sum(~np.isnan(scores)))
+    print(f"  AlphaMissense scores: {n_valid}/{len(variants)} available")
+    return scores
+
+
 def _load_data(data_dir):
-    """Phase 1: load and filter the Gerasimavicius dataset."""
-    variants = fetch_gerasimavicius_dataset(data_dir)
-    for v in variants:
-        v["label_3class"] = "LOF" if v["mechanism"] in ("HI", "AR") else v["mechanism"]
+    """Phase 1: load and filter the merged variant dataset."""
+    merged_path = os.path.join(data_dir, "merged_variants.json")
+    if not os.path.exists(merged_path):
+        raise FileNotFoundError(
+            f"{merged_path} not found — run fetch_data/fetch_variants.py --step merge first"
+        )
+    with open(merged_path) as f:
+        variants = json.load(f)
     variants = [v for v in variants
-                if v["uniprot_id"] and v["aa_wt"] and v["aa_mut"] and v["aa_pos"] > 0]
+                if v.get("uniprot_id") and v.get("aa_wt") and v.get("aa_mut") and v.get("aa_pos", 0) > 0]
     print(f"After filtering: {len(variants)} variants")
     return variants
 
@@ -718,12 +508,13 @@ def _prepare_sequences(variants, data_dir):
 
 def _load_or_extract_embeddings(wt_seqs, mut_seqs, var_positions,
                                  data_dir, model_name, device, batch_size):
-    """Phase 3: load cached embeddings or run ESM-2 forward pass."""
+    """Phase 3: load embeddings from data/embeddings/<model>/ or run ESM-2 forward pass."""
+    emb_dir = os.path.join(data_dir, "embeddings", model_name)
     emb_cache = {
-        "wt":      os.path.join(data_dir, f"embeddings_wt_{model_name}.npy"),
-        "mut":     os.path.join(data_dir, f"embeddings_mut_{model_name}.npy"),
-        "wt_pos":  os.path.join(data_dir, f"embeddings_wt_pos_{model_name}.npy"),
-        "mut_pos": os.path.join(data_dir, f"embeddings_mut_pos_{model_name}.npy"),
+        "wt":      os.path.join(emb_dir, "embeddings_wt_mean.npy"),
+        "mut":     os.path.join(emb_dir, "embeddings_mut_mean.npy"),
+        "wt_pos":  os.path.join(emb_dir, "embeddings_wt_pos.npy"),
+        "mut_pos": os.path.join(emb_dir, "embeddings_mut_pos.npy"),
     }
     if os.path.exists(emb_cache["wt"]) and os.path.exists(emb_cache["mut"]):
         print("\n=== Loading cached embeddings ===")
@@ -733,6 +524,7 @@ def _load_or_extract_embeddings(wt_seqs, mut_seqs, var_positions,
         emb_mut_pos  = np.load(emb_cache["mut_pos"]) if os.path.exists(emb_cache["mut_pos"]) else emb_mut_mean
     else:
         print(f"\n=== Extracting ESM-2 embeddings ({model_name}) ===")
+        os.makedirs(emb_dir, exist_ok=True)
         emb_wt_mean, emb_mut_mean, emb_wt_pos, emb_mut_pos = get_esm2_embeddings_for_pairs(
             wt_seqs, mut_seqs, var_positions,
             model_name=model_name, device=device, batch_size=batch_size,
@@ -857,8 +649,8 @@ def run(out_dir, seed=0, model_name=ESM2_MODEL_650M, n_stability_components=10,
     aa_wt_list  = [v["aa_wt"]  for v in valid_variants]
     aa_mut_list = [v["aa_mut"] for v in valid_variants]
 
-    print("\n=== Fetching AlphaMissense scores ===")
-    alphamissense_scores = fetch_alphamissense_scores(valid_variants, data_dir)
+    print("\n=== Loading AlphaMissense scores ===")
+    alphamissense_scores = _load_alphamissense_scores(valid_variants, data_dir)
 
     from collections import Counter
     print(f"3-class distribution: {dict(Counter(labels_3class))}")
