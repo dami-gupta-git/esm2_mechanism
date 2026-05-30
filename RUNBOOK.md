@@ -154,7 +154,7 @@ within a group. **Bold = bug-fixed this sweep, number will change.**
 
 ### D1 — mechanism core (results 1–10)
 ```bash
-python -m esm2_mechanism.mechanism.experiment_mlp --family_split        # results 3, 5
+python -m esm2_mechanism.mechanism.mlp --family_split        # results 3, 5
 python -m esm2_mechanism.mechanism.mut_only_mlp --data_dir data --emb_dir data/embeddings   # result_7 ** (was SyntaxError)
 python -m esm2_mechanism.mechanism.family_split_baselines                # result_2
 python -m esm2_mechanism.mechanism.family_clustering                     # result_4 ** (was SyntaxError)
@@ -230,14 +230,14 @@ just-fixed bug may break:**
 - `esm3_mechanism.py`'s fold guard was fixed from `len(set(y_tr)) < 2` to `< 3`
   (skip a fold if any of the 3 classes is missing from train). This matches the
   shared `utils_probes.run_mlp_cv` (`< n_classes`).
-- BUT the ESM-2 baseline (0.299) comes from `esm2_mechanism.mechanism.experiment_mlp`,
+- BUT the ESM-2 baseline (0.299) comes from `esm2_mechanism.mechanism.mlp`,
   which **still uses `< 2`** (lines 140/269/327) — it includes degenerate folds that
   drag F1 down.
 - So ESM-2 is scored with degenerate folds *in*, ESM-3 with them *out*. **Part of
   the +0.125 gap may be a fold-eligibility artifact, not scale.**
 
 **Required before result_26 can stand or enter PUBLISH.md:** re-score ESM-2 and
-ESM-3 under the *identical* fold rule. Cleanest fix — make `experiment_mlp.py` use
+ESM-3 under the *identical* fold rule. Cleanest fix — make `mlp.py` use
 the shared `utils_probes.run_mlp_cv` (or bump its guards to `< n_classes`), re-run
 the ESM-2 family-split baseline, then re-run `esm3_mechanism.py` phase 3 and
 recompute the M1/M2 gap against the new baseline. Note `esm3_mechanism.py` uses its
@@ -293,12 +293,12 @@ Three sweeps found ~25 script fixes. Recurring classes:
 5. **Corrupted labels** — EC-string iteration + multi-class keyword fallback
    (`fetch_enzyme_labels`, two fixes; result_25).
 6. **Fold-eligibility mismatch** — ESM-3 `< 2` → `< 3` classes-in-train, now
-   matching `utils_probes`, but ESM-2's `experiment_mlp.py` still `< 2`. **Threatens
+   matching `utils_probes`, but ESM-2's `mlp.py` still `< 2`. **Threatens
    the result_26 M1/M2 positive claim** (see Stage E).
 
 The refactor ("refactoring duplicate code" commits) consolidated CV/metric helpers
 into `utils_probes.py` (`gene_split_cv`, `family_split_cv`, `compute_metrics`,
 `align_proba`, `run_mlp_cv`, `run_logreg_cv`) — exactly the dedup that prevents the
 class-order bug class. Remaining gap: `esm3_mechanism.py` (`_run_mlp`) and
-`experiment_mlp.py` still carry their own probe loops with the old `< 2` guard;
+`mlp.py` still carry their own probe loops with the old `< 2` guard;
 routing them through `utils_probes.run_mlp_cv` would close the fold-rule mismatch.

@@ -140,10 +140,10 @@ Tests whether ESM-3 structure tokens rescue the mechanism null from ESM-2. Two c
 
 ```
 # Phase 1 — CPU: download AF2 structures
-python -m esm2_mechanism.mechanism.esm3_mechanism --phase 1 --run_dir run_0
+python -m esm2_mechanism.mechanism.esm3_mechanism --phase 1
 
 # Phase 2 — GPU: extract ESM-3 embeddings
-python -m esm2_mechanism.mechanism.esm3_mechanism --phase 2 --run_dir run_0
+python -m esm2_mechanism.mechanism.esm3_mechanism --phase 2
 ```
 
 ---
@@ -244,7 +244,7 @@ python -m esm2_mechanism.mechanism.family_clustering \
 ### MLP probe
 
 ```
-python -m esm2_mechanism.mechanism.experiment_mlp \
+python -m esm2_mechanism.mechanism.mlp \
     --data_dir run_0/data \
     --emb_dir run_0/data/embeddings/esm2_t33_650M_UR50D \
     --out_dir run_0 \
@@ -276,7 +276,7 @@ python -m esm2_mechanism.mechanism.pathogenicity_control \
 Runs the probe comparison for ESM-3 conditions (CPU only). Requires ESM-3 embeddings from step 3 above.
 
 ```
-python -m esm2_mechanism.mechanism.esm3_mechanism --phase 3 --run_dir run_0
+python -m esm2_mechanism.mechanism.esm3_mechanism --phase 3
 ```
 
 ### Megascale stability analysis

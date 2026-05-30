@@ -1,0 +1,360 @@
+"""Probe runners: logistic regression and MLP CV over pre-computed splits."""
+
+from __future__ import annotations
+
+import functools
+
+import numpy as np
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import roc_auc_score, f1_score
+from sklearn.preprocessing import StandardScaler
+
+from esm2_mech.utils.constants import MECHANISM_CLASSES
+from esm2_mech.utils.metrics import aggregate_folds, align_proba, compute_metrics
+
+print = functools.partial(print, flush=True)
+
+
+def _per_gene_f1(y_true: np.ndarray, proba: np.ndarray, genes: np.ndarray) -> float:
+    """Aggregate per-variant probabilities to per-gene predictions and compute macro-F1."""
+    unique = list(set(genes.tolist()))
+    y_g, p_g = [], []
+    for g in unique:
+        mask = genes == g
+        gene_labels = y_true[mask]
+        counts = {cls: int((gene_labels == cls).sum()) for cls in MECHANISM_CLASSES}
+        true_label = max(counts, key=counts.__getitem__)
+        pred_label = MECHANISM_CLASSES[int(proba[mask].mean(0).argmax())]
+        y_g.append(true_label)
+        p_g.append(pred_label)
+    return float(f1_score(y_g, p_g, average="macro", zero_division=0))
+
+
+def run_logreg_cv(
+    X: np.ndarray,
+    y: np.ndarray,
+    splits: list[tuple],
+    classes: list[str] = MECHANISM_CLASSES,
+    seed: int = 42,
+    genes: np.ndarray | None = None,
+    label: str = "",
+) -> dict:
+    """Run LogReg + StandardScaler over pre-computed splits, return aggregated metrics.
+
+    genes : if provided, also computes per_gene_f1 per fold
+    label : prefix for per-fold log lines
+    """
+    n_classes = len(classes)
+    fold_results, pg_f1s = [], []
+    for fold_i, (tr, te) in enumerate(splits):
+        X_tr, X_te = X[tr], X[te]
+        y_tr, y_te = y[tr], y[te]
+        if len(set(y_tr.tolist())) < n_classes:
+            print(f"    [{label}] Fold {fold_i+1}: skipped (missing class in train)")
+            continue
+        if len(set(y_te.tolist())) < 2:
+            print(f"    [{label}] Fold {fold_i+1}: skipped (< 2 classes in test)")
+            continue
+        sc = StandardScaler().fit(X_tr)
+        clf = LogisticRegression(
+            max_iter=2000, class_weight="balanced", random_state=seed
+        )
+        clf.fit(sc.transform(X_tr), y_tr)
+        proba = align_proba(clf.predict_proba(sc.transform(X_te)), clf.classes_, classes)
+        pred = np.array([classes[idx] for idx in proba.argmax(axis=1)])
+        fm = compute_metrics(y_te, pred, proba, classes)
+        fold_results.append(fm)
+
+        pg_str = ""
+        if genes is not None:
+            pg = _per_gene_f1(y_te, proba, genes[te])
+            pg_f1s.append(pg)
+            pg_str = f"  per_gene_f1={pg:.3f}"
+
+        print(
+            f"    [{label}] Fold {fold_i+1}: macro_f1={fm['macro_f1']:.3f}{pg_str}  "
+            + "  ".join(
+                (
+                    f"{cls}={fm['per_class_auroc'].get(cls, float('nan')):.3f}"
+                    if fm["per_class_auroc"].get(cls) is not None
+                    else f"{cls}=NA"
+                )
+                for cls in classes
+            )
+        )
+
+    agg = aggregate_folds(fold_results, classes)
+    if pg_f1s:
+        agg["per_gene_f1_mean"] = float(np.mean(pg_f1s))
+        agg["per_gene_f1_std"] = float(np.std(pg_f1s))
+    return agg
+
+
+def _pos_class_col(clf_classes: np.ndarray, pos_label) -> int:
+    """Return the column index for pos_label in clf.classes_, raising clearly if absent."""
+    cols = np.where(clf_classes == pos_label)[0]
+    if len(cols) == 0:
+        raise ValueError(
+            f"pos_label {pos_label!r} not found in classifier classes {clf_classes.tolist()}. "
+            "Ensure the fold contains both classes before fitting."
+        )
+    return int(cols[0])
+
+
+def run_logreg_binary_cv(
+    X: np.ndarray, y: np.ndarray, splits: list[tuple], seed: int = 42, pos_label=1
+) -> dict:
+    """Binary LogReg CV returning AUROC mean ± std."""
+    aurocs = []
+    for tr, te in splits:
+        sc = StandardScaler()
+        X_tr = sc.fit_transform(X[tr])
+        X_te = sc.transform(X[te])
+        if len(set(y[tr])) < 2 or len(set(y[te])) < 2:
+            continue
+        clf = LogisticRegression(max_iter=1000, C=1.0, random_state=seed)
+        clf.fit(X_tr, y[tr])
+        proba = clf.predict_proba(X_te)[:, _pos_class_col(clf.classes_, pos_label)]
+        aurocs.append(float(roc_auc_score(y[te], proba)))
+    if not aurocs:
+        return {}
+    return {
+        "auroc_mean": float(np.mean(aurocs)),
+        "auroc_std": float(np.std(aurocs)),
+        "n_folds": len(aurocs),
+    }
+
+
+def run_mlp_cv(
+    X: np.ndarray,
+    y: np.ndarray,
+    splits: list[tuple],
+    hidden: tuple = (256, 64),
+    seed: int = 42,
+    classes: list[str] = MECHANISM_CLASSES,
+    genes: np.ndarray | None = None,
+    label: str = "",
+) -> dict:
+    """Sklearn MLP CV: scale → oversample → fit → aggregate metrics.
+
+    splits : pre-computed list of (train_idx, test_idx)
+    genes  : if provided, also computes per_gene_f1 per fold
+    label  : prefix for per-fold log lines
+    """
+    from sklearn.neural_network import MLPClassifier
+
+    n_classes = len(classes)
+    fold_results, pg_f1s = [], []
+
+    for fold_i, (tr, te) in enumerate(splits):
+        X_tr, X_te = X[tr], X[te]
+        y_tr, y_te = y[tr], y[te]
+
+        if len(set(y_tr.tolist())) < n_classes:
+            print(f"    [{label}] Fold {fold_i+1}: skipped (missing class in train)")
+            continue
+        if len(set(y_te.tolist())) < 2:
+            print(f"    [{label}] Fold {fold_i+1}: skipped (< 2 classes in test)")
+            continue
+
+        sc = StandardScaler().fit(X_tr)
+        X_tr_s = sc.transform(X_tr)
+        X_te_s = sc.transform(X_te)
+
+        counts = {cls: int((y_tr == cls).sum()) for cls in classes}
+        max_c = max(counts.values())
+        rng = np.random.RandomState(seed)
+        os_idx = []
+        for cls in classes:
+            ci = np.where(y_tr == cls)[0]
+            if len(ci) == 0:
+                continue
+            os_idx.append(np.tile(ci, max_c // len(ci)))
+            rem = max_c % len(ci)
+            if rem:
+                os_idx.append(rng.choice(ci, rem, replace=False))
+        os_idx = np.concatenate(os_idx)
+        rng.shuffle(os_idx)
+
+        clf = MLPClassifier(
+            hidden_layer_sizes=hidden,
+            max_iter=500,
+            early_stopping=True,
+            validation_fraction=0.15,
+            random_state=seed,
+        )
+        clf.fit(X_tr_s[os_idx], y_tr[os_idx])
+
+        proba = align_proba(clf.predict_proba(X_te_s), clf.classes_, classes)
+        pred = np.array([classes[idx] for idx in proba.argmax(axis=1)])
+        fm = compute_metrics(y_te, pred, proba, classes)
+        fold_results.append(fm)
+
+        pg_str = ""
+        if genes is not None:
+            pg = _per_gene_f1(y_te, proba, genes[te])
+            pg_f1s.append(pg)
+            pg_str = f"  per_gene_f1={pg:.3f}"
+
+        print(
+            f"    [{label}] Fold {fold_i+1}: macro_f1={fm['macro_f1']:.3f}{pg_str}  "
+            + "  ".join(
+                (
+                    f"{cls}={fm['per_class_auroc'].get(cls, float('nan')):.3f}"
+                    if fm["per_class_auroc"].get(cls) is not None
+                    else f"{cls}=NA"
+                )
+                for cls in classes
+            )
+        )
+
+    agg = aggregate_folds(fold_results, classes)
+    if pg_f1s:
+        agg["per_gene_f1_mean"] = float(np.mean(pg_f1s))
+        agg["per_gene_f1_std"] = float(np.std(pg_f1s))
+    return agg
+
+
+def run_mlp_binary_cv(
+    X: np.ndarray, y: np.ndarray, splits: list[tuple], seed: int = 42, pos_label=1
+) -> dict:
+    """Binary sklearn MLP CV returning AUROC mean ± std."""
+    from sklearn.neural_network import MLPClassifier
+
+    aurocs = []
+    for tr, te in splits:
+        sc = StandardScaler()
+        X_tr = sc.fit_transform(X[tr])
+        X_te = sc.transform(X[te])
+        if len(set(y[tr])) < 2 or len(set(y[te])) < 2:
+            continue
+        clf = MLPClassifier(
+            hidden_layer_sizes=(256,),
+            max_iter=300,
+            random_state=seed,
+            early_stopping=True,
+            validation_fraction=0.1,
+        )
+        clf.fit(X_tr, y[tr])
+        proba = clf.predict_proba(X_te)[:, _pos_class_col(clf.classes_, pos_label)]
+        aurocs.append(float(roc_auc_score(y[te], proba)))
+    if not aurocs:
+        return {}
+    return {
+        "auroc_mean": float(np.mean(aurocs)),
+        "auroc_std": float(np.std(aurocs)),
+        "n_folds": len(aurocs),
+    }
+
+
+def run_mlp_probe_cv(
+    X: np.ndarray,
+    labels: np.ndarray,
+    splits: list[tuple],
+    seed: int = 42,
+    hidden: tuple = (256, 64),
+    dropout: float = 0.3,
+    lr: float = 1e-3,
+    max_epochs: int = 100,
+    patience: int = 10,
+    batch_size: int = 256,
+) -> dict:
+    """PyTorch MLP multi-class CV returning macro-F1 and per-class AUROC mean ± std."""
+    import torch
+    import torch.nn as nn
+    from torch.utils.data import DataLoader, TensorDataset
+    from sklearn.metrics import roc_auc_score, f1_score
+
+    classes = MECHANISM_CLASSES
+    n_classes = len(classes)
+    cls_to_idx = {cls: idx for idx, cls in enumerate(classes)}
+    y = np.array([cls_to_idx[lab] for lab in labels])
+    fold_results = []
+
+    for fold_i, (train_idx, test_idx) in enumerate(splits):
+        X_tr = X[train_idx].astype(np.float32)
+        X_te = X[test_idx].astype(np.float32)
+        y_tr, y_te = y[train_idx], y[test_idx]
+        labels_te = labels[test_idx]
+        if len(set(labels[train_idx])) < n_classes:
+            continue
+
+        rng = np.random.RandomState(seed + fold_i)
+        order = np.arange(len(train_idx))
+        rng.shuffle(order)
+        n_val = max(1, int(0.15 * len(order)))
+        val_idx_local = order[:n_val]
+        fit_idx_local = order[n_val:]
+        X_fit, y_fit = X_tr[fit_idx_local], y_tr[fit_idx_local]
+        X_val, y_val = X_tr[val_idx_local], y_tr[val_idx_local]
+        if len(X_fit) < 10 or len(X_val) < 5:
+            continue
+
+        mu = X_fit.mean(0)
+        std = X_fit.std(0) + 1e-8
+        X_fit = (X_fit - mu) / std
+        X_val = (X_val - mu) / std
+        X_te_n = (X_te - mu) / std
+
+        class_counts = np.bincount(y_tr, minlength=n_classes).astype(np.float32)
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        cw = torch.tensor(1.0 / (class_counts + 1e-8)).to(device)
+
+        layers = []
+        prev = X_fit.shape[1]
+        for h in hidden:
+            layers += [nn.Linear(prev, h), nn.ReLU(), nn.Dropout(dropout)]
+            prev = h
+        layers.append(nn.Linear(prev, n_classes))
+        model = nn.Sequential(*layers).to(device)
+        opt = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=1e-3)
+        crit = nn.CrossEntropyLoss(weight=cw)
+
+        ds = TensorDataset(torch.tensor(X_fit), torch.tensor(y_fit, dtype=torch.long))
+        loader = DataLoader(ds, batch_size=batch_size, shuffle=True)
+        best_val, patience_cnt, best_state = float("inf"), 0, None
+        for _epoch in range(max_epochs):
+            model.train()
+            for xb, yb in loader:
+                opt.zero_grad()
+                crit(model(xb.to(device)), yb.to(device)).backward()
+                opt.step()
+            model.eval()
+            with torch.no_grad():
+                vl = crit(
+                    model(torch.tensor(X_val).to(device)),
+                    torch.tensor(y_val, dtype=torch.long).to(device),
+                ).item()
+            if vl < best_val - 1e-4:
+                best_val, patience_cnt = vl, 0
+                best_state = {k: v.clone() for k, v in model.state_dict().items()}
+            else:
+                patience_cnt += 1
+                if patience_cnt >= patience:
+                    break
+        if best_state:
+            model.load_state_dict(best_state)
+
+        model.eval()
+        with torch.no_grad():
+            proba = torch.softmax(model(torch.tensor(X_te_n).to(device)), 1).cpu().numpy()
+        pred_labels = np.array([classes[idx] for idx in proba.argmax(1)])
+        fm = {"macro_f1": float(f1_score(labels_te, pred_labels, average="macro", zero_division=0))}
+        for col_idx, cls in enumerate(classes):
+            y_bin = (labels_te == cls).astype(int)
+            if y_bin.sum() > 0 and (1 - y_bin).sum() > 0:
+                fm[f"auroc_{cls}"] = float(roc_auc_score(y_bin, proba[:, col_idx]))
+        fold_results.append(fm)
+        print(f"    fold {fold_i+1}: macro_f1={fm['macro_f1']:.3f}")
+
+    if not fold_results:
+        return {}
+    agg = {}
+    for key in set().union(*[set(f) for f in fold_results]):
+        vals = [f[key] for f in fold_results if key in f and not np.isnan(f[key])]
+        if vals:
+            agg[f"{key}_mean"] = float(np.mean(vals))
+            agg[f"{key}_std"] = float(np.std(vals))
+    return agg
+
+
