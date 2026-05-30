@@ -31,7 +31,7 @@ import argparse, functools, json, os, sys, numpy as np
 from collections import defaultdict
 from pathlib import Path
 
-from esm2_mech.utils.paths import DATA_DIR as DATA, RESULTS_DIR as _RESULTS_DIR, VALID_VARIANTS_JSON, EMB_WT_MEAN, EMB_MUT_MEAN
+from esm2_mech.utils.paths import EMB_MUT_MEAN, EMB_WT_MEAN, LL_CKPT_JSON, RESULTS_DIR as _RESULTS_DIR, SCAN_PROBE_CACHE_JSON, SEQUENCES_EXTENDED_JSON, SEQUENCES_JSON, VALID_VARIANTS_JSON
 
 print = functools.partial(print, flush=True)
 from esm2_mech.embeddings.embed_variants import ESM2_MODEL_650M
@@ -50,7 +50,7 @@ MIN_POSITIONS = 3
 
 def load_probe_list():
     """Reuse the same probe positions from result_20."""
-    probe_cache = DATA / "cache" / "scan_probes.json"
+    probe_cache = SCAN_PROBE_CACHE_JSON
     with open(probe_cache) as f:
         d = json.load(f)
     probes = d["probes"]
@@ -75,11 +75,10 @@ def load_probe_list():
 
 
 def load_sequences():
-    with open(DATA / "sequences.json") as f:
+    with open(SEQUENCES_JSON) as f:
         seqs = json.load(f)
-    ext = DATA / "cache" / "uniprot_sequences_extended.json"
-    if ext.exists():
-        with open(ext) as f:
+    if SEQUENCES_EXTENDED_JSON.exists():
+        with open(SEQUENCES_EXTENDED_JSON) as f:
             seqs.update(json.load(f))
     return seqs
 
@@ -103,7 +102,7 @@ def extract_ll_scores(covered_genes, gene_positions, seqs, batch_size=32):
     if device != "cuda":
         raise RuntimeError("GPU required. Run on RunPod.")
 
-    ckpt_path = DATA / "cache" / "ll_ckpt.json"
+    ckpt_path = LL_CKPT_JSON
     out_path = DATA / "ll_scores.json"
 
     if out_path.exists():

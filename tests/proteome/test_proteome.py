@@ -394,7 +394,7 @@ class TestGetDropIndices:
 class TestBuildOnehot:
 
     def setup_method(self):
-        from esm2_mechanism.mechanism.family_split_baselines import build_onehot
+        from esm2_mech.experiments.mechanism.mechanism_delta_family_split import build_onehot
 
         self.build_onehot = build_onehot
 
@@ -403,13 +403,13 @@ class TestBuildOnehot:
         assert onehot.shape == (3, 40)
 
     def test_wt_position_set(self):
-        from esm2_mechanism.mechanism.family_split_baselines import AA_INDEX
+        from esm2_mech.experiments.mechanism.mechanism_delta_family_split import AA_INDEX
 
         onehot = self.build_onehot(["A"], ["V"])
         assert onehot[0, AA_INDEX["A"]] == 1.0
 
     def test_mut_position_set(self):
-        from esm2_mechanism.mechanism.family_split_baselines import AA_INDEX
+        from esm2_mech.experiments.mechanism.mechanism_delta_family_split import AA_INDEX
 
         onehot = self.build_onehot(["A"], ["V"])
         assert onehot[0, 20 + AA_INDEX["V"]] == 1.0

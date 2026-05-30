@@ -9,16 +9,15 @@ Purpose: if AUROC >> 0.85 on gene-split, the pipeline is sound and a mechanism
 null result is interpretable as a real absence of signal, not a pipeline failure.
 
 Inputs:
-  {run_dir}/data/clinvar_pathogenicity_variants.json  (from pathogenicity_fetch.py)
+  data/clinvar_pathogenicity_variants.json  (from pathogenicity_fetch.py)
   data/embeddings/esm2_t33_650M_UR50D/pathogenicity_wt_mean.npy  (from embed_pathogenicity.py)
   data/embeddings/esm2_t33_650M_UR50D/pathogenicity_mut_mean.npy
   data/embeddings/esm2_t33_650M_UR50D/pathogenicity_meta.json
 
-Output: {run_dir}/pathogenicity_control.json
+Output: results/pathogenicity_control.json
 
 Usage:
-    python -m esm2_mech.experiments.pathogenicity.pathogenicity_probes \\
-        --run_dir run_0
+    python -m esm2_mech.experiments.pathogenicity.pathogenicity_probes
 """
 
 import argparse
@@ -34,8 +33,14 @@ from sklearn.metrics import auc, f1_score, precision_recall_curve, roc_auc_score
 from sklearn.neural_network import MLPClassifier
 from sklearn.preprocessing import StandardScaler
 
-from esm2_mech.utils.paths import PATH_EMB_META, PATH_EMB_MUT_MEAN, PATH_EMB_WT_MEAN
-from esm2_mech.utils.sequences import fetch_pfam_families
+from esm2_mech.utils.paths import (
+    CLINVAR_PATHOGENICITY_VARIANTS_JSON,
+    PATH_EMB_META,
+    PATH_EMB_MUT_MEAN,
+    PATH_EMB_WT_MEAN,
+    RESULTS_DIR,
+    PFAM_JSON,
+)
 from esm2_mech.utils.splits import family_split_cv, gene_split_cv
 
 print = functools.partial(print, flush=True)
@@ -47,7 +52,7 @@ def load_embeddings(variants):
         if not os.path.exists(path):
             raise FileNotFoundError(
                 f"Embedding file missing: {path}\n"
-                "Run: python -m esm2_mech.embeddings.embed_pathogenicity --run_dir <run_dir>"
+                "Run: python -m esm2_mech.embeddings.embed_pathogenicity"
             )
     try:
         with open(PATH_EMB_META) as f:
@@ -103,19 +108,16 @@ def run_binary_probe(X, y, splits, probe_kind, seed=42):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--run_dir", default="run_0")
+    p.add_argument("--out_dir", default=str(RESULTS_DIR))
     p.add_argument("--seed", type=int, default=42)
     args = p.parse_args()
 
-    data_dir = os.path.join(args.run_dir, "data")
-
-    variants_path = os.path.join(data_dir, "clinvar_pathogenicity_variants.json")
-    if not os.path.exists(variants_path):
+    if not CLINVAR_PATHOGENICITY_VARIANTS_JSON.exists():
         raise FileNotFoundError(
-            f"Phase 1 output not found: {variants_path}\n"
+            f"Phase 1 output not found: {CLINVAR_PATHOGENICITY_VARIANTS_JSON}\n"
             "Run first: python -m esm2_mech.experiments.pathogenicity.pathogenicity_fetch"
         )
-    with open(variants_path) as f:
+    with open(CLINVAR_PATHOGENICITY_VARIANTS_JSON) as f:
         variants = json.load(f)
 
     wt_mean, mut_mean, valid = load_embeddings(variants)
@@ -125,11 +127,10 @@ def main():
     y = np.array([1 if v["label"] == "pathogenic" else 0 for v in valid])
     genes = np.array([v["gene"] for v in valid])
 
-    pfam_map = fetch_pfam_families(
-        [{"gene": g, "uniprot_id": next((v["uniprot_id"] for v in valid if v["gene"] == g), None)}
-         for g in set(genes)],
-        data_dir,
-    )
+    if not PFAM_JSON.exists():
+        raise FileNotFoundError(f"{PFAM_JSON} not found — run fetch_data/fetch_annotations --step pfam first")
+    with open(PFAM_JSON) as f:
+        pfam_map = json.load(f)
     gs = gene_split_cv(genes, seed=args.seed)
     fs = family_split_cv(genes, pfam_map, seed=args.seed)
     print(f"  Gene-split folds: {len(gs)}  Family-split folds: {len(fs)}")
@@ -162,7 +163,9 @@ def main():
                     )
         results["by_feature"][fname] = block
 
-    out_path = os.path.join(args.run_dir, "pathogenicity_control.json")
+    import pathlib
+    out_path = pathlib.Path(args.out_dir) / "pathogenicity_control.json"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
     with open(out_path, "w") as f:
         json.dump(results, f, indent=2)
     print(f"\nResults written to {out_path}")

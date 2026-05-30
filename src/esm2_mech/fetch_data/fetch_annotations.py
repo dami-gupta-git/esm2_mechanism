@@ -43,7 +43,14 @@ from typing import Optional
 
 from Bio import SeqIO
 
-from esm2_mech.utils.paths import DATA_DIR, VARIANTS_JSON, GENE_LIST_TSV
+from esm2_mech.utils.paths import (
+    DATA_DIR,
+    ENZYME_CACHE_DIR,
+    GENE_LIST_TSV,
+    SEQUENCES_EXTENDED_JSON,
+    SEQUENCES_JSON,
+    VARIANTS_JSON,
+)
 from esm2_mech.utils.io import atomic_write_json as _atomic_write_json
 
 print = functools.partial(print, flush=True)
@@ -54,10 +61,8 @@ print = functools.partial(print, flush=True)
 MERGED_VARIANTS = VARIANTS_JSON
 MERGED_GENE_LIST = GENE_LIST_TSV
 PFAM_OUT = DATA_DIR / "pfam_families.json"
-SEQUENCES_JSON = DATA_DIR / "sequences.json"
-SEQUENCES_EXTENDED_OUT = DATA_DIR / "cache" / "uniprot_sequences_extended.json"
+SEQUENCES_EXTENDED_OUT = SEQUENCES_EXTENDED_JSON
 ENZYME_OUT = DATA_DIR / "enzyme_labels.tsv"
-ENZYME_CACHE_DIR = DATA_DIR / "cache" / "enzyme_uniprot"
 
 # ===========================================================================
 # Step 1 — Pfam families

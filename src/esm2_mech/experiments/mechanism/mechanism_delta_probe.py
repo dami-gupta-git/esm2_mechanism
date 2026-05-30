@@ -18,7 +18,6 @@ Pipeline:
   6. Baselines, negative controls, probe direction orthogonality analysis
 """
 
-import argparse
 import json
 import os
 import warnings
@@ -36,8 +35,6 @@ from sklearn.decomposition import PCA
 from esm2_mech.utils.splits import gene_split_cv, family_split_cv
 from esm2_mech.utils.probes import run_logreg_cv
 from esm2_mech.utils.sequences import (
-    build_sequence_cache,
-    fetch_pfam_families,
     apply_missense,
     window_sequence,
 )
@@ -49,6 +46,11 @@ from esm2_mech.utils.paths import (
     MEGASCALE_DELTAS,
     MEGASCALE_DDG,
     STABILITY_SUBSPACE,
+    RESULTS_DIR,
+    VARIANTS_JSON,
+    SEQUENCES_JSON,
+    ALPHAMISSENSE_SCORES_JSON,
+    PFAM_JSON,
     ESM2_MODEL,
 )
 
@@ -452,21 +454,20 @@ def run_negative_controls(deltas_mean, y, genes, seed=42):
 # ---------------------------------------------------------------------------
 
 
-def _load_alphamissense_scores(variants: list, data_dir: str) -> np.ndarray:
+def _load_alphamissense_scores(variants: list) -> np.ndarray:
     """Load AlphaMissense scores from fetch_data output (alphamissense_scores_full.json).
 
     Returns a float array of length len(variants), NaN where no score is available.
     Keys in the JSON are gene_aapos_aawt_aamut (same format used by fetch_annotations.py).
     """
-    am_path = os.path.join(data_dir, "alphamissense_scores_full.json")
-    if not os.path.exists(am_path):
-        print(f"  WARNING: {am_path} not found — AlphaMissense scores unavailable")
+    if not ALPHAMISSENSE_SCORES_JSON.exists():
+        print(f"  WARNING: {ALPHAMISSENSE_SCORES_JSON} not found — AlphaMissense scores unavailable")
         return np.full(len(variants), np.nan)
     try:
-        with open(am_path) as f:
+        with open(ALPHAMISSENSE_SCORES_JSON) as f:
             am_scores = json.load(f)
     except json.JSONDecodeError:
-        print(f"  WARNING: corrupt {am_path} — AlphaMissense scores unavailable")
+        print(f"  WARNING: corrupt {ALPHAMISSENSE_SCORES_JSON} — AlphaMissense scores unavailable")
         return np.full(len(variants), np.nan)
 
     scores = np.full(len(variants), np.nan)
@@ -481,14 +482,13 @@ def _load_alphamissense_scores(variants: list, data_dir: str) -> np.ndarray:
     return scores
 
 
-def _load_data(data_dir):
+def _load_data():
     """Phase 1: load and filter the merged variant dataset."""
-    merged_path = os.path.join(data_dir, "variants.json")
-    if not os.path.exists(merged_path):
+    if not VARIANTS_JSON.exists():
         raise FileNotFoundError(
-            f"{merged_path} not found — run fetch_data/fetch_variants.py --step merge first"
+            f"{VARIANTS_JSON} not found — run fetch_data/fetch_variants.py --step merge first"
         )
-    with open(merged_path) as f:
+    with open(VARIANTS_JSON) as f:
         variants = json.load(f)
     variants = [
         v
@@ -502,9 +502,14 @@ def _load_data(data_dir):
     return variants
 
 
-def _prepare_sequences(variants, data_dir):
-    """Phase 2: fetch sequences and build WT/mutant pairs."""
-    seq_cache = build_sequence_cache(variants, data_dir)
+def _prepare_sequences(variants):
+    """Phase 2: load cached sequences and build WT/mutant pairs."""
+    if not SEQUENCES_JSON.exists():
+        raise FileNotFoundError(
+            f"{SEQUENCES_JSON} not found — run fetch_data/fetch_sequences first"
+        )
+    with open(SEQUENCES_JSON) as f:
+        seq_cache = json.load(f)
 
     valid_variants, wt_seqs, mut_seqs, var_positions = [], [], [], []
     for v in variants:
@@ -532,7 +537,6 @@ def _load_embeddings():
         if not os.path.exists(path):
             raise FileNotFoundError(
                 f"Embedding file missing: {path}\n"
-                f"Run: python -m esm2_mechanism.embeddings.embed_variants --model {ESM2_MODEL}"
             )
     print("\n=== Loading embeddings ===")
     return (
@@ -603,10 +607,13 @@ def _run_secondary_probes(
 
 
 def _run_family_cv(
-    deltas_mean_proj, y, genes, valid_variants, data_dir, n_cv_folds, seed
+    deltas_mean_proj, y, genes, valid_variants, n_cv_folds, seed
 ):
     """Phase 7: gene-family-split CV using Pfam families."""
-    pfam_map = fetch_pfam_families(valid_variants, data_dir)
+    if not PFAM_JSON.exists():
+        raise FileNotFoundError(f"{PFAM_JSON} not found — run fetch_data/fetch_annotations --step pfam first")
+    with open(PFAM_JSON) as f:
+        pfam_map = json.load(f)
     n_families = len(set(v for v in pfam_map.values() if v is not None))
 
     splits = family_split_cv(genes, pfam_map, n_folds=n_cv_folds, seed=seed)
@@ -628,8 +635,8 @@ def _run_family_cv(
 
 
 def run(
+    data,
     out_dir,
-    data_dir,
     seed=0,
     n_stability_components=10,
     n_cv_folds=5,
@@ -638,45 +645,27 @@ def run(
     np.random.seed(seed)
 
     # ------------------------------------------------------------------
-    # 1. Load dataset
+    # 1–3. Extract pre-loaded data
     # ------------------------------------------------------------------
-    print("\n=== Loading Gerasimavicius dataset ===")
-    variants = _load_data(data_dir)
-
-    # ------------------------------------------------------------------
-    # 2. Prepare sequences
-    # ------------------------------------------------------------------
-    print("\n=== Fetching protein sequences ===")
-    valid_variants, seq_cache, wt_seqs, mut_seqs, var_positions = _prepare_sequences(
-        variants, data_dir
-    )
-
-    # ------------------------------------------------------------------
-    # 3. Load embeddings
-    # ------------------------------------------------------------------
-    emb_wt_mean, emb_mut_mean, emb_wt_pos, emb_mut_pos = _load_embeddings()
+    valid_variants = data["valid_variants"]
+    emb_wt_mean = data["emb_wt_mean"]
+    emb_mut_mean = data["emb_mut_mean"]
+    emb_wt_pos = data["emb_wt_pos"]
+    emb_mut_pos = data["emb_mut_pos"]
+    labels_3class = data["labels_3class"]
+    labels_4class = data["labels_4class"]
+    genes_arr = data["genes_arr"]
+    foldx_ddg = data["foldx_ddg"]
+    aa_wt_list = data["aa_wt_list"]
+    aa_mut_list = data["aa_mut_list"]
+    alphamissense_scores = data["alphamissense_scores"]
 
     deltas_mean = emb_mut_mean - emb_wt_mean
     deltas_pos = emb_mut_pos - emb_wt_pos
     print(f"Delta embedding shape: {deltas_mean.shape}")
 
-    # Labels and metadata arrays
     le3 = LabelEncoder().fit(CLASSES_3)
-    labels_3class = np.array([v["label_3class"] for v in valid_variants])
-    labels_4class = np.array([v["mechanism"] for v in valid_variants])
     y3 = le3.transform(labels_3class)
-    genes_arr = np.array([v["gene"] for v in valid_variants])
-    foldx_ddg = np.array(
-        [
-            v["foldx_ddg"] if v["foldx_ddg"] is not None else np.nan
-            for v in valid_variants
-        ]
-    )
-    aa_wt_list = [v["aa_wt"] for v in valid_variants]
-    aa_mut_list = [v["aa_mut"] for v in valid_variants]
-
-    print("\n=== Loading AlphaMissense scores ===")
-    alphamissense_scores = _load_alphamissense_scores(valid_variants, data_dir)
 
     from collections import Counter
 
@@ -752,7 +741,7 @@ def run(
     # ------------------------------------------------------------------
     print("\n=== Gene-family-split CV ===")
     results_family_cv, pfam_map, pfam_n_families = _run_family_cv(
-        deltas_mean_proj, y3, genes_arr, valid_variants, data_dir, n_cv_folds, seed
+        deltas_mean_proj, y3, genes_arr, valid_variants, n_cv_folds, seed
     )
 
     # ------------------------------------------------------------------
@@ -858,68 +847,5 @@ def run(
     return final_info
 
 
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--out_dir", type=str, required=True)
-    parser.add_argument("--data_dir", type=str, default="data")
-    parser.add_argument(
-        "--model",
-        type=str,
-        default=ESM2_MODEL,
-        choices=[ESM2_MODEL, ESM2_MODEL_3B],
-    )
-    parser.add_argument("--seeds", type=int, nargs="+", default=[0])
-    args = parser.parse_args()
-    os.makedirs(args.out_dir, exist_ok=True)
-
-    final_infos_list = []
-    for seed in args.seeds:
-        print(f"\n{'='*60}\n=== Seed {seed} ===\n{'='*60}")
-        fi = run(args.out_dir, data_dir=args.data_dir, seed=seed)
-        final_infos_list.append(fi)
-
-    numeric_keys = [
-        k
-        for k, v in final_infos_list[0].items()
-        if isinstance(v, (int, float)) and not np.isnan(v)
-    ]
-    final_infos = {
-        "means": {
-            k: float(
-                np.mean(
-                    [
-                        d[k]
-                        for d in final_infos_list
-                        if isinstance(d.get(k), (int, float))
-                    ]
-                )
-            )
-            for k in numeric_keys
-        },
-        "stderrs": {
-            k: float(
-                np.std(
-                    [
-                        d[k]
-                        for d in final_infos_list
-                        if isinstance(d.get(k), (int, float))
-                    ]
-                )
-                / max(len(args.seeds), 1) ** 0.5
-            )
-            for k in numeric_keys
-        },
-        "final_info_list": final_infos_list,
-    }
-
-    with open(os.path.join(args.out_dir, "final_info.json"), "w") as f:
-        json.dump(final_infos, f, indent=2)
-
-    with open(os.path.join(args.out_dir, "all_results.json"), "w") as f:
-        json.dump({"seeds": final_infos_list}, f, indent=2)
-
-    print(f"\nDone. Results written to {args.out_dir}/final_info.json")
+# This module is intended to be run via mechanism_delta_cv.py, which loads data
+# once and passes it to run(). Direct execution is not supported.

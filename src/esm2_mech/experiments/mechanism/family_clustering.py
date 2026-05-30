@@ -34,12 +34,10 @@ print = functools.partial(print, flush=True)
 
 from pathlib import Path
 from esm2_mech.utils.data import load_variants
-from esm2_mech.utils.paths import EMB_WT_MEAN, EMB_MUT_MEAN, ESM2_MODEL
+from esm2_mech.utils.paths import EMB_WT_MEAN, EMB_MUT_MEAN, ESM2_MODEL, SEQUENCES_JSON, VARIANTS_JSON, RESULTS_DIR, PFAM_JSON
 from esm2_mech.utils.sequences import (
-    build_sequence_cache,
     window_sequence,
     apply_missense,
-    fetch_pfam_families,
 )
 from esm2_mech.utils.splits import gene_split_cv
 
@@ -171,18 +169,19 @@ def family_probe(
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--run_dir", type=str, default="run_0")
+    parser.add_argument("--out_dir", type=str, default=str(RESULTS_DIR))
     parser.add_argument("--model", type=str, default=ESM2_MODEL)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--out", type=str, default="family_clustering.json")
     args = parser.parse_args()
 
-    data_dir = os.path.join(args.run_dir, "data")
-
     # Rebuild valid_variants identically to experiment.py
     print("=== Loading dataset and embeddings ===")
-    variants = load_variants(Path(data_dir) / "variants.json")
-    seq_cache = build_sequence_cache(variants, data_dir)
+    variants = load_variants(VARIANTS_JSON)
+    if not SEQUENCES_JSON.exists():
+        raise FileNotFoundError(f"{SEQUENCES_JSON} not found — run fetch_data/fetch_sequences first")
+    with open(SEQUENCES_JSON) as f:
+        seq_cache = json.load(f)
 
     valid_variants = []
     for v in variants:
@@ -206,7 +205,10 @@ def main():
     labels_arr = np.array([v["label_3class"] for v in valid_variants])
 
     # Pfam map
-    pfam_map = fetch_pfam_families(valid_variants, data_dir)
+    if not PFAM_JSON.exists():
+        raise FileNotFoundError(f"{PFAM_JSON} not found — run fetch_data/fetch_annotations --step pfam first")
+    with open(PFAM_JSON) as f:
+        pfam_map = json.load(f)
 
     # Gene-level views (one row per gene)
     gene_names, _ = gene_level_embeddings(emb_wt, genes_arr)
@@ -351,7 +353,7 @@ def main():
 
         results["by_view"][view_name] = view_res
 
-    out_path = os.path.join(args.run_dir, args.out)
+    out_path = os.path.join(args.out_dir, args.out)
     with open(out_path, "w") as f:
         json.dump(results, f, indent=2, default=str)
     print(f"\nResults written to {out_path}")

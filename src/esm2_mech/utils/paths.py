@@ -1,7 +1,7 @@
 import functools
 from pathlib import Path
 
-from esm2_mech.utils.constants import ESM2_MODEL, ESM3_MODEL, GENE_UNIVERSE_FILENAME
+from esm2_mech.utils.constants import ESM2_MODEL, ESM3_MODEL, GENE_UNIVERSE_FILENAME, PFAM_FAMILIES_FILENAME
 
 print = functools.partial(print, flush=True)
 
@@ -24,11 +24,22 @@ VARIANTS_JSON = DATA_DIR / "variants.json"
 GENE_LIST_TSV = DATA_DIR / "gene_list.tsv"
 PFAM_JSON = DATA_DIR / "pfam_families.json"
 GERAS_VALID_VARIANTS_JSON = DATA_DIR / "geras_valid_variants.json"
+ALPHAMISSENSE_SCORES_JSON = DATA_DIR / "alphamissense_scores_full.json"
 
 # ── Cache ─────────────────────────────────────────────────────────────────────
 CACHE_DIR = DATA_DIR / "cache"
 SEQUENCES_JSON = CACHE_DIR / "sequences.json"
 SEQUENCES_EXTENDED_JSON = CACHE_DIR / "uniprot_sequences_extended.json"
+AM_CACHE_FILE = CACHE_DIR / "AlphaMissense_aa_substitutions.tsv.gz"
+BADONYI_CACHE_DIR = CACHE_DIR / "badonyi"
+PROTEINGYM_CACHE_DIR = CACHE_DIR / "proteingym"
+PROTEOME_FEATURES_CACHE_DIR = CACHE_DIR / "proteome_features"
+PROTEOME_PILOT_CACHE_DIR = CACHE_DIR / "proteome_pilot"
+LL_CKPT_JSON = CACHE_DIR / "ll_ckpt.json"
+ENZYME_CACHE_DIR = CACHE_DIR / "enzyme_uniprot"
+SCAN_PROBE_CACHE_JSON = CACHE_DIR / "scan_probes.json"
+ESM3_STRUCT_TOKENS_JSON = CACHE_DIR / "esm3_struct_tokens.json"
+CLINVAR_PATHOGENICITY_VARIANTS_JSON = DATA_DIR / "clinvar_pathogenicity_variants.json"
 
 # ── ESM-2 Gerasimavicius embeddings (embed_variants.py) ──────────────────────
 VALID_VARIANTS_JSON = EMB_DIR / "valid_variants.json"

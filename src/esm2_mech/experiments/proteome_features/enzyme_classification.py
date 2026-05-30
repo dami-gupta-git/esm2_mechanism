@@ -39,7 +39,7 @@ from sklearn.metrics import f1_score, roc_auc_score
 from sklearn.neural_network import MLPClassifier
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 from esm2_mech.utils.splits import gene_split_cv, family_split_cv
-from esm2_mech.utils.paths import DATA_DIR, RESULTS_DIR, VALID_VARIANTS_JSON, EMB_WT_MEAN, GENE_LIST_TSV
+from esm2_mech.utils.paths import DATA_DIR, EMB_WT_MEAN, GENE_LIST_TSV, RESULTS_DIR, VALID_VARIANTS_JSON
 
 print = functools.partial(print, flush=True)
 warnings.filterwarnings("ignore")
@@ -56,7 +56,7 @@ MECHANISM_GENE_SPLIT_F1 = 0.415  # merged dataset, MLP, seed 0 (result 7)
 # ---------------------------------------------------------------------------
 
 
-def load_gene_embeddings(data_dir: Path, emb_dir: Path) -> tuple:
+def load_gene_embeddings() -> tuple:
     """
     Load per-gene WT embeddings by taking the first variant's embedding for each gene.
     Returns (X, gene_list, uniprot_list) where X has shape (n_genes, 1280).
@@ -84,12 +84,12 @@ def load_gene_embeddings(data_dir: Path, emb_dir: Path) -> tuple:
     return X, gene_list, [gene_uniprot[g] for g in gene_list]
 
 
-def load_enzyme_labels(data_dir: Path) -> dict:
+def load_enzyme_labels() -> dict:
     """Load gene -> enzyme_4class from enzyme_labels.tsv."""
     import csv
 
     labels: dict[str, str] = {}
-    label_path = data_dir / "enzyme_labels.tsv"
+    label_path = DATA_DIR / "enzyme_labels.tsv"
     with open(label_path) as f:
         reader = csv.DictReader(f, delimiter="\t")
         for row in reader:
@@ -98,15 +98,15 @@ def load_enzyme_labels(data_dir: Path) -> dict:
     return labels
 
 
-def load_pfam(data_dir: Path) -> dict:
-    with open(data_dir / "pfam_families.json") as f:
+def load_pfam() -> dict:
+    with open(DATA_DIR / "pfam_families.json") as f:
         return json.load(f)
 
 
-def load_proteome_features(data_dir: Path) -> tuple:
+def load_proteome_features() -> tuple:
     """Load proteome feature matrix and aligned gene list."""
-    X = np.load(data_dir / "proteome_features_aligned.npy").astype(np.float32)
-    with open(data_dir / "proteome_feature_columns.json") as f:
+    X = np.load(DATA_DIR / "proteome_features_aligned.npy").astype(np.float32)
+    with open(DATA_DIR / "proteome_feature_columns.json") as f:
         cols = json.load(f)
     # Load gene order from gene_list.tsv
     import csv
@@ -371,15 +371,11 @@ def run_multiseed(
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data_dir", default=str(DATA_DIR))
-    parser.add_argument("--emb_dir", default=str(DATA_DIR / "embeddings"))
     parser.add_argument("--out_dir", default=str(RESULTS_DIR / "enzyme_classification"))
     parser.add_argument("--seeds", type=int, nargs="+", default=[0, 1, 2, 3, 4])
     parser.add_argument("--n_folds", type=int, default=5)
     args = parser.parse_args()
 
-    data_dir = Path(args.data_dir)
-    emb_dir = Path(args.emb_dir)
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -387,9 +383,9 @@ def main():
     print(f"Seeds: {args.seeds}  Folds: {args.n_folds}")
 
     # Load data
-    X_emb, gene_list, _ = load_gene_embeddings(data_dir, emb_dir)
-    enzyme_labels = load_enzyme_labels(data_dir)
-    pfam_map = load_pfam(data_dir)
+    X_emb, gene_list, _ = load_gene_embeddings()
+    enzyme_labels = load_enzyme_labels()
+    pfam_map = load_pfam()
 
     # Align labels to gene_list order
     missing = [g for g in gene_list if g not in enzyme_labels]
@@ -431,7 +427,7 @@ def main():
 
     proteome_results = None
     try:
-        X_prot, prot_genes = load_proteome_features(data_dir)
+        X_prot, prot_genes = load_proteome_features()
         prot_gene_to_idx = {g: i for i, g in enumerate(prot_genes)}
 
         # Align proteome features to gene_list

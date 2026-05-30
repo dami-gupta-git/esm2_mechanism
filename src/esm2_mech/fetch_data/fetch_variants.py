@@ -44,7 +44,7 @@ from typing import Optional
 import openpyxl
 import requests
 
-from esm2_mech.utils.paths import DATA_DIR, GENE_LIST_TSV, VARIANTS_JSON
+from esm2_mech.utils.paths import CACHE_DIR, DATA_DIR, GENE_LIST_TSV, VARIANTS_JSON
 
 print = functools.partial(print, flush=True)
 
@@ -55,7 +55,6 @@ XLSX_PATH = DATA_DIR / "downloads" / "DiseaseMech_Stability_VEPS.xlsx"
 GERAS_OUT = DATA_DIR / "gerasimavicius_variants.json"
 CLINVAR_OUT = DATA_DIR / "clinvar_variants.tsv"
 MERGED_OUT = VARIANTS_JSON
-CACHE_DIR = DATA_DIR / "cache"
 UNIPROT_CACHE = CACHE_DIR / "uniprot"
 CLINVAR_CACHE = CACHE_DIR / "clinvar"
 

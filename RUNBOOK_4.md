@@ -67,7 +67,7 @@ python -m esm2_mech.fetch_data.build_gene_list
 
 | Command | Description | Inputs | Outputs |
 |---|---|---|---|
-| `python -m esm2_mech.embeddings.embed_variants --data_dir data --model esm2_t33_650M_UR50D --batch_size 32` | Extract ESM-2 embeddings | `variants.json`, `cache/sequences.json` | `embeddings_wt_mean.npy`, `embeddings_mut_mean.npy`, `embeddings_wt_pos.npy`, `embeddings_mut_pos.npy`, `valid_variants.json` |
+| `python -m esm2_mech.embeddings.embed_variants --model esm2_t33_650M_UR50D --batch_size 32` | Extract ESM-2 embeddings | `variants.json`, `cache/sequences.json` | `embeddings_wt_mean.npy`, `embeddings_mut_mean.npy`, `embeddings_wt_pos.npy`, `embeddings_mut_pos.npy`, `valid_variants.json` |
 
 After completion, `scp` the `.npy` files and `valid_variants.json` back to `data/embeddings/esm2_t33_650M_UR50D/` locally.
 

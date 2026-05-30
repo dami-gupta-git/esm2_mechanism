@@ -5,14 +5,13 @@ Downloads ClinVar variant_summary.txt.gz, filters to missense variants in the
 Gerasimavicius gene set, balances pathogenic vs benign per gene, and attaches
 UniProt IDs from the Gerasimavicius variant table.
 
-Input:  {run_dir}/data/variants.json  (Gerasimavicius merged variants)
-Output: {run_dir}/data/clinvar_pathogenicity_variants.json
+Input:  data/variants.json  (Gerasimavicius merged variants)
+Output: data/clinvar_pathogenicity_variants.json
 
 Re-running loads from cache if the output file already exists.
 
 Usage:
-    python -m esm2_mech.experiments.pathogenicity.pathogenicity_fetch \\
-        --run_dir run_0
+    python -m esm2_mech.experiments.pathogenicity.pathogenicity_fetch
 """
 
 import functools
@@ -28,6 +27,7 @@ from pathlib import Path
 import numpy as np
 
 from esm2_mech.utils.data import load_variants
+from esm2_mech.utils.paths import VARIANTS_JSON, CLINVAR_PATHOGENICITY_VARIANTS_JSON, CACHE_DIR
 
 print = functools.partial(print, flush=True)
 
@@ -44,7 +44,7 @@ AA3 = {
 HGVSP_PAT = re.compile(r"p\.([A-Z][a-z]{2})(\d+)([A-Z][a-z]{2})(?=[^a-zA-Z]|$)")
 
 
-def fetch_clinvar_variants(target_genes, cache_dir, max_per_gene_per_class=20, seed=42):
+def fetch_clinvar_variants(target_genes, max_per_gene_per_class=20, seed=42):
     """
     Download ClinVar variant_summary.txt.gz, filter to:
       - Type == "single nucleotide variant"
@@ -56,8 +56,8 @@ def fetch_clinvar_variants(target_genes, cache_dir, max_per_gene_per_class=20, s
     Returns list of dicts: {gene, aa_pos, aa_wt, aa_mut, label, clinvar_id}
     (uniprot_id filled later by attach_uniprot_ids)
     """
-    cache = os.path.join(cache_dir, "clinvar_pathogenicity_variants.json")
-    if os.path.exists(cache):
+    cache = CLINVAR_PATHOGENICITY_VARIANTS_JSON
+    if cache.exists():
         try:
             with open(cache) as f:
                 data = json.load(f)
@@ -65,7 +65,7 @@ def fetch_clinvar_variants(target_genes, cache_dir, max_per_gene_per_class=20, s
             return data
         except json.JSONDecodeError:
             print(f"  WARNING: corrupt cache {cache} — re-fetching")
-            os.remove(cache)
+            cache.unlink()
 
     print("  Downloading ClinVar variant_summary.txt.gz (~150 MB compressed) ...")
     req = urllib.request.Request(CLINVAR_URL, headers={"User-Agent": "Mozilla/5.0"})
@@ -138,7 +138,7 @@ def fetch_clinvar_variants(target_genes, cache_dir, max_per_gene_per_class=20, s
         f"{len(set(v['gene'] for v in chosen))} genes)"
     )
 
-    tmp = cache + ".tmp"
+    tmp = cache.with_suffix(".json.tmp")
     with open(tmp, "w") as f:
         json.dump(chosen, f)
     os.replace(tmp, cache)
@@ -163,20 +163,18 @@ def attach_uniprot_ids(variants, gerasimavicius_variants):
 def main():
     import argparse
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--run_dir", default="run_0")
     p.add_argument("--max_per_gene_per_class", type=int, default=20)
     p.add_argument("--seed", type=int, default=42)
     args = p.parse_args()
 
-    data_dir = os.path.join(args.run_dir, "data")
-    os.makedirs(data_dir, exist_ok=True)
+    CLINVAR_PATHOGENICITY_VARIANTS_JSON.parent.mkdir(parents=True, exist_ok=True)
 
-    gerasimavicius = load_variants(Path(data_dir) / "variants.json")
+    gerasimavicius = load_variants(VARIANTS_JSON)
     target_genes = sorted(set(v["gene"].upper() for v in gerasimavicius if v.get("gene")))
     print(f"Target gene set: {len(target_genes)} genes from Gerasimavicius")
 
     variants = fetch_clinvar_variants(
-        target_genes, data_dir,
+        target_genes,
         max_per_gene_per_class=args.max_per_gene_per_class,
         seed=args.seed,
     )
@@ -188,7 +186,7 @@ def main():
         f"({Counter(v['label'] for v in variants)})  "
         f"{len(set(v['gene'] for v in variants))} genes"
     )
-    print(f"Written to {data_dir}/clinvar_pathogenicity_variants.json")
+    print(f"Written to {CLINVAR_PATHOGENICITY_VARIANTS_JSON}")
 
 
 if __name__ == "__main__":

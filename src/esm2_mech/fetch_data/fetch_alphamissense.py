@@ -27,11 +27,11 @@ from pathlib import Path
 import urllib.request
 from typing import Optional
 
-from esm2_mech.utils.paths import DATA_DIR, VALID_VARIANTS_JSON
+from esm2_mech.utils.paths import AM_CACHE_FILE, DATA_DIR, VALID_VARIANTS_JSON
 
 print = functools.partial(print, flush=True)
 
-AM_CACHE = DATA_DIR / "cache" / "AlphaMissense_aa_substitutions.tsv.gz"
+AM_CACHE = AM_CACHE_FILE
 AM_OUT = DATA_DIR / "alphamissense_scores_full.json"
 AM_MERGED_VALID_VARIANTS = VALID_VARIANTS_JSON
 AM_PATHOGENICITY_VARIANTS = DATA_DIR / "pathogenicity_valid_variants.json"

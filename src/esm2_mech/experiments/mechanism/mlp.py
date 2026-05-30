@@ -21,7 +21,7 @@ import numpy as np
 from sklearn.metrics import roc_auc_score, f1_score
 from sklearn.preprocessing import LabelEncoder
 from esm2_mech.utils.splits import gene_split_cv
-from esm2_mech.utils.paths import EMB_WT_MEAN, EMB_MUT_MEAN, EMB_WT_POS, EMB_MUT_POS
+from esm2_mech.utils.paths import EMB_MUT_MEAN, EMB_MUT_POS, EMB_WT_MEAN, EMB_WT_POS, RESULTS_DIR, SEQUENCES_JSON, VARIANTS_JSON
 import functools
 
 print = functools.partial(print, flush=True)
@@ -34,7 +34,7 @@ warnings.filterwarnings("ignore")
 # ---------------------------------------------------------------------------
 
 
-def load_variants_and_labels(data_dir, variants_file=None):
+def load_variants_and_labels(variants_file=None):
     if variants_file:
         # Pre-filtered variant list (e.g. valid_variants.json) — skip sequence filtering
         with open(variants_file) as f:
@@ -45,7 +45,7 @@ def load_variants_and_labels(data_dir, variants_file=None):
                     "LOF" if v["mechanism"] in ("HI", "AR") else v["mechanism"]
                 )
     else:
-        cache_path = os.path.join(data_dir, "gerasimavicius_variants.json")
+        cache_path = VARIANTS_JSON
         with open(cache_path) as f:
             variants = json.load(f)
         for v in variants:
@@ -58,8 +58,7 @@ def load_variants_and_labels(data_dir, variants_file=None):
             if v["uniprot_id"] and v["aa_wt"] and v["aa_mut"] and v["aa_pos"] > 0
         ]
 
-        seq_path = os.path.join(data_dir, "sequences.json")
-        with open(seq_path) as f:
+        with open(SEQUENCES_JSON) as f:
             seq_cache = json.load(f)
 
         from esm2_mech.utils.sequences import apply_missense, window_sequence
@@ -411,10 +410,10 @@ def main():
     parser.add_argument(
         "--data_dir",
         type=str,
-        default="run_0/data",
-        help="Directory with cached gerasimavicius_variants.json and sequences.json",
+        default=None,
+        help="Unused; variants and sequences are loaded from canonical paths.py paths.",
     )
-    parser.add_argument("--out_dir", type=str, default="run_0")
+    parser.add_argument("--out_dir", type=str, default=str(RESULTS_DIR))
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument(
         "--family_split",
@@ -441,9 +440,7 @@ def main():
     np.random.seed(args.seed)
 
     print("=== Loading variants and labels ===")
-    valid_variants, labels, genes = load_variants_and_labels(
-        args.data_dir, args.variants_file
-    )
+    valid_variants, labels, genes = load_variants_and_labels(args.variants_file)
 
     print("\n=== Loading embeddings ===")
     delta_mean, delta_pos = load_embeddings()

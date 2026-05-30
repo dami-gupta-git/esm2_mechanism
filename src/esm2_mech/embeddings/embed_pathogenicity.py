@@ -1,12 +1,12 @@
 """
 Extract ESM-2 embeddings for the pathogenicity positive-control variant set.
 
-Reads {run_dir}/data/clinvar_pathogenicity_variants.json (written by phase 1 of
+Reads data/clinvar_pathogenicity_variants.json (written by phase 1 of
 pathogenicity_fetch.py) and produces mean-pooled WT and mutant embeddings used
 by pathogenicity_probes.py.
 
 Inputs:
-  {run_dir}/data/clinvar_pathogenicity_variants.json
+  data/clinvar_pathogenicity_variants.json
   data/cache/sequences.json
 
 Outputs (under data/embeddings/<model>/):
@@ -23,7 +23,7 @@ is skipped automatically. Re-run the same command to retry after a failure.
 
 Usage (requires GPU, run inside tmux on RunPod):
     python -m esm2_mech.embeddings.embed_pathogenicity \\
-        --run_dir run_0 --model esm2_t33_650M_UR50D --batch_size 32
+        --model esm2_t33_650M_UR50D --batch_size 32
 """
 
 import argparse
@@ -35,7 +35,14 @@ import numpy as np
 
 from esm2_mech.embeddings.embed_variants import get_esm2_embeddings_for_pairs
 from esm2_mech.utils.io import atomic_write_json, save_npy
-from esm2_mech.utils.paths import EMB_DIR, PATH_EMB_META, PATH_EMB_MUT_MEAN, PATH_EMB_WT_MEAN, SEQUENCES_JSON
+from esm2_mech.utils.paths import (
+    CLINVAR_PATHOGENICITY_VARIANTS_JSON,
+    EMB_DIR,
+    PATH_EMB_META,
+    PATH_EMB_MUT_MEAN,
+    PATH_EMB_WT_MEAN,
+    SEQUENCES_JSON,
+)
 from esm2_mech.utils.sequences import window_sequence, apply_missense
 
 print = functools.partial(print, flush=True)
@@ -88,21 +95,19 @@ def _already_complete(n_valid: int) -> bool:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--run_dir", default="run_0")
     parser.add_argument("--model", default=ESM2_MODEL_650M, choices=[ESM2_MODEL_650M, ESM2_MODEL_3B])
     parser.add_argument("--batch_size", type=int, default=32)
     args = parser.parse_args()
 
-    variants_path = os.path.join(args.run_dir, "data", "clinvar_pathogenicity_variants.json")
-    if not os.path.exists(variants_path):
+    if not CLINVAR_PATHOGENICITY_VARIANTS_JSON.exists():
         raise FileNotFoundError(
-            f"Pathogenicity variants not found: {variants_path}\n"
+            f"Pathogenicity variants not found: {CLINVAR_PATHOGENICITY_VARIANTS_JSON}\n"
             "Run phase 1 first:\n"
             "  python -m esm2_mech.experiments.pathogenicity.pathogenicity_fetch"
         )
-    with open(variants_path) as f:
+    with open(CLINVAR_PATHOGENICITY_VARIANTS_JSON) as f:
         variants = json.load(f)
-    print(f"Loaded {len(variants)} pathogenicity variants from {variants_path}")
+    print(f"Loaded {len(variants)} pathogenicity variants from {CLINVAR_PATHOGENICITY_VARIANTS_JSON}")
 
     if not SEQUENCES_JSON.exists():
         raise FileNotFoundError(

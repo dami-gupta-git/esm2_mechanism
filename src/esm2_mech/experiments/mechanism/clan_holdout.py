@@ -36,7 +36,7 @@ from sklearn.preprocessing import LabelEncoder
 from sklearn.neighbors import KNeighborsClassifier
 import functools
 
-from esm2_mech.utils.paths import VALID_VARIANTS_JSON, EMB_WT_MEAN, EMB_MUT_MEAN
+from esm2_mech.utils.paths import DATA_DIR, EMB_MUT_MEAN, EMB_WT_MEAN, RESULTS_DIR, VALID_VARIANTS_JSON
 
 print = functools.partial(print, flush=True)
 
@@ -65,8 +65,8 @@ def load_data(data_dir, emb_dir):
     return variants, labels, genes, delta
 
 
-def load_pfam(data_dir):
-    with open(os.path.join(data_dir, "pfam_families.json")) as f:
+def load_pfam(data_dir=None):
+    with open(DATA_DIR / "pfam_families.json") as f:
         return json.load(f)  # gene -> pfam_acc
 
 
@@ -296,20 +296,18 @@ def aggregate(clan_results):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data_dir", default="../data")
-    parser.add_argument("--emb_dir", default="../data/embeddings")
     parser.add_argument(
         "--clan_file", required=True, help="Path to Pfam-A.clans.tsv.gz"
     )
-    parser.add_argument("--out_dir", default="../results/20260524_baseline_run/run_0")
+    parser.add_argument("--out_dir", default=str(RESULTS_DIR))
     parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args()
 
     np.random.seed(args.seed)
 
     print("=== Loading data ===")
-    variants, labels, genes, delta = load_data(args.data_dir, args.emb_dir)
-    pfam_map = load_pfam(args.data_dir)
+    variants, labels, genes, delta = load_data(None, None)
+    pfam_map = load_pfam()
     clan_map, clan_names = load_clan_map(args.clan_file)
 
     # Build gene -> clan

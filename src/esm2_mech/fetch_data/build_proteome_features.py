@@ -45,7 +45,15 @@ from typing import Optional
 
 import numpy as np
 
-from esm2_mech.utils.paths import DATA_DIR, GENE_UNIVERSE, GNOMAD_LOF_FILE, PAXDB_FILE, S_HET_FILE
+from esm2_mech.utils.paths import (
+    DATA_DIR,
+    GENE_UNIVERSE,
+    GNOMAD_LOF_FILE,
+    PAXDB_FILE,
+    PROTEOME_FEATURES_CACHE_DIR,
+    PROTEOME_PILOT_CACHE_DIR,
+    S_HET_FILE,
+)
 from esm2_mech.utils.io import atomic_write_json
 
 print = functools.partial(print, flush=True)
@@ -53,8 +61,8 @@ print = functools.partial(print, flush=True)
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
-CACHE_DIR = DATA_DIR / "cache" / "proteome_features"
-PILOT_CACHE_DIR = DATA_DIR / "cache" / "proteome_pilot"
+CACHE_DIR = PROTEOME_FEATURES_CACHE_DIR
+PILOT_CACHE_DIR = PROTEOME_PILOT_CACHE_DIR
 PILOT_PARALOG_CACHE = PILOT_CACHE_DIR / "paralogs"
 
 OUT_TSV = DATA_DIR / "gene_proteome_features.tsv"

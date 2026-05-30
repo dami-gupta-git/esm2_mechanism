@@ -45,7 +45,7 @@ survive an interrupt. On restart:
 
 Usage (requires GPU):
     python -m esm2_mechanism.embeddings.embed_variants \\
-        --data_dir data --model esm2_t33_650M_UR50D --batch_size 32
+        --model esm2_t33_650M_UR50D --batch_size 32
 """
 
 import argparse
@@ -58,14 +58,12 @@ import numpy as np
 print = functools.partial(print, flush=True)
 
 from esm2_mech.utils.sequences import (
-    build_sequence_cache,
     window_sequence,
     apply_missense,
 )
 from esm2_mech.utils.io import save_npy
-
-ESM2_MODEL_650M = "esm2_t33_650M_UR50D"
-ESM2_MODEL_3B = "esm2_t36_3B_UR50D"
+from esm2_mech.utils.constants import ESM2_MODEL as ESM2_MODEL_650M, ESM2_MODEL_3B
+from esm2_mech.utils.paths import VARIANTS_JSON, EMB_DIR, SEQUENCES_JSON
 
 
 # ---------------------------------------------------------------------------
@@ -135,6 +133,7 @@ def get_esm2_embeddings_for_pairs(
     batch_converter = alphabet.get_batch_converter()
     n_layers = model.num_layers
 
+    # Seed output lists from checkpoint if resuming, otherwise start empty.
     if resume_arrays is not None:
         wt_mean_r, mut_mean_r, wt_pos_r, mut_pos_r = resume_arrays
         wt_mean_list = [wt_mean_r[i] for i in range(len(wt_mean_r))]
@@ -156,6 +155,7 @@ def get_esm2_embeddings_for_pairs(
                 aa_positions[batch_start : batch_start + batch_size],
             )
         )
+        # Interleave WT and mutant in the same batch to halve forward passes.
         interleaved = []
         for j, (wt, mut, _) in enumerate(pairs):
             interleaved.append((f"wt{j}", wt))
@@ -171,6 +171,7 @@ def get_esm2_embeddings_for_pairs(
             wt_rep = reps[2 * j]
             mut_rep = reps[2 * j + 1]
 
+            # Slice off BOS/EOS tokens (token 0 = BOS, tokens 1..len = residues).
             wt_mean_list.append(wt_rep[1 : len(wt) + 1].mean(0).numpy())
             mut_mean_list.append(mut_rep[1 : len(mut) + 1].mean(0).numpy())
 
@@ -255,7 +256,6 @@ def _build_valid_pairs(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--data_dir", default="data")
     parser.add_argument(
         "--model", default=ESM2_MODEL_650M, choices=[ESM2_MODEL_650M, ESM2_MODEL_3B]
     )
@@ -268,22 +268,26 @@ def main() -> None:
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Device: {device} | Model: {args.model}")
 
-    variants_path = os.path.join(args.data_dir, "variants.json")
-    if not os.path.exists(variants_path):
+    if not VARIANTS_JSON.exists():
         raise FileNotFoundError(
-            f"{variants_path} not found — run fetch_data/fetch_variants.py --step merge first"
+            f"{VARIANTS_JSON} not found — run fetch_data/fetch_variants.py --step merge first"
         )
-    with open(variants_path) as f:
+    with open(VARIANTS_JSON) as f:
         variants = json.load(f)
     print(f"Loaded {len(variants)} merged variants")
 
-    seq_cache = build_sequence_cache(variants, os.path.join(args.data_dir, "cache"))
+    if not SEQUENCES_JSON.exists():
+        raise FileNotFoundError(
+            f"{SEQUENCES_JSON} not found — run fetch_data/fetch_sequences first"
+        )
+    with open(SEQUENCES_JSON) as f:
+        seq_cache = json.load(f)
 
     valid, wt_seqs, mut_seqs, positions = _build_valid_pairs(variants, seq_cache)
 
     print(f"3-class distribution: {dict(Counter(v['label_3class'] for v in valid))}")
 
-    out_dir = os.path.join(args.data_dir, "embeddings", args.model)
+    out_dir = str(EMB_DIR)
     os.makedirs(out_dir, exist_ok=True)
 
     ckpt_wt_mean = os.path.join(out_dir, "embeddings_wt_mean.npy")

@@ -37,10 +37,11 @@ from esm2_mech.utils.data import build_gene_to_row as _build_gene_to_row
 from esm2_mech.utils.splits import family_split_indices
 from esm2_mech.utils.probes import run_logreg_cv
 from esm2_mech.utils.paths import (
+    BADONYI_CACHE_DIR,
     DATA_DIR,
+    GENE_LIST_TSV,
     RESULTS_DIR,
     VALID_VARIANTS_JSON,
-    GENE_LIST_TSV,
 )
 import functools
 
@@ -51,7 +52,7 @@ warnings.filterwarnings("ignore")
 MERGED_VALID_VARIANTS = VALID_VARIANTS_JSON
 PROTEOME_FEATURES = DATA_DIR / "proteome_features_aligned.npy"
 BADONYI_FEATURES = DATA_DIR / "badonyi_features_aligned.npy"
-BADONYI_S3 = DATA_DIR / "cache" / "badonyi" / "table_S3.xlsx"
+BADONYI_S3 = BADONYI_CACHE_DIR / "table_S3.xlsx"
 BADONYI_RAW_COLS = [0, 1, 2]  # pDN, pGOF, pLOF
 
 MERGED_GENE_LIST = GENE_LIST_TSV

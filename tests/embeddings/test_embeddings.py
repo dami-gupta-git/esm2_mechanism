@@ -377,42 +377,51 @@ class TestGeneLevelEmbeddings:
 class TestLoadAlphaMissenseScores:
 
     def setup_method(self):
-        from esm2_mechanism.mechanism.esm2_mechanism import _load_alphamissense_scores
+        from esm2_mech.experiments.mechanism.mechanism_delta_probe import _load_alphamissense_scores
 
         self._load = _load_alphamissense_scores
 
     def _variant(self, gene="TP53", aa_pos=100, aa_wt="A", aa_mut="V"):
         return {"gene": gene, "aa_pos": aa_pos, "aa_wt": aa_wt, "aa_mut": aa_mut}
 
-    def test_scores_loaded_for_matching_keys(self, tmp_path):
+    def test_scores_loaded_for_matching_keys(self, tmp_path, monkeypatch):
+        import esm2_mech.experiments.mechanism.mechanism_delta_probe as mod
+        monkeypatch.setattr(mod, "ALPHAMISSENSE_SCORES_JSON", tmp_path / "alphamissense_scores_full.json")
         v = self._variant()
         key = f"{v['gene']}_{v['aa_pos']}_{v['aa_wt']}_{v['aa_mut']}"
         (tmp_path / "alphamissense_scores_full.json").write_text(f'{{"{key}": 0.87}}')
-        scores = self._load([v], str(tmp_path))
+        scores = self._load([v])
         assert scores.shape == (1,)
         assert scores[0] == pytest.approx(0.87)
 
-    def test_missing_key_gives_nan(self, tmp_path):
+    def test_missing_key_gives_nan(self, tmp_path, monkeypatch):
+        import esm2_mech.experiments.mechanism.mechanism_delta_probe as mod
+        monkeypatch.setattr(mod, "ALPHAMISSENSE_SCORES_JSON", tmp_path / "alphamissense_scores_full.json")
         (tmp_path / "alphamissense_scores_full.json").write_text("{}")
-        scores = self._load([self._variant()], str(tmp_path))
+        scores = self._load([self._variant()])
         assert np.isnan(scores[0])
 
-    def test_missing_file_returns_all_nan(self, tmp_path):
-        scores = self._load([self._variant()], str(tmp_path))
+    def test_missing_file_returns_all_nan(self, tmp_path, monkeypatch):
+        import esm2_mech.experiments.mechanism.mechanism_delta_probe as mod
+        monkeypatch.setattr(mod, "ALPHAMISSENSE_SCORES_JSON", tmp_path / "alphamissense_scores_full.json")
+        scores = self._load([self._variant()])
         assert scores.shape == (1,)
         assert np.isnan(scores[0])
 
-    def test_corrupt_json_returns_all_nan(self, tmp_path):
+    def test_corrupt_json_returns_all_nan(self, tmp_path, monkeypatch):
+        import esm2_mech.experiments.mechanism.mechanism_delta_probe as mod
+        monkeypatch.setattr(mod, "ALPHAMISSENSE_SCORES_JSON", tmp_path / "alphamissense_scores_full.json")
         (tmp_path / "alphamissense_scores_full.json").write_text("{not valid json")
-        scores = self._load([self._variant()], str(tmp_path))
+        scores = self._load([self._variant()])
         assert np.all(np.isnan(scores))
 
-    def test_multiple_variants_partial_coverage(self, tmp_path):
+    def test_multiple_variants_partial_coverage(self, tmp_path, monkeypatch):
+        import esm2_mech.experiments.mechanism.mechanism_delta_probe as mod
+        monkeypatch.setattr(mod, "ALPHAMISSENSE_SCORES_JSON", tmp_path / "alphamissense_scores_full.json")
         v1 = self._variant("BRCA1", 50, "M", "K")
         v2 = self._variant("BRCA2", 80, "G", "D")
-        key1 = f"BRCA1_50_M_K"
-        (tmp_path / "alphamissense_scores_full.json").write_text(f'{{"{key1}": 0.55}}')
-        scores = self._load([v1, v2], str(tmp_path))
+        (tmp_path / "alphamissense_scores_full.json").write_text('{"BRCA1_50_M_K": 0.55}')
+        scores = self._load([v1, v2])
         assert scores[0] == pytest.approx(0.55)
         assert np.isnan(scores[1])
 
@@ -425,7 +434,7 @@ class TestLoadAlphaMissenseScores:
 class TestLoadData:
 
     def setup_method(self):
-        from esm2_mechanism.mechanism.esm2_mechanism import _load_data
+        from esm2_mech.experiments.mechanism.mechanism_delta_probe import _load_data
 
         self._load_data = _load_data
 
@@ -447,16 +456,22 @@ class TestLoadData:
         v.update(overrides)
         return v
 
-    def test_missing_file_raises(self, tmp_path):
+    def test_missing_file_raises(self, tmp_path, monkeypatch):
+        import esm2_mech.experiments.mechanism.mechanism_delta_probe as mod
+        monkeypatch.setattr(mod, "VARIANTS_JSON", tmp_path / "variants.json")
         with pytest.raises(FileNotFoundError):
-            self._load_data(str(tmp_path))
+            self._load_data()
 
-    def test_returns_valid_variants(self, tmp_path):
+    def test_returns_valid_variants(self, tmp_path, monkeypatch):
+        import esm2_mech.experiments.mechanism.mechanism_delta_probe as mod
+        monkeypatch.setattr(mod, "VARIANTS_JSON", tmp_path / "variants.json")
         self._write_variants(tmp_path, [self._valid_variant()])
-        result = self._load_data(str(tmp_path))
+        result = self._load_data()
         assert len(result) == 1
 
-    def test_drops_missing_uniprot_id(self, tmp_path):
+    def test_drops_missing_uniprot_id(self, tmp_path, monkeypatch):
+        import esm2_mech.experiments.mechanism.mechanism_delta_probe as mod
+        monkeypatch.setattr(mod, "VARIANTS_JSON", tmp_path / "variants.json")
         self._write_variants(
             tmp_path,
             [
@@ -465,10 +480,12 @@ class TestLoadData:
                 self._valid_variant(uniprot_id=None),
             ],
         )
-        result = self._load_data(str(tmp_path))
+        result = self._load_data()
         assert len(result) == 1
 
-    def test_drops_zero_aa_pos(self, tmp_path):
+    def test_drops_zero_aa_pos(self, tmp_path, monkeypatch):
+        import esm2_mech.experiments.mechanism.mechanism_delta_probe as mod
+        monkeypatch.setattr(mod, "VARIANTS_JSON", tmp_path / "variants.json")
         self._write_variants(
             tmp_path,
             [
@@ -476,10 +493,12 @@ class TestLoadData:
                 self._valid_variant(aa_pos=0),
             ],
         )
-        result = self._load_data(str(tmp_path))
+        result = self._load_data()
         assert len(result) == 1
 
-    def test_drops_missing_aa_wt_or_mut(self, tmp_path):
+    def test_drops_missing_aa_wt_or_mut(self, tmp_path, monkeypatch):
+        import esm2_mech.experiments.mechanism.mechanism_delta_probe as mod
+        monkeypatch.setattr(mod, "VARIANTS_JSON", tmp_path / "variants.json")
         self._write_variants(
             tmp_path,
             [
@@ -488,7 +507,7 @@ class TestLoadData:
                 self._valid_variant(aa_mut=None),
             ],
         )
-        result = self._load_data(str(tmp_path))
+        result = self._load_data()
         assert len(result) == 1
 
 

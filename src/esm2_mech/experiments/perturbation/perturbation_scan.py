@@ -44,13 +44,13 @@ from collections import defaultdict
 from pathlib import Path
 
 from esm2_mech.utils.paths import (
-    DATA_DIR as DATA,
     RESULTS_DIR as _RESULTS_DIR,
-    VALID_VARIANTS_JSON,
-    SCAN_EMB_WT,
     SCAN_EMB_MUT,
-    SEQUENCES_JSON,
+    SCAN_EMB_WT,
+    SCAN_PROBE_CACHE_JSON,
     SEQUENCES_EXTENDED_JSON,
+    SEQUENCES_JSON,
+    VALID_VARIANTS_JSON,
 )
 from esm2_mech.utils.sequences import window_sequence, apply_missense
 
@@ -286,7 +286,7 @@ def main():
 
     seqs = load_sequences()
 
-    probe_cache = DATA / "cache" / "scan_probes.json"
+    probe_cache = SCAN_PROBE_CACHE_JSON
     if probe_cache.exists():
         print(f"Loading cached probe list from {probe_cache}")
         with open(probe_cache) as f:

@@ -24,21 +24,21 @@ import numpy as np
 print = functools.partial(print, flush=True)
 
 from esm2_mech.utils.paths import (
-    DATA_DIR as DATA,
-    SCAN_EMB_WT,
-    SCAN_EMB_MUT,
-    SCAN_CKPT_WT,
-    SCAN_CKPT_MUT,
     EMB_DIR,
     ESM2_MODEL,
-    SEQUENCES_JSON,
+    SCAN_CKPT_MUT,
+    SCAN_CKPT_WT,
+    SCAN_EMB_MUT,
+    SCAN_EMB_WT,
+    SCAN_PROBE_CACHE_JSON,
     SEQUENCES_EXTENDED_JSON,
+    SEQUENCES_JSON,
 )
 from esm2_mech.embeddings.embed_variants import get_esm2_embeddings_for_pairs
 from esm2_mech.utils.sequences import window_sequence, apply_missense
 from esm2_mech.utils.io import save_npy
 
-PROBE_CACHE = DATA / "cache" / "scan_probes.json"
+PROBE_CACHE = SCAN_PROBE_CACHE_JSON
 CKPT_IDX = EMB_DIR / "scan_ckpt_idx.txt"
 CHECKPOINT_EVERY = 100
 

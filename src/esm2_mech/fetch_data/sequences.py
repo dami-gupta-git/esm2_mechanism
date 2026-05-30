@@ -10,6 +10,7 @@ import urllib.request
 
 from esm2_mech.utils.constants import UNIPROT_REST
 from esm2_mech.utils.io import atomic_write_json
+from esm2_mech.utils.paths import PFAM_FILE
 
 print = functools.partial(print, flush=True)
 
@@ -55,55 +56,8 @@ def fetch_uniprot_sequence(
     raise TransientFetchError(uniprot_id) from last_exc
 
 
-def build_sequence_cache(variants: list[dict], cache_dir: str) -> dict[str, str]:
-    """Fetch and cache UniProt sequences for all unique UniProt IDs in variants.
 
-    Checkpoints to disk after every successful fetch so an interrupted run
-    resumes rather than re-fetching from scratch. Only IDs not already in the
-    cache are fetched.
-
-    Returns dict: uniprot_id -> canonical sequence.
-    """
-    cache_path = os.path.join(cache_dir, "sequences.json")
-    os.makedirs(cache_dir, exist_ok=True)
-
-    sequences: dict[str, str] = {}
-    if os.path.exists(cache_path):
-        try:
-            with open(cache_path, newline="") as f:
-                sequences = json.load(f)
-        except json.JSONDecodeError:
-            print(f"WARNING: corrupt sequence cache at {cache_path} — re-fetching all")
-            os.remove(cache_path)
-
-    unique_uniprots = {v["uniprot_id"] for v in variants if v.get("uniprot_id")}
-    needed = sorted(unique_uniprots - sequences.keys())
-    if not needed:
-        return sequences
-
-    print(f"Fetching {len(needed)} UniProt sequences (resuming from {len(sequences)} cached)...")
-    transient_failures = 0
-    for idx, uid in enumerate(needed):
-        if idx % 50 == 0:
-            print(f"  {idx}/{len(needed)}")
-        try:
-            seq = fetch_uniprot_sequence(uid)
-        except TransientFetchError:
-            transient_failures += 1
-        else:
-            if seq:
-                sequences[uid] = seq
-        if (idx + 1) % 50 == 0 or idx == len(needed) - 1:
-            atomic_write_json(cache_path, sequences)
-        time.sleep(0.3)
-
-    if transient_failures:
-        print(f"  WARNING: {transient_failures} UIDs had transient failures — will retry next run")
-    print(f"  Sequences cached: {len(sequences)}/{len(unique_uniprots)}")
-    return sequences
-
-
-def fetch_pfam_families(variants: list[dict], cache_dir: str) -> dict[str, str | None]:
+def fetch_pfam_families(variants: list[dict]) -> dict[str, str | None]:
     """Fetch primary Pfam family for each unique gene via UniProt.
 
     Returns dict: gene -> pfam_id (or None when the protein has no Pfam annotation).
@@ -112,7 +66,7 @@ def fetch_pfam_families(variants: list[dict], cache_dir: str) -> dict[str, str |
     """
     import urllib.error
 
-    cache_path = os.path.join(cache_dir, "pfam_families.json")
+    cache_path = PFAM_FILE
     if os.path.exists(cache_path):
         try:
             with open(cache_path, newline="") as f:

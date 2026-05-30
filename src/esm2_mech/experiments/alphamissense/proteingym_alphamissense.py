@@ -41,13 +41,15 @@ import functools
 print = functools.partial(print, flush=True)
 
 from esm2_mech.utils.paths import (
+    AM_CACHE_FILE,
     DATA_DIR as _DATA_DIR,
+    PROTEINGYM_CACHE_DIR,
     RESULTS_DIR as _RESULTS_DIR,
 )
 
-DATA = _DATA_DIR / "cache" / "proteingym"
+DATA = PROTEINGYM_CACHE_DIR
 RESULTS = _RESULTS_DIR / "proteingym_alphamissense"
-AM_FILE = _DATA_DIR / "cache" / "AlphaMissense_aa_substitutions.tsv.gz"
+AM_FILE = AM_CACHE_FILE
 
 DMS_INDEX = DATA / "DMS_substitutions.csv"
 DMS_DIR = DATA / "DMS_ProteinGym_substitutions"

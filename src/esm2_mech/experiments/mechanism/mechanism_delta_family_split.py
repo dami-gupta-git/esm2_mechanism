@@ -18,16 +18,11 @@ from collections import Counter
 
 import numpy as np
 
-from pathlib import Path
-from esm2_mech.utils.data import load_variants
 from esm2_mech.utils.paths import (
-    EMB_WT_MEAN, EMB_MUT_MEAN, EMB_WT_POS, EMB_MUT_POS, ESM2_MODEL,
+    EMB_WT_MEAN, EMB_MUT_MEAN, EMB_WT_POS, EMB_MUT_POS,
+    SEQUENCES_JSON, VARIANTS_JSON, RESULTS_DIR, PFAM_JSON,
 )
 from esm2_mech.utils.sequences import window_sequence, apply_missense
-from esm2_mech.fetch_data.sequences import (
-    build_sequence_cache,
-    fetch_pfam_families,
-)
 from esm2_mech.utils.splits import gene_split_cv, family_split_cv
 
 from sklearn.linear_model import LogisticRegression
@@ -92,105 +87,28 @@ def build_onehot(aa_wt_list, aa_mut_list):
     return onehot
 
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--run_dir",
-        type=str,
-        default="run_0",
-        help="Directory containing data/ with cached embeddings",
-    )
-    parser.add_argument("--model", type=str, default=ESM2_MODEL)
-    parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--n_folds", type=int, default=5)
-    parser.add_argument("--out", type=str, default="family_split_baselines.json")
-    args = parser.parse_args()
-
-    data_dir = os.path.join(args.run_dir, "data")
-
+def run(data: dict, out_dir: str, seed: int = 0, n_folds: int = 5) -> dict:
     # ------------------------------------------------------------------
-    # 1. Rebuild the valid_variants list IDENTICALLY to experiment.py
+    # 1–3. Extract pre-loaded data
     # ------------------------------------------------------------------
-    print("=== Loading cached dataset and sequences ===")
-    variants = load_variants(Path(data_dir) / "variants.json")
-
-    seq_cache = build_sequence_cache(variants, data_dir)
-
-    valid_variants = []
-    for v in variants:
-        uid = v["uniprot_id"]
-        if uid not in seq_cache:
-            continue
-        wt_full = seq_cache[uid]
-        wt_win, new_pos = window_sequence(wt_full, v["aa_pos"])
-        mut_win = apply_missense(wt_win, new_pos, v["aa_wt"], v["aa_mut"])
-        if mut_win is None:
-            continue
-        valid_variants.append(v)
-
-    print(f"Valid variants: {len(valid_variants)}")
-
-    # ------------------------------------------------------------------
-    # 2. Load cached embeddings
-    # ------------------------------------------------------------------
-    for path in [EMB_WT_MEAN, EMB_MUT_MEAN, EMB_WT_POS, EMB_MUT_POS]:
-        if not os.path.exists(path):
-            raise FileNotFoundError(
-                f"Missing cached embedding: {path}\n"
-                f"Run embed_variants.py first to populate the cache."
-            )
-
-    emb_wt_mean = np.load(EMB_WT_MEAN)
-    emb_mut_mean = np.load(EMB_MUT_MEAN)
-    emb_wt_pos = np.load(EMB_WT_POS)
-    emb_mut_pos = np.load(EMB_MUT_POS)
+    valid_variants = data["valid_variants"]
+    emb_wt_mean = data["emb_wt_mean"]
+    emb_mut_mean = data["emb_mut_mean"]
+    emb_wt_pos = data["emb_wt_pos"]
+    emb_mut_pos = data["emb_mut_pos"]
+    labels_3class = data["labels_3class"]
+    genes_arr = data["genes_arr"]
+    foldx_ddg = data["foldx_ddg"]
+    aa_wt_list = data["aa_wt_list"]
+    aa_mut_list = data["aa_mut_list"]
+    alphamissense_scores = data["alphamissense_scores"]
 
     deltas_mean = emb_mut_mean - emb_wt_mean
     deltas_pos = emb_mut_pos - emb_wt_pos
     print(f"Embedding shape: {emb_wt_mean.shape}")
-
-    assert len(valid_variants) == emb_wt_mean.shape[0], (
-        f"Variant count mismatch: {len(valid_variants)} variants vs "
-        f"{emb_wt_mean.shape[0]} embeddings. The cached embeddings were built "
-        f"from a different filtering — re-run experiment.py to align."
-    )
-
-    # ------------------------------------------------------------------
-    # 3. Build label / gene / aux arrays
-    # ------------------------------------------------------------------
-    labels_3class = np.array([v["label_3class"] for v in valid_variants])
-    genes_arr = np.array([v["gene"] for v in valid_variants])
-    foldx_ddg = np.array(
-        [
-            v["foldx_ddg"] if v["foldx_ddg"] is not None else np.nan
-            for v in valid_variants
-        ]
-    )
-    aa_wt_list = [v["aa_wt"] for v in valid_variants]
-    aa_mut_list = [v["aa_mut"] for v in valid_variants]
-
+    print(f"Valid variants: {len(valid_variants)}")
     print(f"Class distribution: {dict(Counter(labels_3class))}")
     print(f"Unique genes: {len(set(genes_arr))}")
-
-    am_path = Path(data_dir) / "alphamissense_scores_full.json"
-    if not am_path.exists():
-        print(f"  WARNING: {am_path} not found — AlphaMissense scores unavailable")
-        alphamissense_scores = np.full(len(valid_variants), np.nan)
-    else:
-        try:
-            with open(am_path) as f:
-                am_scores = json.load(f)
-        except json.JSONDecodeError:
-            print(f"  WARNING: corrupt {am_path} — AlphaMissense scores unavailable")
-            am_scores = {}
-        alphamissense_scores = np.full(len(valid_variants), np.nan)
-        for idx, v in enumerate(valid_variants):
-            key = f"{v['gene']}_{v['aa_pos']}_{v['aa_wt']}_{v['aa_mut']}"
-            val = am_scores.get(key)
-            if val is not None:
-                alphamissense_scores[idx] = float(val)
-        n_valid = int(np.sum(~np.isnan(alphamissense_scores)))
-        print(f"  AlphaMissense scores: {n_valid}/{len(valid_variants)} available")
 
     # ------------------------------------------------------------------
     # 4. Build feature matrices
@@ -226,10 +144,13 @@ def main():
     # 5. Build splits — gene-split AND family-split
     # ------------------------------------------------------------------
     print("\n=== Building CV splits ===")
-    pfam_map = fetch_pfam_families(valid_variants, data_dir)
-    gene_splits = gene_split_cv(genes_arr, n_folds=args.n_folds, seed=args.seed)
+    if not PFAM_JSON.exists():
+        raise FileNotFoundError(f"{PFAM_JSON} not found — run fetch_data/fetch_annotations --step pfam first")
+    with open(PFAM_JSON) as f:
+        pfam_map = json.load(f)
+    gene_splits = gene_split_cv(genes_arr, n_folds=n_folds, seed=seed)
     family_splits = family_split_cv(
-        genes_arr, pfam_map, n_folds=args.n_folds, seed=args.seed
+        genes_arr, pfam_map, n_folds=n_folds, seed=seed
     )
 
     print(f"Gene-split folds:   {len(gene_splits)}")
@@ -253,8 +174,8 @@ def main():
         # Masked baselines carry their own subset labels/genes; others use full arrays
         if isinstance(entry, tuple):
             X, feat_labels, feat_genes = entry
-            feat_gene_splits = gene_split_cv(feat_genes, n_folds=args.n_folds, seed=args.seed)
-            feat_family_splits = family_split_cv(feat_genes, pfam_map, n_folds=args.n_folds, seed=args.seed)
+            feat_gene_splits = gene_split_cv(feat_genes, n_folds=n_folds, seed=seed)
+            feat_family_splits = family_split_cv(feat_genes, pfam_map, n_folds=n_folds, seed=seed)
         else:
             X, feat_labels, feat_genes = entry, labels_3class, genes_arr
             feat_gene_splits, feat_family_splits = gene_splits, family_splits
@@ -264,7 +185,7 @@ def main():
             continue
         print(f"\n--- {name} (dim={X.shape[1]}, n={len(feat_labels)}) ---")
 
-        gs = run_probe_on_splits(X, feat_labels, feat_gene_splits, seed=args.seed)
+        gs = run_probe_on_splits(X, feat_labels, feat_gene_splits, seed=seed)
         results["gene_split"][name] = gs
         print(
             f"  gene-split   macro-F1 = {gs.get('macro_f1_mean', float('nan')):.3f} "
@@ -275,7 +196,7 @@ def main():
         )
 
         if feat_family_splits:
-            fs = run_probe_on_splits(X, feat_labels, feat_family_splits, seed=args.seed)
+            fs = run_probe_on_splits(X, feat_labels, feat_family_splits, seed=seed)
             results["family_split"][name] = fs
             delta_macro = gs.get("macro_f1_mean", float("nan")) - fs.get(
                 "macro_f1_mean", float("nan")
@@ -295,10 +216,11 @@ def main():
     # ------------------------------------------------------------------
     # 7. Write results
     # ------------------------------------------------------------------
-    out_path = os.path.join(args.run_dir, args.out)
+    out_path = os.path.join(out_dir, f"family_split_baselines_seed{seed}.json")
     with open(out_path, "w") as f:
         json.dump(results, f, indent=2)
     print(f"\nResults written to {out_path}")
+    return results
 
     # ------------------------------------------------------------------
     # 8. Headline interpretation
@@ -355,6 +277,81 @@ def main():
                 "  ⇒ WT-only signal COLLAPSES under family-split — apparent mechanism"
             )
             print("    classification was largely paralog/homology leakage.")
+
+
+def _load_data_inline() -> dict:
+    """Load all data needed by run(). Used by main() for standalone execution."""
+    from esm2_mech.utils.data import load_variants as _load_variants
+    from esm2_mech.experiments.mechanism.mechanism_delta_probe import _load_alphamissense_scores
+
+    if not VARIANTS_JSON.exists():
+        raise FileNotFoundError(
+            f"{VARIANTS_JSON} not found — run fetch_data/fetch_variants.py --step merge first"
+        )
+    variants = _load_variants(VARIANTS_JSON)
+
+    if not SEQUENCES_JSON.exists():
+        raise FileNotFoundError(f"{SEQUENCES_JSON} not found — run fetch_data/fetch_sequences first")
+    with open(SEQUENCES_JSON) as f:
+        seq_cache = json.load(f)
+
+    valid_variants = []
+    for v in variants:
+        uid = v["uniprot_id"]
+        if uid not in seq_cache:
+            continue
+        wt_win, new_pos = window_sequence(seq_cache[uid], v["aa_pos"])
+        mut_win = apply_missense(wt_win, new_pos, v["aa_wt"], v["aa_mut"])
+        if mut_win is None:
+            continue
+        valid_variants.append(v)
+
+    print(f"Valid variant pairs: {len(valid_variants)}")
+
+    for path in [EMB_WT_MEAN, EMB_MUT_MEAN, EMB_WT_POS, EMB_MUT_POS]:
+        if not os.path.exists(path):
+            raise FileNotFoundError(f"Missing cached embedding: {path}")
+
+    emb_wt_mean = np.load(EMB_WT_MEAN)
+    emb_mut_mean = np.load(EMB_MUT_MEAN)
+    emb_wt_pos = np.load(EMB_WT_POS)
+    emb_mut_pos = np.load(EMB_MUT_POS)
+
+    labels_3class = np.array([v["label_3class"] for v in valid_variants])
+    labels_4class = np.array([v["mechanism"] for v in valid_variants])
+    genes_arr = np.array([v["gene"] for v in valid_variants])
+    foldx_ddg = np.array(
+        [v["foldx_ddg"] if v["foldx_ddg"] is not None else np.nan for v in valid_variants]
+    )
+    aa_wt_list = [v["aa_wt"] for v in valid_variants]
+    aa_mut_list = [v["aa_mut"] for v in valid_variants]
+
+    alphamissense_scores = _load_alphamissense_scores(valid_variants)
+
+    return {
+        "valid_variants": valid_variants,
+        "emb_wt_mean": emb_wt_mean,
+        "emb_mut_mean": emb_mut_mean,
+        "emb_wt_pos": emb_wt_pos,
+        "emb_mut_pos": emb_mut_pos,
+        "labels_3class": labels_3class,
+        "labels_4class": labels_4class,
+        "genes_arr": genes_arr,
+        "foldx_ddg": foldx_ddg,
+        "aa_wt_list": aa_wt_list,
+        "aa_mut_list": aa_mut_list,
+        "alphamissense_scores": alphamissense_scores,
+    }
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--out_dir", type=str, default=str(RESULTS_DIR))
+    parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--n_folds", type=int, default=5)
+    args = parser.parse_args()
+    data = _load_data_inline()
+    run(data=data, out_dir=args.out_dir, seed=args.seed, n_folds=args.n_folds)
 
 
 if __name__ == "__main__":

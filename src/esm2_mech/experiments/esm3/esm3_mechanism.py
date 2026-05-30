@@ -42,16 +42,17 @@ import numpy as np
 print = functools.partial(print, flush=True)
 
 from esm2_mech.utils.paths import (
+    CACHE_DIR,
     DATA_DIR as DATA,
-    RESULTS_DIR as _RESULTS_DIR,
     ESM3_EMB_DIR,
     ESM3_EMB_SEQ,
     ESM3_EMB_SEQ_STRUCT,
-    ESM3_VALID_IDX,
-    ESM3_STRUCT_META,
     ESM3_MODEL,
+    ESM3_STRUCT_META,
+    ESM3_STRUCT_TOKENS_JSON,
+    ESM3_VALID_IDX,
+    RESULTS_DIR as _RESULTS_DIR,
     SEQUENCES_JSON,
-    CACHE_DIR,
 )
 from esm2_mech.utils.io import save_npy
 
@@ -68,7 +69,7 @@ EMB_VALID_IDX = ESM3_VALID_IDX
 STRUCT_META = ESM3_STRUCT_META
 
 # AF2 structure token cache (phase 1 output)
-STRUCT_TOKENS = DATA / "cache" / "esm3_struct_tokens.json"
+STRUCT_TOKENS = ESM3_STRUCT_TOKENS_JSON
 AF2_API_URL = "https://alphafold.ebi.ac.uk/api/prediction/{uniprot_id}"
 
 # Match result_7 exactly

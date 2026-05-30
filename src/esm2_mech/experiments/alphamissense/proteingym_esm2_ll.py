@@ -43,9 +43,9 @@ from sklearn.metrics import roc_auc_score
 
 print = functools.partial(print, flush=True)
 
-from esm2_mech.utils.paths import DATA_DIR as DATA, RESULTS_DIR as _RESULTS_DIR
+from esm2_mech.utils.paths import PROTEINGYM_CACHE_DIR, RESULTS_DIR as _RESULTS_DIR
 
-PG_DIR = DATA / "cache" / "proteingym"
+PG_DIR = PROTEINGYM_CACHE_DIR
 OUT = _RESULTS_DIR / "proteingym_esm2_ll"
 
 DMS_INDEX = PG_DIR / "DMS_substitutions.csv"

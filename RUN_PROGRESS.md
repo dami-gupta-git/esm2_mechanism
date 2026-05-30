@@ -90,14 +90,14 @@ Uses `esm2_mech` package (RUNBOOK_3). All commands use `python -m esm2_mech.<mod
 
 ---
 
-## Run 5 — started 2026-05-30 (RUNBOOK_4, Experiment 1)
+## Run 5 — started 2026-05-30 (RUNBOOK_4)
 
-| # | Step | Command | Inputs | Outputs | Status | Notes |
+| # | RUNBOOK_4 step | Command | Inputs | Outputs | Status | Notes |
 |---|---|---|---|---|---|---|
-| 1 | Stage 1 | `python -m esm2_mech.fetch_data.build_gene_list` | `downloads/DiseaseMech_Stability_VEPS.xlsx`, `downloads/AllG2P.csv` | `gene_list.tsv` | ✅ already run | 2376 genes (gerasimavicius=950, g2p=1426); AR=727, DN=108, GOF=148, HI=82, LOF=1311; 475 g2p_disagrees; 61 excluded |
-| 2 | Exp1 fetch | `python -m esm2_mech.fetch_data.fetch_variants --step gerasimavicius` | `downloads/DiseaseMech_Stability_VEPS.xlsx` | `gerasimavicius_variants.json` | ✅ already run | 10,233 variants, 948 genes; AR=5678, GOF=1983, HI=1678, DN=894 |
-| 3 | Exp1 fetch | `python -m esm2_mech.fetch_data.fetch_variants --step clinvar` | `gene_list.tsv` | `clinvar_variants.tsv` | ✅ already run | 47,752 variants across 2376 genes |
-| 4 | Exp1 fetch | `python -m esm2_mech.fetch_data.fetch_variants --step merge` | `gerasimavicius_variants.json`, `gene_list.tsv`, `clinvar_variants.tsv` | `variants.json` | ✅ already run | 17,921 variants, 1941 genes; gerasimavicius=10233, clinvar_g2p=7688 |
-| 5 | Exp1 fetch | `python -m esm2_mech.fetch_data.fetch_sequences` | `variants.json` | `cache/sequences.json` | ✅ already run | 1939 unique UniProt IDs |
-| 6 | Exp1 fetch | `python -m esm2_mech.fetch_data.fetch_annotations --step pfam` | `variants.json` | `pfam_families.json` | ✅ already run | 1908/1941 genes annotated, 33 unannotated |
-| 7 | Exp1 embed | `python -m esm2_mech.embeddings.embed_variants --data_dir data --model esm2_t33_650M_UR50D --batch_size 32` | `variants.json`, `cache/sequences.json` | `embeddings_wt_mean.npy`, `embeddings_mut_mean.npy`, `embeddings_wt_pos.npy`, `embeddings_mut_pos.npy`, `valid_variants.json` | ✅ already run | 17,826 valid variants; shape (17826, 1280); run on RunPod H100 |
+| 1 | Stage 1 | `python -m esm2_mech.fetch_data.build_gene_list` | `downloads/DiseaseMech_Stability_VEPS.xlsx`, `downloads/AllG2P.csv` | `gene_list.tsv` | ✅ 2026-05-30 | 2376 genes (gerasimavicius=950, g2p=1426); AR=727, DN=108, GOF=148, HI=82, LOF=1311; 475 g2p_disagrees; 61 excluded |
+| 2 | Exp1 Step 1 | `python -m esm2_mech.fetch_data.fetch_variants --step gerasimavicius` | `downloads/DiseaseMech_Stability_VEPS.xlsx` | `gerasimavicius_variants.json` | ✅ 2026-05-30 | 10,233 variants, 948 genes; AR=5678, GOF=1983, HI=1678, DN=894 |
+| 3 | Exp1 Step 1 | `python -m esm2_mech.fetch_data.fetch_variants --step clinvar` | `gene_list.tsv` | `clinvar_variants.tsv` | ✅ 2026-05-30 | 47,752 variants across 2376 genes |
+| 4 | Exp1 Step 1 | `python -m esm2_mech.fetch_data.fetch_variants --step merge` | `gerasimavicius_variants.json`, `gene_list.tsv`, `clinvar_variants.tsv` | `variants.json` | ✅ 2026-05-30 | 17,921 variants, 1941 genes; gerasimavicius=10233, clinvar_g2p=7688 |
+| 5 | Exp1 Step 1 | `python -m esm2_mech.fetch_data.fetch_sequences` | `variants.json` | `data/cache/sequences.json` | ✅ 2026-05-30 | 1939 unique UniProt IDs |
+| 6 | Exp1 Step 1 | `python -m esm2_mech.fetch_data.fetch_annotations --step pfam` | `variants.json` | `data/pfam_families.json` | ✅ 2026-05-30 | 1908/1941 genes annotated, 33 unannotated |
+| 7 | Exp1 Step 2 | `python -m esm2_mech.embeddings.embed_variants --data_dir data --model esm2_t33_650M_UR50D --batch_size 32` | `variants.json`, `cache/sequences.json` | `embeddings_wt_mean.npy`, `embeddings_mut_mean.npy`, `embeddings_wt_pos.npy`, `embeddings_mut_pos.npy`, `valid_variants.json` | ✅ 2026-05-30 | 17,826 valid variants; shape (17826, 1280); run on RunPod H100 |

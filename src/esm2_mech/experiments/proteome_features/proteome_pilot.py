@@ -56,12 +56,12 @@ import numpy as np
 
 print = functools.partial(print, flush=True)
 from esm2_mech.utils.splits import family_split_indices
-from esm2_mech.utils.paths import DATA_DIR, RESULTS_DIR as _PROJECT_RESULTS_DIR, GENE_LIST_TSV
+from esm2_mech.utils.paths import DATA_DIR, GENE_LIST_TSV, PROTEOME_PILOT_CACHE_DIR, RESULTS_DIR as _PROJECT_RESULTS_DIR
 
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
-CACHE_DIR = DATA_DIR / "cache" / "proteome_pilot"
+CACHE_DIR = PROTEOME_PILOT_CACHE_DIR
 PARALOG_CACHE = CACHE_DIR / "paralogs"
 RESULTS_DIR = _PROJECT_RESULTS_DIR / "proteome_pilot"
 

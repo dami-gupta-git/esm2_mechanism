@@ -33,7 +33,7 @@ from sklearn.metrics import roc_auc_score, f1_score
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.preprocessing import LabelEncoder
 from esm2_mech.utils.splits import gene_split_cv, family_split_cv
-from esm2_mech.utils.paths import VALID_VARIANTS_JSON, EMB_WT_MEAN, EMB_MUT_MEAN
+from esm2_mech.utils.paths import DATA_DIR, EMB_MUT_MEAN, EMB_WT_MEAN, RESULTS_DIR, VALID_VARIANTS_JSON
 import functools
 
 print = functools.partial(print, flush=True)
@@ -72,9 +72,8 @@ def load_data(data_dir, emb_dir, merged=False):
     return variants, labels, genes, delta_mean
 
 
-def load_pfam(data_dir, genes):
-    pfam_path = os.path.join(data_dir, "pfam_families.json")
-    with open(pfam_path) as f:
+def load_pfam(genes):
+    with open(DATA_DIR / "pfam_families.json") as f:
         pfam_map = json.load(f)
     gene_pfam = np.array([pfam_map.get(g) for g in genes])
     n_annotated = sum(1 for p in gene_pfam if p is not None)
@@ -447,9 +446,7 @@ def run_cv(
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data_dir", default="../data")
-    parser.add_argument("--emb_dir", default="../data/embeddings")
-    parser.add_argument("--out_dir", default="../results/20260524_baseline_run/run_0")
+    parser.add_argument("--out_dir", default=str(RESULTS_DIR))
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--n_folds", type=int, default=5)
     parser.add_argument(
@@ -474,12 +471,10 @@ def main():
     np.random.seed(args.seed)
 
     print("=== Loading data ===")
-    geras, labels, genes, delta_mean = load_data(
-        args.data_dir, args.emb_dir, merged=args.merged
-    )
+    geras, labels, genes, delta_mean = load_data(None, None, merged=args.merged)
 
     print("\n=== Loading Pfam map ===")
-    gene_pfam, pfam_map = load_pfam(args.data_dir, genes)
+    gene_pfam, pfam_map = load_pfam(genes)
 
     le = LabelEncoder()
     le.fit(labels)

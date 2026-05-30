@@ -44,7 +44,7 @@ from esm2_mech.experiments.mechanism.mlp import (
     make_family_splits,
     run_mlp_probe,
 )
-from esm2_mech.utils.paths import EMB_WT_MEAN, EMB_MUT_MEAN
+from esm2_mech.utils.paths import DATA_DIR, EMB_MUT_MEAN, EMB_WT_MEAN, RESULTS_DIR
 
 
 def load_wt_mut_mean_embeddings():
@@ -66,11 +66,6 @@ def load_wt_mut_mean_embeddings():
 def main():
     p = argparse.ArgumentParser()
     p.add_argument(
-        "--data_dir",
-        required=True,
-        help="Directory containing variants JSON (and sequences.json, pfam_families.json if Gerasimavicius)",
-    )
-    p.add_argument(
         "--variants_file",
         default=None,
         help="Pre-filtered variants JSON (use for merged dataset)",
@@ -78,7 +73,7 @@ def main():
     p.add_argument(
         "--pfam_map",
         default=None,
-        help="Path to pfam_families.json (defaults to data_dir/pfam_families.json)",
+        help="Path to pfam_families.json (defaults to DATA_DIR/pfam_families.json)",
     )
     p.add_argument(
         "--family_split",
@@ -101,9 +96,7 @@ def main():
     np.random.seed(args.seed)
 
     print("=== Loading variants and labels ===")
-    valid_variants, labels, genes = load_variants_and_labels(
-        args.data_dir, args.variants_file
-    )
+    valid_variants, labels, genes = load_variants_and_labels(args.variants_file)
 
     print("\n=== Loading WT and mut mean-pooled embeddings ===")
     wt, mut = load_wt_mut_mean_embeddings()
@@ -131,7 +124,7 @@ def main():
     gene_splits = gene_split_cv(genes, seed=args.seed)
     family_splits = None
     if args.family_split:
-        pfam_path = args.pfam_map or os.path.join(args.data_dir, "pfam_families.json")
+        pfam_path = args.pfam_map or str(DATA_DIR / "pfam_families.json")
         with open(pfam_path) as f:
             pfam_map = json.load(f)
         family_splits = make_family_splits(genes, pfam_map, seed=args.seed)
