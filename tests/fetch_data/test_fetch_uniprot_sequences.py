@@ -12,7 +12,6 @@ Covers:
 
 from esm2_mechanism.fetch_data.fetch_annotations import parse_fasta, select_extended
 
-
 ISOFORM_FASTA = """\
 >sp|P12345-2|GENE_HUMAN Isoform 2 OS=Homo sapiens
 ACDEFGHIKLM

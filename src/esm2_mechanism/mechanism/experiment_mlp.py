@@ -23,6 +23,7 @@ from sklearn.metrics import roc_auc_score, f1_score
 from sklearn.preprocessing import LabelEncoder
 from esm2_mechanism.utils_probes import gene_split_cv
 import functools
+
 print = functools.partial(print, flush=True)
 
 warnings.filterwarnings("ignore")
@@ -34,6 +35,7 @@ ESM2_MODEL_650M = "esm2_t33_650M_UR50D"
 # Reuse data-loading helpers from experiment.py
 # ---------------------------------------------------------------------------
 
+
 def load_variants_and_labels(data_dir, variants_file=None):
     if variants_file:
         # Pre-filtered variant list (e.g. merged_valid_variants.json) — skip sequence filtering
@@ -41,20 +43,29 @@ def load_variants_and_labels(data_dir, variants_file=None):
             valid_variants = json.load(f)
         for v in valid_variants:
             if "label_3class" not in v:
-                v["label_3class"] = "LOF" if v["mechanism"] in ("HI", "AR") else v["mechanism"]
+                v["label_3class"] = (
+                    "LOF" if v["mechanism"] in ("HI", "AR") else v["mechanism"]
+                )
     else:
         cache_path = os.path.join(data_dir, "gerasimavicius_variants.json")
         with open(cache_path) as f:
             variants = json.load(f)
         for v in variants:
-            v["label_3class"] = "LOF" if v["mechanism"] in ("HI", "AR") else v["mechanism"]
-        variants = [v for v in variants if v["uniprot_id"] and v["aa_wt"] and v["aa_mut"] and v["aa_pos"] > 0]
+            v["label_3class"] = (
+                "LOF" if v["mechanism"] in ("HI", "AR") else v["mechanism"]
+            )
+        variants = [
+            v
+            for v in variants
+            if v["uniprot_id"] and v["aa_wt"] and v["aa_mut"] and v["aa_pos"] > 0
+        ]
 
         seq_path = os.path.join(data_dir, "sequences.json")
         with open(seq_path) as f:
             seq_cache = json.load(f)
 
         from utils_sequences import apply_missense, window_sequence
+
         valid_variants = []
         for v in variants:
             uid = v["uniprot_id"]
@@ -71,6 +82,7 @@ def load_variants_and_labels(data_dir, variants_file=None):
     genes = np.array([v["gene"] for v in valid_variants])
     print(f"Loaded {len(valid_variants)} variants, {len(set(genes))} genes")
     from collections import Counter
+
     print(f"Class distribution: {dict(Counter(labels))}")
     return valid_variants, labels, genes
 
@@ -79,17 +91,27 @@ def load_embeddings(emb_dir, model_name=ESM2_MODEL_650M, prefix=""):
     """Load embeddings. Use prefix='merged_' for merged dataset files."""
     if prefix:
         emb_wt_mean = np.load(os.path.join(emb_dir, f"{prefix}embeddings_wt_mean.npy"))
-        emb_mut_mean = np.load(os.path.join(emb_dir, f"{prefix}embeddings_mut_mean.npy"))
+        emb_mut_mean = np.load(
+            os.path.join(emb_dir, f"{prefix}embeddings_mut_mean.npy")
+        )
         emb_wt_pos = np.load(os.path.join(emb_dir, f"{prefix}embeddings_wt_pos.npy"))
         emb_mut_pos = np.load(os.path.join(emb_dir, f"{prefix}embeddings_mut_pos.npy"))
     else:
         emb_wt_mean = np.load(os.path.join(emb_dir, f"embeddings_wt_{model_name}.npy"))
-        emb_mut_mean = np.load(os.path.join(emb_dir, f"embeddings_mut_{model_name}.npy"))
-        emb_wt_pos = np.load(os.path.join(emb_dir, f"embeddings_wt_pos_{model_name}.npy"))
-        emb_mut_pos = np.load(os.path.join(emb_dir, f"embeddings_mut_pos_{model_name}.npy"))
+        emb_mut_mean = np.load(
+            os.path.join(emb_dir, f"embeddings_mut_{model_name}.npy")
+        )
+        emb_wt_pos = np.load(
+            os.path.join(emb_dir, f"embeddings_wt_pos_{model_name}.npy")
+        )
+        emb_mut_pos = np.load(
+            os.path.join(emb_dir, f"embeddings_mut_pos_{model_name}.npy")
+        )
     delta_mean = emb_mut_mean - emb_wt_mean
     delta_pos = emb_mut_pos - emb_wt_pos
-    print(f"Embeddings loaded: delta_mean {delta_mean.shape}, delta_pos {delta_pos.shape}")
+    print(
+        f"Embeddings loaded: delta_mean {delta_mean.shape}, delta_pos {delta_pos.shape}"
+    )
     return delta_mean, delta_pos
 
 
@@ -98,28 +120,50 @@ def load_embeddings(emb_dir, model_name=ESM2_MODEL_650M, prefix=""):
 # MLP probe (PyTorch)
 # ---------------------------------------------------------------------------
 
+
 def make_family_splits(genes, pfam_map, n_folds=5, seed=42):
     """Build family-split CV using Pfam annotations."""
     n = len(genes)
     gene_to_pfam = {g: pfam_map.get(g) for g in np.unique(genes) if pfam_map.get(g)}
     unique_fams = sorted(set(gene_to_pfam.values()))
     rng = np.random.RandomState(seed)
-    fam_arr = np.array(unique_fams); rng.shuffle(fam_arr)
+    fam_arr = np.array(unique_fams)
+    rng.shuffle(fam_arr)
     splits = []
     for fold_fams in np.array_split(fam_arr, n_folds):
         fold_set = set(fold_fams)
-        te = np.array([genes[i] in gene_to_pfam and gene_to_pfam[genes[i]] in fold_set for i in range(n)])
-        tr = np.array([genes[i] in gene_to_pfam and gene_to_pfam[genes[i]] not in fold_set for i in range(n)])
+        te = np.array(
+            [
+                genes[i] in gene_to_pfam and gene_to_pfam[genes[i]] in fold_set
+                for i in range(n)
+            ]
+        )
+        tr = np.array(
+            [
+                genes[i] in gene_to_pfam and gene_to_pfam[genes[i]] not in fold_set
+                for i in range(n)
+            ]
+        )
         if tr.sum() >= 10 and te.sum() >= 5:
             splits.append((np.where(tr)[0], np.where(te)[0]))
     print(f"  Family-split: {len(splits)} folds, {len(unique_fams)} families")
     return splits
 
 
-def run_mlp_probe(X, labels, genes, n_folds=5, seed=42,
-                  hidden=(256, 64), dropout=0.3, lr=1e-3,
-                  max_epochs=100, patience=10, batch_size=256,
-                  splits=None):
+def run_mlp_probe(
+    X,
+    labels,
+    genes,
+    n_folds=5,
+    seed=42,
+    hidden=(256, 64),
+    dropout=0.3,
+    lr=1e-3,
+    max_epochs=100,
+    patience=10,
+    batch_size=256,
+    splits=None,
+):
     import torch
     import torch.nn as nn
     from torch.utils.data import DataLoader, TensorDataset
@@ -176,7 +220,9 @@ def run_mlp_probe(X, labels, genes, n_folds=5, seed=42,
         optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=1e-3)
         criterion = nn.CrossEntropyLoss(weight=class_weights)
 
-        fit_ds = TensorDataset(torch.tensor(X_fit), torch.tensor(y_fit, dtype=torch.long))
+        fit_ds = TensorDataset(
+            torch.tensor(X_fit), torch.tensor(y_fit, dtype=torch.long)
+        )
         fit_loader = DataLoader(fit_ds, batch_size=batch_size, shuffle=True)
 
         best_val_loss = float("inf")
@@ -196,7 +242,7 @@ def run_mlp_probe(X, labels, genes, n_folds=5, seed=42,
             with torch.no_grad():
                 val_loss = criterion(
                     model(torch.tensor(X_val).to(device)),
-                    torch.tensor(y_val, dtype=torch.long).to(device)
+                    torch.tensor(y_val, dtype=torch.long).to(device),
                 ).item()
 
             if val_loss < best_val_loss - 1e-4:
@@ -224,7 +270,9 @@ def run_mlp_probe(X, labels, genes, n_folds=5, seed=42,
                 fm[f"auroc_{cls}"] = float(roc_auc_score(y_bin, proba[:, i]))
         fm["epochs_run"] = epoch + 1
         fold_results.append(fm)
-        print(f"  Fold {fold_i+1}: macro_f1={fm['macro_f1']:.3f}, epochs={fm['epochs_run']}")
+        print(
+            f"  Fold {fold_i+1}: macro_f1={fm['macro_f1']:.3f}, epochs={fm['epochs_run']}"
+        )
 
     if not fold_results:
         return {"error": "insufficient data"}
@@ -241,6 +289,7 @@ def run_mlp_probe(X, labels, genes, n_folds=5, seed=42,
 
 def _build_mlp(in_dim, hidden, dropout, n_classes):
     import torch.nn as nn
+
     layers = []
     prev = in_dim
     for h in hidden:
@@ -253,6 +302,7 @@ def _build_mlp(in_dim, hidden, dropout, n_classes):
 # ---------------------------------------------------------------------------
 # GBM, RF, kNN probes (sklearn)
 # ---------------------------------------------------------------------------
+
 
 def run_sklearn_probe(clf_fn, X, labels, genes, n_folds=5, seed=42, normalize=False):
     """Generic gene-split CV runner for any sklearn classifier."""
@@ -305,8 +355,10 @@ def run_sklearn_probe(clf_fn, X, labels, genes, n_folds=5, seed=42, normalize=Fa
 # PCA reduction helper (GBM/RF are slow on 1280-dim; reduce first)
 # ---------------------------------------------------------------------------
 
+
 def pca_reduce(X_tr, X_te, n_components=50):
     from sklearn.decomposition import PCA
+
     pca = PCA(n_components=n_components, random_state=0)
     return pca.fit_transform(X_tr), pca.transform(X_te)
 
@@ -314,6 +366,7 @@ def pca_reduce(X_tr, X_te, n_components=50):
 def run_sklearn_probe_pca(clf_fn, X, labels, genes, n_folds=5, seed=42, n_pca=50):
     """Gene-split CV with PCA reduction applied per fold."""
     from sklearn.decomposition import PCA
+
     le = LabelEncoder()
     y = le.fit_transform(labels)
     classes = le.classes_
@@ -328,10 +381,15 @@ def run_sklearn_probe_pca(clf_fn, X, labels, genes, n_folds=5, seed=42, n_pca=50
             continue
 
         # Normalize then PCA
-        mu = X_tr.mean(0); std = X_tr.std(0) + 1e-8
-        X_tr = (X_tr - mu) / std; X_te = (X_te - mu) / std
-        pca = PCA(n_components=min(n_pca, X_tr.shape[1], X_tr.shape[0] - 1), random_state=seed)
-        X_tr = pca.fit_transform(X_tr); X_te = pca.transform(X_te)
+        mu = X_tr.mean(0)
+        std = X_tr.std(0) + 1e-8
+        X_tr = (X_tr - mu) / std
+        X_te = (X_te - mu) / std
+        pca = PCA(
+            n_components=min(n_pca, X_tr.shape[1], X_tr.shape[0] - 1), random_state=seed
+        )
+        X_tr = pca.fit_transform(X_tr)
+        X_te = pca.transform(X_te)
 
         clf = clf_fn(seed)
         clf.fit(X_tr, y_tr)
@@ -363,32 +421,58 @@ def run_sklearn_probe_pca(clf_fn, X, labels, genes, n_folds=5, seed=42, n_pca=50
 # Main
 # ---------------------------------------------------------------------------
 
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data_dir", type=str, default="run_0/data",
-                        help="Directory with cached gerasimavicius_variants.json and sequences.json")
-    parser.add_argument("--emb_dir", type=str, default="run_0/data",
-                        help="Directory with cached embedding .npy files")
+    parser.add_argument(
+        "--data_dir",
+        type=str,
+        default="run_0/data",
+        help="Directory with cached gerasimavicius_variants.json and sequences.json",
+    )
+    parser.add_argument(
+        "--emb_dir",
+        type=str,
+        default="run_0/data",
+        help="Directory with cached embedding .npy files",
+    )
     parser.add_argument("--out_dir", type=str, default="run_0")
     parser.add_argument("--model", type=str, default=ESM2_MODEL_650M)
     parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--family_split", action="store_true",
-                        help="Run family-split CV in addition to gene-split")
-    parser.add_argument("--pfam_map", type=str, default=None,
-                        help="Path to pfam_families.json (required for --family_split)")
+    parser.add_argument(
+        "--family_split",
+        action="store_true",
+        help="Run family-split CV in addition to gene-split",
+    )
+    parser.add_argument(
+        "--pfam_map",
+        type=str,
+        default=None,
+        help="Path to pfam_families.json (required for --family_split)",
+    )
     parser.add_argument("--max_epochs", type=int, default=100)
     parser.add_argument("--patience", type=int, default=10)
-    parser.add_argument("--variants_file", type=str, default=None,
-                        help="Pre-filtered variants JSON (e.g. merged_valid_variants.json). "
-                             "Skips sequence filtering. Embeddings must be aligned.")
-    parser.add_argument("--emb_prefix", type=str, default="",
-                        help="Embedding filename prefix, e.g. 'merged_' for merged dataset.")
+    parser.add_argument(
+        "--variants_file",
+        type=str,
+        default=None,
+        help="Pre-filtered variants JSON (e.g. merged_valid_variants.json). "
+        "Skips sequence filtering. Embeddings must be aligned.",
+    )
+    parser.add_argument(
+        "--emb_prefix",
+        type=str,
+        default="",
+        help="Embedding filename prefix, e.g. 'merged_' for merged dataset.",
+    )
     args = parser.parse_args()
 
     np.random.seed(args.seed)
 
     print("=== Loading variants and labels ===")
-    valid_variants, labels, genes = load_variants_and_labels(args.data_dir, args.variants_file)
+    valid_variants, labels, genes = load_variants_and_labels(
+        args.data_dir, args.variants_file
+    )
 
     print("\n=== Loading embeddings ===")
     delta_mean, delta_pos = load_embeddings(args.emb_dir, args.model, args.emb_prefix)
@@ -401,14 +485,22 @@ def main():
     from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier
     from sklearn.neighbors import KNeighborsClassifier
 
-    def gbm_fn(seed): return GradientBoostingClassifier(
-        n_estimators=50, max_depth=4, learning_rate=0.1,
-        subsample=0.8, random_state=seed)
+    def gbm_fn(seed):
+        return GradientBoostingClassifier(
+            n_estimators=50,
+            max_depth=4,
+            learning_rate=0.1,
+            subsample=0.8,
+            random_state=seed,
+        )
 
-    def rf_fn(seed): return RandomForestClassifier(
-        n_estimators=50, max_depth=8, random_state=seed, n_jobs=-1)
+    def rf_fn(seed):
+        return RandomForestClassifier(
+            n_estimators=50, max_depth=8, random_state=seed, n_jobs=-1
+        )
 
-    def knn_fn(seed): return KNeighborsClassifier(n_neighbors=10, metric="cosine")
+    def knn_fn(seed):
+        return KNeighborsClassifier(n_neighbors=10, metric="cosine")
 
     results = {}
 
@@ -423,30 +515,61 @@ def main():
 
     for feat_name, X in [("delta_mean", delta_mean), ("delta_pos", delta_pos)]:
         print(f"\n=== MLP gene-split: {feat_name} ===")
-        results[f"mlp_{feat_name}_gene"] = run_mlp_probe(X, labels, genes, seed=args.seed, splits=gene_splits,
-                                                          max_epochs=args.max_epochs, patience=args.patience)
-        print(f"  macro_f1={results[f'mlp_{feat_name}_gene'].get('macro_f1_mean', float('nan')):.3f}")
+        results[f"mlp_{feat_name}_gene"] = run_mlp_probe(
+            X,
+            labels,
+            genes,
+            seed=args.seed,
+            splits=gene_splits,
+            max_epochs=args.max_epochs,
+            patience=args.patience,
+        )
+        print(
+            f"  macro_f1={results[f'mlp_{feat_name}_gene'].get('macro_f1_mean', float('nan')):.3f}"
+        )
 
         if family_splits:
             print(f"\n=== MLP family-split: {feat_name} ===")
-            results[f"mlp_{feat_name}_family"] = run_mlp_probe(X, labels, genes, seed=args.seed, splits=family_splits,
-                                                                max_epochs=args.max_epochs, patience=args.patience)
-            print(f"  macro_f1={results[f'mlp_{feat_name}_family'].get('macro_f1_mean', float('nan')):.3f}")
-            delta = (results[f"mlp_{feat_name}_gene"].get("macro_f1_mean", float("nan")) -
-                     results[f"mlp_{feat_name}_family"].get("macro_f1_mean", float("nan")))
+            results[f"mlp_{feat_name}_family"] = run_mlp_probe(
+                X,
+                labels,
+                genes,
+                seed=args.seed,
+                splits=family_splits,
+                max_epochs=args.max_epochs,
+                patience=args.patience,
+            )
+            print(
+                f"  macro_f1={results[f'mlp_{feat_name}_family'].get('macro_f1_mean', float('nan')):.3f}"
+            )
+            delta = results[f"mlp_{feat_name}_gene"].get(
+                "macro_f1_mean", float("nan")
+            ) - results[f"mlp_{feat_name}_family"].get("macro_f1_mean", float("nan"))
             print(f"  Δ(gene − family) = {delta:+.3f}  ← positive ⇒ homology leakage")
 
         print(f"\n=== GBM gene-split: {feat_name} (PCA-50) ===")
-        results[f"gbm_{feat_name}"] = run_sklearn_probe_pca(gbm_fn, X, labels, genes, seed=args.seed, n_pca=50)
-        print(f"  macro_f1={results[f'gbm_{feat_name}'].get('macro_f1_mean', float('nan')):.3f}")
+        results[f"gbm_{feat_name}"] = run_sklearn_probe_pca(
+            gbm_fn, X, labels, genes, seed=args.seed, n_pca=50
+        )
+        print(
+            f"  macro_f1={results[f'gbm_{feat_name}'].get('macro_f1_mean', float('nan')):.3f}"
+        )
 
         print(f"\n=== RF gene-split: {feat_name} (PCA-50) ===")
-        results[f"rf_{feat_name}"] = run_sklearn_probe_pca(rf_fn, X, labels, genes, seed=args.seed, n_pca=50)
-        print(f"  macro_f1={results[f'rf_{feat_name}'].get('macro_f1_mean', float('nan')):.3f}")
+        results[f"rf_{feat_name}"] = run_sklearn_probe_pca(
+            rf_fn, X, labels, genes, seed=args.seed, n_pca=50
+        )
+        print(
+            f"  macro_f1={results[f'rf_{feat_name}'].get('macro_f1_mean', float('nan')):.3f}"
+        )
 
         print(f"\n=== kNN gene-split: {feat_name} ===")
-        results[f"knn_{feat_name}"] = run_sklearn_probe(knn_fn, X, labels, genes, seed=args.seed, normalize=True)
-        print(f"  macro_f1={results[f'knn_{feat_name}'].get('macro_f1_mean', float('nan')):.3f}")
+        results[f"knn_{feat_name}"] = run_sklearn_probe(
+            knn_fn, X, labels, genes, seed=args.seed, normalize=True
+        )
+        print(
+            f"  macro_f1={results[f'knn_{feat_name}'].get('macro_f1_mean', float('nan')):.3f}"
+        )
 
     print("\n=== Summary ===")
     for feat, res in results.items():

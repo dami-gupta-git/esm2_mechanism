@@ -4,21 +4,22 @@ fetch_uniprot_entry makes network calls and is not tested here.
 """
 
 import pytest
-from esm2_mechanism.fetch_data.fetch_annotations import parse_ec_and_keywords, assign_4class
-
+from esm2_mechanism.fetch_data.fetch_annotations import (
+    parse_ec_and_keywords,
+    assign_4class,
+)
 
 # ---------------------------------------------------------------------------
 # parse_ec_and_keywords
 # ---------------------------------------------------------------------------
+
 
 class TestParseEcAndKeywords:
 
     def test_ec_from_recommended_name(self):
         entry = {
             "proteinDescription": {
-                "recommendedName": {
-                    "ecNumbers": [{"value": "2.7.11.1"}]
-                }
+                "recommendedName": {"ecNumbers": [{"value": "2.7.11.1"}]}
             }
         }
         ec, kw = parse_ec_and_keywords(entry)
@@ -29,9 +30,7 @@ class TestParseEcAndKeywords:
         entry = {
             "proteinDescription": {
                 "recommendedName": {},
-                "alternativeNames": [
-                    {"ecNumbers": [{"value": "3.4.21.4"}]}
-                ]
+                "alternativeNames": [{"ecNumbers": [{"value": "3.4.21.4"}]}],
             }
         }
         ec, kw = parse_ec_and_keywords(entry)
@@ -39,20 +38,24 @@ class TestParseEcAndKeywords:
 
     def test_ec_from_catalytic_activity_string(self):
         entry = {
-            "comments": [{
-                "commentType": "CATALYTIC ACTIVITY",
-                "reaction": {"ecNumber": "1.1.1.1"}
-            }]
+            "comments": [
+                {
+                    "commentType": "CATALYTIC ACTIVITY",
+                    "reaction": {"ecNumber": "1.1.1.1"},
+                }
+            ]
         }
         ec, kw = parse_ec_and_keywords(entry)
         assert "1.1.1.1" in ec
 
     def test_ec_from_catalytic_activity_list_of_strings(self):
         entry = {
-            "comments": [{
-                "commentType": "CATALYTIC ACTIVITY",
-                "reaction": {"ecNumber": ["1.1.1.1", "1.1.1.2"]}
-            }]
+            "comments": [
+                {
+                    "commentType": "CATALYTIC ACTIVITY",
+                    "reaction": {"ecNumber": ["1.1.1.1", "1.1.1.2"]},
+                }
+            ]
         }
         ec, kw = parse_ec_and_keywords(entry)
         assert "1.1.1.1" in ec
@@ -63,10 +66,12 @@ class TestParseEcAndKeywords:
             "proteinDescription": {
                 "recommendedName": {"ecNumbers": [{"value": "2.7.11.1"}]}
             },
-            "comments": [{
-                "commentType": "CATALYTIC ACTIVITY",
-                "reaction": {"ecNumber": "2.7.11.1"}
-            }]
+            "comments": [
+                {
+                    "commentType": "CATALYTIC ACTIVITY",
+                    "reaction": {"ecNumber": "2.7.11.1"},
+                }
+            ],
         }
         ec, _ = parse_ec_and_keywords(entry)
         assert ec.count("2.7.11.1") == 1
@@ -92,9 +97,7 @@ class TestParseEcAndKeywords:
         entry = {
             "proteinDescription": {
                 "recommendedName": None,
-                "alternativeNames": [
-                    {"ecNumbers": [{"value": "3.4.21.4"}]}
-                ]
+                "alternativeNames": [{"ecNumbers": [{"value": "3.4.21.4"}]}],
             }
         }
         ec, _ = parse_ec_and_keywords(entry)
@@ -102,19 +105,16 @@ class TestParseEcAndKeywords:
 
     def test_non_catalytic_comments_ignored(self):
         entry = {
-            "comments": [{
-                "commentType": "FUNCTION",
-                "reaction": {"ecNumber": "2.7.11.1"}
-            }]
+            "comments": [
+                {"commentType": "FUNCTION", "reaction": {"ecNumber": "2.7.11.1"}}
+            ]
         }
         ec, _ = parse_ec_and_keywords(entry)
         assert ec == []
 
     def test_all_keyword_ids_returned(self):
         """All keyword IDs are returned — no silent truncation."""
-        entry = {
-            "keywords": [{"id": f"KW-{i:04d}"} for i in range(20)]
-        }
+        entry = {"keywords": [{"id": f"KW-{i:04d}"} for i in range(20)]}
         _, kw = parse_ec_and_keywords(entry)
         assert len(kw) == 20
 
@@ -122,6 +122,7 @@ class TestParseEcAndKeywords:
 # ---------------------------------------------------------------------------
 # assign_4class
 # ---------------------------------------------------------------------------
+
 
 class TestAssign4Class:
 

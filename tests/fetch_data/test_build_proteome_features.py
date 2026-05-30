@@ -25,7 +25,9 @@ from esm2_mechanism.fetch_data.build_proteome_features import (
 
 def _rows(values):
     """Build minimal row dicts from a list of pLI values (None allowed)."""
-    return [{"gene": f"G{i}", "pfam_family": "", "pLI": v} for i, v in enumerate(values)]
+    return [
+        {"gene": f"G{i}", "pfam_family": "", "pLI": v} for i, v in enumerate(values)
+    ]
 
 
 COLS = ["gene", "pfam_family", "pLI"]
@@ -60,12 +62,18 @@ def test_observed_values_unchanged():
 # ---------------------------------------------------------------------------
 # get_shet
 # ---------------------------------------------------------------------------
-_SHET_FILE = "ensg\thgnc\tchrom\tobs_lof\texp_lof\tprior_mean\tpost_mean\tpost_lower_95\tpost_upper_95\n" \
-             "ENSG00000001\tHGNC:1\tchr1\t5\t4.0\t0.01\t0.005\t0.001\t0.01\n" \
-             "ENSG00000002\tHGNC:2\tchr2\t10\t8.0\t0.02\t0.015\t0.005\t0.03\n" \
-             "ENSG00000003\tHGNC:3\tchr3\t0\t5.0\t0.001\t0.0001\t0.00001\t0.001\n"
+_SHET_FILE = (
+    "ensg\thgnc\tchrom\tobs_lof\texp_lof\tprior_mean\tpost_mean\tpost_lower_95\tpost_upper_95\n"
+    "ENSG00000001\tHGNC:1\tchr1\t5\t4.0\t0.01\t0.005\t0.001\t0.01\n"
+    "ENSG00000002\tHGNC:2\tchr2\t10\t8.0\t0.02\t0.015\t0.005\t0.03\n"
+    "ENSG00000003\tHGNC:3\tchr3\t0\t5.0\t0.001\t0.0001\t0.00001\t0.001\n"
+)
 
-_ENSG_MAP = {"ENSG00000001": "BRCA1", "ENSG00000002": "TP53", "ENSG00000003": "UNKNOWN_GENE"}
+_ENSG_MAP = {
+    "ENSG00000001": "BRCA1",
+    "ENSG00000002": "TP53",
+    "ENSG00000003": "UNKNOWN_GENE",
+}
 
 
 def _patch_shet(monkeypatch, tmp_path, shet_content=_SHET_FILE, ensg_map=_ENSG_MAP):

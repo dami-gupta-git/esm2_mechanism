@@ -55,10 +55,14 @@ from sklearn.metrics import f1_score, roc_auc_score
 from sklearn.neural_network import MLPClassifier
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 from esm2_mechanism.utils_probes import (
-    family_split_indices, compute_metrics, aggregate_folds, align_proba,
+    family_split_indices,
+    compute_metrics,
+    aggregate_folds,
+    align_proba,
 )
 from esm2_mechanism.utils_paths import DATA_DIR, RESULTS_DIR, PROJECT_ROOT
 import functools
+
 print = functools.partial(print, flush=True)
 
 warnings.filterwarnings("ignore")
@@ -80,12 +84,12 @@ N_FOLDS = 5
 # Feature class definitions for T4
 # ---------------------------------------------------------------------------
 FEATURE_CLASSES = {
-    "constraint":   ["pLI", "LOEUF", "mis_z"],
-    "paralogs":     ["paralog_count"],
-    "expression":   ["tissue_specificity_tau"],
-    "abundance":    ["log_abundance_ppm"],
-    "interactome":  ["PPI_degree"],
-    "dosage":       ["HI_score", "TS_score"],
+    "constraint": ["pLI", "LOEUF", "mis_z"],
+    "paralogs": ["paralog_count"],
+    "expression": ["tissue_specificity_tau"],
+    "abundance": ["log_abundance_ppm"],
+    "interactome": ["PPI_degree"],
+    "dosage": ["HI_score", "TS_score"],
 }
 
 
@@ -152,10 +156,19 @@ def load_all():
     gene_level_idx = gene_level_idx[valid_gene_mask]
     X_prot_gene = prot_matrix[gene_level_idx]
 
-    return (variants, labels, genes, delta, X_prot_var, pfam_map,
-            gene_level, X_prot_gene, prot_matrix, gene_to_row, feature_names)
-
-
+    return (
+        variants,
+        labels,
+        genes,
+        delta,
+        X_prot_var,
+        pfam_map,
+        gene_level,
+        X_prot_gene,
+        prot_matrix,
+        gene_to_row,
+        feature_names,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -206,7 +219,9 @@ def run_per_gene_cv(
 
     v1_folds, v2_folds, v3_folds = [], [], []
 
-    for fold_i, (tr_g, te_g) in enumerate(family_split_indices(groups_g, N_FOLDS, seed)):
+    for fold_i, (tr_g, te_g) in enumerate(
+        family_split_indices(groups_g, N_FOLDS, seed)
+    ):
         # Gene-level train/test split
         train_genes_set = set(gene_df_f.iloc[tr_g]["gene"].values)
         test_genes_set = set(gene_df_f.iloc[te_g]["gene"].values)
@@ -222,7 +237,9 @@ def run_per_gene_cv(
             continue
 
         sc2 = StandardScaler().fit(X_tr_g)
-        lr2 = LogisticRegression(max_iter=2000, class_weight="balanced", random_state=seed)
+        lr2 = LogisticRegression(
+            max_iter=2000, class_weight="balanced", random_state=seed
+        )
         lr2.fit(sc2.transform(X_tr_g), y_tr_g)
         pr2 = lr2.predict_proba(sc2.transform(X_te_g))
         # Align to CLASSES order
@@ -266,15 +283,25 @@ def run_per_gene_cv(
         sc1 = StandardScaler().fit(X_tr_d)
         X_tr_d_s = sc1.transform(X_tr_d)
         X_bal_d, y_bal_d = oversample(X_tr_d_s, y_tr_d, seed)
-        mlp1 = MLPClassifier((256, 64), max_iter=500, early_stopping=True,
-                              validation_fraction=0.15, random_state=seed)
+        mlp1 = MLPClassifier(
+            (256, 64),
+            max_iter=500,
+            early_stopping=True,
+            validation_fraction=0.15,
+            random_state=seed,
+        )
         mlp1.fit(X_bal_d, y_bal_d)
 
         sc3 = StandardScaler().fit(X_tr_c)
         X_tr_c_s = sc3.transform(X_tr_c)
         X_bal_c, y_bal_c = oversample(X_tr_c_s, y_tr_c, seed)
-        mlp3 = MLPClassifier((256, 64), max_iter=500, early_stopping=True,
-                              validation_fraction=0.15, random_state=seed)
+        mlp3 = MLPClassifier(
+            (256, 64),
+            max_iter=500,
+            early_stopping=True,
+            validation_fraction=0.15,
+            random_state=seed,
+        )
         mlp3.fit(X_bal_c, y_bal_c)
 
         # Aggregate per-gene predictions for test genes
@@ -293,13 +320,17 @@ def run_per_gene_cv(
 
             # V1
             X_g_d = sc1.transform(delta_f[gene_var_idx])
-            pr1_g = align_proba(mlp1.predict_proba(X_g_d), mlp1.classes_, len(CLASSES)).mean(0)
+            pr1_g = align_proba(
+                mlp1.predict_proba(X_g_d), mlp1.classes_, len(CLASSES)
+            ).mean(0)
             pr_gene1.append(pr1_g)
             y_gene_pred1.append(pr1_g.argmax())
 
             # V3
             X_g_c = sc3.transform(X_concat_f[gene_var_idx])
-            pr3_g = align_proba(mlp3.predict_proba(X_g_c), mlp3.classes_, len(CLASSES)).mean(0)
+            pr3_g = align_proba(
+                mlp3.predict_proba(X_g_c), mlp3.classes_, len(CLASSES)
+            ).mean(0)
             pr_gene3.append(pr3_g)
             y_gene_pred3.append(pr3_g.argmax())
 
@@ -315,10 +346,12 @@ def run_per_gene_cv(
         v1_folds.append(compute_metrics(y_gene_true, y_gene_pred1, pr_gene1))
         v3_folds.append(compute_metrics(y_gene_true, y_gene_pred3, pr_gene3))
 
-        print(f"  [T2 seed={seed}] Fold {fold_i+1}: "
-              f"V1={v1_folds[-1]['macro_f1']:.3f}  "
-              f"V2={v2_folds[-1]['macro_f1']:.3f}  "
-              f"V3={v3_folds[-1]['macro_f1']:.3f}")
+        print(
+            f"  [T2 seed={seed}] Fold {fold_i+1}: "
+            f"V1={v1_folds[-1]['macro_f1']:.3f}  "
+            f"V2={v2_folds[-1]['macro_f1']:.3f}  "
+            f"V3={v3_folds[-1]['macro_f1']:.3f}"
+        )
 
     return {
         "V1_per_gene": aggregate_folds(v1_folds) if v1_folds else {},
@@ -348,11 +381,13 @@ def run_v2_ablation(
             if len(set(y_tr.tolist())) < len(CLASSES) or len(set(y_te.tolist())) < 2:
                 continue
             sc = StandardScaler().fit(X_tr)
-            lr = LogisticRegression(max_iter=2000, class_weight="balanced",
-                                    random_state=seed)
+            lr = LogisticRegression(
+                max_iter=2000, class_weight="balanced", random_state=seed
+            )
             lr.fit(sc.transform(X_tr), y_tr)
-            pr_al = align_proba(lr.predict_proba(sc.transform(X_te)),
-                                lr.classes_, len(CLASSES))
+            pr_al = align_proba(
+                lr.predict_proba(sc.transform(X_te)), lr.classes_, len(CLASSES)
+            )
             pd_ = pr_al.argmax(axis=1)
             folds.append(compute_metrics(y_te, pd_, pr_al))
         return aggregate_folds(folds) if folds else {"macro_f1_mean": float("nan")}
@@ -384,9 +419,11 @@ def run_v2_ablation(
             "delta_f1": float(delta_f1),
             "delta_auroc_DN": float(delta_dn),
         }
-        print(f"  [T4 seed={seed}] minus {cls_name:12s}: "
-              f"f1={res['macro_f1_mean']:.4f}  ΔF1={delta_f1:+.4f}  "
-              f"ΔDN_AUROC={delta_dn:+.4f}")
+        print(
+            f"  [T4 seed={seed}] minus {cls_name:12s}: "
+            f"f1={res['macro_f1_mean']:.4f}  ΔF1={delta_f1:+.4f}  "
+            f"ΔDN_AUROC={delta_dn:+.4f}"
+        )
 
     return ablation_results
 
@@ -406,8 +443,19 @@ def main():
     out_dir.mkdir(parents=True, exist_ok=True)
 
     print("Loading data...")
-    (variants, var_labels, var_genes, delta, X_prot_var, pfam_map,
-     gene_level_df, X_prot_gene, prot_matrix, gene_to_row, feature_names) = load_all()
+    (
+        variants,
+        var_labels,
+        var_genes,
+        delta,
+        X_prot_var,
+        pfam_map,
+        gene_level_df,
+        X_prot_gene,
+        prot_matrix,
+        gene_to_row,
+        feature_names,
+    ) = load_all()
 
     le = LabelEncoder()
     le.fit(CLASSES)
@@ -454,17 +502,27 @@ def main():
         # Aggregate T2
         t2_summary = {}
         for v in ["V1_per_gene", "V2_per_gene", "V3_per_gene"]:
-            f1s = [r[v].get("macro_f1_mean") for r in t2_seed_results
-                   if r[v].get("macro_f1_mean") is not None]
+            f1s = [
+                r[v].get("macro_f1_mean")
+                for r in t2_seed_results
+                if r[v].get("macro_f1_mean") is not None
+            ]
             t2_summary[v] = {
                 "macro_f1_mean": float(np.mean(f1s)) if f1s else None,
                 "macro_f1_std": float(np.std(f1s)) if f1s else None,
             }
             for cls in CLASSES:
-                vals = [r[v].get(f"auroc_{cls}_mean") for r in t2_seed_results
-                        if r[v].get(f"auroc_{cls}_mean") is not None]
-                t2_summary[v][f"auroc_{cls}_mean"] = float(np.mean(vals)) if vals else None
-                t2_summary[v][f"auroc_{cls}_std"] = float(np.std(vals)) if vals else None
+                vals = [
+                    r[v].get(f"auroc_{cls}_mean")
+                    for r in t2_seed_results
+                    if r[v].get(f"auroc_{cls}_mean") is not None
+                ]
+                t2_summary[v][f"auroc_{cls}_mean"] = (
+                    float(np.mean(vals)) if vals else None
+                )
+                t2_summary[v][f"auroc_{cls}_std"] = (
+                    float(np.std(vals)) if vals else None
+                )
 
         t2_sum_path = out_dir / "per_gene_summary.json"
         with open(t2_sum_path, "w") as f:
@@ -475,7 +533,11 @@ def main():
             m = t2_summary[v].get("macro_f1_mean")
             s = t2_summary[v].get("macro_f1_std")
             dn = t2_summary[v].get("auroc_DN_mean")
-            print(f"  {v}: macro_f1={m:.4f}±{s:.4f}  DN_AUROC={dn:.3f}" if m else f"  {v}: N/A")
+            print(
+                f"  {v}: macro_f1={m:.4f}±{s:.4f}  DN_AUROC={dn:.3f}"
+                if m
+                else f"  {v}: N/A"
+            )
 
     # -----------------------------------------------------------------------
     # T4 — V2 Feature-class ablation
@@ -485,9 +547,7 @@ def main():
         t4_seed_results = []
         for seed in seeds:
             print(f"\n--- Seed {seed} ---")
-            res = run_v2_ablation(
-                X_prot_g_f, y_g_f, groups_g, feature_names, seed, le
-            )
+            res = run_v2_ablation(X_prot_g_f, y_g_f, groups_g, feature_names, seed, le)
             res["seed"] = seed
             t4_seed_results.append(res)
             out_path = out_dir / f"v2_ablation_seed{seed}.json"
@@ -497,18 +557,34 @@ def main():
 
         # Aggregate T4
         t4_summary = {"FULL": {}}
-        full_f1s = [r["FULL"].get("macro_f1_mean") for r in t4_seed_results
-                    if r["FULL"].get("macro_f1_mean") is not None]
-        t4_summary["FULL"]["macro_f1_mean"] = float(np.mean(full_f1s)) if full_f1s else None
-        t4_summary["FULL"]["macro_f1_std"] = float(np.std(full_f1s)) if full_f1s else None
+        full_f1s = [
+            r["FULL"].get("macro_f1_mean")
+            for r in t4_seed_results
+            if r["FULL"].get("macro_f1_mean") is not None
+        ]
+        t4_summary["FULL"]["macro_f1_mean"] = (
+            float(np.mean(full_f1s)) if full_f1s else None
+        )
+        t4_summary["FULL"]["macro_f1_std"] = (
+            float(np.std(full_f1s)) if full_f1s else None
+        )
 
         for cls_name in FEATURE_CLASSES:
-            delta_f1s = [r[cls_name]["delta_f1"] for r in t4_seed_results
-                         if cls_name in r and "delta_f1" in r[cls_name]]
-            delta_dns = [r[cls_name]["delta_auroc_DN"] for r in t4_seed_results
-                         if cls_name in r and "delta_auroc_DN" in r[cls_name]]
-            abl_f1s = [r[cls_name].get("macro_f1_mean") for r in t4_seed_results
-                       if cls_name in r and r[cls_name].get("macro_f1_mean") is not None]
+            delta_f1s = [
+                r[cls_name]["delta_f1"]
+                for r in t4_seed_results
+                if cls_name in r and "delta_f1" in r[cls_name]
+            ]
+            delta_dns = [
+                r[cls_name]["delta_auroc_DN"]
+                for r in t4_seed_results
+                if cls_name in r and "delta_auroc_DN" in r[cls_name]
+            ]
+            abl_f1s = [
+                r[cls_name].get("macro_f1_mean")
+                for r in t4_seed_results
+                if cls_name in r and r[cls_name].get("macro_f1_mean") is not None
+            ]
             t4_summary[cls_name] = {
                 "macro_f1_mean": float(np.mean(abl_f1s)) if abl_f1s else None,
                 "macro_f1_std": float(np.std(abl_f1s)) if abl_f1s else None,

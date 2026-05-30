@@ -21,20 +21,28 @@ Key invariants checked:
 import numpy as np
 import pytest
 from esm2_mechanism.utils_probes import (
-    gene_split_cv, family_split_cv, family_split_indices,
-    compute_metrics, aggregate_folds, align_proba,
-    run_logreg_cv, run_logreg_binary_cv, run_ridge_cv,
+    gene_split_cv,
+    family_split_cv,
+    family_split_indices,
+    compute_metrics,
+    aggregate_folds,
+    align_proba,
+    run_logreg_cv,
+    run_logreg_binary_cv,
+    run_ridge_cv,
     MECHANISM_CLASSES,
 )
 
-
 # ── fixtures ─────────────────────────────────────────────────────────────────
+
 
 def make_genes(n_genes=20, variants_per_gene=10, seed=0):
     """Return a variants-length array of gene labels."""
     rng = np.random.RandomState(seed)
     gene_names = [f"GENE{i:02d}" for i in range(n_genes)]
-    return np.array([gene_names[i] for i in rng.randint(0, n_genes, n_genes * variants_per_gene)])
+    return np.array(
+        [gene_names[i] for i in rng.randint(0, n_genes, n_genes * variants_per_gene)]
+    )
 
 
 def make_pfam_map(genes, n_families=5):
@@ -44,6 +52,7 @@ def make_pfam_map(genes, n_families=5):
 
 
 # ── gene_split_cv ─────────────────────────────────────────────────────────────
+
 
 class TestGeneSplitCv:
 
@@ -61,7 +70,9 @@ class TestGeneSplitCv:
         genes = make_genes()
         splits = gene_split_cv(genes, n_folds=5, seed=42)
         for tr, te in splits:
-            assert len(set(tr) & set(te)) == 0, "Same index appears in both train and test"
+            assert (
+                len(set(tr) & set(te)) == 0
+            ), "Same index appears in both train and test"
 
     def test_every_sample_covered_once(self):
         """Each sample appears in exactly one test fold."""
@@ -133,6 +144,7 @@ class TestGeneSplitCv:
 
 # ── family_split_cv ───────────────────────────────────────────────────────────
 
+
 class TestFamilySplitCv:
 
     def test_no_family_leakage(self):
@@ -144,7 +156,9 @@ class TestFamilySplitCv:
             tr_fams = {pfam[g] for g in genes[tr] if g in pfam}
             te_fams = {pfam[g] for g in genes[te] if g in pfam}
             overlap = tr_fams & te_fams
-            assert not overlap, f"Family leakage: {overlap} appear in both train and test"
+            assert (
+                not overlap
+            ), f"Family leakage: {overlap} appear in both train and test"
 
     def test_train_test_disjoint_indices(self):
         genes = make_genes()
@@ -201,9 +215,9 @@ class TestFamilySplitCv:
         splits = family_split_cv(genes, partial_pfam, n_folds=5, seed=42)
         for tr, te in splits:
             for idx in list(tr) + list(te):
-                assert genes[idx] in partial_pfam, (
-                    f"Gene '{genes[idx]}' has no Pfam entry but appears in a fold"
-                )
+                assert (
+                    genes[idx] in partial_pfam
+                ), f"Gene '{genes[idx]}' has no Pfam entry but appears in a fold"
 
     def test_empty_pfam_map_returns_no_folds(self):
         genes = make_genes()
@@ -243,6 +257,7 @@ class TestFamilySplitCv:
 
 # ── family_split_indices ──────────────────────────────────────────────────────
 
+
 class TestFamilySplitIndices:
 
     def _make_groups(self, n=100, n_fams=5, none_frac=0.1, seed=0):
@@ -277,6 +292,7 @@ class TestFamilySplitIndices:
 
 
 # ── compute_metrics ──────────────────────────────────────────────────────────
+
 
 class TestComputeMetrics:
 
@@ -324,6 +340,7 @@ class TestComputeMetrics:
 
 # ── aggregate_folds ──────────────────────────────────────────────────────────
 
+
 class TestAggregateFolds:
 
     def _fold(self, f1, auroc_val):
@@ -359,6 +376,7 @@ class TestAggregateFolds:
 
 # ── align_proba ──────────────────────────────────────────────────────────────
 
+
 class TestAlignProba:
 
     def test_identity_alignment(self):
@@ -383,6 +401,7 @@ class TestAlignProba:
 
 
 # ── run_logreg_cv ─────────────────────────────────────────────────────────────
+
 
 class TestRunLogregCv:
 
@@ -416,6 +435,7 @@ class TestRunLogregCv:
 
 # ── run_logreg_binary_cv ──────────────────────────────────────────────────────
 
+
 class TestRunLogregBinaryCv:
 
     def _data(self, seed=0):
@@ -440,6 +460,7 @@ class TestRunLogregBinaryCv:
 
 
 # ── run_ridge_cv ──────────────────────────────────────────────────────────────
+
 
 class TestRunRidgeCv:
 

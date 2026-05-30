@@ -24,6 +24,7 @@ MECHANISM_CLASSES = ["GOF", "DN", "LOF"]
 # CV split generators
 # ---------------------------------------------------------------------------
 
+
 def gene_split_cv(genes: np.ndarray, n_folds: int = 5, seed: int = 42) -> list[tuple]:
     """Gene-disjoint CV: each fold holds out a disjoint set of genes."""
     u = np.array(sorted(set(genes)))
@@ -37,8 +38,9 @@ def gene_split_cv(genes: np.ndarray, n_folds: int = 5, seed: int = 42) -> list[t
     return splits
 
 
-def family_split_cv(genes: np.ndarray, pfam_map: dict, n_folds: int = 5,
-                    seed: int = 42) -> list[tuple]:
+def family_split_cv(
+    genes: np.ndarray, pfam_map: dict, n_folds: int = 5, seed: int = 42
+) -> list[tuple]:
     """Family-disjoint CV using a {gene: pfam_family} map.
 
     Only annotated genes (present in pfam_map) are included in train/test;
@@ -73,10 +75,12 @@ def family_split_indices(groups: np.ndarray, n_folds: int, seed: int):
     rng.shuffle(none_positions)
     none_fold = {pos: i % n_folds for i, pos in enumerate(none_positions)}
 
-    fold_of = np.array([
-        fam_fold[g] if g is not None else none_fold.get(i, 0)
-        for i, g in enumerate(groups)
-    ])
+    fold_of = np.array(
+        [
+            fam_fold[g] if g is not None else none_fold.get(i, 0)
+            for i, g in enumerate(groups)
+        ]
+    )
     for k in range(n_folds):
         test = np.where(fold_of == k)[0]
         train = np.where(fold_of != k)[0]
@@ -87,17 +91,19 @@ def family_split_indices(groups: np.ndarray, n_folds: int, seed: int):
 # Metrics
 # ---------------------------------------------------------------------------
 
-def compute_metrics(y_true: np.ndarray, y_pred: np.ndarray,
-                    y_proba: np.ndarray,
-                    classes: list[str] = MECHANISM_CLASSES) -> dict:
+
+def compute_metrics(
+    y_true: np.ndarray,
+    y_pred: np.ndarray,
+    y_proba: np.ndarray,
+    classes: list[str] = MECHANISM_CLASSES,
+) -> dict:
     """Compute macro-F1 and per-class AUROC.
 
     Returns {"macro_f1": float, "per_class_auroc": {cls: float|None}}.
     """
     if len(y_true) == 0:
-        return {"macro_f1": None,
-                "per_class_auroc": {c: None for c in classes},
-                "n": 0}
+        return {"macro_f1": None, "per_class_auroc": {c: None for c in classes}, "n": 0}
     macro_f1 = float(f1_score(y_true, y_pred, average="macro", zero_division=0))
     auroc: dict[str, float | None] = {}
     for i, cls in enumerate(classes):
@@ -112,8 +118,7 @@ def compute_metrics(y_true: np.ndarray, y_pred: np.ndarray,
     return out
 
 
-def per_gene_f1(y_true: np.ndarray, proba: np.ndarray,
-                genes: np.ndarray) -> float:
+def per_gene_f1(y_true: np.ndarray, proba: np.ndarray, genes: np.ndarray) -> float:
     """Aggregate per-variant probabilities to per-gene predictions and compute macro-F1."""
     unique = list(set(genes.tolist()))
     y_g, p_g = [], []
@@ -127,8 +132,9 @@ def per_gene_f1(y_true: np.ndarray, proba: np.ndarray,
     return float(f1_score(y_g, p_g, average="macro", zero_division=0))
 
 
-def aggregate_folds(fold_list: list[dict],
-                    classes: list[str] = MECHANISM_CLASSES) -> dict:
+def aggregate_folds(
+    fold_list: list[dict], classes: list[str] = MECHANISM_CLASSES
+) -> dict:
     """Aggregate per-fold dicts from compute_metrics into mean ± std."""
     if not fold_list:
         return {"error": "no folds"}
@@ -137,9 +143,11 @@ def aggregate_folds(fold_list: list[dict],
     out["macro_f1_mean"] = float(np.mean(f1_vals)) if f1_vals else None
     out["macro_f1_std"] = float(np.std(f1_vals)) if f1_vals else None
     for cls in classes:
-        vals = [f["per_class_auroc"][cls]
-                for f in fold_list
-                if f.get("per_class_auroc", {}).get(cls) is not None]
+        vals = [
+            f["per_class_auroc"][cls]
+            for f in fold_list
+            if f.get("per_class_auroc", {}).get(cls) is not None
+        ]
         out[f"auroc_{cls}_mean"] = float(np.mean(vals)) if vals else None
         out[f"auroc_{cls}_std"] = float(np.std(vals)) if vals else None
     out["n_folds"] = len(fold_list)
@@ -150,8 +158,10 @@ def aggregate_folds(fold_list: list[dict],
 # Probability alignment
 # ---------------------------------------------------------------------------
 
-def align_proba(proba: np.ndarray, clf_classes: np.ndarray,
-                n_classes: int) -> np.ndarray:
+
+def align_proba(
+    proba: np.ndarray, clf_classes: np.ndarray, n_classes: int
+) -> np.ndarray:
     """Reorder classifier probability output to match canonical class indices."""
     aligned = np.zeros((len(proba), n_classes), dtype=np.float32)
     for ci, c in enumerate(clf_classes):
@@ -164,11 +174,16 @@ def align_proba(proba: np.ndarray, clf_classes: np.ndarray,
 # Logistic regression probe
 # ---------------------------------------------------------------------------
 
-def run_logreg_cv(X: np.ndarray, y: np.ndarray, splits: list[tuple],
-                  classes: list[str] = MECHANISM_CLASSES,
-                  seed: int = 42,
-                  genes: np.ndarray | None = None,
-                  label: str = "") -> dict:
+
+def run_logreg_cv(
+    X: np.ndarray,
+    y: np.ndarray,
+    splits: list[tuple],
+    classes: list[str] = MECHANISM_CLASSES,
+    seed: int = 42,
+    genes: np.ndarray | None = None,
+    label: str = "",
+) -> dict:
     """Run LogReg + StandardScaler over pre-computed splits, return aggregated metrics.
 
     genes : if provided, also computes per_gene_f1 per fold
@@ -186,11 +201,13 @@ def run_logreg_cv(X: np.ndarray, y: np.ndarray, splits: list[tuple],
             print(f"    [{label}] Fold {fold_i+1}: skipped (< 2 classes in test)")
             continue
         sc = StandardScaler().fit(X_tr)
-        clf = LogisticRegression(max_iter=2000, class_weight="balanced",
-                                 random_state=seed)
+        clf = LogisticRegression(
+            max_iter=2000, class_weight="balanced", random_state=seed
+        )
         clf.fit(sc.transform(X_tr), y_tr)
-        proba = align_proba(clf.predict_proba(sc.transform(X_te)),
-                            clf.classes_, n_classes)
+        proba = align_proba(
+            clf.predict_proba(sc.transform(X_te)), clf.classes_, n_classes
+        )
         pred = proba.argmax(axis=1)
         fm = compute_metrics(y_te, pred, proba, classes)
         fold_results.append(fm)
@@ -201,11 +218,17 @@ def run_logreg_cv(X: np.ndarray, y: np.ndarray, splits: list[tuple],
             pg_f1s.append(pg)
             pg_str = f"  per_gene_f1={pg:.3f}"
 
-        print(f"    [{label}] Fold {fold_i+1}: macro_f1={fm['macro_f1']:.3f}{pg_str}  "
-              + "  ".join(
-                  f"{cls}={fm['per_class_auroc'].get(cls, float('nan')):.3f}"
-                  if fm["per_class_auroc"].get(cls) is not None else f"{cls}=NA"
-                  for cls in classes))
+        print(
+            f"    [{label}] Fold {fold_i+1}: macro_f1={fm['macro_f1']:.3f}{pg_str}  "
+            + "  ".join(
+                (
+                    f"{cls}={fm['per_class_auroc'].get(cls, float('nan')):.3f}"
+                    if fm["per_class_auroc"].get(cls) is not None
+                    else f"{cls}=NA"
+                )
+                for cls in classes
+            )
+        )
 
     agg = aggregate_folds(fold_results, classes)
     if pg_f1s:
@@ -214,11 +237,16 @@ def run_logreg_cv(X: np.ndarray, y: np.ndarray, splits: list[tuple],
     return agg
 
 
-def run_mlp_cv(X: np.ndarray, y: np.ndarray, splits: list[tuple],
-               hidden: tuple = (256, 64), seed: int = 42,
-               classes: list[str] = MECHANISM_CLASSES,
-               genes: np.ndarray | None = None,
-               label: str = "") -> dict:
+def run_mlp_cv(
+    X: np.ndarray,
+    y: np.ndarray,
+    splits: list[tuple],
+    hidden: tuple = (256, 64),
+    seed: int = 42,
+    classes: list[str] = MECHANISM_CLASSES,
+    genes: np.ndarray | None = None,
+    label: str = "",
+) -> dict:
     """Sklearn MLP CV: scale → oversample → fit → aggregate metrics.
 
     splits : pre-computed list of (train_idx, test_idx)
@@ -226,6 +254,7 @@ def run_mlp_cv(X: np.ndarray, y: np.ndarray, splits: list[tuple],
     label  : prefix for per-fold log lines
     """
     from sklearn.neural_network import MLPClassifier
+
     n_classes = len(classes)
     fold_results, pg_f1s = [], []
 
@@ -259,9 +288,13 @@ def run_mlp_cv(X: np.ndarray, y: np.ndarray, splits: list[tuple],
         os_idx = np.concatenate(os_idx)
         rng.shuffle(os_idx)
 
-        clf = MLPClassifier(hidden_layer_sizes=hidden, max_iter=500,
-                            early_stopping=True, validation_fraction=0.15,
-                            random_state=seed)
+        clf = MLPClassifier(
+            hidden_layer_sizes=hidden,
+            max_iter=500,
+            early_stopping=True,
+            validation_fraction=0.15,
+            random_state=seed,
+        )
         clf.fit(X_tr_s[os_idx], y_tr[os_idx])
 
         proba = align_proba(clf.predict_proba(X_te_s), clf.classes_, n_classes)
@@ -275,11 +308,17 @@ def run_mlp_cv(X: np.ndarray, y: np.ndarray, splits: list[tuple],
             pg_f1s.append(pg)
             pg_str = f"  per_gene_f1={pg:.3f}"
 
-        print(f"    [{label}] Fold {fold_i+1}: macro_f1={fm['macro_f1']:.3f}{pg_str}  "
-              + "  ".join(
-                  f"{cls}={fm['per_class_auroc'].get(cls, float('nan')):.3f}"
-                  if fm["per_class_auroc"].get(cls) is not None else f"{cls}=NA"
-                  for cls in classes))
+        print(
+            f"    [{label}] Fold {fold_i+1}: macro_f1={fm['macro_f1']:.3f}{pg_str}  "
+            + "  ".join(
+                (
+                    f"{cls}={fm['per_class_auroc'].get(cls, float('nan')):.3f}"
+                    if fm["per_class_auroc"].get(cls) is not None
+                    else f"{cls}=NA"
+                )
+                for cls in classes
+            )
+        )
 
     agg = aggregate_folds(fold_results, classes)
     if pg_f1s:
@@ -288,8 +327,9 @@ def run_mlp_cv(X: np.ndarray, y: np.ndarray, splits: list[tuple],
     return agg
 
 
-def run_logreg_binary_cv(X: np.ndarray, y: np.ndarray,
-                         splits: list[tuple], seed: int = 42) -> dict:
+def run_logreg_binary_cv(
+    X: np.ndarray, y: np.ndarray, splits: list[tuple], seed: int = 42
+) -> dict:
     """Binary LogReg CV returning AUROC mean ± std."""
     aurocs = []
     for tr, te in splits:
@@ -304,18 +344,28 @@ def run_logreg_binary_cv(X: np.ndarray, y: np.ndarray,
         aurocs.append(float(roc_auc_score(y[te], proba)))
     if not aurocs:
         return {}
-    return {"auroc_mean": float(np.mean(aurocs)), "auroc_std": float(np.std(aurocs)),
-            "n_folds": len(aurocs)}
+    return {
+        "auroc_mean": float(np.mean(aurocs)),
+        "auroc_std": float(np.std(aurocs)),
+        "n_folds": len(aurocs),
+    }
 
 
 # ---------------------------------------------------------------------------
 # Ridge regression probe (for continuous targets)
 # ---------------------------------------------------------------------------
 
-def run_ridge_cv(X: np.ndarray, y: np.ndarray, splits: list[tuple],
-                 alpha: float = 1.0, include_pearson: bool = True) -> dict:
+
+def run_ridge_cv(
+    X: np.ndarray,
+    y: np.ndarray,
+    splits: list[tuple],
+    alpha: float = 1.0,
+    include_pearson: bool = True,
+) -> dict:
     """Ridge regression CV returning Spearman (and optionally Pearson) r."""
     from scipy.stats import spearmanr, pearsonr
+
     rhos, rs = [], []
     for tr, te in splits:
         sc = StandardScaler()

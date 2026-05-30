@@ -17,15 +17,16 @@ import pandas as pd
 import pytest
 from collections import Counter
 
-
 # ---------------------------------------------------------------------------
 # badonyi_leakage_analysis.broadcast
 # ---------------------------------------------------------------------------
+
 
 class TestBroadcast:
 
     def setup_method(self):
         from esm2_mechanism.badonyi.badonyi_leakage_analysis import broadcast
+
         self.broadcast = broadcast
 
     def test_output_shape(self):
@@ -69,10 +70,12 @@ class TestBroadcast:
 # badonyi_holdout_survival.assign_folds
 # ---------------------------------------------------------------------------
 
+
 class TestAssignFolds:
 
     def setup_method(self):
         from esm2_mechanism.badonyi.badonyi_holdout_survival import assign_folds
+
         self.assign_folds = assign_folds
 
     def _make_df(self, n=30, n_groups=5):
@@ -116,25 +119,29 @@ class TestAssignFolds:
 # badonyi_holdout_survival.compute_aurocs
 # ---------------------------------------------------------------------------
 
+
 class TestComputeAurocs:
 
     def setup_method(self):
         from esm2_mechanism.badonyi.badonyi_holdout_survival import compute_aurocs
+
         self.compute_aurocs = compute_aurocs
 
     def _make_df(self, labels, pDN, pGOF, pLOF):
-        return pd.DataFrame({
-            "label3": labels,
-            "pDN": pDN,
-            "pGOF": pGOF,
-            "pLOF": pLOF,
-        })
+        return pd.DataFrame(
+            {
+                "label3": labels,
+                "pDN": pDN,
+                "pGOF": pGOF,
+                "pLOF": pLOF,
+            }
+        )
 
     def test_perfect_dn_vs_lof(self):
         n = 20
         labels = ["DN"] * 10 + ["LOF"] * 10
-        pDN  = [1.0] * 10 + [0.0] * 10
-        df = self._make_df(labels, pDN=pDN, pGOF=[0.5]*n, pLOF=[0.5]*n)
+        pDN = [1.0] * 10 + [0.0] * 10
+        df = self._make_df(labels, pDN=pDN, pGOF=[0.5] * n, pLOF=[0.5] * n)
         result = self.compute_aurocs(df)
         assert result["DN_vs_LOF"] == pytest.approx(1.0)
 
@@ -142,23 +149,25 @@ class TestComputeAurocs:
         n = 20
         labels = ["DN"] * 10 + ["LOF"] * 10
         pDN = [0.5] * n
-        df = self._make_df(labels, pDN=pDN, pGOF=[0.5]*n, pLOF=[0.5]*n)
+        df = self._make_df(labels, pDN=pDN, pGOF=[0.5] * n, pLOF=[0.5] * n)
         result = self.compute_aurocs(df)
         assert result["DN_vs_LOF"] == pytest.approx(0.5)
 
     def test_single_class_dn_vs_lof_returns_none(self):
         n = 10
-        df = self._make_df(["DN"]*n, pDN=[0.9]*n, pGOF=[0.5]*n, pLOF=[0.1]*n)
+        df = self._make_df(["DN"] * n, pDN=[0.9] * n, pGOF=[0.5] * n, pLOF=[0.1] * n)
         result = self.compute_aurocs(df)
         assert result["DN_vs_LOF"] is None
 
     def test_missing_preds_excluded(self):
-        df = pd.DataFrame({
-            "label3": ["DN", "LOF", "DN", "LOF"],
-            "pDN":  [None, None, 0.9, 0.1],
-            "pGOF": [None, None, 0.1, 0.9],
-            "pLOF": [None, None, 0.1, 0.9],
-        })
+        df = pd.DataFrame(
+            {
+                "label3": ["DN", "LOF", "DN", "LOF"],
+                "pDN": [None, None, 0.9, 0.1],
+                "pGOF": [None, None, 0.1, 0.9],
+                "pLOF": [None, None, 0.1, 0.9],
+            }
+        )
         result = self.compute_aurocs(df)
         # Only 2 rows have predictions — still computable if both classes present
         assert result["n_total"] == 2
@@ -166,14 +175,14 @@ class TestComputeAurocs:
     def test_n_total_correct(self):
         n = 15
         labels = ["DN"] * 5 + ["LOF"] * 5 + ["GOF"] * 5
-        df = self._make_df(labels, pDN=[0.5]*n, pGOF=[0.5]*n, pLOF=[0.5]*n)
+        df = self._make_df(labels, pDN=[0.5] * n, pGOF=[0.5] * n, pLOF=[0.5] * n)
         result = self.compute_aurocs(df)
         assert result["n_total"] == n
 
     def test_keys_present(self):
         n = 20
         labels = ["DN"] * 7 + ["LOF"] * 7 + ["GOF"] * 6
-        df = self._make_df(labels, pDN=[0.5]*n, pGOF=[0.5]*n, pLOF=[0.5]*n)
+        df = self._make_df(labels, pDN=[0.5] * n, pGOF=[0.5] * n, pLOF=[0.5] * n)
         result = self.compute_aurocs(df)
         assert "DN_vs_LOF" in result
         assert "GOF_vs_LOF" in result
@@ -184,10 +193,12 @@ class TestComputeAurocs:
 # within_family_mechanism.collapse_3class
 # ---------------------------------------------------------------------------
 
+
 class TestCollapse3class:
 
     def setup_method(self):
         from esm2_mechanism.badonyi.within_family_mechanism import collapse_3class
+
         self.collapse_3class = collapse_3class
 
     def test_gof(self):
@@ -212,53 +223,69 @@ class TestCollapse3class:
 # within_family_mechanism.get_qualifying_families
 # ---------------------------------------------------------------------------
 
+
 class TestGetQualifyingFamilies:
 
     def setup_method(self):
-        from esm2_mechanism.badonyi.within_family_mechanism import get_qualifying_families
+        from esm2_mechanism.badonyi.within_family_mechanism import (
+            get_qualifying_families,
+        )
+
         self.get_qualifying_families = get_qualifying_families
 
     def test_family_with_enough_genes_and_classes_included(self):
         genes = ["G1", "G2", "G3", "G4"]
         mechs = ["GOF", "LOF", "GOF", "LOF"]
-        pfam  = {"G1": "FAM1", "G2": "FAM1", "G3": "FAM1", "G4": "FAM1"}
-        result = self.get_qualifying_families(genes, mechs, pfam, min_genes=2, min_classes=2)
+        pfam = {"G1": "FAM1", "G2": "FAM1", "G3": "FAM1", "G4": "FAM1"}
+        result = self.get_qualifying_families(
+            genes, mechs, pfam, min_genes=2, min_classes=2
+        )
         assert "FAM1" in result
 
     def test_family_with_too_few_genes_excluded(self):
         genes = ["G1"]
         mechs = ["GOF"]
-        pfam  = {"G1": "FAM1"}
-        result = self.get_qualifying_families(genes, mechs, pfam, min_genes=2, min_classes=1)
+        pfam = {"G1": "FAM1"}
+        result = self.get_qualifying_families(
+            genes, mechs, pfam, min_genes=2, min_classes=1
+        )
         assert "FAM1" not in result
 
     def test_family_with_single_class_excluded_when_min_classes_2(self):
         genes = ["G1", "G2", "G3"]
         mechs = ["GOF", "GOF", "GOF"]
-        pfam  = {"G1": "FAM1", "G2": "FAM1", "G3": "FAM1"}
-        result = self.get_qualifying_families(genes, mechs, pfam, min_genes=2, min_classes=2)
+        pfam = {"G1": "FAM1", "G2": "FAM1", "G3": "FAM1"}
+        result = self.get_qualifying_families(
+            genes, mechs, pfam, min_genes=2, min_classes=2
+        )
         assert "FAM1" not in result
 
     def test_genes_without_pfam_excluded(self):
         genes = ["G1", "G2", "G3"]
         mechs = ["GOF", "LOF", "GOF"]
-        pfam  = {"G1": "FAM1", "G2": "FAM1"}  # G3 not in pfam
-        result = self.get_qualifying_families(genes, mechs, pfam, min_genes=2, min_classes=2)
+        pfam = {"G1": "FAM1", "G2": "FAM1"}  # G3 not in pfam
+        result = self.get_qualifying_families(
+            genes, mechs, pfam, min_genes=2, min_classes=2
+        )
         if "FAM1" in result:
             assert "G3" not in result["FAM1"]
 
     def test_unknown_mechanism_excluded(self):
         genes = ["G1", "G2", "G3"]
-        mechs = ["GOF", "AR", "LOF"]   # AR → None via collapse_3class
-        pfam  = {"G1": "FAM1", "G2": "FAM1", "G3": "FAM1"}
-        result = self.get_qualifying_families(genes, mechs, pfam, min_genes=2, min_classes=2)
+        mechs = ["GOF", "AR", "LOF"]  # AR → None via collapse_3class
+        pfam = {"G1": "FAM1", "G2": "FAM1", "G3": "FAM1"}
+        result = self.get_qualifying_families(
+            genes, mechs, pfam, min_genes=2, min_classes=2
+        )
         if "FAM1" in result:
             assert "G2" not in result["FAM1"]
 
     def test_multiple_families_independently_filtered(self):
         genes = ["G1", "G2", "G3", "G4", "G5"]
         mechs = ["GOF", "LOF", "GOF", "GOF", "GOF"]
-        pfam  = {"G1": "FAM1", "G2": "FAM1", "G3": "FAM2", "G4": "FAM2", "G5": "FAM2"}
-        result = self.get_qualifying_families(genes, mechs, pfam, min_genes=2, min_classes=2)
-        assert "FAM1" in result   # 2 genes, 2 classes
+        pfam = {"G1": "FAM1", "G2": "FAM1", "G3": "FAM2", "G4": "FAM2", "G5": "FAM2"}
+        result = self.get_qualifying_families(
+            genes, mechs, pfam, min_genes=2, min_classes=2
+        )
+        assert "FAM1" in result  # 2 genes, 2 classes
         assert "FAM2" not in result  # 3 genes, 1 class

@@ -23,24 +23,38 @@ from collections import defaultdict
 from esm2_mechanism.utils_probes import gene_split_cv, family_split_cv
 from esm2_mechanism.utils_paths import DATA_DIR, RESULTS_DIR
 import functools
+
 print = functools.partial(print, flush=True)
 
 DATA = str(DATA_DIR)
-EMB  = str(DATA_DIR / "embeddings")
-OUT  = str(RESULTS_DIR / "go_smoke")
+EMB = str(DATA_DIR / "embeddings")
+OUT = str(RESULTS_DIR / "go_smoke")
 os.makedirs(OUT, exist_ok=True)
 
 GOA_URL = "https://ftp.ebi.ac.uk/pub/databases/GO/goa/HUMAN/goa_human.gaf.gz"
 
 # Evidence codes to exclude (electronic/predicted — keep only manual)
-IEA_CODES = {"IEA", "ISS", "ISO", "ISA", "ISM", "IGC", "IBA", "IBD", "IKR", "IRD", "RCA"}
+IEA_CODES = {
+    "IEA",
+    "ISS",
+    "ISO",
+    "ISA",
+    "ISM",
+    "IGC",
+    "IBA",
+    "IBD",
+    "IKR",
+    "IRD",
+    "RCA",
+}
 
-MIN_POSITIVES = 20   # minimum annotated genes per GO term
-MAX_POS_FRAC  = 0.5  # skip trivially common terms (>50% of genes positive)
-TOP_N_TERMS   = 50   # number of GO terms to test in smoke run
+MIN_POSITIVES = 20  # minimum annotated genes per GO term
+MAX_POS_FRAC = 0.5  # skip trivially common terms (>50% of genes positive)
+TOP_N_TERMS = 50  # number of GO terms to test in smoke run
 
 
 # ── Data loading ──────────────────────────────────────────────────────────────
+
 
 def load_gene_set():
     """Load merged dataset gene list and UniProt IDs."""
@@ -54,7 +68,9 @@ def load_gene_set():
             gene_to_uniprot[g] = u
     uniprot_to_gene = {u: g for g, u in gene_to_uniprot.items()}
     genes = sorted(set(gene_to_uniprot.keys()))
-    print(f"Merged dataset: {len(genes)} unique genes, {len(gene_to_uniprot)} with UniProt IDs")
+    print(
+        f"Merged dataset: {len(genes)} unique genes, {len(gene_to_uniprot)} with UniProt IDs"
+    )
     return genes, gene_to_uniprot, uniprot_to_gene
 
 
@@ -84,11 +100,11 @@ def fetch_go_annotations(uniprot_to_gene, cache_path):
         parts = line.rstrip("\n").split("\t")
         if len(parts) < 9:
             continue
-        db_obj_id  = parts[1]   # UniProt accession
-        go_id      = parts[4]   # GO:XXXXXXX
-        evidence   = parts[6]   # evidence code
-        namespace  = parts[8]   # P/F/C (BP/MF/CC)
-        qualifier  = parts[3]   # e.g. "NOT"
+        db_obj_id = parts[1]  # UniProt accession
+        go_id = parts[4]  # GO:XXXXXXX
+        evidence = parts[6]  # evidence code
+        namespace = parts[8]  # P/F/C (BP/MF/CC)
+        qualifier = parts[3]  # e.g. "NOT"
 
         if "NOT" in qualifier:
             continue
@@ -123,8 +139,9 @@ def fetch_go_annotations(uniprot_to_gene, cache_path):
     return result
 
 
-def select_terms(go_data, all_genes, min_pos=MIN_POSITIVES,
-                 max_frac=MAX_POS_FRAC, top_n=TOP_N_TERMS):
+def select_terms(
+    go_data, all_genes, min_pos=MIN_POSITIVES, max_frac=MAX_POS_FRAC, top_n=TOP_N_TERMS
+):
     """Pick testable GO terms: enough positives, not too common."""
     n_genes = len(all_genes)
     gene_set = set(all_genes)
@@ -141,8 +158,10 @@ def select_terms(go_data, all_genes, min_pos=MIN_POSITIVES,
     # Sort by n_pos descending, take top_n
     candidates.sort(key=lambda x: -x[1])
     selected = candidates[:top_n]
-    print(f"Selected {len(selected)} GO terms (from {len(candidates)} candidates) "
-          f"with {min_pos}–{int(max_frac*n_genes)} positives")
+    print(
+        f"Selected {len(selected)} GO terms (from {len(candidates)} candidates) "
+        f"with {min_pos}–{int(max_frac*n_genes)} positives"
+    )
     for go_id, n_pos, ns in selected[:10]:
         print(f"  {go_id} [{ns}]: {n_pos} genes")
     if len(selected) > 10:
@@ -151,6 +170,7 @@ def select_terms(go_data, all_genes, min_pos=MIN_POSITIVES,
 
 
 # ── Embeddings ────────────────────────────────────────────────────────────────
+
 
 def load_gene_embeddings(genes, gene_to_uniprot):
     """Load per-gene mean WT embeddings from the merged dataset embeddings.
@@ -176,7 +196,9 @@ def load_gene_embeddings(genes, gene_to_uniprot):
             X.append(np.mean(gene_embs[g], axis=0))
 
     X = np.array(X, dtype=np.float32)
-    print(f"Loaded embeddings for {len(gene_list)} / {len(genes)} genes  shape={X.shape}")
+    print(
+        f"Loaded embeddings for {len(gene_list)} / {len(genes)} genes  shape={X.shape}"
+    )
     return gene_list, X
 
 
@@ -187,6 +209,7 @@ def run_logreg_binary(X, y, splits, seed=42):
     from sklearn.linear_model import LogisticRegression
     from sklearn.preprocessing import StandardScaler
     from sklearn.metrics import roc_auc_score
+
     aurocs = []
     for tr, te in splits:
         if len(set(y[tr])) < 2 or len(set(y[te])) < 2:
@@ -194,8 +217,9 @@ def run_logreg_binary(X, y, splits, seed=42):
         sc = StandardScaler()
         Xtr = sc.fit_transform(X[tr])
         Xte = sc.transform(X[te])
-        clf = LogisticRegression(max_iter=1000, C=1.0,
-                                  class_weight="balanced", random_state=seed)
+        clf = LogisticRegression(
+            max_iter=1000, C=1.0, class_weight="balanced", random_state=seed
+        )
         clf.fit(Xtr, y[tr])
         proba = clf.predict_proba(Xte)[:, list(clf.classes_).index(1)]
         aurocs.append(float(roc_auc_score(y[te], proba)))
@@ -205,6 +229,7 @@ def run_logreg_binary(X, y, splits, seed=42):
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
+
 
 def main():
     # 1. Gene set
@@ -256,19 +281,23 @@ def main():
         fs_auroc, fs_std = fs
         leakage = (gs_auroc - fs_auroc) / max(gs_auroc - 0.5, 1e-6)
 
-        results.append({
-            "go_id": go_id,
-            "namespace": ns,
-            "n_pos": n_pos,
-            "gene_split_auroc": round(gs_auroc, 4),
-            "family_split_auroc": round(fs_auroc, 4),
-            "leakage_fraction": round(leakage, 4),
-        })
+        results.append(
+            {
+                "go_id": go_id,
+                "namespace": ns,
+                "n_pos": n_pos,
+                "gene_split_auroc": round(gs_auroc, 4),
+                "family_split_auroc": round(fs_auroc, 4),
+                "leakage_fraction": round(leakage, 4),
+            }
+        )
 
         if (i + 1) % 10 == 0 or i < 5:
-            print(f"  [{i+1}/{len(selected_terms)}] {go_id} [{ns}] "
-                  f"n={n_pos}  gene={gs_auroc:.3f}  family={fs_auroc:.3f}  "
-                  f"leakage={leakage:.1%}")
+            print(
+                f"  [{i+1}/{len(selected_terms)}] {go_id} [{ns}] "
+                f"n={n_pos}  gene={gs_auroc:.3f}  family={fs_auroc:.3f}  "
+                f"leakage={leakage:.1%}"
+            )
 
     # 8. Summary
     print(f"\n{'='*60}")
@@ -278,7 +307,7 @@ def main():
 
     gs_aurocs = [r["gene_split_auroc"] for r in results]
     fs_aurocs = [r["family_split_auroc"] for r in results]
-    leakages  = [r["leakage_fraction"] for r in results]
+    leakages = [r["leakage_fraction"] for r in results]
 
     print(f"Gene-split AUROC:   {np.mean(gs_aurocs):.3f} ± {np.std(gs_aurocs):.3f}")
     print(f"Family-split AUROC: {np.mean(fs_aurocs):.3f} ± {np.std(fs_aurocs):.3f}")
@@ -289,33 +318,50 @@ def main():
         ns_res = [r for r in results if r["namespace"] == ns]
         if ns_res:
             print(f"\n  {ns} ({len(ns_res)} terms):")
-            print(f"    gene-split:   {np.mean([r['gene_split_auroc'] for r in ns_res]):.3f}")
-            print(f"    family-split: {np.mean([r['family_split_auroc'] for r in ns_res]):.3f}")
-            print(f"    leakage:      {np.mean([r['leakage_fraction'] for r in ns_res]):.1%}")
+            print(
+                f"    gene-split:   {np.mean([r['gene_split_auroc'] for r in ns_res]):.3f}"
+            )
+            print(
+                f"    family-split: {np.mean([r['family_split_auroc'] for r in ns_res]):.3f}"
+            )
+            print(
+                f"    leakage:      {np.mean([r['leakage_fraction'] for r in ns_res]):.1%}"
+            )
 
     # Top surviving terms (lowest leakage)
     results_sorted = sorted(results, key=lambda r: r["leakage_fraction"])
     print(f"\nTop 5 terms that SURVIVE family-split (lowest leakage):")
     for r in results_sorted[:5]:
-        print(f"  {r['go_id']} [{r['namespace']}] n={r['n_pos']}  "
-              f"gene={r['gene_split_auroc']:.3f}  family={r['family_split_auroc']:.3f}  "
-              f"leakage={r['leakage_fraction']:.1%}")
+        print(
+            f"  {r['go_id']} [{r['namespace']}] n={r['n_pos']}  "
+            f"gene={r['gene_split_auroc']:.3f}  family={r['family_split_auroc']:.3f}  "
+            f"leakage={r['leakage_fraction']:.1%}"
+        )
 
     print(f"\nTop 5 terms that COLLAPSE (highest leakage):")
     for r in results_sorted[-5:]:
-        print(f"  {r['go_id']} [{r['namespace']}] n={r['n_pos']}  "
-              f"gene={r['gene_split_auroc']:.3f}  family={r['family_split_auroc']:.3f}  "
-              f"leakage={r['leakage_fraction']:.1%}")
+        print(
+            f"  {r['go_id']} [{r['namespace']}] n={r['n_pos']}  "
+            f"gene={r['gene_split_auroc']:.3f}  family={r['family_split_auroc']:.3f}  "
+            f"leakage={r['leakage_fraction']:.1%}"
+        )
 
     out_path = os.path.join(OUT, "smoke_results.json")
     with open(out_path, "w") as f:
-        json.dump({"summary": {
-            "n_terms": len(results),
-            "gene_split_mean": float(np.mean(gs_aurocs)),
-            "family_split_mean": float(np.mean(fs_aurocs)),
-            "leakage_mean": float(np.mean(leakages)),
-            "leakage_std": float(np.std(leakages)),
-        }, "per_term": results}, f, indent=2)
+        json.dump(
+            {
+                "summary": {
+                    "n_terms": len(results),
+                    "gene_split_mean": float(np.mean(gs_aurocs)),
+                    "family_split_mean": float(np.mean(fs_aurocs)),
+                    "leakage_mean": float(np.mean(leakages)),
+                    "leakage_std": float(np.std(leakages)),
+                },
+                "per_term": results,
+            },
+            f,
+            indent=2,
+        )
     print(f"\nResults -> {out_path}")
 
 

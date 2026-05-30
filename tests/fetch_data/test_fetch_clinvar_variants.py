@@ -27,10 +27,10 @@ from esm2_mechanism.fetch_data.fetch_variants import (
     fetch_uniprot_id,
 )
 
-
 # ---------------------------------------------------------------------------
 # _parse_hgvsp
 # ---------------------------------------------------------------------------
+
 
 class TestParseHgvsp:
 
@@ -89,6 +89,7 @@ class TestParseHgvsp:
 # validate_wt
 # ---------------------------------------------------------------------------
 
+
 class TestValidateWt:
 
     SEQ = "MKTAYIAKQR"  # 10 AA, 1-indexed
@@ -122,6 +123,7 @@ class TestValidateWt:
 # fetch_clinvar_variants – cache hit (no HTTP)
 # ---------------------------------------------------------------------------
 
+
 class TestFetchClinvarVariantsCache:
 
     def test_cache_hit_returns_cached_data(self, tmp_path, monkeypatch):
@@ -129,7 +131,15 @@ class TestFetchClinvarVariantsCache:
             "esm2_mechanism.fetch_data.fetch_variants.CLINVAR_CACHE",
             tmp_path,
         )
-        cached = [{"hgvs_p": "p.Val600Glu", "wt_aa": "V", "pos": 600, "mut_aa": "E", "clinsig": "pathogenic"}]
+        cached = [
+            {
+                "hgvs_p": "p.Val600Glu",
+                "wt_aa": "V",
+                "pos": 600,
+                "mut_aa": "E",
+                "clinsig": "pathogenic",
+            }
+        ]
         (tmp_path / "BRAF.json").write_text(json.dumps(cached))
 
         result = fetch_clinvar_variants("BRAF")
@@ -150,6 +160,7 @@ class TestFetchClinvarVariantsCache:
 # ---------------------------------------------------------------------------
 # fetch_uniprot_id
 # ---------------------------------------------------------------------------
+
 
 class TestFetchUniprotId:
 

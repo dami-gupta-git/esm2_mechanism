@@ -16,15 +16,16 @@ Covers:
 import numpy as np
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # ll_scan — compute_ll_features
 # ---------------------------------------------------------------------------
+
 
 class TestComputeLlFeatures:
 
     def setup_method(self):
         from esm2_mechanism.perturb.ll_scan import compute_ll_features, MIN_POSITIONS
+
         self.compute_ll_features = compute_ll_features
         self.MIN_POSITIONS = MIN_POSITIONS
 
@@ -34,15 +35,17 @@ class TestComputeLlFeatures:
         scores = []
         for i in range(n_positions):
             probs = rng.dirichlet(np.ones(20))
-            scores.append({
-                "aa_pos": i + 1,
-                "wt_aa": "A",
-                "ll_wt": float(np.log(probs[0] + 1e-12)),
-                "ll_ala": float(np.log(probs[0] + 1e-12)),
-                "ll_asp": float(np.log(probs[1] + 1e-12)),
-                "ll_trp": float(np.log(probs[2] + 1e-12)),
-                "full_probs": probs.tolist(),
-            })
+            scores.append(
+                {
+                    "aa_pos": i + 1,
+                    "wt_aa": "A",
+                    "ll_wt": float(np.log(probs[0] + 1e-12)),
+                    "ll_ala": float(np.log(probs[0] + 1e-12)),
+                    "ll_asp": float(np.log(probs[1] + 1e-12)),
+                    "ll_trp": float(np.log(probs[2] + 1e-12)),
+                    "full_probs": probs.tolist(),
+                }
+            )
         return scores
 
     def test_output_shapes(self):
@@ -73,8 +76,13 @@ class TestComputeLlFeatures:
         covered = ["G"]
         all_scores = {"G": self._make_scores(10)}
         _, _, feature_names = self.compute_ll_features(covered, all_scores)
-        assert feature_names == ["ll_wt_mean", "ll_delta_mean", "ll_delta_cv",
-                                  "ll_hotspot_frac", "ll_top_entropy"]
+        assert feature_names == [
+            "ll_wt_mean",
+            "ll_delta_mean",
+            "ll_delta_cv",
+            "ll_hotspot_frac",
+            "ll_top_entropy",
+        ]
 
     def test_hotspot_frac_in_range(self):
         covered = ["G"]
@@ -94,11 +102,17 @@ class TestComputeLlFeatures:
         # Uniform distribution over 20 AAs → max entropy ≈ ln(20) ≈ 2.996
         scores = []
         for i in range(15):
-            scores.append({
-                "aa_pos": i + 1, "wt_aa": "A",
-                "ll_wt": -3.0, "ll_ala": -3.0, "ll_asp": -3.0, "ll_trp": -3.0,
-                "full_probs": [1.0 / 20] * 20,
-            })
+            scores.append(
+                {
+                    "aa_pos": i + 1,
+                    "wt_aa": "A",
+                    "ll_wt": -3.0,
+                    "ll_ala": -3.0,
+                    "ll_asp": -3.0,
+                    "ll_trp": -3.0,
+                    "full_probs": [1.0 / 20] * 20,
+                }
+            )
         _, X, _ = self.compute_ll_features(["G"], {"G": scores})
         ll_top_entropy = float(X[0, 4])
         assert ll_top_entropy > 2.5
@@ -121,10 +135,12 @@ class TestComputeLlFeatures:
 # megascale_mlp — pfam_split_cv
 # ---------------------------------------------------------------------------
 
+
 class TestPfamSplitCv:
 
     def setup_method(self):
         from esm2_mechanism.perturb.megascale_mlp import pfam_split_cv, PFAM
+
         self.pfam_split_cv = pfam_split_cv
         self.PFAM = PFAM
 
@@ -133,6 +149,7 @@ class TestPfamSplitCv:
 
     def test_no_family_leakage(self):
         from esm2_mechanism.perturb.megascale_mlp import PFAM
+
         proteins = self._proteins()
         for tr, te in self.pfam_split_cv(proteins, n_folds=5, seed=0):
             tr_fams = {PFAM.get(p, p) for p in proteins[tr]}
@@ -177,10 +194,12 @@ class TestPfamSplitCv:
 # megascale_mlp — run_sklearn_probe
 # ---------------------------------------------------------------------------
 
+
 class TestRunSklearnProbe:
 
     def setup_method(self):
         from esm2_mechanism.perturb.megascale_mlp import run_sklearn_probe
+
         self.run_sklearn_probe = run_sklearn_probe
 
     def _correlated_data(self, n=100, dim=10, seed=0):
@@ -192,6 +211,7 @@ class TestRunSklearnProbe:
 
     def _ridge(self):
         from sklearn.linear_model import Ridge
+
         return Ridge(alpha=1.0)
 
     def test_returns_spearman_keys(self):
@@ -226,10 +246,12 @@ class TestRunSklearnProbe:
 # perturbation_pattern — build_gene_features
 # ---------------------------------------------------------------------------
 
+
 class TestBuildGeneFeatures:
 
     def setup_method(self):
         from esm2_mechanism.perturb.perturbation_pattern import build_gene_features
+
         self.build_gene_features = build_gene_features
 
     def _make_variants(self, n_genes=4, variants_per_gene=5, dim=8, seed=0):
@@ -239,11 +261,13 @@ class TestBuildGeneFeatures:
         for i in range(n_genes):
             label = classes[i % 3]
             for j in range(variants_per_gene):
-                variants.append({
-                    "gene": f"GENE{i:02d}",
-                    "aa_pos": j + 1,
-                    "label_3class": label,
-                })
+                variants.append(
+                    {
+                        "gene": f"GENE{i:02d}",
+                        "aa_pos": j + 1,
+                        "label_3class": label,
+                    }
+                )
         n = len(variants)
         delta_pos = rng.randn(n, dim).astype(np.float32)
         delta_mean = rng.randn(n, dim).astype(np.float32)
@@ -252,7 +276,8 @@ class TestBuildGeneFeatures:
     def test_output_count_matches_genes(self):
         variants, delta_pos, delta_mean = self._make_variants(n_genes=4)
         gene_list, X, labels, n_scalar = self.build_gene_features(
-            variants, delta_pos, delta_mean)
+            variants, delta_pos, delta_mean
+        )
         assert len(gene_list) == 4
         assert len(labels) == 4
         assert X.shape[0] == 4
@@ -309,6 +334,7 @@ class TestBuildGeneFeatures:
 # (Both have the same signature — test both implementations)
 # ---------------------------------------------------------------------------
 
+
 def _make_probe_inputs(n=90, dim=8, seed=0):
     rng = np.random.RandomState(seed)
     classes = ["GOF", "LOF", "DN"]
@@ -316,20 +342,26 @@ def _make_probe_inputs(n=90, dim=8, seed=0):
     X = rng.randn(n, dim).astype(np.float32)
     fold = n // 3
     splits = [
-        (np.concatenate([np.arange(fold), np.arange(2 * fold, n)]),
-         np.arange(fold, 2 * fold)),
+        (
+            np.concatenate([np.arange(fold), np.arange(2 * fold, n)]),
+            np.arange(fold, 2 * fold),
+        ),
     ]
     return X, labels, splits
 
 
-@pytest.mark.parametrize("module_path", [
-    "esm2_mechanism.perturb.perturbation_pattern",
-    "esm2_mechanism.perturb.perturbation_probe",
-])
+@pytest.mark.parametrize(
+    "module_path",
+    [
+        "esm2_mechanism.perturb.perturbation_pattern",
+        "esm2_mechanism.perturb.perturbation_probe",
+    ],
+)
 class TestRunProbe:
 
     def _get_run_probe(self, module_path):
         import importlib
+
         mod = importlib.import_module(module_path)
         return mod.run_probe
 

@@ -27,9 +27,11 @@ from pathlib import Path
 import numpy as np
 from sklearn.metrics import average_precision_score, roc_auc_score
 import functools
+
 print = functools.partial(print, flush=True)
 
 from esm2_mechanism.utils_paths import DATA_DIR as DATA, RESULTS_DIR as _RESULTS_DIR
+
 RESULTS = _RESULTS_DIR / "alphamissense_family"
 
 
@@ -39,13 +41,15 @@ def vkey(v: dict) -> str:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--min-pos", type=int, default=10,
-                    help="min pathogenic variants per family")
-    ap.add_argument("--min-neg", type=int, default=10,
-                    help="min benign variants per family")
-    ap.add_argument("--scores",
-                    type=Path,
-                    default=DATA / "alphamissense_scores_full.json")
+    ap.add_argument(
+        "--min-pos", type=int, default=10, help="min pathogenic variants per family"
+    )
+    ap.add_argument(
+        "--min-neg", type=int, default=10, help="min benign variants per family"
+    )
+    ap.add_argument(
+        "--scores", type=Path, default=DATA / "alphamissense_scores_full.json"
+    )
     args = ap.parse_args()
 
     RESULTS.mkdir(parents=True, exist_ok=True)
@@ -91,9 +95,11 @@ def main() -> int:
         "auroc": float(roc_auc_score(y, s)),
         "pr_auc": float(average_precision_score(y, s)),
     }
-    print(f"\nOVERALL  n={overall['n']:,}  "
-          f"pos={overall['n_pos']:,}  neg={overall['n_neg']:,}  "
-          f"AUROC={overall['auroc']:.4f}  PR-AUC={overall['pr_auc']:.4f}")
+    print(
+        f"\nOVERALL  n={overall['n']:,}  "
+        f"pos={overall['n_pos']:,}  neg={overall['n_neg']:,}  "
+        f"AUROC={overall['auroc']:.4f}  PR-AUC={overall['pr_auc']:.4f}"
+    )
     with open(RESULTS / "overall.json", "w") as f:
         json.dump(overall, f, indent=2)
 
@@ -119,8 +125,10 @@ def main() -> int:
         }
 
     print(f"\nfamilies total:        {len(by_fam):,}")
-    print(f"families passing min:  {len(per_family):,} "
-          f"(min_pos={args.min_pos}, min_neg={args.min_neg})")
+    print(
+        f"families passing min:  {len(per_family):,} "
+        f"(min_pos={args.min_pos}, min_neg={args.min_neg})"
+    )
     print(f"families skipped:      {skipped:,}")
 
     with open(RESULTS / "per_family.json", "w") as f:
@@ -146,14 +154,18 @@ def main() -> int:
         print("\nPER-FAMILY AUROC DISTRIBUTION")
         print(f"  n_families = {summary['n_families']}")
         print(f"  overall    = {summary['overall_auroc']:.4f}")
-        print(f"  mean ± std = {summary['per_family_mean']:.4f} ± "
-              f"{summary['per_family_std']:.4f}")
-        print(f"  min / q25 / med / q75 / max = "
-              f"{summary['per_family_min']:.3f} / "
-              f"{summary['per_family_q25']:.3f} / "
-              f"{summary['per_family_median']:.3f} / "
-              f"{summary['per_family_q75']:.3f} / "
-              f"{summary['per_family_max']:.3f}")
+        print(
+            f"  mean ± std = {summary['per_family_mean']:.4f} ± "
+            f"{summary['per_family_std']:.4f}"
+        )
+        print(
+            f"  min / q25 / med / q75 / max = "
+            f"{summary['per_family_min']:.3f} / "
+            f"{summary['per_family_q25']:.3f} / "
+            f"{summary['per_family_median']:.3f} / "
+            f"{summary['per_family_q75']:.3f} / "
+            f"{summary['per_family_max']:.3f}"
+        )
         print(f"  frac AUROC < 0.8 = {summary['frac_below_0_8']:.2%}")
         print(f"  frac AUROC < 0.7 = {summary['frac_below_0_7']:.2%}")
 
@@ -161,10 +173,14 @@ def main() -> int:
         ranked = sorted(per_family.items(), key=lambda kv: kv[1]["auroc"])
         print("\nWORST 5 families:")
         for fam, d in ranked[:5]:
-            print(f"  {fam}  AUROC={d['auroc']:.3f}  n_pos={d['n_pos']} n_neg={d['n_neg']}")
+            print(
+                f"  {fam}  AUROC={d['auroc']:.3f}  n_pos={d['n_pos']} n_neg={d['n_neg']}"
+            )
         print("\nBEST 5 families:")
         for fam, d in ranked[-5:]:
-            print(f"  {fam}  AUROC={d['auroc']:.3f}  n_pos={d['n_pos']} n_neg={d['n_neg']}")
+            print(
+                f"  {fam}  AUROC={d['auroc']:.3f}  n_pos={d['n_pos']} n_neg={d['n_neg']}"
+            )
 
         with open(RESULTS / "summary.json", "w") as f:
             json.dump(summary, f, indent=2)

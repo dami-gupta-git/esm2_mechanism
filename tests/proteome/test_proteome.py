@@ -20,15 +20,16 @@ Covers:
 import numpy as np
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # proteome_mechanism.gene_split_indices
 # ---------------------------------------------------------------------------
+
 
 class TestGeneSplitIndices:
 
     def setup_method(self):
         from esm2_mechanism.proteome.proteome_mechanism import gene_split_indices
+
         self.gene_split_indices = gene_split_indices
 
     def _genes(self, n=120, n_genes=12):
@@ -77,10 +78,15 @@ class TestGeneSplitIndices:
 # proteome_mechanism.aggregate_fold_results
 # ---------------------------------------------------------------------------
 
+
 class TestAggregateFoldResults:
 
     def setup_method(self):
-        from esm2_mechanism.proteome.proteome_mechanism import aggregate_fold_results, CLASSES
+        from esm2_mechanism.proteome.proteome_mechanism import (
+            aggregate_fold_results,
+            CLASSES,
+        )
+
         self.aggregate_fold_results = aggregate_fold_results
         self.CLASSES = CLASSES
 
@@ -124,10 +130,15 @@ class TestAggregateFoldResults:
 # proteome_mechanism.build_triplets_v4
 # ---------------------------------------------------------------------------
 
+
 class TestBuildTripletsV4:
 
     def setup_method(self):
-        from esm2_mechanism.proteome.proteome_mechanism import build_triplets_v4, CLASSES
+        from esm2_mechanism.proteome.proteome_mechanism import (
+            build_triplets_v4,
+            CLASSES,
+        )
+
         self.build_triplets_v4 = build_triplets_v4
         self.n_classes = len(CLASSES)
 
@@ -139,36 +150,48 @@ class TestBuildTripletsV4:
 
     def test_positives_are_same_mechanism(self):
         y_int, gene_pfam = self._data()
-        anchors, positives, _ = self.build_triplets_v4(y_int, gene_pfam, max_triplets=200, seed=0)
+        anchors, positives, _ = self.build_triplets_v4(
+            y_int, gene_pfam, max_triplets=200, seed=0
+        )
         for a, p in zip(anchors, positives):
             assert y_int[a] == y_int[p]
 
     def test_negatives_are_different_mechanism(self):
         y_int, gene_pfam = self._data()
-        anchors, _, negatives = self.build_triplets_v4(y_int, gene_pfam, max_triplets=200, seed=0)
+        anchors, _, negatives = self.build_triplets_v4(
+            y_int, gene_pfam, max_triplets=200, seed=0
+        )
         for a, n in zip(anchors, negatives):
             assert y_int[a] != y_int[n]
 
     def test_positives_are_cross_family(self):
         y_int, gene_pfam = self._data()
-        anchors, positives, _ = self.build_triplets_v4(y_int, gene_pfam, max_triplets=200, seed=0)
+        anchors, positives, _ = self.build_triplets_v4(
+            y_int, gene_pfam, max_triplets=200, seed=0
+        )
         for a, p in zip(anchors, positives):
             assert gene_pfam[a] != gene_pfam[p]
 
     def test_single_family_produces_no_triplets(self):
         y_int = np.array([0, 1, 2, 0, 1, 2], dtype=np.int32)
         gene_pfam = np.array(["FAM1"] * 6, dtype=object)
-        anchors, positives, negatives = self.build_triplets_v4(y_int, gene_pfam, max_triplets=100, seed=0)
+        anchors, positives, negatives = self.build_triplets_v4(
+            y_int, gene_pfam, max_triplets=100, seed=0
+        )
         assert len(anchors) == 0
 
     def test_max_triplets_cap(self):
         y_int, gene_pfam = self._data(n=300, n_fams=6)
-        anchors, _, _ = self.build_triplets_v4(y_int, gene_pfam, max_triplets=50, seed=0)
+        anchors, _, _ = self.build_triplets_v4(
+            y_int, gene_pfam, max_triplets=50, seed=0
+        )
         assert len(anchors) <= 50
 
     def test_output_lengths_consistent(self):
         y_int, gene_pfam = self._data()
-        anchors, positives, negatives = self.build_triplets_v4(y_int, gene_pfam, max_triplets=200, seed=0)
+        anchors, positives, negatives = self.build_triplets_v4(
+            y_int, gene_pfam, max_triplets=200, seed=0
+        )
         assert len(anchors) == len(positives) == len(negatives)
 
 
@@ -176,10 +199,12 @@ class TestBuildTripletsV4:
 # clinical_utility.get_feature_sets
 # ---------------------------------------------------------------------------
 
+
 class TestGetFeatureSets:
 
     def setup_method(self):
         from esm2_mechanism.proteome.clinical_utility import get_feature_sets
+
         self.get_feature_sets = get_feature_sets
 
     def test_full_includes_all(self):
@@ -212,10 +237,12 @@ class TestGetFeatureSets:
 # clinical_utility.compute_ece
 # ---------------------------------------------------------------------------
 
+
 class TestComputeEce:
 
     def setup_method(self):
         from esm2_mechanism.proteome.clinical_utility import compute_ece
+
         self.compute_ece = compute_ece
 
     def test_perfect_calibration_near_zero(self):
@@ -245,10 +272,12 @@ class TestComputeEce:
 # clinical_utility.bootstrap_auroc
 # ---------------------------------------------------------------------------
 
+
 class TestBootstrapAuroc:
 
     def setup_method(self):
         from esm2_mechanism.proteome.clinical_utility import bootstrap_auroc
+
         self.bootstrap_auroc = bootstrap_auroc
 
     def test_ci_contains_point_estimate(self):
@@ -276,25 +305,39 @@ class TestBootstrapAuroc:
 # clinical_utility.apply_decision_rule
 # ---------------------------------------------------------------------------
 
+
 class TestApplyDecisionRule:
 
     def setup_method(self):
         from esm2_mechanism.proteome.clinical_utility import apply_decision_rule
+
         self.apply_decision_rule = apply_decision_rule
 
     def test_informative(self):
-        result = self.apply_decision_rule({"H1_GOF_vs_LOF_AUROC_LR_FULL": 0.75,
-                                            "H1_GOF_vs_LOF_CI95_LR_FULL": [0.65, 0.85]})
+        result = self.apply_decision_rule(
+            {
+                "H1_GOF_vs_LOF_AUROC_LR_FULL": 0.75,
+                "H1_GOF_vs_LOF_CI95_LR_FULL": [0.65, 0.85],
+            }
+        )
         assert "INFORMATIVE" in result
 
     def test_weakly_informative(self):
-        result = self.apply_decision_rule({"H1_GOF_vs_LOF_AUROC_LR_FULL": 0.60,
-                                            "H1_GOF_vs_LOF_CI95_LR_FULL": [0.50, 0.70]})
+        result = self.apply_decision_rule(
+            {
+                "H1_GOF_vs_LOF_AUROC_LR_FULL": 0.60,
+                "H1_GOF_vs_LOF_CI95_LR_FULL": [0.50, 0.70],
+            }
+        )
         assert "WEAKLY" in result
 
     def test_null(self):
-        result = self.apply_decision_rule({"H1_GOF_vs_LOF_AUROC_LR_FULL": 0.50,
-                                            "H1_GOF_vs_LOF_CI95_LR_FULL": [0.40, 0.60]})
+        result = self.apply_decision_rule(
+            {
+                "H1_GOF_vs_LOF_AUROC_LR_FULL": 0.50,
+                "H1_GOF_vs_LOF_CI95_LR_FULL": [0.40, 0.60],
+            }
+        )
         assert "NULL" in result
 
     def test_missing_ci_no_crash(self):
@@ -306,24 +349,26 @@ class TestApplyDecisionRule:
 # per_gene_ablation.get_drop_indices
 # ---------------------------------------------------------------------------
 
+
 class TestGetDropIndices:
 
     def setup_method(self):
         from esm2_mechanism.proteome.per_gene_ablation import get_drop_indices
+
         self.get_drop_indices = get_drop_indices
 
     def test_base_column_dropped(self):
         names = ["pLI", "oe_lof", "gnomad_z"]
         drop = self.get_drop_indices(names, base_features=["pLI"])
-        assert 0 in drop       # pLI
-        assert 1 not in drop   # oe_lof kept
+        assert 0 in drop  # pLI
+        assert 1 not in drop  # oe_lof kept
 
     def test_derived_columns_dropped(self):
         names = ["pLI", "pLI_missing", "pLI_familyresid", "oe_lof"]
         drop = self.get_drop_indices(names, base_features=["pLI"])
-        assert 0 in drop   # pLI
-        assert 1 in drop   # pLI_missing
-        assert 2 in drop   # pLI_familyresid
+        assert 0 in drop  # pLI
+        assert 1 in drop  # pLI_missing
+        assert 2 in drop  # pLI_familyresid
         assert 3 not in drop
 
     def test_empty_base_features_drops_nothing(self):
@@ -345,10 +390,12 @@ class TestGetDropIndices:
 # mechanism.family_split_baselines.build_onehot
 # ---------------------------------------------------------------------------
 
+
 class TestBuildOnehot:
 
     def setup_method(self):
         from esm2_mechanism.mechanism.family_split_baselines import build_onehot
+
         self.build_onehot = build_onehot
 
     def test_shape(self):
@@ -357,11 +404,13 @@ class TestBuildOnehot:
 
     def test_wt_position_set(self):
         from esm2_mechanism.mechanism.family_split_baselines import AA_INDEX
+
         onehot = self.build_onehot(["A"], ["V"])
         assert onehot[0, AA_INDEX["A"]] == 1.0
 
     def test_mut_position_set(self):
         from esm2_mechanism.mechanism.family_split_baselines import AA_INDEX
+
         onehot = self.build_onehot(["A"], ["V"])
         assert onehot[0, 20 + AA_INDEX["V"]] == 1.0
 
@@ -378,10 +427,12 @@ class TestBuildOnehot:
 # mechanism.clan_holdout.aggregate
 # ---------------------------------------------------------------------------
 
+
 class TestClanAggregate:
 
     def setup_method(self):
         from esm2_mechanism.mechanism.clan_holdout import aggregate
+
         self.aggregate = aggregate
 
     def _result(self, f1, gof=None, dn=None, lof=None, n_test=10):
@@ -420,9 +471,17 @@ class TestClanAggregate:
 
     def test_error_mlp_excluded(self):
         r1 = self._result(0.6)
-        r2 = {"clan": "CL0002", "clan_name": "bad", "n_train": 50, "n_test": 10,
-               "n_genes_test": 2, "test_mechs": {}, "mlp": {"error": "failed"},
-               "knn_macro_f1": float("nan"), "majority_macro_f1": 0.33}
+        r2 = {
+            "clan": "CL0002",
+            "clan_name": "bad",
+            "n_train": 50,
+            "n_test": 10,
+            "n_genes_test": 2,
+            "test_mechs": {},
+            "mlp": {"error": "failed"},
+            "knn_macro_f1": float("nan"),
+            "majority_macro_f1": 0.33,
+        }
         agg = self.aggregate([r1, r2])
         assert agg["mlp_macro_f1_mean"] == pytest.approx(0.6)
 

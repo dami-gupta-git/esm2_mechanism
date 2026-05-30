@@ -52,21 +52,27 @@ from sklearn.linear_model import Ridge
 from sklearn.metrics import roc_auc_score
 from sklearn.preprocessing import StandardScaler
 
-from esm2_mechanism.embeddings.esm2_mechanism import get_esm2_embeddings_for_pairs, ESM2_MODEL_650M
+from esm2_mechanism.embeddings.esm2_mechanism import (
+    get_esm2_embeddings_for_pairs,
+    ESM2_MODEL_650M,
+)
 from esm2_mechanism.utils_sequences import window_sequence, apply_missense
-from esm2_mechanism.utils_paths import DATA_DIR as _DATA_DIR, RESULTS_DIR as _RESULTS_DIR
+from esm2_mechanism.utils_paths import (
+    DATA_DIR as _DATA_DIR,
+    RESULTS_DIR as _RESULTS_DIR,
+)
 
 DATA = str(_DATA_DIR)
-EMB  = str(_DATA_DIR / "embeddings")
+EMB = str(_DATA_DIR / "embeddings")
 BM_ZIP = str(_DATA_DIR / "megascale" / "benchmarks.zip")
 PFAM_JSON = str(_DATA_DIR / "pfam_families.json")
 OUT = str(_RESULTS_DIR / "megascale_stability")
 
 VARIANTS_CACHE = os.path.join(DATA, "megascale_variants.json")
-WT_MEAN_EMB  = os.path.join(EMB, "megascale_wt_mean.npy")
+WT_MEAN_EMB = os.path.join(EMB, "megascale_wt_mean.npy")
 MUT_MEAN_EMB = os.path.join(EMB, "megascale_mut_mean.npy")
-WT_POS_EMB   = os.path.join(EMB, "megascale_wt_pos.npy")
-MUT_POS_EMB  = os.path.join(EMB, "megascale_mut_pos.npy")
+WT_POS_EMB = os.path.join(EMB, "megascale_wt_pos.npy")
+MUT_POS_EMB = os.path.join(EMB, "megascale_mut_pos.npy")
 
 N_SEEDS = 5
 N_FOLDS = 5
@@ -78,6 +84,7 @@ os.makedirs(EMB, exist_ok=True)
 # ---------------------------------------------------------------------------
 # Data loading
 # ---------------------------------------------------------------------------
+
 
 def load_s1724_variants():
     """
@@ -94,6 +101,7 @@ def load_s1724_variants():
 
     import re
     import pandas as pd
+
     mut_pat = re.compile(r"^([A-Z])(\d+)([A-Z])$")
 
     with zipfile.ZipFile(BM_ZIP) as z:
@@ -105,10 +113,10 @@ def load_s1724_variants():
     # within paper_seq where the mutation was applied (paper_seq[var_pos-1] == aa_mut).
     # WT is reconstructed by reversing the mutation: replace aa_mut -> aa_wt at var_pos.
     df = df[
-        (df["mutation_type"] == "Single") &
-        df["ddg"].notna() &
-        df["paper_seq"].notna() &
-        df["paper_seq_muts"].notna()
+        (df["mutation_type"] == "Single")
+        & df["ddg"].notna()
+        & df["paper_seq"].notna()
+        & df["paper_seq_muts"].notna()
     ].copy()
 
     variants = []
@@ -133,17 +141,19 @@ def load_s1724_variants():
             continue
 
         # Reconstruct WT by reversing the mutation
-        wt_seq  = paper_seq[:var_pos - 1] + aa_wt + paper_seq[var_pos:]
+        wt_seq = paper_seq[: var_pos - 1] + aa_wt + paper_seq[var_pos:]
         mut_seq = paper_seq  # already the mutant
 
-        variants.append({
-            "protein": protein,
-            "mutation_code": mut_str,
-            "wt_seq": wt_seq,
-            "mut_seq": mut_seq,
-            "var_pos": var_pos,
-            "ddg": float(row["ddg"]),
-        })
+        variants.append(
+            {
+                "protein": protein,
+                "mutation_code": mut_str,
+                "wt_seq": wt_seq,
+                "mut_seq": mut_seq,
+                "var_pos": var_pos,
+                "ddg": float(row["ddg"]),
+            }
+        )
 
     print(f"S1724: {len(variants)} single-point variants, skipped={skipped}")
 
@@ -156,6 +166,7 @@ def load_s1724_variants():
 # ---------------------------------------------------------------------------
 # Protein-level clustering for family-split (MMseqs2 or sequence-identity)
 # ---------------------------------------------------------------------------
+
 
 def assign_protein_clusters(variants):
     """
@@ -207,12 +218,23 @@ def _run_mmseqs2(proteins, min_seq_id=0.20, coverage=0.20):
                 f.write(f">{pid}\n{seq}\n")
 
         subprocess.run(
-            ["mmseqs", "easy-cluster", fasta, os.path.join(tmp, "clust"),
-             os.path.join(tmp, "mmseqs_tmp"),
-             f"--min-seq-id", str(min_seq_id),
-             "-c", str(coverage),
-             "--cov-mode", "0", "-v", "0"],
-            check=True, capture_output=True
+            [
+                "mmseqs",
+                "easy-cluster",
+                fasta,
+                os.path.join(tmp, "clust"),
+                os.path.join(tmp, "mmseqs_tmp"),
+                f"--min-seq-id",
+                str(min_seq_id),
+                "-c",
+                str(coverage),
+                "--cov-mode",
+                "0",
+                "-v",
+                "0",
+            ],
+            check=True,
+            capture_output=True,
         )
 
         tsv = os.path.join(tmp, "clust_cluster.tsv")
@@ -229,23 +251,31 @@ def _run_mmseqs2(proteins, min_seq_id=0.20, coverage=0.20):
 # Embedding extraction
 # ---------------------------------------------------------------------------
 
+
 def extract_embeddings(variants):
     import torch
+
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     wt_seqs, mut_seqs, positions = [], [], []
     for v in variants:
         wt_win, new_pos = window_sequence(v["wt_seq"], v["var_pos"])
         # mut_seq is already built; re-derive windowed version for consistency
-        mut_win = wt_win[:new_pos - 1] + v["mut_seq"][v["var_pos"] - 1] + wt_win[new_pos:]
+        mut_win = (
+            wt_win[: new_pos - 1] + v["mut_seq"][v["var_pos"] - 1] + wt_win[new_pos:]
+        )
         wt_seqs.append(wt_win)
         mut_seqs.append(mut_win)
         positions.append(new_pos)
 
     print(f"Extracting ESM-2 embeddings for {len(wt_seqs)} S1724 pairs on {device}...")
     wt_mean, mut_mean, wt_pos, mut_pos = get_esm2_embeddings_for_pairs(
-        wt_seqs, mut_seqs, positions,
-        model_name=ESM2_MODEL_650M, device=device, batch_size=64
+        wt_seqs,
+        mut_seqs,
+        positions,
+        model_name=ESM2_MODEL_650M,
+        device=device,
+        batch_size=64,
     )
     np.save(WT_MEAN_EMB, wt_mean)
     np.save(MUT_MEAN_EMB, mut_mean)
@@ -258,6 +288,7 @@ def extract_embeddings(variants):
 # ---------------------------------------------------------------------------
 # CV splits
 # ---------------------------------------------------------------------------
+
 
 def random_split_cv(n, n_folds=5, seed=42):
     idx = np.arange(n)
@@ -303,6 +334,7 @@ def cluster_split_cv(proteins, cluster_map, n_folds=5, seed=42):
 # Ridge regression probe
 # ---------------------------------------------------------------------------
 
+
 def auroc_at_median(y_true, y_pred):
     """Binary AUROC: above-median = positive."""
     med = np.median(y_true)
@@ -322,8 +354,8 @@ def run_ridge_with_auroc(X, y, splits):
         clf.fit(Xtr, y[tr])
         pred = clf.predict(Xte)
         rho, _ = spearmanr(y[te], pred)
-        r, _   = pearsonr(y[te], pred)
-        au     = auroc_at_median(y[te], pred)
+        r, _ = pearsonr(y[te], pred)
+        au = auroc_at_median(y[te], pred)
         rhos.append(float(rho))
         rs.append(float(r))
         aurocs.append(au)
@@ -331,11 +363,11 @@ def run_ridge_with_auroc(X, y, splits):
         return {}
     return {
         "spearman_mean": float(np.mean(rhos)),
-        "spearman_std":  float(np.std(rhos)),
-        "pearson_mean":  float(np.mean(rs)),
-        "pearson_std":   float(np.std(rs)),
-        "auroc_mean":    float(np.nanmean(aurocs)),
-        "auroc_std":     float(np.nanstd(aurocs)),
+        "spearman_std": float(np.std(rhos)),
+        "pearson_mean": float(np.mean(rs)),
+        "pearson_std": float(np.std(rs)),
+        "auroc_mean": float(np.nanmean(aurocs)),
+        "auroc_std": float(np.nanstd(aurocs)),
         "n_folds": len(rhos),
     }
 
@@ -343,6 +375,7 @@ def run_ridge_with_auroc(X, y, splits):
 # ---------------------------------------------------------------------------
 # Per-protein Spearman distribution
 # ---------------------------------------------------------------------------
+
 
 def per_protein_spearman(X, y, proteins, use_delta_mean=True):
     """
@@ -352,7 +385,7 @@ def per_protein_spearman(X, y, proteins, use_delta_mean=True):
     unique = sorted(set(proteins))
     results = {}
     for prot in unique:
-        mask = (proteins == prot)
+        mask = proteins == prot
         if mask.sum() < 5:
             continue
         tr = np.where(~mask)[0]
@@ -378,9 +411,18 @@ def per_protein_spearman(X, y, proteins, use_delta_mean=True):
 # H3: stability projection out of mechanism
 # ---------------------------------------------------------------------------
 
-def run_h3_stability_projection(merged_delta_mean, merged_labels, merged_proteins,
-                                  pfam_map, s1724_variants, s1724_delta_mean, s1724_ddg,
-                                  n_folds=5, n_seeds=5):
+
+def run_h3_stability_projection(
+    merged_delta_mean,
+    merged_labels,
+    merged_proteins,
+    pfam_map,
+    s1724_variants,
+    s1724_delta_mean,
+    s1724_ddg,
+    n_folds=5,
+    n_seeds=5,
+):
     """
     Pre-registered H3 protocol:
       1. Train Ridge on S1724 (wt_mean, mut_mean) -> ΔΔG.
@@ -410,7 +452,9 @@ def run_h3_stability_projection(merged_delta_mean, merged_labels, merged_protein
     v = w / (np.linalg.norm(w) + 1e-12)  # unit vector in sc_s-scaled feature space
 
     # Project stability out of merged delta_mean — must scale first to match sc_s space
-    merged_scaled = sc_s.transform(merged_delta_mean.astype(np.float64)).astype(np.float32)
+    merged_scaled = sc_s.transform(merged_delta_mean.astype(np.float64)).astype(
+        np.float32
+    )
     proj = merged_scaled @ v  # (N,) scalar stability score per variant
     residuals = merged_scaled - np.outer(proj, v)
 
@@ -426,29 +470,38 @@ def run_h3_stability_projection(merged_delta_mean, merged_labels, merged_protein
                 sc = StandardScaler()
                 Xtr = sc.fit_transform(X[tr].astype(np.float32))
                 Xte = sc.transform(X[te].astype(np.float32))
-                clf = LogisticRegression(max_iter=1000, C=1.0, class_weight="balanced",
-                                         multi_class="multinomial", random_state=seed)
+                clf = LogisticRegression(
+                    max_iter=1000,
+                    C=1.0,
+                    class_weight="balanced",
+                    multi_class="multinomial",
+                    random_state=seed,
+                )
                 clf.fit(Xtr, y[tr])
                 pred = clf.predict(Xte)
-                fold_f1s.append(float(f1_score(y[te], pred, average="macro", zero_division=0)))
+                fold_f1s.append(
+                    float(f1_score(y[te], pred, average="macro", zero_division=0))
+                )
             if tag == "baseline":
                 baseline_f1s.append(float(np.mean(fold_f1s)))
             else:
                 projected_f1s.append(float(np.mean(fold_f1s)))
 
     return {
-        "baseline_f1_mean":  float(np.mean(baseline_f1s)),
-        "baseline_f1_std":   float(np.std(baseline_f1s)),
+        "baseline_f1_mean": float(np.mean(baseline_f1s)),
+        "baseline_f1_std": float(np.std(baseline_f1s)),
         "projected_f1_mean": float(np.mean(projected_f1s)),
-        "projected_f1_std":  float(np.std(projected_f1s)),
-        "delta_f1":          float(np.mean(projected_f1s) - np.mean(baseline_f1s)),
-        "h3_passes":         float(np.mean(projected_f1s)) <= float(np.mean(baseline_f1s)) + 0.01,
+        "projected_f1_std": float(np.std(projected_f1s)),
+        "delta_f1": float(np.mean(projected_f1s) - np.mean(baseline_f1s)),
+        "h3_passes": float(np.mean(projected_f1s))
+        <= float(np.mean(baseline_f1s)) + 0.01,
     }
 
 
 # ---------------------------------------------------------------------------
 # Decision rule — ordered by informativeness
 # ---------------------------------------------------------------------------
+
 
 def apply_decision_rule(random_rho, protein_rho, per_prot_std):
     """
@@ -474,14 +527,17 @@ def apply_decision_rule(random_rho, protein_rho, per_prot_std):
 # Main
 # ---------------------------------------------------------------------------
 
+
 def main():
     # ── 1. Load variants ──────────────────────────────────────────────────────
     variants = load_s1724_variants()
-    print(f"Loaded {len(variants)} S1724 variants across "
-          f"{len(set(v['protein'] for v in variants))} proteins")
+    print(
+        f"Loaded {len(variants)} S1724 variants across "
+        f"{len(set(v['protein'] for v in variants))} proteins"
+    )
 
     proteins = np.array([v["protein"] for v in variants])
-    ddg      = np.array([v["ddg"]     for v in variants])
+    ddg = np.array([v["ddg"] for v in variants])
 
     # ── 2. Cluster assignment for family-split analogue ───────────────────────
     cluster_map = assign_protein_clusters(variants)
@@ -489,17 +545,19 @@ def main():
     print(f"Protein clusters: {len(set(proteins))} proteins → {n_clusters} clusters")
 
     # ── 3. Embeddings ─────────────────────────────────────────────────────────
-    if all(os.path.exists(p) for p in [WT_MEAN_EMB, MUT_MEAN_EMB, WT_POS_EMB, MUT_POS_EMB]):
+    if all(
+        os.path.exists(p) for p in [WT_MEAN_EMB, MUT_MEAN_EMB, WT_POS_EMB, MUT_POS_EMB]
+    ):
         print("Loading cached embeddings...")
-        wt_mean  = np.load(WT_MEAN_EMB)
+        wt_mean = np.load(WT_MEAN_EMB)
         mut_mean = np.load(MUT_MEAN_EMB)
-        wt_pos   = np.load(WT_POS_EMB)
-        mut_pos  = np.load(MUT_POS_EMB)
+        wt_pos = np.load(WT_POS_EMB)
+        mut_pos = np.load(MUT_POS_EMB)
     else:
         wt_mean, mut_mean, wt_pos, mut_pos = extract_embeddings(variants)
 
     delta_mean = mut_mean - wt_mean
-    delta_pos  = mut_pos  - wt_pos
+    delta_pos = mut_pos - wt_pos
 
     print(f"Embeddings: delta_mean {delta_mean.shape}, delta_pos {delta_pos.shape}")
 
@@ -508,7 +566,7 @@ def main():
     for seed in range(N_SEEDS):
         print(f"\n── Seed {seed} ──")
 
-        splits_random  = random_split_cv(len(variants), N_FOLDS, seed)
+        splits_random = random_split_cv(len(variants), N_FOLDS, seed)
         splits_protein = protein_split_cv(proteins, N_FOLDS, seed)
         splits_cluster = cluster_split_cv(proteins, cluster_map, N_FOLDS, seed)
 
@@ -516,7 +574,7 @@ def main():
 
         for feat_name, X in [("delta_mean", delta_mean), ("delta_pos", delta_pos)]:
             for split_name, splits in [
-                ("random",  splits_random),
+                ("random", splits_random),
                 ("protein", splits_protein),
                 ("cluster", splits_cluster),
             ]:
@@ -524,8 +582,10 @@ def main():
                 res = run_ridge_with_auroc(X, ddg, splits)
                 seed_result[key] = res
                 if res:
-                    print(f"  {key}: ρ={res['spearman_mean']:.3f}±{res['spearman_std']:.3f}  "
-                          f"AUROC={res['auroc_mean']:.3f}")
+                    print(
+                        f"  {key}: ρ={res['spearman_mean']:.3f}±{res['spearman_std']:.3f}  "
+                        f"AUROC={res['auroc_mean']:.3f}"
+                    )
 
         results_by_seed.append(seed_result)
 
@@ -536,9 +596,11 @@ def main():
     per_prot_std = float(np.std(prot_rhos)) if prot_rhos else float("nan")
     per_prot_mean = float(np.mean(prot_rhos)) if prot_rhos else float("nan")
 
-    print(f"  Per-protein ρ: mean={per_prot_mean:.3f}  std={per_prot_std:.3f}  "
-          f"min={min(prot_rhos):.3f}  max={max(prot_rhos):.3f}  "
-          f"n={len(prot_rhos)}")
+    print(
+        f"  Per-protein ρ: mean={per_prot_mean:.3f}  std={per_prot_std:.3f}  "
+        f"min={min(prot_rhos):.3f}  max={max(prot_rhos):.3f}  "
+        f"n={len(prot_rhos)}"
+    )
 
     with open(os.path.join(OUT, "per_protein_spearman.json"), "w") as f:
         json.dump(per_prot, f, indent=2)
@@ -552,67 +614,89 @@ def main():
                 all_keys.add(k)
 
     for key in sorted(all_keys):
-        vals_rho   = [sr[key]["spearman_mean"] for sr in results_by_seed if key in sr and sr[key]]
-        vals_auroc = [sr[key]["auroc_mean"]    for sr in results_by_seed if key in sr and sr[key]]
+        vals_rho = [
+            sr[key]["spearman_mean"] for sr in results_by_seed if key in sr and sr[key]
+        ]
+        vals_auroc = [
+            sr[key]["auroc_mean"] for sr in results_by_seed if key in sr and sr[key]
+        ]
         if not vals_rho:
             continue
         summary[key] = {
             "spearman_mean": float(np.mean(vals_rho)),
-            "spearman_std":  float(np.std(vals_rho)),
-            "auroc_mean":    float(np.nanmean(vals_auroc)),
-            "auroc_std":     float(np.nanstd(vals_auroc)),
+            "spearman_std": float(np.std(vals_rho)),
+            "auroc_mean": float(np.nanmean(vals_auroc)),
+            "auroc_std": float(np.nanstd(vals_auroc)),
         }
 
     summary["per_protein"] = {
         "spearman_mean": per_prot_mean,
-        "spearman_std":  per_prot_std,
-        "n_proteins":    len(prot_rhos),
+        "spearman_std": per_prot_std,
+        "n_proteins": len(prot_rhos),
     }
 
     # ── 7. H3 — stability projection out of mechanism ─────────────────────────
     h3_result = None
     merged_variants_path = os.path.join(DATA, "merged_valid_variants.json")
-    merged_wt_path  = os.path.join(EMB, "merged_embeddings_wt_mean.npy")
+    merged_wt_path = os.path.join(EMB, "merged_embeddings_wt_mean.npy")
     merged_mut_path = os.path.join(EMB, "merged_embeddings_mut_mean.npy")
-    if all(os.path.exists(p) for p in [merged_variants_path, merged_wt_path, merged_mut_path,
-                                        PFAM_JSON]):
+    if all(
+        os.path.exists(p)
+        for p in [merged_variants_path, merged_wt_path, merged_mut_path, PFAM_JSON]
+    ):
         print("\nRunning H3 stability projection test...")
         with open(merged_variants_path) as f:
             merged_variants = json.load(f)
         with open(PFAM_JSON) as f:
             pfam_map = json.load(f)
-        merged_wt  = np.load(merged_wt_path)
+        merged_wt = np.load(merged_wt_path)
         merged_mut = np.load(merged_mut_path)
         merged_delta = merged_mut - merged_wt
 
         label_map = {"GOF": "GOF", "DN": "DN", "HI": "LOF", "AR": "LOF", "LOF": "LOF"}
-        merged_labels   = np.array([label_map.get(v.get("mechanism", v.get("label", "")), "LOF")
-                                     for v in merged_variants])
-        merged_proteins = np.array([v.get("gene", v.get("protein", "")) for v in merged_variants])
+        merged_labels = np.array(
+            [
+                label_map.get(v.get("mechanism", v.get("label", "")), "LOF")
+                for v in merged_variants
+            ]
+        )
+        merged_proteins = np.array(
+            [v.get("gene", v.get("protein", "")) for v in merged_variants]
+        )
 
         # Align lengths: merged embeddings may differ from variant list if some were dropped
         n_min = min(len(merged_delta), len(merged_labels))
-        merged_delta   = merged_delta[:n_min]
-        merged_labels  = merged_labels[:n_min]
+        merged_delta = merged_delta[:n_min]
+        merged_labels = merged_labels[:n_min]
         merged_proteins = merged_proteins[:n_min]
 
         h3_result = run_h3_stability_projection(
-            merged_delta, merged_labels, merged_proteins, pfam_map,
-            variants, delta_mean, ddg,
-            n_folds=N_FOLDS, n_seeds=N_SEEDS,
+            merged_delta,
+            merged_labels,
+            merged_proteins,
+            pfam_map,
+            variants,
+            delta_mean,
+            ddg,
+            n_folds=N_FOLDS,
+            n_seeds=N_SEEDS,
         )
-        print(f"  H3: baseline F1={h3_result['baseline_f1_mean']:.3f}  "
-              f"projected F1={h3_result['projected_f1_mean']:.3f}  "
-              f"Δ={h3_result['delta_f1']:+.3f}  "
-              f"passes={'YES' if h3_result['h3_passes'] else 'NO (stability direction is informative)'}")
+        print(
+            f"  H3: baseline F1={h3_result['baseline_f1_mean']:.3f}  "
+            f"projected F1={h3_result['projected_f1_mean']:.3f}  "
+            f"Δ={h3_result['delta_f1']:+.3f}  "
+            f"passes={'YES' if h3_result['h3_passes'] else 'NO (stability direction is informative)'}"
+        )
         with open(os.path.join(OUT, "h3_stability_projection.json"), "w") as f:
             json.dump(h3_result, f, indent=2)
     else:
         print("\nSkipping H3 (merged embeddings not found — run on pod with full data)")
 
     # ── 8. Decision rule ──────────────────────────────────────────────────────
-    dm_random  = summary.get("delta_mean_random",  {}).get("spearman_mean", float("nan"))
-    dm_protein = summary.get("delta_mean_protein", {}).get("spearman_mean", float("nan"))
+    dm_random = summary.get("delta_mean_random", {}).get("spearman_mean", float("nan"))
+    dm_protein = summary.get("delta_mean_protein", {}).get(
+        "spearman_mean", float("nan")
+    )
 
     verdict = apply_decision_rule(dm_random, dm_protein, per_prot_std)
     summary["verdict"] = verdict
@@ -623,14 +707,18 @@ def main():
     summary["h3"] = h3_result
 
     print(f"\n{'='*60}")
-    print(f"VERDICT: {verdict}  (ordered by informativeness: LEAKY > HETEROGENEOUS > ROBUST > WEAK > NULL)")
+    print(
+        f"VERDICT: {verdict}  (ordered by informativeness: LEAKY > HETEROGENEOUS > ROBUST > WEAK > NULL)"
+    )
     print(f"  delta_mean random ρ  : {dm_random:.3f}  (H1 threshold ≥ 0.5)")
     print(f"  delta_mean protein ρ : {dm_protein:.3f}")
     print(f"  Δ (random − protein) : {dm_random - dm_protein:.3f}  (LEAKY if Δ ≥ 0.10)")
     print(f"  per-protein ρ std    : {per_prot_std:.3f}  (HETEROGENEOUS if ≥ 0.15)")
     if h3_result:
-        print(f"  H3 Δ mechanism F1    : {h3_result['delta_f1']:+.3f}  "
-              f"(passes if ≤ +0.01 — stability projection doesn't help mechanism)")
+        print(
+            f"  H3 Δ mechanism F1    : {h3_result['delta_f1']:+.3f}  "
+            f"(passes if ≤ +0.01 — stability projection doesn't help mechanism)"
+        )
     print(f"{'='*60}")
 
     with open(os.path.join(OUT, "summary.json"), "w") as f:

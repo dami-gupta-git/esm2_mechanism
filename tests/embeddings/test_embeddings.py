@@ -22,15 +22,16 @@ Covers:
 import numpy as np
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # utils_sequences.apply_missense
 # ---------------------------------------------------------------------------
+
 
 class TestApplyMissense:
 
     def setup_method(self):
         from esm2_mechanism.utils_sequences import apply_missense
+
         self.apply_missense = apply_missense
 
     def test_correct_substitution(self):
@@ -71,10 +72,12 @@ class TestApplyMissense:
 # utils_sequences.window_sequence
 # ---------------------------------------------------------------------------
 
+
 class TestWindowSequence:
 
     def setup_method(self):
         from esm2_mechanism.utils_sequences import window_sequence, MAX_SEQ_LEN
+
         self.window_sequence = window_sequence
         self.MAX_SEQ_LEN = MAX_SEQ_LEN
 
@@ -122,10 +125,12 @@ class TestWindowSequence:
 # megascale_stability CV splits
 # ---------------------------------------------------------------------------
 
+
 class TestRandomSplitCv:
 
     def setup_method(self):
         from esm2_mechanism.embeddings.megascale_stability import random_split_cv
+
         self.random_split_cv = random_split_cv
 
     def test_covers_all_indices(self):
@@ -158,6 +163,7 @@ class TestProteinSplitCv:
 
     def setup_method(self):
         from esm2_mechanism.embeddings.megascale_stability import protein_split_cv
+
         self.protein_split_cv = protein_split_cv
 
     def _proteins(self, n=60, n_prots=10):
@@ -181,6 +187,7 @@ class TestClusterSplitCv:
 
     def setup_method(self):
         from esm2_mechanism.embeddings.megascale_stability import cluster_split_cv
+
         self.cluster_split_cv = cluster_split_cv
 
     def _data(self, n=60, n_prots=10):
@@ -207,10 +214,12 @@ class TestClusterSplitCv:
 # megascale_stability.auroc_at_median
 # ---------------------------------------------------------------------------
 
+
 class TestAurocAtMedian:
 
     def setup_method(self):
         from esm2_mechanism.embeddings.megascale_stability import auroc_at_median
+
         self.auroc_at_median = auroc_at_median
 
     def test_perfect_prediction(self):
@@ -238,10 +247,12 @@ class TestAurocAtMedian:
 # megascale_stability.apply_decision_rule
 # ---------------------------------------------------------------------------
 
+
 class TestApplyDecisionRule:
 
     def setup_method(self):
         from esm2_mechanism.embeddings.megascale_stability import apply_decision_rule
+
         self.apply_decision_rule = apply_decision_rule
 
     def test_leaky(self):
@@ -264,10 +275,12 @@ class TestApplyDecisionRule:
 # family_clustering.knn_family_purity
 # ---------------------------------------------------------------------------
 
+
 class TestKnnFamilyPurity:
 
     def setup_method(self):
         from esm2_mechanism.mechanism.family_clustering import knn_family_purity
+
         self.knn_family_purity = knn_family_purity
 
     def test_too_few_points_returns_nan(self):
@@ -295,10 +308,12 @@ class TestKnnFamilyPurity:
 # family_clustering.within_between_ratio
 # ---------------------------------------------------------------------------
 
+
 class TestWithinBetweenRatio:
 
     def setup_method(self):
         from esm2_mechanism.mechanism.family_clustering import within_between_ratio
+
         self.within_between_ratio = within_between_ratio
 
     def test_too_few_pairs_returns_nan(self):
@@ -310,10 +325,12 @@ class TestWithinBetweenRatio:
     def test_tight_clusters_ratio_below_one(self):
         rng = np.random.RandomState(0)
         # Tight clusters — within-family distance should be small
-        emb = np.vstack([
-            rng.randn(10, 8) * 0.01 + np.array([10.0] + [0.0]*7),
-            rng.randn(10, 8) * 0.01 + np.array([-10.0] + [0.0]*7),
-        ]).astype(np.float32)
+        emb = np.vstack(
+            [
+                rng.randn(10, 8) * 0.01 + np.array([10.0] + [0.0] * 7),
+                rng.randn(10, 8) * 0.01 + np.array([-10.0] + [0.0] * 7),
+            ]
+        ).astype(np.float32)
         families = np.array(["A"] * 10 + ["B"] * 10)
         ratio, null, z = self.within_between_ratio(emb, families, n_shuffles=5)
         assert ratio < 1.0
@@ -323,10 +340,12 @@ class TestWithinBetweenRatio:
 # family_clustering.gene_level_embeddings
 # ---------------------------------------------------------------------------
 
+
 class TestGeneLevelEmbeddings:
 
     def setup_method(self):
         from esm2_mechanism.mechanism.family_clustering import gene_level_embeddings
+
         self.gene_level_embeddings = gene_level_embeddings
 
     def test_output_shape(self):
@@ -354,10 +373,12 @@ class TestGeneLevelEmbeddings:
 # esm2_mechanism._load_alphamissense_scores
 # ---------------------------------------------------------------------------
 
+
 class TestLoadAlphaMissenseScores:
 
     def setup_method(self):
         from esm2_mechanism.embeddings.esm2_mechanism import _load_alphamissense_scores
+
         self._load = _load_alphamissense_scores
 
     def _variant(self, gene="TP53", aa_pos=100, aa_wt="A", aa_mut="V"):
@@ -366,15 +387,13 @@ class TestLoadAlphaMissenseScores:
     def test_scores_loaded_for_matching_keys(self, tmp_path):
         v = self._variant()
         key = f"{v['gene']}_{v['aa_pos']}_{v['aa_wt']}_{v['aa_mut']}"
-        (tmp_path / "alphamissense_scores_full.json").write_text(
-            f'{{"{key}": 0.87}}'
-        )
+        (tmp_path / "alphamissense_scores_full.json").write_text(f'{{"{key}": 0.87}}')
         scores = self._load([v], str(tmp_path))
         assert scores.shape == (1,)
         assert scores[0] == pytest.approx(0.87)
 
     def test_missing_key_gives_nan(self, tmp_path):
-        (tmp_path / "alphamissense_scores_full.json").write_text('{}')
+        (tmp_path / "alphamissense_scores_full.json").write_text("{}")
         scores = self._load([self._variant()], str(tmp_path))
         assert np.isnan(scores[0])
 
@@ -384,7 +403,7 @@ class TestLoadAlphaMissenseScores:
         assert np.isnan(scores[0])
 
     def test_corrupt_json_returns_all_nan(self, tmp_path):
-        (tmp_path / "alphamissense_scores_full.json").write_text('{not valid json')
+        (tmp_path / "alphamissense_scores_full.json").write_text("{not valid json")
         scores = self._load([self._variant()], str(tmp_path))
         assert np.all(np.isnan(scores))
 
@@ -392,9 +411,7 @@ class TestLoadAlphaMissenseScores:
         v1 = self._variant("BRCA1", 50, "M", "K")
         v2 = self._variant("BRCA2", 80, "G", "D")
         key1 = f"BRCA1_50_M_K"
-        (tmp_path / "alphamissense_scores_full.json").write_text(
-            f'{{"{key1}": 0.55}}'
-        )
+        (tmp_path / "alphamissense_scores_full.json").write_text(f'{{"{key1}": 0.55}}')
         scores = self._load([v1, v2], str(tmp_path))
         assert scores[0] == pytest.approx(0.55)
         assert np.isnan(scores[1])
@@ -404,21 +421,28 @@ class TestLoadAlphaMissenseScores:
 # esm2_mechanism._load_data
 # ---------------------------------------------------------------------------
 
+
 class TestLoadData:
 
     def setup_method(self):
         from esm2_mechanism.embeddings.esm2_mechanism import _load_data
+
         self._load_data = _load_data
 
     def _write_variants(self, tmp_path, variants):
         import json
+
         (tmp_path / "merged_variants.json").write_text(json.dumps(variants))
 
     def _valid_variant(self, **overrides):
         v = {
-            "gene": "TP53", "uniprot_id": "P04637",
-            "aa_pos": 100, "aa_wt": "A", "aa_mut": "V",
-            "mechanism": "GOF", "label_3class": "GOF",
+            "gene": "TP53",
+            "uniprot_id": "P04637",
+            "aa_pos": 100,
+            "aa_wt": "A",
+            "aa_mut": "V",
+            "mechanism": "GOF",
+            "label_3class": "GOF",
         }
         v.update(overrides)
         return v
@@ -433,28 +457,37 @@ class TestLoadData:
         assert len(result) == 1
 
     def test_drops_missing_uniprot_id(self, tmp_path):
-        self._write_variants(tmp_path, [
-            self._valid_variant(),
-            self._valid_variant(uniprot_id=""),
-            self._valid_variant(uniprot_id=None),
-        ])
+        self._write_variants(
+            tmp_path,
+            [
+                self._valid_variant(),
+                self._valid_variant(uniprot_id=""),
+                self._valid_variant(uniprot_id=None),
+            ],
+        )
         result = self._load_data(str(tmp_path))
         assert len(result) == 1
 
     def test_drops_zero_aa_pos(self, tmp_path):
-        self._write_variants(tmp_path, [
-            self._valid_variant(),
-            self._valid_variant(aa_pos=0),
-        ])
+        self._write_variants(
+            tmp_path,
+            [
+                self._valid_variant(),
+                self._valid_variant(aa_pos=0),
+            ],
+        )
         result = self._load_data(str(tmp_path))
         assert len(result) == 1
 
     def test_drops_missing_aa_wt_or_mut(self, tmp_path):
-        self._write_variants(tmp_path, [
-            self._valid_variant(),
-            self._valid_variant(aa_wt=""),
-            self._valid_variant(aa_mut=None),
-        ])
+        self._write_variants(
+            tmp_path,
+            [
+                self._valid_variant(),
+                self._valid_variant(aa_wt=""),
+                self._valid_variant(aa_mut=None),
+            ],
+        )
         result = self._load_data(str(tmp_path))
         assert len(result) == 1
 
@@ -463,10 +496,12 @@ class TestLoadData:
 # embed_variants._build_valid_pairs
 # ---------------------------------------------------------------------------
 
+
 class TestBuildValidPairs:
 
     def setup_method(self):
         from esm2_mechanism.embeddings.embed_variants import _build_valid_pairs
+
         self._build = _build_valid_pairs
 
     def _variant(self, uniprot_id="P04637", aa_pos=2, aa_wt="K", aa_mut="R"):
@@ -479,9 +514,7 @@ class TestBuildValidPairs:
 
     def test_valid_variant_included(self):
         seq_cache = {"P04637": "MKACD"}
-        valid, wt_seqs, mut_seqs, positions = self._build(
-            [self._variant()], seq_cache
-        )
+        valid, wt_seqs, mut_seqs, positions = self._build([self._variant()], seq_cache)
         assert len(valid) == 1
         assert len(wt_seqs) == len(mut_seqs) == len(positions) == 1
 
@@ -517,9 +550,11 @@ class TestBuildValidPairs:
     def test_multiple_variants_mixed(self):
         seq_cache = {"P04637": "MKACD", "P99999": "ACDEF"}
         variants = [
-            self._variant(),                          # valid
-            self._variant(uniprot_id="MISSING"),      # no sequence
-            self._variant(uniprot_id="P99999", aa_pos=1, aa_wt="A", aa_mut="G"),  # valid
+            self._variant(),  # valid
+            self._variant(uniprot_id="MISSING"),  # no sequence
+            self._variant(
+                uniprot_id="P99999", aa_pos=1, aa_wt="A", aa_mut="G"
+            ),  # valid
         ]
         valid, *_ = self._build(variants, seq_cache)
         assert len(valid) == 2
@@ -529,10 +564,15 @@ class TestBuildValidPairs:
 # utils_sequences.fetch_uniprot_sequence
 # ---------------------------------------------------------------------------
 
+
 class TestFetchUniprotSequence:
 
     def setup_method(self):
-        from esm2_mechanism.utils_sequences import fetch_uniprot_sequence, TransientFetchError
+        from esm2_mechanism.utils_sequences import (
+            fetch_uniprot_sequence,
+            TransientFetchError,
+        )
+
         self.fetch = fetch_uniprot_sequence
         self.TransientFetchError = TransientFetchError
 
@@ -546,10 +586,13 @@ class TestFetchUniprotSequence:
             def __init__(self):
                 self.status = status
                 self._body = body
+
             def read(self):
                 return self._body
+
             def __enter__(self):
                 return self
+
             def __exit__(self, *_):
                 pass
 
@@ -560,6 +603,7 @@ class TestFetchUniprotSequence:
                         req.full_url, 404, "Not Found", {}, io.BytesIO(b"")
                     )
                 return _FakeResponse()
+
             https_open = http_open
 
         opener = urllib.request.OpenerDirector()
@@ -568,6 +612,7 @@ class TestFetchUniprotSequence:
 
     def test_404_returns_none(self, monkeypatch):
         import urllib.request
+
         opener = self._make_handler(404)
         monkeypatch.setattr(urllib.request, "urlopen", opener.open)
         result = self.fetch("P99999", retries=1)
@@ -592,8 +637,10 @@ class TestFetchUniprotSequence:
         class _FakeResp:
             def read(self):
                 return fasta
+
             def __enter__(self):
                 return self
+
             def __exit__(self, *_):
                 pass
 
@@ -607,8 +654,10 @@ class TestFetchUniprotSequence:
         class _FakeResp:
             def read(self):
                 return b">sp|P12345|GENE_HUMAN\n"
+
             def __enter__(self):
                 return self
+
             def __exit__(self, *_):
                 pass
 

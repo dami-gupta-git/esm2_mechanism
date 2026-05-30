@@ -119,30 +119,31 @@ def check_latex_dependencies():
     import shutil
     import sys
 
-    required_dependencies = ['pdflatex', 'chktex']
+    required_dependencies = ["pdflatex", "chktex"]
     missing_deps = []
 
     for dep in required_dependencies:
         if shutil.which(dep) is None:
             missing_deps.append(dep)
-    
+
     if missing_deps:
         print("Error: Required LaTeX dependencies not found:", file=sys.stderr)
         return False
-    
+
     return True
-    
+
+
 def worker(
-        queue,
-        base_dir,
-        results_dir,
-        model,
-        client,
-        client_model,
-        writeup,
-        improvement,
-        gpu_id,
-        no_writeup=False,
+    queue,
+    base_dir,
+    results_dir,
+    model,
+    client,
+    client_model,
+    writeup,
+    improvement,
+    gpu_id,
+    no_writeup=False,
 ):
     os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
     print(f"Worker {gpu_id} started.")
@@ -167,16 +168,16 @@ def worker(
 
 
 def do_idea(
-        base_dir,
-        results_dir,
-        idea,
-        model,
-        client,
-        client_model,
-        writeup,
-        improvement,
-        log_file=False,
-        no_writeup=False,
+    base_dir,
+    results_dir,
+    idea,
+    model,
+    client,
+    client_model,
+    writeup,
+    improvement,
+    log_file=False,
+    no_writeup=False,
 ):
     ## CREATE PROJECT FOLDER
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -194,7 +195,11 @@ def do_idea(
             baseline_results = baseline_results["means"]
         else:
             # Nested structure: {dataset: {means: {...}}}
-            baseline_results = {k: v["means"] for k, v in baseline_results.items() if isinstance(v, dict) and "means" in v}
+            baseline_results = {
+                k: v["means"]
+                for k, v in baseline_results.items()
+                if isinstance(v, dict) and "means" in v
+            }
     exp_file = osp.join(folder_name, "experiment.py")
     vis_file = osp.join(folder_name, "plot.py")
     notes = osp.join(folder_name, "notes.txt")
@@ -276,7 +281,9 @@ def do_idea(
                 edit_format="diff",
             )
             try:
-                perform_writeup(idea, folder_name, coder, client, client_model, engine=args.engine)
+                perform_writeup(
+                    idea, folder_name, coder, client, client_model, engine=args.engine
+                )
             except Exception as e:
                 print(f"Failed to perform writeup: {e}")
                 return False
@@ -357,7 +364,12 @@ if __name__ == "__main__":
     print(f"Using GPUs: {available_gpus}")
 
     # Check LaTeX dependencies before proceeding
-    if not args.ideas_only and not args.no_writeup and args.writeup == "latex" and not check_latex_dependencies():
+    if (
+        not args.ideas_only
+        and not args.no_writeup
+        and args.writeup == "latex"
+        and not check_latex_dependencies()
+    ):
         sys.exit(1)
 
     # Create client
@@ -386,7 +398,9 @@ if __name__ == "__main__":
         json.dump(ideas, f, indent=4)
 
     if args.ideas_only:
-        print(f"Ideas saved to {osp.join(base_dir, 'ideas.json')}. Exiting (--ideas-only).")
+        print(
+            f"Ideas saved to {osp.join(base_dir, 'ideas.json')}. Exiting (--ideas-only)."
+        )
         sys.exit(0)
 
     novel_ideas = [idea for idea in ideas if idea.get("novel", True)]
@@ -446,5 +460,6 @@ if __name__ == "__main__":
             except Exception as e:
                 print(f"Failed to evaluate idea {idea['Name']}: {str(e)}")
                 import traceback
+
                 print(traceback.format_exc())
     print("All ideas evaluated.")

@@ -37,7 +37,7 @@ CHECKPOINTS = [
     "esm1v_t33_650M_UR90S_1",
     "esm1v_t33_650M_UR90S_2",
 ]
-CHECKPOINT_EVERY = 50   # genes between saves
+CHECKPOINT_EVERY = 50  # genes between saves
 
 
 def build_gene_maps() -> tuple[dict[str, str], dict[str, str]]:
@@ -82,6 +82,7 @@ def score_variants_single_model(
 
         # Group by position — one forward pass per unique position.
         from collections import defaultdict
+
         pos_to_variants: dict[int, list[dict]] = defaultdict(list)
         for v in variants:
             pos_to_variants[v["pos"]].append(v)
@@ -112,9 +113,8 @@ def score_variants_single_model(
                 for v in pos_to_variants[pos]:
                     wt_aa, mut_aa = v["wt_aa"], v["mut_aa"]
                     if wt_aa in aa_to_idx and mut_aa in aa_to_idx:
-                        delta = (
-                            float(log_probs[aa_to_idx[mut_aa]])
-                            - float(log_probs[aa_to_idx[wt_aa]])
+                        delta = float(log_probs[aa_to_idx[mut_aa]]) - float(
+                            log_probs[aa_to_idx[wt_aa]]
                         )
                     else:
                         delta = float("nan")
@@ -126,10 +126,15 @@ def score_variants_single_model(
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", type=Path, default=DATA / "esm1v_scores_full.json")
-    ap.add_argument("--batch-size", type=int, default=16,
-                    help="positions per GPU batch")
-    ap.add_argument("--checkpoint-every", type=int, default=CHECKPOINT_EVERY,
-                    help="genes between incremental saves")
+    ap.add_argument(
+        "--batch-size", type=int, default=16, help="positions per GPU batch"
+    )
+    ap.add_argument(
+        "--checkpoint-every",
+        type=int,
+        default=CHECKPOINT_EVERY,
+        help="genes between incremental saves",
+    )
     args = ap.parse_args()
 
     try:
@@ -151,16 +156,19 @@ def main() -> int:
 
     # Index by gene.
     from collections import defaultdict
+
     gene_variants: dict[str, list[dict]] = defaultdict(list)
     for v in variants_raw:
         key = f"{v['gene']}_{v['aa_pos']}_{v['aa_wt']}_{v['aa_mut']}"
-        gene_variants[v["gene"]].append({
-            "key": key,
-            "pos": v["aa_pos"],
-            "wt_aa": v["aa_wt"],
-            "mut_aa": v["aa_mut"],
-            "label": v["label"],
-        })
+        gene_variants[v["gene"]].append(
+            {
+                "key": key,
+                "pos": v["aa_pos"],
+                "wt_aa": v["aa_wt"],
+                "mut_aa": v["aa_mut"],
+                "label": v["label"],
+            }
+        )
     print(f"genes: {len(gene_variants):,}")
 
     ckpt_path = DATA / "esm1v_scores_ckpt.json"
@@ -176,7 +184,9 @@ def main() -> int:
         for c in CHECKPOINTS:
             ckpt_done[c] = set(saved.get("ckpt_done", {}).get(c, []))
         done_genes = set.intersection(*[ckpt_done[c] for c in CHECKPOINTS])
-        print(f"Resuming from checkpoint: {len(done_genes)}/{len(gene_variants)} genes fully done")
+        print(
+            f"Resuming from checkpoint: {len(done_genes)}/{len(gene_variants)} genes fully done"
+        )
     else:
         done_genes = set()
 
@@ -198,15 +208,21 @@ def main() -> int:
             if len(gene_batch) >= args.checkpoint_every or i == len(genes_for_ckpt) - 1:
                 batch_gene_variants = {g: gene_variants[g] for g in gene_batch}
                 new_scores = score_variants_single_model(
-                    model, alphabet, device,
-                    batch_gene_variants, g2u, seqs,
+                    model,
+                    alphabet,
+                    device,
+                    batch_gene_variants,
+                    g2u,
+                    seqs,
                     args.batch_size,
                 )
                 per_ckpt[ckpt_name].update(new_scores)
                 ckpt_done[ckpt_name].update(gene_batch)
                 n_ok = sum(1 for v in new_scores.values() if not np.isnan(v))
-                print(f"  [{i+1}/{len(genes_for_ckpt)}] batch of {len(gene_batch)} genes "
-                      f"scored ({n_ok}/{len(new_scores)} non-nan)")
+                print(
+                    f"  [{i+1}/{len(genes_for_ckpt)}] batch of {len(gene_batch)} genes "
+                    f"scored ({n_ok}/{len(new_scores)} non-nan)"
+                )
                 gene_batch = []
 
                 # Save intermediate checkpoint so progress survives crashes
@@ -218,11 +234,15 @@ def main() -> int:
                 }
                 with open(ckpt_path, "w") as _f:
                     json.dump(ckpt_state, _f)
-                print(f"  Checkpoint saved ({len(all_fully_done)} genes fully done)", flush=True)
+                print(
+                    f"  Checkpoint saved ({len(all_fully_done)} genes fully done)",
+                    flush=True,
+                )
 
         del model
         try:
             import torch
+
             torch.cuda.empty_cache()
         except Exception:
             pass

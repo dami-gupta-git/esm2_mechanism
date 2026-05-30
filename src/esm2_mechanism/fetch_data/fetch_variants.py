@@ -66,8 +66,12 @@ CLINVAR_CACHE = CACHE_DIR / "clinvar"
 _VARIANT_PAT = re.compile(r"^([A-Z])(\d+)([A-Z])$")
 
 _GERAS_MECH_MAP = {
-    "GOF": "GOF", "DN": "DN", "HI": "HI",
-    "AR": "AR", "AR, HET": "AR", "AR, HOM": "AR",
+    "GOF": "GOF",
+    "DN": "DN",
+    "HI": "HI",
+    "AR": "AR",
+    "AR, HET": "AR",
+    "AR, HOM": "AR",
 }
 
 
@@ -87,7 +91,9 @@ def parse_gerasimavicius_variants(xlsx_path: Path) -> list[dict]:
     required = {"Gene", "Uniprot_id", "Uniprot_variant", "Disease_mechanism", "Class"}
     missing_cols = required - col.keys()
     if missing_cols:
-        raise ValueError(f"Missing expected columns in ClinVar_gene_level sheet: {missing_cols}")
+        raise ValueError(
+            f"Missing expected columns in ClinVar_gene_level sheet: {missing_cols}"
+        )
 
     variants = []
     skipped = 0
@@ -101,7 +107,9 @@ def parse_gerasimavicius_variants(xlsx_path: Path) -> list[dict]:
             uniprot = row[col["Uniprot_id"]]
             variant_str = row[col["Uniprot_variant"]]
             mech_raw = row[col["Disease_mechanism"]]
-            foldx_raw = row[col["raw_FoldX_Monomer"]] if "raw_FoldX_Monomer" in col else None
+            foldx_raw = (
+                row[col["raw_FoldX_Monomer"]] if "raw_FoldX_Monomer" in col else None
+            )
 
             if not all([gene, uniprot, variant_str, mech_raw]):
                 skipped += 1
@@ -125,16 +133,18 @@ def parse_gerasimavicius_variants(xlsx_path: Path) -> list[dict]:
                 except (ValueError, TypeError):
                     pass
 
-            variants.append({
-                "gene": str(gene).upper(),
-                "uniprot_id": str(uniprot).strip(),
-                "aa_pos": int(aa_pos_str),
-                "aa_wt": aa_wt.upper(),
-                "aa_mut": aa_mut.upper(),
-                "mechanism": mech,
-                "foldx_ddg": foldx_ddg,
-                "clinvar_id": "",
-            })
+            variants.append(
+                {
+                    "gene": str(gene).upper(),
+                    "uniprot_id": str(uniprot).strip(),
+                    "aa_pos": int(aa_pos_str),
+                    "aa_wt": aa_wt.upper(),
+                    "aa_mut": aa_mut.upper(),
+                    "mechanism": mech,
+                    "foldx_ddg": foldx_ddg,
+                    "clinvar_id": "",
+                }
+            )
         except Exception as exc:
             print(f"WARNING: skipping row due to error: {exc}")
             skipped += 1
@@ -175,16 +185,35 @@ UNIPROT_FASTA = "https://rest.uniprot.org/uniprotkb/{acc}.fasta"
 _CLINSIG_KEEP = {"pathogenic", "likely pathogenic", "pathogenic/likely pathogenic"}
 
 _PROT_CHANGE_RE = re.compile(
-    r"p\.([A-Z][a-z]{2})(\d+)([A-Z][a-z]{2})"
-    r"|p\.([A-Z])(\d+)([A-Z])"
+    r"p\.([A-Z][a-z]{2})(\d+)([A-Z][a-z]{2})" r"|p\.([A-Z])(\d+)([A-Z])"
 )
 
 _THREE_TO_ONE = {
-    "Ala": "A", "Arg": "R", "Asn": "N", "Asp": "D", "Cys": "C",
-    "Gln": "Q", "Glu": "E", "Gly": "G", "His": "H", "Ile": "I",
-    "Leu": "L", "Lys": "K", "Met": "M", "Phe": "F", "Pro": "P",
-    "Ser": "S", "Thr": "T", "Trp": "W", "Tyr": "Y", "Val": "V",
-    "Sec": "U", "Pyl": "O", "Asx": "B", "Glx": "Z", "Xaa": "X",
+    "Ala": "A",
+    "Arg": "R",
+    "Asn": "N",
+    "Asp": "D",
+    "Cys": "C",
+    "Gln": "Q",
+    "Glu": "E",
+    "Gly": "G",
+    "His": "H",
+    "Ile": "I",
+    "Leu": "L",
+    "Lys": "K",
+    "Met": "M",
+    "Phe": "F",
+    "Pro": "P",
+    "Ser": "S",
+    "Thr": "T",
+    "Trp": "W",
+    "Tyr": "Y",
+    "Val": "V",
+    "Sec": "U",
+    "Pyl": "O",
+    "Asx": "B",
+    "Glx": "Z",
+    "Xaa": "X",
     "Ter": "*",
 }
 
@@ -200,7 +229,9 @@ def _ncbi_wait() -> None:
     _last_ncbi_call = time.monotonic()
 
 
-def _get_json(url: str, params: dict, ncbi: bool = False, retries: int = 4) -> Optional[dict]:
+def _get_json(
+    url: str, params: dict, ncbi: bool = False, retries: int = 4
+) -> Optional[dict]:
     skip_rate_limit = False
     for attempt in range(retries):
         if ncbi and not skip_rate_limit:
@@ -273,7 +304,9 @@ def fetch_uniprot_id(gene: str, prefilled: Optional[str]) -> Optional[str]:
     }
     data = _get_json(UNIPROT_SEARCH, params)
     if data is None:
-        print(f"  WARNING: {gene}: UniProt request failed — not caching, will retry next run")
+        print(
+            f"  WARNING: {gene}: UniProt request failed — not caching, will retry next run"
+        )
         return None
 
     results = data.get("results", [])
@@ -284,16 +317,16 @@ def fetch_uniprot_id(gene: str, prefilled: Optional[str]) -> Optional[str]:
     acc = None
     for entry in results:
         primary_names = [
-            g["geneName"]["value"]
-            for g in entry.get("genes", [])
-            if "geneName" in g
+            g["geneName"]["value"] for g in entry.get("genes", []) if "geneName" in g
         ]
         if any(n.upper() == gene.upper() for n in primary_names):
             acc = entry["primaryAccession"]
             break
 
     if acc is None:
-        print(f"  WARNING: {gene}: no exact gene name match in UniProt results — skipping")
+        print(
+            f"  WARNING: {gene}: no exact gene name match in UniProt results — skipping"
+        )
         cache_file.write_text(json.dumps({"uniprot_id": None}))
         return None
 
@@ -346,7 +379,9 @@ def fetch_clinvar_variants(gene: str) -> list:
 
     result = _get_json(ESEARCH_URL, search_params, ncbi=True)
     if result is None:
-        print(f"  WARNING: {gene}: NCBI esearch failed — not caching, will retry next run")
+        print(
+            f"  WARNING: {gene}: NCBI esearch failed — not caching, will retry next run"
+        )
         return []
 
     ids = result.get("esearchresult", {}).get("idlist", [])
@@ -359,14 +394,16 @@ def fetch_clinvar_variants(gene: str) -> list:
     BATCH = 200
     any_batch_failed = False
     for batch_start in range(0, len(ids), BATCH):
-        batch_ids = ids[batch_start: batch_start + BATCH]
+        batch_ids = ids[batch_start : batch_start + BATCH]
         summary_params = {"db": "clinvar", "id": ",".join(batch_ids), "retmode": "json"}
         if NCBI_API_KEY:
             summary_params["api_key"] = NCBI_API_KEY
 
         summ = _get_json(ESUMMARY_URL, summary_params, ncbi=True)
         if summ is None:
-            print(f"  WARNING: {gene}: esummary batch at offset {batch_start} failed — will not cache result")
+            print(
+                f"  WARNING: {gene}: esummary batch at offset {batch_start} failed — will not cache result"
+            )
             any_batch_failed = True
             continue
 
@@ -392,8 +429,15 @@ def fetch_clinvar_variants(gene: str) -> list:
             if parsed is None:
                 continue
             wt_aa, pos, mut_aa = parsed
-            variants.append({"hgvs_p": rec.get("title", ""), "wt_aa": wt_aa,
-                              "pos": pos, "mut_aa": mut_aa, "clinsig": clinsig_raw})
+            variants.append(
+                {
+                    "hgvs_p": rec.get("title", ""),
+                    "wt_aa": wt_aa,
+                    "pos": pos,
+                    "mut_aa": mut_aa,
+                    "clinsig": clinsig_raw,
+                }
+            )
 
     seen: set = set()
     deduped: list = []
@@ -404,7 +448,9 @@ def fetch_clinvar_variants(gene: str) -> list:
             deduped.append(v)
 
     if any_batch_failed:
-        print(f"  WARNING: {gene}: result is incomplete due to batch failure — not caching, will retry next run")
+        print(
+            f"  WARNING: {gene}: result is incomplete due to batch failure — not caching, will retry next run"
+        )
         return deduped
     cache_file.write_text(json.dumps(deduped))
     return deduped
@@ -425,11 +471,13 @@ def _load_gene_list(path: Path) -> list:
             gene = row.get("gene", "").strip()
             if not gene:
                 continue
-            rows.append({
-                "gene": gene,
-                "mechanism": row.get("mechanism", "").strip(),
-                "uniprot_id": row.get("uniprot_id", "").strip() or None,
-            })
+            rows.append(
+                {
+                    "gene": gene,
+                    "mechanism": row.get("mechanism", "").strip(),
+                    "uniprot_id": row.get("uniprot_id", "").strip() or None,
+                }
+            )
     return rows
 
 
@@ -449,7 +497,9 @@ def main_clinvar() -> None:
         if not raw.endswith(b"\n"):
             truncate_at = raw.rfind(b"\n") + 1
             if truncate_at > 0:
-                print("WARNING: Output file has partial last line; truncating to last complete row")
+                print(
+                    "WARNING: Output file has partial last line; truncating to last complete row"
+                )
                 with open(CLINVAR_OUT, "r+b") as fh:
                     fh.truncate(truncate_at)
         with open(CLINVAR_OUT, newline="") as fh:
@@ -462,7 +512,9 @@ def main_clinvar() -> None:
     with open(CLINVAR_OUT, "a", newline="") as out_fh:
         writer = csv.writer(out_fh, delimiter="\t")
         if write_header:
-            writer.writerow(["gene", "uniprot_id", "aa_pos", "aa_wt", "aa_mut", "clinsig"])
+            writer.writerow(
+                ["gene", "uniprot_id", "aa_pos", "aa_wt", "aa_mut", "clinsig"]
+            )
 
         for idx, gdata in enumerate(genes, 1):
             gene = gdata["gene"]
@@ -478,7 +530,9 @@ def main_clinvar() -> None:
 
             sequence = fetch_protein_sequence(uniprot_id)
             if sequence is None:
-                print(f"WARNING: {gene}: sequence unavailable, writing variants without WT validation")
+                print(
+                    f"WARNING: {gene}: sequence unavailable, writing variants without WT validation"
+                )
 
             variants = fetch_clinvar_variants(gene)
             print(f"  {gene}: {len(variants)} missense P/LP variants")
@@ -488,7 +542,9 @@ def main_clinvar() -> None:
                 if sequence and not validate_wt(v, sequence):
                     print(f"  WT mismatch {gene} pos {v['pos']}: expected {v['wt_aa']}")
                     continue
-                writer.writerow([gene, uniprot_id, v["pos"], v["wt_aa"], v["mut_aa"], v["clinsig"]])
+                writer.writerow(
+                    [gene, uniprot_id, v["pos"], v["wt_aa"], v["mut_aa"], v["clinsig"]]
+                )
                 gene_written += 1
 
             total_variants += gene_written
@@ -503,7 +559,9 @@ def main_clinvar() -> None:
 def main_merge(pathogenic_only: bool = False) -> None:
     missing = [p for p in [GERAS_OUT, GENE_LIST_TSV, CLINVAR_OUT] if not p.exists()]
     if missing:
-        raise FileNotFoundError("Required input(s) not found:\n" + "\n".join(f"  {p}" for p in missing))
+        raise FileNotFoundError(
+            "Required input(s) not found:\n" + "\n".join(f"  {p}" for p in missing)
+        )
 
     with open(GERAS_OUT) as f:
         geras = json.load(f)
@@ -511,14 +569,17 @@ def main_merge(pathogenic_only: bool = False) -> None:
     print(f"Gerasimavicius: {len(geras)} variants, {len(geras_genes)} genes")
 
     with open(GENE_LIST_TSV, newline="") as f:
-        gene_mech_map = {r["gene"].upper(): r["mechanism"]
-                         for r in csv.DictReader(f, delimiter="\t")}
+        gene_mech_map = {
+            r["gene"].upper(): r["mechanism"] for r in csv.DictReader(f, delimiter="\t")
+        }
 
     with open(CLINVAR_OUT, newline="") as f:
         clinvar_rows = list(csv.DictReader(f, delimiter="\t"))
 
     if pathogenic_only:
-        clinvar_rows = [r for r in clinvar_rows if r.get("clinsig", "").lower() == "pathogenic"]
+        clinvar_rows = [
+            r for r in clinvar_rows if r.get("clinsig", "").lower() == "pathogenic"
+        ]
         print(f"Filtered to pathogenic only: {len(clinvar_rows)} variants")
 
     new_variants = []
@@ -548,16 +609,25 @@ def main_merge(pathogenic_only: bool = False) -> None:
         if not uniprot_id:
             skipped_no_uniprot += 1
             continue
-        new_variants.append({
-            "gene": gene, "uniprot_id": uniprot_id, "aa_pos": aa_pos,
-            "aa_wt": r["aa_wt"].upper(), "aa_mut": r["aa_mut"].upper(),
-            "mechanism": mech, "foldx_ddg": None, "clinvar_id": "",
-            "source": "clinvar_g2p",
-        })
+        new_variants.append(
+            {
+                "gene": gene,
+                "uniprot_id": uniprot_id,
+                "aa_pos": aa_pos,
+                "aa_wt": r["aa_wt"].upper(),
+                "aa_mut": r["aa_mut"].upper(),
+                "mechanism": mech,
+                "foldx_ddg": None,
+                "clinvar_id": "",
+                "source": "clinvar_g2p",
+            }
+        )
 
-    print(f"ClinVar new-gene variants: {len(new_variants)} "
-          f"(skipped {skipped_no_mech} with no mechanism label, "
-          f"{skipped_no_uniprot} with no UniProt ID)")
+    print(
+        f"ClinVar new-gene variants: {len(new_variants)} "
+        f"(skipped {skipped_no_mech} with no mechanism label, "
+        f"{skipped_no_uniprot} with no UniProt ID)"
+    )
 
     for v in geras:
         v["source"] = "gerasimavicius"

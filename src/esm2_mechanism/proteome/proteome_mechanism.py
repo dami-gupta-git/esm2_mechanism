@@ -39,9 +39,15 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.neural_network import MLPClassifier
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.preprocessing import StandardScaler
-from esm2_mechanism.utils_probes import compute_metrics, family_split_indices, run_mlp_cv, run_logreg_cv
+from esm2_mechanism.utils_probes import (
+    compute_metrics,
+    family_split_indices,
+    run_mlp_cv,
+    run_logreg_cv,
+)
 from esm2_mechanism.utils_paths import DATA_DIR, RESULTS_DIR, PROJECT_ROOT
 import functools
+
 print = functools.partial(print, flush=True)
 
 warnings.filterwarnings("ignore")
@@ -66,8 +72,11 @@ CLASSES = ["GOF", "DN", "LOF"]
 # Gene-split CV (from experiment_mlp.py / contrastive_mechanism.py)
 # ---------------------------------------------------------------------------
 
+
 def gene_split_indices(
-    genes: np.ndarray, n_folds: int, seed: int,
+    genes: np.ndarray,
+    n_folds: int,
+    seed: int,
     pfam_map: dict | None = None,
 ):
     """
@@ -140,6 +149,7 @@ def gene_split_indices(
 # ---------------------------------------------------------------------------
 # Data loading
 # ---------------------------------------------------------------------------
+
 
 def load_data() -> tuple[list[dict], np.ndarray, np.ndarray, np.ndarray]:
     """
@@ -220,7 +230,6 @@ def load_proteome_features(genes: np.ndarray) -> np.ndarray:
     return X_prot
 
 
-
 def aggregate_fold_results(fold_list: list[dict]) -> dict:
     """Aggregate a list of per-fold metric dicts into mean ± std."""
     if not fold_list:
@@ -254,6 +263,7 @@ def aggregate_fold_results(fold_list: list[dict]) -> dict:
 # V1 / V2 / V3 — sklearn MLPClassifier runners
 # ---------------------------------------------------------------------------
 
+
 def run_family_split_mlp(
     X: np.ndarray,
     y: np.ndarray,
@@ -282,6 +292,7 @@ def run_family_split_logreg(
 # ---------------------------------------------------------------------------
 # V2 — LightGBM (gradient boosting, handles tabular/sparse features well)
 # ---------------------------------------------------------------------------
+
 
 def run_family_split_lgbm(
     X: np.ndarray,
@@ -340,8 +351,11 @@ def run_family_split_lgbm(
         print(
             f"    [{label}] Fold {fold_i+1}: macro_f1={fm['macro_f1']:.3f}  "
             + "  ".join(
-                f"{cls}={fm['per_class_auroc'].get(cls, float('nan')):.3f}"
-                if fm["per_class_auroc"].get(cls) is not None else f"{cls}=NA"
+                (
+                    f"{cls}={fm['per_class_auroc'].get(cls, float('nan')):.3f}"
+                    if fm["per_class_auroc"].get(cls) is not None
+                    else f"{cls}=NA"
+                )
                 for cls in CLASSES
             )
         )
@@ -352,6 +366,7 @@ def run_family_split_lgbm(
 # ---------------------------------------------------------------------------
 # Gene-split CV for V3 (leakage diagnostic)
 # ---------------------------------------------------------------------------
+
 
 def run_gene_split_mlp(
     X: np.ndarray,
@@ -370,6 +385,7 @@ def run_gene_split_mlp(
 # ---------------------------------------------------------------------------
 # V4 — Contrastive projection head (PyTorch) + k-NN
 # ---------------------------------------------------------------------------
+
 
 def build_triplets_v4(
     y_int: np.ndarray,
@@ -392,9 +408,7 @@ def build_triplets_v4(
     # Encode family strings to ints
     unique_fams = [f for f in set(gene_pfam.tolist()) if f is not None]
     fam_to_int = {f: i for i, f in enumerate(unique_fams)}
-    fam_int = np.array(
-        [fam_to_int.get(f, -1) for f in gene_pfam], dtype=np.int32
-    )
+    fam_int = np.array([fam_to_int.get(f, -1) for f in gene_pfam], dtype=np.int32)
 
     by_mech = {c: np.where(y_int == c)[0] for c in range(n_classes)}
     neg_by_class = {
@@ -404,9 +418,7 @@ def build_triplets_v4(
 
     # For each (class, family) build cross-family positive pool
     by_mech_fam_arr = {c: np.array(by_mech[c]) for c in range(n_classes)}
-    unique_combos = set(
-        (int(y_int[i]), int(fam_int[i])) for i in range(n)
-    )
+    unique_combos = set((int(y_int[i]), int(fam_int[i])) for i in range(n))
     combo_pos_pool: dict[tuple[int, int], np.ndarray] = {}
     for c, fam in unique_combos:
         idxs = by_mech_fam_arr[c]
@@ -435,7 +447,11 @@ def build_triplets_v4(
         neg_list.append(ns.astype(np.int64))
 
     if not anchor_list:
-        return np.array([], dtype=np.int64), np.array([], dtype=np.int64), np.array([], dtype=np.int64)
+        return (
+            np.array([], dtype=np.int64),
+            np.array([], dtype=np.int64),
+            np.array([], dtype=np.int64),
+        )
 
     anchors = np.concatenate(anchor_list)
     positives = np.concatenate(pos_list)
@@ -467,9 +483,9 @@ def train_projection_head_v4(
     from torch.utils.data import DataLoader, TensorDataset
 
     device = (
-        torch.device("mps") if torch.backends.mps.is_available()
-        else torch.device("cuda") if torch.cuda.is_available()
-        else torch.device("cpu")
+        torch.device("mps")
+        if torch.backends.mps.is_available()
+        else torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
     )
 
     mu = X_train.mean(0).astype(np.float32)
@@ -522,8 +538,9 @@ def train_projection_head_v4(
 
 def project_v4(proj, X: np.ndarray, mu: np.ndarray, std: np.ndarray) -> np.ndarray:
     import torch
+
     device = next(proj.parameters()).device
-    X_norm = ((X.astype(np.float32) - mu) / std)
+    X_norm = (X.astype(np.float32) - mu) / std
     proj.eval()
     with torch.no_grad():
         Z = proj(torch.tensor(X_norm, dtype=torch.float32).to(device)).cpu().numpy()
@@ -586,8 +603,12 @@ def run_v4_family_split(
 
         print(f"    [V4] Fold {fold_i+1}: training projection head ...")
         proj, mu, std, Z_tr = train_projection_head_v4(
-            X_tr, y_tr, gene_pfam_tr,
-            n_epochs=n_epochs, lr=lr, max_triplets=max_triplets,
+            X_tr,
+            y_tr,
+            gene_pfam_tr,
+            n_epochs=n_epochs,
+            lr=lr,
+            max_triplets=max_triplets,
             seed=seed + fold_i,
         )
         Z_te = project_v4(proj, X_te, mu, std)
@@ -597,9 +618,11 @@ def run_v4_family_split(
         print(
             f"    [V4] Fold {fold_i+1}: macro_f1={fm['macro_f1']:.3f}  "
             + "  ".join(
-                f"{cls}={fm['per_class_auroc'].get(cls, float('nan')):.3f}"
-                if fm["per_class_auroc"].get(cls) is not None
-                else f"{cls}=NA"
+                (
+                    f"{cls}={fm['per_class_auroc'].get(cls, float('nan')):.3f}"
+                    if fm["per_class_auroc"].get(cls) is not None
+                    else f"{cls}=NA"
+                )
                 for cls in CLASSES
             )
         )
@@ -610,6 +633,7 @@ def run_v4_family_split(
 # ---------------------------------------------------------------------------
 # Single-seed runner
 # ---------------------------------------------------------------------------
+
 
 def run_seed(
     seed: int,
@@ -667,13 +691,19 @@ def run_seed(
     # ------------------------------------------------------------------
     print(f"\n--- V1: ESM-2 delta only (MLP 1280→256→64→3) ---")
     v1_res = run_family_split_mlp(
-        X_delta, y_fam, groups,
+        X_delta,
+        y_fam,
+        groups,
         hidden_layer_sizes=(256, 64),
-        n_folds=n_folds, seed=seed, label="V1",
+        n_folds=n_folds,
+        seed=seed,
+        label="V1",
     )
     results["V1_family_split"] = v1_res
     v1_f1 = v1_res.get("macro_f1_mean", float("nan"))
-    print(f"  V1 family-split macro-F1 = {v1_f1:.4f} ± {v1_res.get('macro_f1_std', float('nan')):.4f}")
+    print(
+        f"  V1 family-split macro-F1 = {v1_f1:.4f} ± {v1_res.get('macro_f1_std', float('nan')):.4f}"
+    )
 
     # ------------------------------------------------------------------
     # V2 — Proteome features only: LogReg + LightGBM + MLP
@@ -681,21 +711,33 @@ def run_seed(
     print(f"\n--- V2: Proteome features only (LogReg + LightGBM + MLP) ---")
 
     v2_logreg_res = run_family_split_logreg(
-        X_prot_fam, y_fam, groups,
-        n_folds=n_folds, seed=seed, label="V2-LR",
+        X_prot_fam,
+        y_fam,
+        groups,
+        n_folds=n_folds,
+        seed=seed,
+        label="V2-LR",
     )
     results["V2_logreg_family_split"] = v2_logreg_res
 
     v2_lgbm_res = run_family_split_lgbm(
-        X_prot_fam, y_fam, groups,
-        n_folds=n_folds, seed=seed, label="V2-LGBM",
+        X_prot_fam,
+        y_fam,
+        groups,
+        n_folds=n_folds,
+        seed=seed,
+        label="V2-LGBM",
     )
     results["V2_lgbm_family_split"] = v2_lgbm_res
 
     v2_mlp_res = run_family_split_mlp(
-        X_prot_fam, y_fam, groups,
+        X_prot_fam,
+        y_fam,
+        groups,
         hidden_layer_sizes=(64, 32),
-        n_folds=n_folds, seed=seed, label="V2-MLP",
+        n_folds=n_folds,
+        seed=seed,
+        label="V2-MLP",
     )
     results["V2_mlp_family_split"] = v2_mlp_res
 
@@ -704,7 +746,11 @@ def run_seed(
     # F1=0.0 would fabricate a metric and corrupt the Gate-1 decision / averages.
     v2_candidates = [
         (label, res["macro_f1_mean"])
-        for label, res in [("LogReg", v2_logreg_res), ("LGBM", v2_lgbm_res), ("MLP", v2_mlp_res)]
+        for label, res in [
+            ("LogReg", v2_logreg_res),
+            ("LGBM", v2_lgbm_res),
+            ("MLP", v2_mlp_res),
+        ]
         if res.get("macro_f1_mean") is not None and not np.isnan(res["macro_f1_mean"])
     ]
     if v2_candidates:
@@ -735,28 +781,38 @@ def run_seed(
     # ------------------------------------------------------------------
     print(f"\n--- V3: ESM-2 delta + proteome concat (MLP 1321→256→64→3) ---")
     v3_family_res = run_family_split_mlp(
-        X_concat, y_fam, groups,
+        X_concat,
+        y_fam,
+        groups,
         hidden_layer_sizes=(256, 64),
-        n_folds=n_folds, seed=seed, label="V3",
+        n_folds=n_folds,
+        seed=seed,
+        label="V3",
     )
     results["V3_family_split"] = v3_family_res
     v3_f1 = v3_family_res.get("macro_f1_mean", float("nan"))
-    print(f"  V3 family-split macro-F1 = {v3_f1:.4f} ± {v3_family_res.get('macro_f1_std', float('nan')):.4f}")
+    print(
+        f"  V3 family-split macro-F1 = {v3_f1:.4f} ± {v3_family_res.get('macro_f1_std', float('nan')):.4f}"
+    )
 
     # Gene-split for V3 (leakage diagnostic — uses all variants, not just family-annotated)
     print(f"\n--- V3 gene-split (leakage diagnostic) ---")
     v3_gene_res = run_gene_split_mlp(
-        X_concat_all, y, genes,
+        X_concat_all,
+        y,
+        genes,
         hidden_layer_sizes=(256, 64),
-        n_folds=n_folds, seed=seed, label="V3-GS",
+        n_folds=n_folds,
+        seed=seed,
+        label="V3-GS",
         pfam_map=pfam_map,
     )
     results["V3_gene_split"] = v3_gene_res
     v3_gs_f1 = v3_gene_res.get("macro_f1_mean", float("nan"))
     leakage_delta = v3_gs_f1 - v3_f1
-    results["V3_leakage_delta"] = float(leakage_delta) if not (
-        np.isnan(v3_gs_f1) or np.isnan(v3_f1)
-    ) else None
+    results["V3_leakage_delta"] = (
+        float(leakage_delta) if not (np.isnan(v3_gs_f1) or np.isnan(v3_f1)) else None
+    )
     print(
         f"  V3 gene-split  macro-F1 = {v3_gs_f1:.4f}   "
         f"leakage delta (gene-split − family-split) = {leakage_delta:+.4f}"
@@ -794,9 +850,16 @@ def run_seed(
     # ------------------------------------------------------------------
     print(f"\n--- V4: Contrastive projection head (1321→256→64) + k-NN ---")
     v4_res = run_v4_family_split(
-        X_concat, y_fam, genes_fam, gene_pfam_fam, groups,
-        n_folds=n_folds, seed=seed,
-        n_epochs=30, lr=1e-3, max_triplets=2000,
+        X_concat,
+        y_fam,
+        genes_fam,
+        gene_pfam_fam,
+        groups,
+        n_folds=n_folds,
+        seed=seed,
+        n_epochs=30,
+        lr=1e-3,
+        max_triplets=2000,
     )
     results["V4_family_split"] = v4_res
     v4_f1 = v4_res.get("macro_f1_mean", float("nan"))
@@ -826,6 +889,7 @@ def run_seed(
 # ---------------------------------------------------------------------------
 # Summary across seeds
 # ---------------------------------------------------------------------------
+
 
 def aggregate_seeds(all_seed_results: list[dict]) -> dict:
     """Aggregate per-seed results into mean ± std across seeds."""
@@ -911,21 +975,25 @@ def nested_get(d: dict, key: str):
 # Main
 # ---------------------------------------------------------------------------
 
+
 def main():
     parser = argparse.ArgumentParser(
         description="Experiment 11 Phase 3: ESM-2 + proteome features, V1–V4"
     )
     parser.add_argument(
-        "--seed", type=int, default=None,
-        help="Single seed to run (default: run all seeds 0–4)"
+        "--seed",
+        type=int,
+        default=None,
+        help="Single seed to run (default: run all seeds 0–4)",
     )
     parser.add_argument(
-        "--variants-only", action="store_true",
-        help="Skip V4 contrastive head (faster)"
+        "--variants-only", action="store_true", help="Skip V4 contrastive head (faster)"
     )
     parser.add_argument(
-        "--out-dir", type=str, default=None,
-        help="Output directory (default: results/proteome_mechanism/)"
+        "--out-dir",
+        type=str,
+        default=None,
+        help="Output directory (default: results/proteome_mechanism/)",
     )
     parser.add_argument("--n-folds", type=int, default=5)
     args = parser.parse_args()
@@ -944,7 +1012,9 @@ def main():
     print("\n=== Loading Pfam families ===")
     pfam_map = load_pfam()
     n_annotated = sum(1 for g in genes if pfam_map.get(g) is not None)
-    print(f"Pfam coverage: {n_annotated}/{len(genes)} variants have a family annotation")
+    print(
+        f"Pfam coverage: {n_annotated}/{len(genes)} variants have a family annotation"
+    )
 
     print("\n=== Loading proteome features ===")
     X_prot = load_proteome_features(genes)
@@ -999,21 +1069,31 @@ def main():
         return f"{m:.4f} ± {s_str}"
 
     rows = [
-        ("V1 family-split macro-F1",
-         summary.get("V1_family_split_macro_f1_mean"),
-         summary.get("V1_family_split_macro_f1_std")),
-        ("V2 best family-split macro-F1",
-         summary.get("V2_best_macro_f1_mean"),
-         summary.get("V2_best_macro_f1_std")),
-        ("V3 family-split macro-F1",
-         summary.get("V3_family_split_macro_f1_mean"),
-         summary.get("V3_family_split_macro_f1_std")),
-        ("V3 gene-split macro-F1",
-         summary.get("V3_gene_split_macro_f1_mean"),
-         summary.get("V3_gene_split_macro_f1_std")),
-        ("V4 family-split macro-F1",
-         summary.get("V4_family_split_macro_f1_mean"),
-         summary.get("V4_family_split_macro_f1_std")),
+        (
+            "V1 family-split macro-F1",
+            summary.get("V1_family_split_macro_f1_mean"),
+            summary.get("V1_family_split_macro_f1_std"),
+        ),
+        (
+            "V2 best family-split macro-F1",
+            summary.get("V2_best_macro_f1_mean"),
+            summary.get("V2_best_macro_f1_std"),
+        ),
+        (
+            "V3 family-split macro-F1",
+            summary.get("V3_family_split_macro_f1_mean"),
+            summary.get("V3_family_split_macro_f1_std"),
+        ),
+        (
+            "V3 gene-split macro-F1",
+            summary.get("V3_gene_split_macro_f1_mean"),
+            summary.get("V3_gene_split_macro_f1_std"),
+        ),
+        (
+            "V4 family-split macro-F1",
+            summary.get("V4_family_split_macro_f1_mean"),
+            summary.get("V4_family_split_macro_f1_std"),
+        ),
     ]
     for name, m, s in rows:
         print(f"  {name:<38}  {fmt(m, s)}")

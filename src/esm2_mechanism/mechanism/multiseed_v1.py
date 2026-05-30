@@ -27,11 +27,17 @@ import sys
 import numpy as np
 from collections import defaultdict
 import functools
+
 print = functools.partial(print, flush=True)
 from esm2_mechanism.utils_probes import (
-    gene_split_cv, family_split_cv, run_logreg_binary_cv,
+    gene_split_cv,
+    family_split_cv,
+    run_logreg_binary_cv,
 )
-from esm2_mechanism.utils_paths import DATA_DIR as _DATA_DIR, RESULTS_DIR as _RESULTS_DIR
+from esm2_mechanism.utils_paths import (
+    DATA_DIR as _DATA_DIR,
+    RESULTS_DIR as _RESULTS_DIR,
+)
 
 # ── paths ────────────────────────────────────────────────────────────────────
 
@@ -45,18 +51,22 @@ GERAS_VARIANTS = os.path.join(DATA_DIR, "gerasimavicius_variants.json")
 MERGED_VARIANTS = os.path.join(DATA_DIR, "merged_valid_variants.json")
 
 # Gerasimavicius embeddings
-GERAS_EMB_WT_MEAN  = os.path.join(EMB_DIR, "embeddings_wt_esm2_t33_650M_UR50D.npy")
+GERAS_EMB_WT_MEAN = os.path.join(EMB_DIR, "embeddings_wt_esm2_t33_650M_UR50D.npy")
 GERAS_EMB_MUT_MEAN = os.path.join(EMB_DIR, "embeddings_mut_esm2_t33_650M_UR50D.npy")
-GERAS_EMB_WT_POS   = os.path.join(EMB_DIR, "embeddings_wt_pos_esm2_t33_650M_UR50D.npy")
-GERAS_EMB_MUT_POS  = os.path.join(EMB_DIR, "embeddings_mut_pos_esm2_t33_650M_UR50D.npy")
+GERAS_EMB_WT_POS = os.path.join(EMB_DIR, "embeddings_wt_pos_esm2_t33_650M_UR50D.npy")
+GERAS_EMB_MUT_POS = os.path.join(EMB_DIR, "embeddings_mut_pos_esm2_t33_650M_UR50D.npy")
 
 # Merged embeddings
-MERGED_EMB_WT_MEAN  = os.path.join(EMB_DIR, "merged_embeddings_wt_mean.npy")
+MERGED_EMB_WT_MEAN = os.path.join(EMB_DIR, "merged_embeddings_wt_mean.npy")
 MERGED_EMB_MUT_MEAN = os.path.join(EMB_DIR, "merged_embeddings_mut_mean.npy")
 
 # Pathogenicity embeddings
-PATH_EMB_WT  = os.path.join(EMB_DIR, "emb_wt_mean_pathogenicity_esm2_t33_650M_UR50D_n17259.npy")
-PATH_EMB_MUT = os.path.join(EMB_DIR, "emb_mut_mean_pathogenicity_esm2_t33_650M_UR50D_n17259.npy")
+PATH_EMB_WT = os.path.join(
+    EMB_DIR, "emb_wt_mean_pathogenicity_esm2_t33_650M_UR50D_n17259.npy"
+)
+PATH_EMB_MUT = os.path.join(
+    EMB_DIR, "emb_mut_mean_pathogenicity_esm2_t33_650M_UR50D_n17259.npy"
+)
 PATH_VARIANTS = os.path.join(DATA_DIR, "clinvar_pathogenicity_variants.json")
 
 
@@ -65,8 +75,19 @@ PATH_VARIANTS = os.path.join(DATA_DIR, "clinvar_pathogenicity_variants.json")
 
 # ── MLP probe (PyTorch) ──────────────────────────────────────────────────────
 
-def run_mlp_probe(X, labels, splits, seed=42, hidden=(256, 64), dropout=0.3,
-                  lr=1e-3, max_epochs=100, patience=10, batch_size=256):
+
+def run_mlp_probe(
+    X,
+    labels,
+    splits,
+    seed=42,
+    hidden=(256, 64),
+    dropout=0.3,
+    lr=1e-3,
+    max_epochs=100,
+    patience=10,
+    batch_size=256,
+):
     import torch
     import torch.nn as nn
     from torch.utils.data import DataLoader, TensorDataset
@@ -98,7 +119,8 @@ def run_mlp_probe(X, labels, splits, seed=42, hidden=(256, 64), dropout=0.3,
         if len(X_fit) < 10 or len(X_val) < 5:
             continue
 
-        mu = X_fit.mean(0); std = X_fit.std(0) + 1e-8
+        mu = X_fit.mean(0)
+        std = X_fit.std(0) + 1e-8
         X_fit = (X_fit - mu) / std
         X_val = (X_val - mu) / std
         X_te_n = (X_te - mu) / std
@@ -129,8 +151,10 @@ def run_mlp_probe(X, labels, splits, seed=42, hidden=(256, 64), dropout=0.3,
                 opt.step()
             model.eval()
             with torch.no_grad():
-                vl = crit(model(torch.tensor(X_val).to(device)),
-                          torch.tensor(y_val, dtype=torch.long).to(device)).item()
+                vl = crit(
+                    model(torch.tensor(X_val).to(device)),
+                    torch.tensor(y_val, dtype=torch.long).to(device),
+                ).item()
             if vl < best_val - 1e-4:
                 best_val, patience_cnt = vl, 0
                 best_state = {k: v.clone() for k, v in model.state_dict().items()}
@@ -143,7 +167,9 @@ def run_mlp_probe(X, labels, splits, seed=42, hidden=(256, 64), dropout=0.3,
 
         model.eval()
         with torch.no_grad():
-            proba = torch.softmax(model(torch.tensor(X_te_n).to(device)), 1).cpu().numpy()
+            proba = (
+                torch.softmax(model(torch.tensor(X_te_n).to(device)), 1).cpu().numpy()
+            )
         pred = proba.argmax(1)
         fm = {"macro_f1": float(f1_score(y_te, pred, average="macro", zero_division=0))}
         for i, cls in enumerate(classes):
@@ -160,7 +186,7 @@ def run_mlp_probe(X, labels, splits, seed=42, hidden=(256, 64), dropout=0.3,
         vals = [f[key] for f in fold_results if key in f and not np.isnan(f[key])]
         if vals:
             agg[f"{key}_mean"] = float(np.mean(vals))
-            agg[f"{key}_std"]  = float(np.std(vals))
+            agg[f"{key}_std"] = float(np.std(vals))
     return agg
 
 
@@ -171,25 +197,35 @@ def run_mlp_binary(X, y, splits, seed=42):
     from sklearn.neural_network import MLPClassifier
     from sklearn.preprocessing import StandardScaler
     from sklearn.metrics import roc_auc_score
+
     aurocs = []
     for tr, te in splits:
         sc = StandardScaler()
-        Xtr = sc.fit_transform(X[tr]); Xte = sc.transform(X[te])
+        Xtr = sc.fit_transform(X[tr])
+        Xte = sc.transform(X[te])
         if len(set(y[tr])) < 2 or len(set(y[te])) < 2:
             continue
-        clf = MLPClassifier(hidden_layer_sizes=(256,), max_iter=300,
-                            random_state=seed, early_stopping=True,
-                            validation_fraction=0.1)
+        clf = MLPClassifier(
+            hidden_layer_sizes=(256,),
+            max_iter=300,
+            random_state=seed,
+            early_stopping=True,
+            validation_fraction=0.1,
+        )
         clf.fit(Xtr, y[tr])
         proba = clf.predict_proba(Xte)[:, list(clf.classes_).index(1)]
         aurocs.append(float(roc_auc_score(y[te], proba)))
     if not aurocs:
         return {}
-    return {"auroc_mean": float(np.mean(aurocs)), "auroc_std": float(np.std(aurocs)),
-            "n_folds": len(aurocs)}
+    return {
+        "auroc_mean": float(np.mean(aurocs)),
+        "auroc_std": float(np.std(aurocs)),
+        "n_folds": len(aurocs),
+    }
 
 
 # ── Data loaders ──────────────────────────────────────────────────────────────
+
 
 def load_geras(pfam_map):
     # Load cached valid variants if available, otherwise derive from basic filter
@@ -211,16 +247,22 @@ def load_geras(pfam_map):
 
     for v in variants:
         if "label_3class" not in v:
-            v["label_3class"] = "LOF" if v.get("mechanism") in ("HI", "AR") else v.get("mechanism", "LOF")
+            v["label_3class"] = (
+                "LOF"
+                if v.get("mechanism") in ("HI", "AR")
+                else v.get("mechanism", "LOF")
+            )
     labels = np.array([v["label_3class"] for v in variants])
-    genes  = np.array([v["gene"] for v in variants])
-    wt  = np.load(GERAS_EMB_WT_MEAN)
+    genes = np.array([v["gene"] for v in variants])
+    wt = np.load(GERAS_EMB_WT_MEAN)
     mut = np.load(GERAS_EMB_MUT_MEAN)
     delta_mean = mut - wt
-    wt_p  = np.load(GERAS_EMB_WT_POS)
+    wt_p = np.load(GERAS_EMB_WT_POS)
     mut_p = np.load(GERAS_EMB_MUT_POS)
     delta_pos = mut_p - wt_p
-    assert len(delta_mean) == len(labels), f"Geras embedding/variant count mismatch: {len(delta_mean)} vs {len(labels)}"
+    assert len(delta_mean) == len(
+        labels
+    ), f"Geras embedding/variant count mismatch: {len(delta_mean)} vs {len(labels)}"
     print(f"  Gerasimavicius: {len(variants)} variants, {len(set(genes))} genes")
     return delta_mean, delta_pos, labels, genes
 
@@ -230,13 +272,19 @@ def load_merged(pfam_map):
         variants = json.load(f)
     for v in variants:
         if "label_3class" not in v:
-            v["label_3class"] = "LOF" if v.get("mechanism") in ("HI", "AR") else v.get("mechanism", "LOF")
+            v["label_3class"] = (
+                "LOF"
+                if v.get("mechanism") in ("HI", "AR")
+                else v.get("mechanism", "LOF")
+            )
     labels = np.array([v["label_3class"] for v in variants])
-    genes  = np.array([v["gene"] for v in variants])
-    wt  = np.load(MERGED_EMB_WT_MEAN)
+    genes = np.array([v["gene"] for v in variants])
+    wt = np.load(MERGED_EMB_WT_MEAN)
     mut = np.load(MERGED_EMB_MUT_MEAN)
     delta_mean = mut - wt
-    assert len(delta_mean) == len(labels), f"Merged embedding/variant count mismatch: {len(delta_mean)} vs {len(labels)}"
+    assert len(delta_mean) == len(
+        labels
+    ), f"Merged embedding/variant count mismatch: {len(delta_mean)} vs {len(labels)}"
     print(f"  Merged: {len(variants)} variants, {len(set(genes))} genes")
     return delta_mean, labels, genes
 
@@ -251,8 +299,10 @@ def load_pathogenicity(pfam_map):
             variants = json.load(f)
         emb_n = np.load(PATH_EMB_WT, mmap_mode="r").shape[0]
         if len(variants) > emb_n:
-            print(f"  Warning: {len(variants)} pathogenicity variants but {emb_n} embeddings; "
-                  f"truncating to {emb_n} (23 dropped on RunPod)")
+            print(
+                f"  Warning: {len(variants)} pathogenicity variants but {emb_n} embeddings; "
+                f"truncating to {emb_n} (23 dropped on RunPod)"
+            )
             variants = variants[:emb_n]
         with open(path_valid_cache, "w") as f:
             json.dump(variants, f)
@@ -260,16 +310,21 @@ def load_pathogenicity(pfam_map):
 
     genes = np.array([v["gene"] for v in variants])
     y = np.array([1 if v["label"] == "pathogenic" else 0 for v in variants])
-    wt  = np.load(PATH_EMB_WT)
+    wt = np.load(PATH_EMB_WT)
     mut = np.load(PATH_EMB_MUT)
     delta = mut - wt
-    assert len(delta) == len(y), f"Path embedding/variant count mismatch: {len(delta)} vs {len(y)}"
-    print(f"  Pathogenicity: {len(variants)} variants, {len(set(genes))} genes, "
-          f"{int(y.sum())} pathogenic / {int((1-y).sum())} benign")
+    assert len(delta) == len(
+        y
+    ), f"Path embedding/variant count mismatch: {len(delta)} vs {len(y)}"
+    print(
+        f"  Pathogenicity: {len(variants)} variants, {len(set(genes))} genes, "
+        f"{int(y.sum())} pathogenic / {int((1-y).sum())} benign"
+    )
     return delta, y, genes
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
+
 
 def run_seed(seed, pfam_map, out_dir):
     print(f"\n{'='*60}")
@@ -290,9 +345,13 @@ def run_seed(seed, pfam_map, out_dir):
         geras_results = {}
         for feat_name, X in [("delta_mean", dm), ("delta_pos", dp)]:
             print(f"  MLP gene-split {feat_name}")
-            geras_results[f"mlp_{feat_name}_gene"] = run_mlp_probe(X, labels, gs, seed=seed)
+            geras_results[f"mlp_{feat_name}_gene"] = run_mlp_probe(
+                X, labels, gs, seed=seed
+            )
             print(f"  MLP family-split {feat_name}")
-            geras_results[f"mlp_{feat_name}_family"] = run_mlp_probe(X, labels, fs, seed=seed)
+            geras_results[f"mlp_{feat_name}_family"] = run_mlp_probe(
+                X, labels, fs, seed=seed
+            )
         with open(geras_out, "w") as f:
             json.dump(geras_results, f, indent=2)
         print(f"  -> {geras_out}")
@@ -312,7 +371,9 @@ def run_seed(seed, pfam_map, out_dir):
         print(f"  MLP gene-split delta_mean")
         merged_results["mlp_delta_mean_gene"] = run_mlp_probe(dm, labels, gs, seed=seed)
         print(f"  MLP family-split delta_mean")
-        merged_results["mlp_delta_mean_family"] = run_mlp_probe(dm, labels, fs, seed=seed)
+        merged_results["mlp_delta_mean_family"] = run_mlp_probe(
+            dm, labels, fs, seed=seed
+        )
         with open(merged_out, "w") as f:
             json.dump(merged_results, f, indent=2)
         print(f"  -> {merged_out}")
@@ -385,19 +446,39 @@ def summarise(all_seeds, out_dir):
             return v
 
         vals = {
-            "mechanism_geras_mlp_delta_mean_family_macro_f1":   g(geras, "mlp_delta_mean_family", "macro_f1_mean"),
-            "mechanism_geras_mlp_delta_mean_family_auroc_GOF":  g(geras, "mlp_delta_mean_family", "auroc_GOF_mean"),
-            "mechanism_geras_mlp_delta_mean_family_auroc_DN":   g(geras, "mlp_delta_mean_family", "auroc_DN_mean"),
-            "mechanism_geras_mlp_delta_mean_family_auroc_LOF":  g(geras, "mlp_delta_mean_family", "auroc_LOF_mean"),
-            "mechanism_geras_mlp_delta_mean_gene_macro_f1":     g(geras, "mlp_delta_mean_gene", "macro_f1_mean"),
-            "mechanism_merged_mlp_delta_mean_family_macro_f1":  g(merged, "mlp_delta_mean_family", "macro_f1_mean"),
-            "mechanism_merged_mlp_delta_mean_family_auroc_GOF": g(merged, "mlp_delta_mean_family", "auroc_GOF_mean"),
-            "mechanism_merged_mlp_delta_mean_family_auroc_DN":  g(merged, "mlp_delta_mean_family", "auroc_DN_mean"),
-            "mechanism_merged_mlp_delta_mean_family_auroc_LOF": g(merged, "mlp_delta_mean_family", "auroc_LOF_mean"),
-            "mechanism_merged_mlp_delta_mean_gene_macro_f1":    g(merged, "mlp_delta_mean_gene", "macro_f1_mean"),
-            "pathogenicity_mlp_gene_auroc":     g(path, "mlp_gene", "auroc_mean"),
-            "pathogenicity_mlp_family_auroc":   g(path, "mlp_family", "auroc_mean"),
-            "pathogenicity_logreg_gene_auroc":  g(path, "logreg_gene", "auroc_mean"),
+            "mechanism_geras_mlp_delta_mean_family_macro_f1": g(
+                geras, "mlp_delta_mean_family", "macro_f1_mean"
+            ),
+            "mechanism_geras_mlp_delta_mean_family_auroc_GOF": g(
+                geras, "mlp_delta_mean_family", "auroc_GOF_mean"
+            ),
+            "mechanism_geras_mlp_delta_mean_family_auroc_DN": g(
+                geras, "mlp_delta_mean_family", "auroc_DN_mean"
+            ),
+            "mechanism_geras_mlp_delta_mean_family_auroc_LOF": g(
+                geras, "mlp_delta_mean_family", "auroc_LOF_mean"
+            ),
+            "mechanism_geras_mlp_delta_mean_gene_macro_f1": g(
+                geras, "mlp_delta_mean_gene", "macro_f1_mean"
+            ),
+            "mechanism_merged_mlp_delta_mean_family_macro_f1": g(
+                merged, "mlp_delta_mean_family", "macro_f1_mean"
+            ),
+            "mechanism_merged_mlp_delta_mean_family_auroc_GOF": g(
+                merged, "mlp_delta_mean_family", "auroc_GOF_mean"
+            ),
+            "mechanism_merged_mlp_delta_mean_family_auroc_DN": g(
+                merged, "mlp_delta_mean_family", "auroc_DN_mean"
+            ),
+            "mechanism_merged_mlp_delta_mean_family_auroc_LOF": g(
+                merged, "mlp_delta_mean_family", "auroc_LOF_mean"
+            ),
+            "mechanism_merged_mlp_delta_mean_gene_macro_f1": g(
+                merged, "mlp_delta_mean_gene", "macro_f1_mean"
+            ),
+            "pathogenicity_mlp_gene_auroc": g(path, "mlp_gene", "auroc_mean"),
+            "pathogenicity_mlp_family_auroc": g(path, "mlp_family", "auroc_mean"),
+            "pathogenicity_logreg_gene_auroc": g(path, "logreg_gene", "auroc_mean"),
             "pathogenicity_logreg_family_auroc": g(path, "logreg_family", "auroc_mean"),
         }
         per_seed[seed] = vals
@@ -410,9 +491,15 @@ def summarise(all_seeds, out_dir):
     print("=" * 60)
     for k, vals in metrics.items():
         mean, std = agg(vals)
-        summary["aggregate"][k] = {"mean": mean, "std": std, "n": len([v for v in vals if v is not None])}
+        summary["aggregate"][k] = {
+            "mean": mean,
+            "std": std,
+            "n": len([v for v in vals if v is not None]),
+        }
         if mean is not None:
-            print(f"  {k:<60s}  {mean:.3f} ± {std:.3f}  (n={summary['aggregate'][k]['n']})")
+            print(
+                f"  {k:<60s}  {mean:.3f} ± {std:.3f}  (n={summary['aggregate'][k]['n']})"
+            )
 
     # Headline leakage fraction
     gf_vals = metrics["mechanism_geras_mlp_delta_mean_gene_macro_f1"]
@@ -423,7 +510,9 @@ def summarise(all_seeds, out_dir):
         if gf is not None and fs is not None and (gf - chance) > 0:
             leakage_fracs.append((gf - fs) / (gf - chance))
     if leakage_fracs:
-        print(f"\n  Leakage fraction (Gerasimavicius):  {np.mean(leakage_fracs):.1%} ± {np.std(leakage_fracs):.1%}")
+        print(
+            f"\n  Leakage fraction (Gerasimavicius):  {np.mean(leakage_fracs):.1%} ± {np.std(leakage_fracs):.1%}"
+        )
 
     path_delta_vals = []
     for s in summary["per_seed"].values():
@@ -432,7 +521,9 @@ def summarise(all_seeds, out_dir):
         if gv is not None and fv is not None:
             path_delta_vals.append(gv - fv)
     if path_delta_vals:
-        print(f"  Pathogenicity gene→family Δ:         {np.mean(path_delta_vals):.3f} ± {np.std(path_delta_vals):.3f}")
+        print(
+            f"  Pathogenicity gene→family Δ:         {np.mean(path_delta_vals):.3f} ± {np.std(path_delta_vals):.3f}"
+        )
 
     out = os.path.join(out_dir, "summary.json")
     with open(out, "w") as f:
@@ -443,12 +534,23 @@ def summarise(all_seeds, out_dir):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3, 4],
-                        help="Seeds to run (default: 1 2 3 4; seed 0 already exists)")
-    parser.add_argument("--include_seed0", action="store_true",
-                        help="Also re-run seed 0 (normally skipped — already exists)")
-    parser.add_argument("--summarise_only", action="store_true",
-                        help="Skip computation, just re-aggregate existing JSONs")
+    parser.add_argument(
+        "--seeds",
+        type=int,
+        nargs="+",
+        default=[1, 2, 3, 4],
+        help="Seeds to run (default: 1 2 3 4; seed 0 already exists)",
+    )
+    parser.add_argument(
+        "--include_seed0",
+        action="store_true",
+        help="Also re-run seed 0 (normally skipped — already exists)",
+    )
+    parser.add_argument(
+        "--summarise_only",
+        action="store_true",
+        help="Skip computation, just re-aggregate existing JSONs",
+    )
     args = parser.parse_args()
 
     os.makedirs(OUT_DIR, exist_ok=True)
@@ -476,10 +578,16 @@ def main():
         bf = d.get("by_feature", {})
         dm = bf.get("delta_mean", {})
         return {
-            "logreg_gene":   {"auroc_mean": dm.get("gene_split_logreg", {}).get("auroc_mean")},
-            "logreg_family": {"auroc_mean": dm.get("family_split_logreg", {}).get("auroc_mean")},
-            "mlp_gene":      {"auroc_mean": dm.get("gene_split_mlp", {}).get("auroc_mean")},
-            "mlp_family":    {"auroc_mean": dm.get("family_split_mlp", {}).get("auroc_mean")},
+            "logreg_gene": {
+                "auroc_mean": dm.get("gene_split_logreg", {}).get("auroc_mean")
+            },
+            "logreg_family": {
+                "auroc_mean": dm.get("family_split_logreg", {}).get("auroc_mean")
+            },
+            "mlp_gene": {"auroc_mean": dm.get("gene_split_mlp", {}).get("auroc_mean")},
+            "mlp_family": {
+                "auroc_mean": dm.get("family_split_mlp", {}).get("auroc_mean")
+            },
         }
 
     all_seeds.append((0, seed0_geras, seed0_merged, reformat_path_seed0(seed0_path)))
@@ -497,10 +605,9 @@ def main():
             pf = os.path.join(OUT_DIR, f"pathogenicity_seed{seed}.json")
             if os.path.exists(gf) and os.path.exists(mf) and os.path.exists(pf):
                 with open(gf) as _f1, open(mf) as _f2, open(pf) as _f3:
-                    all_seeds.append((seed,
-                                      json.load(_f1),
-                                      json.load(_f2),
-                                      json.load(_f3)))
+                    all_seeds.append(
+                        (seed, json.load(_f1), json.load(_f2), json.load(_f3))
+                    )
             else:
                 print(f"Warning: seed {seed} results not found, skipping")
 

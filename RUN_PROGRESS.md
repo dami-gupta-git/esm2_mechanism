@@ -36,3 +36,13 @@ These files were manually downloaded before the pipeline ran — not produced by
 | 1 | 1 | `python -m esm2_mechanism.fetch_data.build_gene_universe --step gene-list` | `downloads/DiseaseMech_Stability_VEPS.xlsx`, `downloads/AllG2P.csv` | `merged_gene_list.tsv` | ✅ 2026-05-29 | 2376 genes (gerasimavicius=950, g2p=1426); 475 g2p_disagrees; 61 genes excluded for unresolvable conflicting G2P mechanism |
 | 2 | 2 | `python -m esm2_mechanism.fetch_data.fetch_variants --step gerasimavicius` | `downloads/DiseaseMech_Stability_VEPS.xlsx` | `gerasimavicius_variants.json` | ✅ 2026-05-29 | 10,233 variants, 948 genes; AR=5678, GOF=1983, HI=1678, DN=894 |
 | 3 | 3 | `python -m esm2_mechanism.fetch_data.fetch_variants --step clinvar` | `merged_gene_list.tsv` | `clinvar_variants.tsv` | ✅ 2026-05-29 | 47,752 variants across 2376 genes |
+
+---
+
+## Run 3 — started 2026-05-29
+
+Uses `run_fetch_pipeline.py` with step 3 (ClinVar) commented out — already completed in Run 2.
+
+| # | Step | Command | Inputs | Outputs | Status | Notes |
+|---|---|---|---|---|---|---|
+| 1 | 1 | `run_fetch_pipeline` step 1 | `downloads/DiseaseMech_Stability_VEPS.xlsx`, `downloads/AllG2P.csv` | `merged_gene_list.tsv` | 🔄 running | |

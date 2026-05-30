@@ -26,10 +26,10 @@ from esm2_mechanism.mechanism.contrastive_mechanism import (
     run_cv,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def make_3class_data(n_per_class=30, n_genes=12, n_families=4, seed=0):
     """
@@ -56,36 +56,39 @@ def make_3class_data(n_per_class=30, n_genes=12, n_families=4, seed=0):
 # build_cross_family_pairs
 # ---------------------------------------------------------------------------
 
+
 class TestBuildCrossFamilyPairs:
 
     def test_output_lengths_consistent(self):
         labels, gene_pfam, le = make_3class_data()
-        anchors, positives, negatives = build_cross_family_pairs(labels, gene_pfam, le, seed=0)
+        anchors, positives, negatives = build_cross_family_pairs(
+            labels, gene_pfam, le, seed=0
+        )
         assert len(anchors) == len(positives) == len(negatives)
 
     def test_positives_are_same_mechanism(self):
         labels, gene_pfam, le = make_3class_data()
         anchors, positives, _ = build_cross_family_pairs(labels, gene_pfam, le, seed=0)
         for a, p in zip(anchors, positives):
-            assert labels[a] == labels[p], (
-                f"Anchor {a} ({labels[a]}) paired with positive {p} ({labels[p]}) — different mechanism"
-            )
+            assert (
+                labels[a] == labels[p]
+            ), f"Anchor {a} ({labels[a]}) paired with positive {p} ({labels[p]}) — different mechanism"
 
     def test_negatives_are_different_mechanism(self):
         labels, gene_pfam, le = make_3class_data()
         anchors, _, negatives = build_cross_family_pairs(labels, gene_pfam, le, seed=0)
         for a, n in zip(anchors, negatives):
-            assert labels[a] != labels[n], (
-                f"Anchor {a} ({labels[a]}) paired with negative {n} ({labels[n]}) — same mechanism"
-            )
+            assert (
+                labels[a] != labels[n]
+            ), f"Anchor {a} ({labels[a]}) paired with negative {n} ({labels[n]}) — same mechanism"
 
     def test_no_within_family_positives(self):
         labels, gene_pfam, le = make_3class_data()
         anchors, positives, _ = build_cross_family_pairs(labels, gene_pfam, le, seed=0)
         for a, p in zip(anchors, positives):
-            assert gene_pfam[a] != gene_pfam[p], (
-                f"Anchor {a} (fam={gene_pfam[a]}) has within-family positive {p} (fam={gene_pfam[p]})"
-            )
+            assert (
+                gene_pfam[a] != gene_pfam[p]
+            ), f"Anchor {a} (fam={gene_pfam[a]}) has within-family positive {p} (fam={gene_pfam[p]})"
 
     def test_max_pairs_per_anchor_respected(self):
         labels, gene_pfam, le = make_3class_data()
@@ -94,7 +97,9 @@ class TestBuildCrossFamilyPairs:
             labels, gene_pfam, le, max_pairs_per_anchor=max_pairs, seed=0
         )
         counts = np.bincount(anchors)
-        assert counts.max() <= max_pairs, f"Some anchor exceeded max_pairs_per_anchor={max_pairs}"
+        assert (
+            counts.max() <= max_pairs
+        ), f"Some anchor exceeded max_pairs_per_anchor={max_pairs}"
 
     def test_deterministic_same_seed(self):
         labels, gene_pfam, le = make_3class_data()
@@ -109,9 +114,9 @@ class TestBuildCrossFamilyPairs:
         _, p1, n1 = build_cross_family_pairs(labels, gene_pfam, le, seed=0)
         _, p2, n2 = build_cross_family_pairs(labels, gene_pfam, le, seed=99)
         # Positives or negatives sampled should differ between seeds
-        assert not (np.array_equal(p1, p2) and np.array_equal(n1, n2)), (
-            "Different seeds produced identical triplet selections"
-        )
+        assert not (
+            np.array_equal(p1, p2) and np.array_equal(n1, n2)
+        ), "Different seeds produced identical triplet selections"
 
     def test_single_family_produces_no_triplets(self):
         """If all variants share one family, no cross-family positives exist."""
@@ -134,21 +139,28 @@ class TestBuildCrossFamilyPairs:
         # None variants have fam_int=-1 and are excluded from positive pools
         # by the cross_fam_mask: (class_fams != fam) & (class_fams != -1)
         for a, p in zip(anchors, positives):
-            assert gene_pfam_with_none[p] is not None, (
-                f"Positive {p} has None family — should be excluded"
-            )
+            assert (
+                gene_pfam_with_none[p] is not None
+            ), f"Positive {p} has None family — should be excluded"
 
     def test_indices_in_bounds(self):
         labels, gene_pfam, le = make_3class_data()
         n = len(labels)
-        anchors, positives, negatives = build_cross_family_pairs(labels, gene_pfam, le, seed=0)
-        for arr, name in [(anchors, "anchors"), (positives, "positives"), (negatives, "negatives")]:
+        anchors, positives, negatives = build_cross_family_pairs(
+            labels, gene_pfam, le, seed=0
+        )
+        for arr, name in [
+            (anchors, "anchors"),
+            (positives, "positives"),
+            (negatives, "negatives"),
+        ]:
             assert arr.min() >= 0 and arr.max() < n, f"{name} index out of bounds"
 
 
 # ---------------------------------------------------------------------------
 # run_knn
 # ---------------------------------------------------------------------------
+
 
 class TestRunKnn:
 
@@ -183,12 +195,12 @@ class TestRunKnn:
         # Split so each class is represented in both train and test
         # classes are encoded 0,1,2 in blocks of n_per_class
         n_per_class = 30
-        train_idx = np.concatenate([
-            np.arange(i * n_per_class, i * n_per_class + 20) for i in range(3)
-        ])
-        test_idx = np.concatenate([
-            np.arange(i * n_per_class + 20, (i + 1) * n_per_class) for i in range(3)
-        ])
+        train_idx = np.concatenate(
+            [np.arange(i * n_per_class, i * n_per_class + 20) for i in range(3)]
+        )
+        test_idx = np.concatenate(
+            [np.arange(i * n_per_class + 20, (i + 1) * n_per_class) for i in range(3)]
+        )
         result = run_knn(Z[train_idx], Z[test_idx], y[train_idx], y[test_idx], le, k=5)
         assert result["macro_f1"] == pytest.approx(1.0, abs=0.01)
 
@@ -220,6 +232,7 @@ class TestRunKnn:
 # run_cv internal agg helper (tested via run_cv with mocked splits)
 # ---------------------------------------------------------------------------
 
+
 class TestRunCvAgg:
     """
     run_cv contains a local `agg` function that aggregates fold metrics.
@@ -244,8 +257,9 @@ class TestRunCvAgg:
     def test_agg_empty_folds_returns_error(self):
         X, labels, genes, gene_pfam, pfam_map, le = self._make_inputs()
         # Pass empty splits list — agg receives an empty fold list
-        cont, raw = run_cv(X, labels, genes, gene_pfam, pfam_map, le,
-                           splits=[], split_name="test")
+        cont, raw = run_cv(
+            X, labels, genes, gene_pfam, pfam_map, le, splits=[], split_name="test"
+        )
         assert "error" in cont
         assert "error" in raw
 
@@ -255,14 +269,30 @@ class TestRunCvAgg:
         n = len(labels)
         fold_size = n // 3
         splits = [
-            (np.concatenate([np.arange(fold_size), np.arange(2 * fold_size, n)]),
-             np.arange(fold_size, 2 * fold_size)),
-            (np.concatenate([np.arange(fold_size, 2 * fold_size), np.arange(2 * fold_size, n)]),
-             np.arange(fold_size)),
+            (
+                np.concatenate([np.arange(fold_size), np.arange(2 * fold_size, n)]),
+                np.arange(fold_size, 2 * fold_size),
+            ),
+            (
+                np.concatenate(
+                    [np.arange(fold_size, 2 * fold_size), np.arange(2 * fold_size, n)]
+                ),
+                np.arange(fold_size),
+            ),
         ]
-        cont, raw = run_cv(X, labels, genes, gene_pfam, pfam_map, le,
-                           splits=splits, split_name="test",
-                           hidden=(16, 8), seed=0, batch_size=32)
+        cont, raw = run_cv(
+            X,
+            labels,
+            genes,
+            gene_pfam,
+            pfam_map,
+            le,
+            splits=splits,
+            split_name="test",
+            hidden=(16, 8),
+            seed=0,
+            batch_size=32,
+        )
         assert cont["n_folds"] == raw["n_folds"] == 2
 
     def test_agg_macro_f1_between_zero_and_one(self):
@@ -270,12 +300,24 @@ class TestRunCvAgg:
         n = len(labels)
         fold_size = n // 3
         splits = [
-            (np.concatenate([np.arange(fold_size), np.arange(2 * fold_size, n)]),
-             np.arange(fold_size, 2 * fold_size)),
+            (
+                np.concatenate([np.arange(fold_size), np.arange(2 * fold_size, n)]),
+                np.arange(fold_size, 2 * fold_size),
+            ),
         ]
-        cont, raw = run_cv(X, labels, genes, gene_pfam, pfam_map, le,
-                           splits=splits, split_name="test",
-                           hidden=(16, 8), seed=0, batch_size=32)
+        cont, raw = run_cv(
+            X,
+            labels,
+            genes,
+            gene_pfam,
+            pfam_map,
+            le,
+            splits=splits,
+            split_name="test",
+            hidden=(16, 8),
+            seed=0,
+            batch_size=32,
+        )
         for result in [cont, raw]:
             f1 = result.get("macro_f1_mean")
             assert f1 is not None

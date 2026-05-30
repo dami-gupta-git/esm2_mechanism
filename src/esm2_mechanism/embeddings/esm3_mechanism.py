@@ -42,35 +42,38 @@ import numpy as np
 print = functools.partial(print, flush=True)
 
 from esm2_mechanism.utils_paths import DATA_DIR as DATA, RESULTS_DIR as _RESULTS_DIR
-EMB     = DATA / "embeddings"
+
+EMB = DATA / "embeddings"
 AF2_DIR = DATA / "cache" / "af2_structures"
-OUT     = _RESULTS_DIR / "esm3_mechanism"
+OUT = _RESULTS_DIR / "esm3_mechanism"
 
 GERAS_VARIANTS = DATA / "gerasimavicius_variants.json"
 SEQUENCES_JSON = DATA / "sequences.json"
-PFAM_JSON      = DATA / "pfam_families.json"
+PFAM_JSON = DATA / "pfam_families.json"
 
 # ESM-3 embedding cache files (phase 2 output)
-EMB_SEQ        = EMB / "esm3_geras_seq_mean.npy"
+EMB_SEQ = EMB / "esm3_geras_seq_mean.npy"
 EMB_SEQ_STRUCT = EMB / "esm3_geras_seq_struct_mean.npy"
-EMB_VALID_IDX  = EMB / "esm3_geras_valid_idx.npy"   # indices of non-skipped variants
-STRUCT_META    = EMB / "esm3_geras_struct_meta.json" # structure-application coverage (phase 2)
+EMB_VALID_IDX = EMB / "esm3_geras_valid_idx.npy"  # indices of non-skipped variants
+STRUCT_META = (
+    EMB / "esm3_geras_struct_meta.json"
+)  # structure-application coverage (phase 2)
 
 # AF2 structure token cache (phase 1 output)
-STRUCT_TOKENS  = DATA / "cache" / "esm3_struct_tokens.json"
+STRUCT_TOKENS = DATA / "cache" / "esm3_struct_tokens.json"
 
-ESM3_MODEL  = "esm3-sm-open-v1"   # 1.4B open weights, loaded via ESM3_sm_open_v0()
+ESM3_MODEL = "esm3-sm-open-v1"  # 1.4B open weights, loaded via ESM3_sm_open_v0()
 AF2_API_URL = "https://alphafold.ebi.ac.uk/api/prediction/{uniprot_id}"
 
 # Match result_7 exactly
 N_FOLDS = 5
-SEEDS   = [0, 1, 2, 3, 4]
+SEEDS = [0, 1, 2, 3, 4]
 
 # Decision rule thresholds (pre-registered)
 # ESM-2 5-seed family-split baseline = 0.299 ± 0.034 (result_7 multi-seed correction)
 ESM2_FAMILY_F1 = 0.299
-M1_THRESHOLD   = ESM2_FAMILY_F1 + 0.05   # 0.349
-M3_THRESHOLD   = 0.03    # full - seq-only gap
+M1_THRESHOLD = ESM2_FAMILY_F1 + 0.05  # 0.349
+M3_THRESHOLD = 0.03  # full - seq-only gap
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -80,7 +83,9 @@ def load_geras() -> tuple[list[dict], np.ndarray, dict]:
     """Load Gerasimavicius variants, collapse HI+AR → LOF, attach wt_seq, return (variants, genes, pfam_map)."""
     variants = json.loads(GERAS_VARIANTS.read_text())
     pfam_map = json.loads(PFAM_JSON.read_text()) if PFAM_JSON.exists() else {}
-    sequences = json.loads(SEQUENCES_JSON.read_text()) if SEQUENCES_JSON.exists() else {}
+    sequences = (
+        json.loads(SEQUENCES_JSON.read_text()) if SEQUENCES_JSON.exists() else {}
+    )
     mech_map = {"GOF": "GOF", "DN": "DN", "HI": "LOF", "AR": "LOF", "LOF": "LOF"}
     kept = []
     skipped = 0
@@ -93,7 +98,7 @@ def load_geras() -> tuple[list[dict], np.ndarray, dict]:
             skipped += 1
             continue
         v = dict(v)
-        v["mech3"]  = mech_map[v["mechanism"]]
+        v["mech3"] = mech_map[v["mechanism"]]
         v["wt_seq"] = seq
         kept.append(v)
     if skipped:
@@ -103,6 +108,7 @@ def load_geras() -> tuple[list[dict], np.ndarray, dict]:
 
 
 # ── Phase 1: download AF2 structures and tokenise ────────────────────────────
+
 
 def phase1_structure_tokens() -> None:
     """
@@ -146,11 +152,15 @@ def phase1_structure_tokens() -> None:
                 with urllib.request.urlopen(req, timeout=30) as r:
                     meta = json.loads(r.read())
                 pdb_url = meta[0]["pdbUrl"]
-                req2 = urllib.request.Request(pdb_url, headers={"User-Agent": "Mozilla/5.0"})
+                req2 = urllib.request.Request(
+                    pdb_url, headers={"User-Agent": "Mozilla/5.0"}
+                )
                 with urllib.request.urlopen(req2, timeout=60) as r:
                     pdb_path.write_bytes(r.read())
             except Exception as e:
-                print(f"  [{i+1}/{len(uniprot_ids)}] {uid}: AF2 fetch failed ({e}), fallback to seq-only")
+                print(
+                    f"  [{i+1}/{len(uniprot_ids)}] {uid}: AF2 fetch failed ({e}), fallback to seq-only"
+                )
                 cached[uid] = None
                 fallback += 1
                 continue
@@ -160,27 +170,38 @@ def phase1_structure_tokens() -> None:
             chain = ProteinChain.from_pdb(str(pdb_path))
             protein = ESMProtein.from_protein_chain(chain)
             # Extract structure token ids as a list (one per residue)
-            cached[uid] = protein.coordinates.tolist() if protein.coordinates is not None else None
+            cached[uid] = (
+                protein.coordinates.tolist()
+                if protein.coordinates is not None
+                else None
+            )
             if cached[uid] is None:
                 fallback += 1
         except Exception as e:
-            print(f"  [{i+1}/{len(uniprot_ids)}] {uid}: tokenisation failed ({e}), fallback")
+            print(
+                f"  [{i+1}/{len(uniprot_ids)}] {uid}: tokenisation failed ({e}), fallback"
+            )
             cached[uid] = None
             fallback += 1
 
         if (i + 1) % 50 == 0:
             STRUCT_TOKENS.write_text(json.dumps(cached))
-            print(f"  Checkpoint: {i+1}/{len(uniprot_ids)}, {fallback} fallbacks so far")
+            print(
+                f"  Checkpoint: {i+1}/{len(uniprot_ids)}, {fallback} fallbacks so far"
+            )
 
         print(f"  [{i+1}/{len(uniprot_ids)}] {uid}: OK")
 
     STRUCT_TOKENS.write_text(json.dumps(cached))
     n_ok = sum(1 for v in cached.values() if v is not None)
-    print(f"\nStructure tokens cached: {n_ok}/{len(uniprot_ids)} OK, {fallback} seq-only fallbacks")
+    print(
+        f"\nStructure tokens cached: {n_ok}/{len(uniprot_ids)} OK, {fallback} seq-only fallbacks"
+    )
     print(f"Saved → {STRUCT_TOKENS}")
 
 
 # ── Phase 2: GPU embedding extraction ────────────────────────────────────────
+
 
 def phase2_extract_embeddings(batch_size: int = 4) -> None:
     """
@@ -213,11 +234,13 @@ def phase2_extract_embeddings(batch_size: int = 4) -> None:
     if STRUCT_TOKENS.exists():
         struct_cache = json.loads(STRUCT_TOKENS.read_text())
         n_struct = sum(1 for v in struct_cache.values() if v is not None)
-        print(f"Structure tokens loaded: {n_struct}/{len(struct_cache)} have structures")
+        print(
+            f"Structure tokens loaded: {n_struct}/{len(struct_cache)} have structures"
+        )
 
     # Two conditions only — function tokens not implemented
     conditions = {
-        "seq":        EMB_SEQ,
+        "seq": EMB_SEQ,
         "seq_struct": EMB_SEQ_STRUCT,
     }
     for cond, path in conditions.items():
@@ -233,7 +256,7 @@ def phase2_extract_embeddings(batch_size: int = 4) -> None:
     EMB.mkdir(parents=True, exist_ok=True)
 
     # Resume from checkpoints if available
-    wt_embs:  dict[str, list] = {}
+    wt_embs: dict[str, list] = {}
     mut_embs: dict[str, list] = {}
     valid_indices: list[int] = []
     resume_from = 0
@@ -241,22 +264,27 @@ def phase2_extract_embeddings(batch_size: int = 4) -> None:
     if idx_ckpt.exists():
         valid_indices = list(np.load(str(idx_ckpt)).astype(int))
     for cond in remaining_conds:
-        ckpt_wt  = Path(str(conditions[cond]).replace(".npy", "_ckpt_wt.npy"))
+        ckpt_wt = Path(str(conditions[cond]).replace(".npy", "_ckpt_wt.npy"))
         ckpt_mut = Path(str(conditions[cond]).replace(".npy", "_ckpt_mut.npy"))
         if ckpt_wt.exists() and ckpt_mut.exists():
-            wt_embs[cond]  = list(np.load(str(ckpt_wt)))
+            wt_embs[cond] = list(np.load(str(ckpt_wt)))
             mut_embs[cond] = list(np.load(str(ckpt_mut)))
-            resume_from = max(resume_from, max(valid_indices) + 1 if valid_indices else 0)
+            resume_from = max(
+                resume_from, max(valid_indices) + 1 if valid_indices else 0
+            )
         else:
-            wt_embs[cond]  = []
+            wt_embs[cond] = []
             mut_embs[cond] = []
     if resume_from > 0:
-        print(f"Resuming from checkpoint: {len(valid_indices)} variants done, next variant index {resume_from}")
+        print(
+            f"Resuming from checkpoint: {len(valid_indices)} variants done, next variant index {resume_from}"
+        )
 
     struct_fallback_count = [0]  # mutable counter accessible in closure
 
-    def get_struct_tokens(uid: str | None, wt_seq_full: str,
-                          win_start: int, win_len: int) -> "torch.Tensor | None":
+    def get_struct_tokens(
+        uid: str | None, wt_seq_full: str, win_start: int, win_len: int
+    ) -> "torch.Tensor | None":
         """
         Return structure tokens for the windowed region [win_start, win_start+win_len).
         win_start is 0-indexed start of the window in the full sequence.
@@ -272,7 +300,7 @@ def phase2_extract_embeddings(batch_size: int = 4) -> None:
             if L_full != len(wt_seq_full):
                 struct_fallback_count[0] += 1
                 return None
-            coords_win = coords[win_start:win_start + win_len]
+            coords_win = coords[win_start : win_start + win_len]
             if coords_win.shape[0] != win_len:
                 struct_fallback_count[0] += 1
                 return None
@@ -283,12 +311,13 @@ def phase2_extract_embeddings(batch_size: int = 4) -> None:
             struct_fallback_count[0] += 1
             return None
 
-    def embed_sequence(seq: str, struct_toks: "torch.Tensor | None",
-                       condition: str) -> np.ndarray:
+    def embed_sequence(
+        seq: str, struct_toks: "torch.Tensor | None", condition: str
+    ) -> np.ndarray:
         """Run ESM-3 forward pass; return mean-pooled (D,) embedding (excluding BOS/EOS)."""
         protein = ESMProtein(sequence=seq)
-        tensor  = model.encode(protein)
-        seq_tok = tensor.sequence.unsqueeze(0).to(device)   # (1, L+2)
+        tensor = model.encode(protein)
+        seq_tok = tensor.sequence.unsqueeze(0).to(device)  # (1, L+2)
 
         use_struct = condition == "seq_struct" and struct_toks is not None
         s_tok = struct_toks.unsqueeze(0).to(device) if use_struct else None
@@ -301,19 +330,22 @@ def phase2_extract_embeddings(batch_size: int = 4) -> None:
         return emb
 
     import time
+
     t_start = time.time()
     n_struct_applied = 0
 
     for i, v in enumerate(variants):
         if i < resume_from:
             continue
-        uid    = v.get("uniprot_id")
+        uid = v.get("uniprot_id")
         wt_seq = v["wt_seq"]
-        pos    = v["aa_pos"]
+        pos = v["aa_pos"]
 
         wt_win, new_pos = window_sequence(wt_seq, pos)
         if new_pos < 1 or new_pos > len(wt_win):
-            print(f"  SKIP variant {i}: pos={pos} new_pos={new_pos} out of range for seq len {len(wt_win)}")
+            print(
+                f"  SKIP variant {i}: pos={pos} new_pos={new_pos} out of range for seq len {len(wt_win)}"
+            )
             continue
         mut_win = list(wt_win)
         mut_win[new_pos - 1] = v["aa_mut"]
@@ -341,7 +373,7 @@ def phase2_extract_embeddings(batch_size: int = 4) -> None:
 
         valid_indices.append(i)
         for cond in remaining_conds:
-            wt_e  = embed_sequence(wt_win,  struct_toks, cond)
+            wt_e = embed_sequence(wt_win, struct_toks, cond)
             mut_e = embed_sequence(mut_win, struct_toks, cond)
             wt_embs[cond].append(wt_e)
             mut_embs[cond].append(mut_e)
@@ -350,35 +382,48 @@ def phase2_extract_embeddings(batch_size: int = 4) -> None:
             elapsed = time.time() - t_start
             done = (i + 1) - resume_from
             rate = done / elapsed if elapsed > 0 else 0
-            eta  = (n - i - 1) / rate if rate > 0 else 0
+            eta = (n - i - 1) / rate if rate > 0 else 0
             print(f"  [{i+1}/{n}] {rate:.1f} var/s  ETA {eta/60:.0f} min")
-            np.save(str(EMB_VALID_IDX).replace(".npy", "_ckpt.npy"),
-                    np.array(valid_indices, dtype=np.int32))
+            np.save(
+                str(EMB_VALID_IDX).replace(".npy", "_ckpt.npy"),
+                np.array(valid_indices, dtype=np.int32),
+            )
             for cond in remaining_conds:
-                np.save(str(conditions[cond]).replace(".npy", "_ckpt_wt.npy"),
-                        np.array(wt_embs[cond]))
-                np.save(str(conditions[cond]).replace(".npy", "_ckpt_mut.npy"),
-                        np.array(mut_embs[cond]))
+                np.save(
+                    str(conditions[cond]).replace(".npy", "_ckpt_wt.npy"),
+                    np.array(wt_embs[cond]),
+                )
+                np.save(
+                    str(conditions[cond]).replace(".npy", "_ckpt_mut.npy"),
+                    np.array(mut_embs[cond]),
+                )
 
     # Save valid variant indices for phase 3 label alignment
     valid_idx_arr = np.array(valid_indices, dtype=np.int32)
     np.save(str(EMB_VALID_IDX), valid_idx_arr)
     n_skipped = n - len(valid_indices)
     print(f"\nVariants embedded: {len(valid_indices)}/{n}  skipped={n_skipped}")
-    print(f"Structure applied: {n_struct_applied}/{len(valid_indices)} "
-          f"({100*n_struct_applied/max(1,len(valid_indices)):.1f}%)")
+    print(
+        f"Structure applied: {n_struct_applied}/{len(valid_indices)} "
+        f"({100*n_struct_applied/max(1,len(valid_indices)):.1f}%)"
+    )
     print(f"Structure coord-length fallbacks: {struct_fallback_count[0]}")
 
     # Persist structure coverage for phase 3 / result_26 (counts reflect this run;
     # may undercount if phase 2 was resumed from a checkpoint).
-    STRUCT_META.write_text(json.dumps({
-        "n_variants_total":       n,
-        "n_variants_embedded":    len(valid_indices),
-        "n_variants_skipped":     n_skipped,
-        "n_structure_applied":    n_struct_applied,
-        "structure_applied_frac": n_struct_applied / max(1, len(valid_indices)),
-        "n_struct_coord_fallback": struct_fallback_count[0],
-    }, indent=2))
+    STRUCT_META.write_text(
+        json.dumps(
+            {
+                "n_variants_total": n,
+                "n_variants_embedded": len(valid_indices),
+                "n_variants_skipped": n_skipped,
+                "n_structure_applied": n_struct_applied,
+                "structure_applied_frac": n_struct_applied / max(1, len(valid_indices)),
+                "n_struct_coord_fallback": struct_fallback_count[0],
+            },
+            indent=2,
+        )
+    )
 
     for cond in remaining_conds:
         wt_arr = np.array(wt_embs[cond])
@@ -398,8 +443,15 @@ def phase2_extract_embeddings(batch_size: int = 4) -> None:
 
 # ── Phase 3: probes and decision rules ───────────────────────────────────────
 
-def _run_mlp(X: np.ndarray, y: np.ndarray, splits: list, n_classes: int,
-             seed: int, genes: np.ndarray = None) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+
+def _run_mlp(
+    X: np.ndarray,
+    y: np.ndarray,
+    splits: list,
+    n_classes: int,
+    seed: int,
+    genes: np.ndarray = None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     PyTorch MLP (256→64) with class-weighted cross-entropy and early stopping.
     Matches result_7's run_mlp_probe exactly.
@@ -428,7 +480,8 @@ def _run_mlp(X: np.ndarray, y: np.ndarray, splits: list, n_classes: int,
             val_gene_set = set(unique_tr_genes[:n_val_genes])
             val_mask = np.array([g in val_gene_set for g in tr_genes])
         else:
-            idx = np.arange(len(y_tr)); rng.shuffle(idx)
+            idx = np.arange(len(y_tr))
+            rng.shuffle(idx)
             n_val = max(1, int(0.15 * len(idx)))
             val_mask = np.zeros(len(y_tr), dtype=bool)
             val_mask[idx[:n_val]] = True
@@ -438,10 +491,11 @@ def _run_mlp(X: np.ndarray, y: np.ndarray, splits: list, n_classes: int,
         if len(X_fit) < 10 or len(X_val) < 5:
             continue
 
-        mu = X_fit.mean(0); std = X_fit.std(0) + 1e-8
+        mu = X_fit.mean(0)
+        std = X_fit.std(0) + 1e-8
         X_fit = (X_fit - mu) / std
         X_val = (X_val - mu) / std
-        X_te_n = (X_te  - mu) / std
+        X_te_n = (X_te - mu) / std
 
         counts = np.bincount(y_tr, minlength=n_classes).astype(np.float32)
         cw = torch.tensor(1.0 / (counts + 1e-8)).to(device)
@@ -463,13 +517,18 @@ def _run_mlp(X: np.ndarray, y: np.ndarray, splits: list, n_classes: int,
         for epoch in range(100):
             mlp.train()
             for xb, yb in loader:
-                opt.zero_grad(); crit(mlp(xb.to(device)), yb.to(device)).backward(); opt.step()
+                opt.zero_grad()
+                crit(mlp(xb.to(device)), yb.to(device)).backward()
+                opt.step()
             mlp.eval()
             with torch.no_grad():
-                vl = crit(mlp(torch.tensor(X_val).to(device)),
-                          torch.tensor(y_val, dtype=torch.long).to(device)).item()
+                vl = crit(
+                    mlp(torch.tensor(X_val).to(device)),
+                    torch.tensor(y_val, dtype=torch.long).to(device),
+                ).item()
             if vl < best_val - 1e-4:
-                best_val = vl; patience_cnt = 0
+                best_val = vl
+                patience_cnt = 0
                 best_state = {k: v.clone() for k, v in mlp.state_dict().items()}
             else:
                 patience_cnt += 1
@@ -480,9 +539,13 @@ def _run_mlp(X: np.ndarray, y: np.ndarray, splits: list, n_classes: int,
             mlp.load_state_dict(best_state)
         mlp.eval()
         with torch.no_grad():
-            proba = torch.softmax(mlp(torch.tensor(X_te_n).to(device)), dim=1).cpu().numpy()
+            proba = (
+                torch.softmax(mlp(torch.tensor(X_te_n).to(device)), dim=1).cpu().numpy()
+            )
         pred = proba.argmax(axis=1)
-        all_pred.append(pred); all_true.append(y_te); all_proba.append(proba)
+        all_pred.append(pred)
+        all_true.append(y_te)
+        all_proba.append(proba)
 
     if not all_pred:
         return np.array([]), np.array([]), np.array([])
@@ -507,7 +570,7 @@ def phase3_probes() -> None:
     # Load valid indices saved by phase 2 for exact label alignment
     if EMB_VALID_IDX.exists():
         valid_idx = np.load(str(EMB_VALID_IDX))
-        y           = y_all[valid_idx]
+        y = y_all[valid_idx]
         genes_valid = genes[valid_idx]
         print(f"Valid indices loaded: {len(valid_idx)}/{len(y_all)} variants embedded")
     else:
@@ -516,14 +579,16 @@ def phase3_probes() -> None:
         print("No valid index file found — assuming all variants embedded")
 
     conditions = {
-        "seq":        EMB_SEQ,
+        "seq": EMB_SEQ,
         "seq_struct": EMB_SEQ_STRUCT,
     }
 
     for cond, path in conditions.items():
         if path.exists():
             arr = np.load(str(path))
-            print(f"  {cond}: {arr.shape[0]} variants embedded (of {len(variants)} total)")
+            print(
+                f"  {cond}: {arr.shape[0]} variants embedded (of {len(variants)} total)"
+            )
 
     results = {}
 
@@ -535,16 +600,20 @@ def phase3_probes() -> None:
         delta = np.load(str(path))
         if delta.shape[0] != len(y):
             raise RuntimeError(
-                f"{cond}: delta rows {delta.shape[0]} != labels {len(y)} — valid index mismatch")
+                f"{cond}: delta rows {delta.shape[0]} != labels {len(y)} — valid index mismatch"
+            )
         print(f"\n=== Condition: {cond}  shape={delta.shape} ===")
-        y_cond     = y
+        y_cond = y
         genes_cond = genes_valid
 
         cond_results: dict = {"gene_split": {}, "family_split": {}}
 
         for cv_name, get_splits in [
-            ("gene_split",   lambda seed: gene_split_cv(genes_cond, N_FOLDS, seed)),
-            ("family_split", lambda seed: family_split_cv(genes_cond, pfam_map, N_FOLDS, seed)),
+            ("gene_split", lambda seed: gene_split_cv(genes_cond, N_FOLDS, seed)),
+            (
+                "family_split",
+                lambda seed: family_split_cv(genes_cond, pfam_map, N_FOLDS, seed),
+            ),
         ]:
             mlp_f1s, mlp_gof, mlp_dn = [], [], []
             lr_f1s = []
@@ -556,16 +625,24 @@ def phase3_probes() -> None:
                     continue
 
                 # PyTorch MLP — matches result_7
-                pred, true, proba = _run_mlp(delta, y_cond, splits, n_classes, seed, genes=genes_cond)
+                pred, true, proba = _run_mlp(
+                    delta, y_cond, splits, n_classes, seed, genes=genes_cond
+                )
                 if len(pred) == 0:
                     continue
                 mlp_f1s.append(f1_score(true, pred, average="macro"))
-                mlp_gof.append(roc_auc_score(
-                    (true == label_set.index("GOF")).astype(int),
-                    proba[:, label_set.index("GOF")]))
-                mlp_dn.append(roc_auc_score(
-                    (true == label_set.index("DN")).astype(int),
-                    proba[:, label_set.index("DN")]))
+                mlp_gof.append(
+                    roc_auc_score(
+                        (true == label_set.index("GOF")).astype(int),
+                        proba[:, label_set.index("GOF")],
+                    )
+                )
+                mlp_dn.append(
+                    roc_auc_score(
+                        (true == label_set.index("DN")).astype(int),
+                        proba[:, label_set.index("DN")],
+                    )
+                )
 
                 # Logistic regression
                 scaler = StandardScaler()
@@ -574,68 +651,100 @@ def phase3_probes() -> None:
                     X_tr = scaler.fit_transform(delta[tr])
                     X_te = scaler.transform(delta[te])
                     clf = LogisticRegression(
-                        max_iter=1000, random_state=seed,
-                        class_weight="balanced", C=0.1,
+                        max_iter=1000,
+                        random_state=seed,
+                        class_weight="balanced",
+                        C=0.1,
                     )
                     clf.fit(X_tr, y_cond[tr])
                     lr_preds.append(clf.predict(X_te))
                     lr_true.append(y_cond[te])
-                lr_f1s.append(f1_score(
-                    np.concatenate(lr_true), np.concatenate(lr_preds), average="macro"))
+                lr_f1s.append(
+                    f1_score(
+                        np.concatenate(lr_true),
+                        np.concatenate(lr_preds),
+                        average="macro",
+                    )
+                )
 
             if not mlp_f1s:
                 continue
 
             r = {
-                "mlp_f1_mean":        float(np.mean(mlp_f1s)),
-                "mlp_f1_std":         float(np.std(mlp_f1s)),
+                "mlp_f1_mean": float(np.mean(mlp_f1s)),
+                "mlp_f1_std": float(np.std(mlp_f1s)),
                 "mlp_gof_auroc_mean": float(np.mean(mlp_gof)),
-                "mlp_dn_auroc_mean":  float(np.mean(mlp_dn)),
-                "lr_f1_mean":         float(np.mean(lr_f1s)),
-                "lr_f1_std":          float(np.std(lr_f1s)),
-                "n_seeds":            len(mlp_f1s),
+                "mlp_dn_auroc_mean": float(np.mean(mlp_dn)),
+                "lr_f1_mean": float(np.mean(lr_f1s)),
+                "lr_f1_std": float(np.std(lr_f1s)),
+                "n_seeds": len(mlp_f1s),
             }
             cond_results[cv_name] = r
-            print(f"  {cv_name}: MLP F1={r['mlp_f1_mean']:.3f}±{r['mlp_f1_std']:.3f}  "
-                  f"GOF={r['mlp_gof_auroc_mean']:.3f}  DN={r['mlp_dn_auroc_mean']:.3f}  "
-                  f"LR F1={r['lr_f1_mean']:.3f}")
+            print(
+                f"  {cv_name}: MLP F1={r['mlp_f1_mean']:.3f}±{r['mlp_f1_std']:.3f}  "
+                f"GOF={r['mlp_gof_auroc_mean']:.3f}  DN={r['mlp_dn_auroc_mean']:.3f}  "
+                f"LR F1={r['lr_f1_mean']:.3f}"
+            )
 
         results[cond] = cond_results
 
     # ── decision rules ─────────────────────────────────────────────────────
     print(f"\n=== DECISION RULES ===")
-    print(f"  ESM-2 baseline (result_7, 5-seed): family-split MLP F1 = {ESM2_FAMILY_F1:.3f}")
+    print(
+        f"  ESM-2 baseline (result_7, 5-seed): family-split MLP F1 = {ESM2_FAMILY_F1:.3f}"
+    )
     print(f"  M1 threshold = {M1_THRESHOLD:.3f}  (ESM2 + 0.05)")
 
     def get_f1(cond: str, cv: str) -> float:
         return results.get(cond, {}).get(cv, {}).get("mlp_f1_mean", float("nan"))
 
-    ss_f1  = get_f1("seq_struct", "family_split")
-    seq_f1 = get_f1("seq",       "family_split")
+    ss_f1 = get_f1("seq_struct", "family_split")
+    seq_f1 = get_f1("seq", "family_split")
 
-    m1 = ss_f1  > M1_THRESHOLD if not np.isnan(ss_f1)  else None
+    m1 = ss_f1 > M1_THRESHOLD if not np.isnan(ss_f1) else None
     m2 = seq_f1 > M1_THRESHOLD if not np.isnan(seq_f1) else None
-    m3 = (ss_f1 - seq_f1) > M3_THRESHOLD \
-         if not np.isnan(ss_f1) and not np.isnan(seq_f1) else None
+    m3 = (
+        (ss_f1 - seq_f1) > M3_THRESHOLD
+        if not np.isnan(ss_f1) and not np.isnan(seq_f1)
+        else None
+    )
 
     def fmt(v, passed):
         s = f"{v:.3f}" if not np.isnan(v) else "N/A"
-        return f"{s} → {'PASS ✓' if passed else 'FAIL ✗' if passed is not None else 'N/A'}"
+        return (
+            f"{s} → {'PASS ✓' if passed else 'FAIL ✗' if passed is not None else 'N/A'}"
+        )
 
-    print(f"  M1: ESM-3 seq_struct family-split F1 > {M1_THRESHOLD:.3f} → {fmt(ss_f1, m1)}")
-    print(f"  M2: ESM-3 seq        family-split F1 > {M1_THRESHOLD:.3f} → {fmt(seq_f1, m2)}")
-    gap = ss_f1 - seq_f1 if not np.isnan(ss_f1) and not np.isnan(seq_f1) else float("nan")
-    print(f"  M3: seq_struct − seq > {M3_THRESHOLD:.3f}                 → {fmt(gap, m3)}")
+    print(
+        f"  M1: ESM-3 seq_struct family-split F1 > {M1_THRESHOLD:.3f} → {fmt(ss_f1, m1)}"
+    )
+    print(
+        f"  M2: ESM-3 seq        family-split F1 > {M1_THRESHOLD:.3f} → {fmt(seq_f1, m2)}"
+    )
+    gap = (
+        ss_f1 - seq_f1 if not np.isnan(ss_f1) and not np.isnan(seq_f1) else float("nan")
+    )
+    print(
+        f"  M3: seq_struct − seq > {M3_THRESHOLD:.3f}                 → {fmt(gap, m3)}"
+    )
 
     if m1 is False:
-        print("\n  Interpretation: NULL CONFIRMED — mechanism not recoverable from ESM-3 "
-              "sequence or sequence+structure representations (function tokens not tested).")
+        print(
+            "\n  Interpretation: NULL CONFIRMED — mechanism not recoverable from ESM-3 "
+            "sequence or sequence+structure representations (function tokens not tested)."
+        )
     elif m1 and m2 is False and m3:
-        print("\n  Interpretation: STRUCTURE RESCUES MECHANISM — structure tokens are the operative ingredient.")
+        print(
+            "\n  Interpretation: STRUCTURE RESCUES MECHANISM — structure tokens are the operative ingredient."
+        )
     elif m1 and m2:
-        print("\n  Interpretation: SCALE SUFFICES — model scale (not structure tokens) accounts for the lift.")
+        print(
+            "\n  Interpretation: SCALE SUFFICES — model scale (not structure tokens) accounts for the lift."
+        )
     elif m1 and m3 is False:
-        print("\n  Interpretation: ESM-3 better than ESM-2 but structure tokens not the reason.")
+        print(
+            "\n  Interpretation: ESM-3 better than ESM-2 but structure tokens not the reason."
+        )
 
     struct_meta = json.loads(STRUCT_META.read_text()) if STRUCT_META.exists() else None
 
@@ -646,12 +755,21 @@ def phase3_probes() -> None:
         "structure_coverage": struct_meta,
         "results": results,
         "decision_rules": {
-            "M1": {"criterion": f"seq_struct family-split F1 > {M1_THRESHOLD:.3f}",
-                   "value": ss_f1,  "passed": m1},
-            "M2": {"criterion": f"seq family-split F1 > {M1_THRESHOLD:.3f}",
-                   "value": seq_f1, "passed": m2},
-            "M3": {"criterion": f"seq_struct − seq > {M3_THRESHOLD:.3f}",
-                   "value": float(gap) if not np.isnan(gap) else None, "passed": m3},
+            "M1": {
+                "criterion": f"seq_struct family-split F1 > {M1_THRESHOLD:.3f}",
+                "value": ss_f1,
+                "passed": m1,
+            },
+            "M2": {
+                "criterion": f"seq family-split F1 > {M1_THRESHOLD:.3f}",
+                "value": seq_f1,
+                "passed": m2,
+            },
+            "M3": {
+                "criterion": f"seq_struct − seq > {M3_THRESHOLD:.3f}",
+                "value": float(gap) if not np.isnan(gap) else None,
+                "passed": m3,
+            },
         },
         "model": ESM3_MODEL,
         "dataset": "gerasimavicius",
@@ -666,10 +784,15 @@ def phase3_probes() -> None:
 
 # ── main ──────────────────────────────────────────────────────────────────────
 
+
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--phase", required=True, choices=["1", "2", "3"],
-                    help="1=structure tokens (CPU), 2=embeddings (GPU), 3=probes (CPU)")
+    ap.add_argument(
+        "--phase",
+        required=True,
+        choices=["1", "2", "3"],
+        help="1=structure tokens (CPU), 2=embeddings (GPU), 3=probes (CPU)",
+    )
     ap.add_argument("--batch_size", type=int, default=4)
     args = ap.parse_args()
 

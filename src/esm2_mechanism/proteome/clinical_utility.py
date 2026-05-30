@@ -38,18 +38,22 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from sklearn.linear_model import LogisticRegression
 from sklearn.neural_network import MLPClassifier
 from sklearn.preprocessing import StandardScaler, LabelEncoder
 from sklearn.metrics import (
-    roc_auc_score, roc_curve,
-    precision_recall_curve, average_precision_score,
+    roc_auc_score,
+    roc_curve,
+    precision_recall_curve,
+    average_precision_score,
 )
 from sklearn.utils import resample
 from sklearn.calibration import calibration_curve
 import functools
+
 print = functools.partial(print, flush=True)
 
 warnings.filterwarnings("ignore")
@@ -86,7 +90,8 @@ def get_feature_sets(feature_names: list[str]) -> dict[str, list[int]]:
     """
     miss_suffixes = ("_missing",)
     no_miss_idx = [
-        i for i, n in enumerate(feature_names)
+        i
+        for i, n in enumerate(feature_names)
         if not any(n.endswith(s) for s in miss_suffixes) and n != "is_singleton_family"
     ]
     full_idx = list(range(len(feature_names)))
@@ -170,8 +175,11 @@ def run_family_split_cv(
 
         # LogReg
         lr = LogisticRegression(
-            C=1.0, max_iter=2000, class_weight="balanced",
-            multi_class="ovr", random_state=RANDOM_STATE,
+            C=1.0,
+            max_iter=2000,
+            class_weight="balanced",
+            multi_class="ovr",
+            random_state=RANDOM_STATE,
         )
         lr.fit(X_train_sc, y_train)
         raw_proba = lr.predict_proba(X_test_sc)
@@ -185,7 +193,9 @@ def run_family_split_cv(
     # must drop these rows rather than score a made-up prediction.
     n_unpredicted = int(np.isnan(probs[:, 0]).sum())
     if n_unpredicted:
-        print(f"  WARNING: {n_unpredicted} genes received no LR prediction (left as NaN)")
+        print(
+            f"  WARNING: {n_unpredicted} genes received no LR prediction (left as NaN)"
+        )
 
     return probs
 
@@ -219,6 +229,7 @@ def run_mlp_cv(
 
         # Oversample minority classes
         from collections import Counter
+
         counts = Counter(y_train)
         max_count = max(counts.values())
         X_bal, y_bal = [], []
@@ -226,8 +237,9 @@ def run_mlp_cv(
             mask = y_train == cls_idx
             Xc, yc = X_train_sc[mask], y_train[mask]
             if cnt < max_count:
-                Xc, yc = resample(Xc, yc, replace=True,
-                                  n_samples=max_count, random_state=RANDOM_STATE)
+                Xc, yc = resample(
+                    Xc, yc, replace=True, n_samples=max_count, random_state=RANDOM_STATE
+                )
             X_bal.append(Xc)
             y_bal.append(yc)
         X_bal = np.vstack(X_bal)
@@ -251,7 +263,9 @@ def run_mlp_cv(
     # fabricate a uniform probability; downstream AUROC/ECE drop these rows.
     n_unpredicted = int(np.isnan(probs[:, 0]).sum())
     if n_unpredicted:
-        print(f"  WARNING: {n_unpredicted} genes received no MLP prediction (left as NaN)")
+        print(
+            f"  WARNING: {n_unpredicted} genes received no MLP prediction (left as NaN)"
+        )
 
     return probs
 
@@ -276,7 +290,11 @@ def bootstrap_auroc(
             continue
         boot_aurocs.append(roc_auc_score(yt, ys))
     boot_aurocs = np.array(boot_aurocs)
-    return point, float(np.percentile(boot_aurocs, 2.5)), float(np.percentile(boot_aurocs, 97.5))
+    return (
+        point,
+        float(np.percentile(boot_aurocs, 2.5)),
+        float(np.percentile(boot_aurocs, 97.5)),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -389,8 +407,7 @@ def hi3_analysis(
         - results["H1_GOF_vs_LOF_AUROC_LR_NOMISS"]
     )
     results["H3_missingness_ablation_delta_DN"] = (
-        results["H2_DN_vs_LOF_AUROC_LR_FULL"]
-        - results["H2_DN_vs_LOF_AUROC_LR_NOMISS"]
+        results["H2_DN_vs_LOF_AUROC_LR_FULL"] - results["H2_DN_vs_LOF_AUROC_LR_NOMISS"]
     )
 
     # --- Calibration (GOF binary, LR_FULL) ---
@@ -398,17 +415,31 @@ def hi3_analysis(
     p_cal = hi3["P_GOF_lr_full"].values
     # Drop genes with no prediction (NaN) — calibrate over real predictions only.
     cal_valid = ~np.isnan(p_cal)
-    ece = compute_ece(y_cal[cal_valid], p_cal[cal_valid]) if cal_valid.any() else float("nan")
+    ece = (
+        compute_ece(y_cal[cal_valid], p_cal[cal_valid])
+        if cal_valid.any()
+        else float("nan")
+    )
     results["calibration_ECE_GOF_LR_FULL"] = ece
 
     # --- Named outlier gene report ---
     outliers = hi3[hi3["mechanism_3class"].isin(["GOF", "DN"])].copy()
-    results["outlier_genes"] = outliers[
-        ["gene", "mechanism_3class",
-         "P_GOF_lr_full", "P_DN_lr_full",
-         "P_GOF_lr_nomiss", "P_DN_lr_nomiss",
-         "P_GOF_mlp_full", "P_DN_mlp_full"]
-    ].sort_values(["mechanism_3class", "P_GOF_lr_full"], ascending=[True, False]).to_dict(orient="records")
+    results["outlier_genes"] = (
+        outliers[
+            [
+                "gene",
+                "mechanism_3class",
+                "P_GOF_lr_full",
+                "P_DN_lr_full",
+                "P_GOF_lr_nomiss",
+                "P_DN_lr_nomiss",
+                "P_GOF_mlp_full",
+                "P_DN_mlp_full",
+            ]
+        ]
+        .sort_values(["mechanism_3class", "P_GOF_lr_full"], ascending=[True, False])
+        .to_dict(orient="records")
+    )
 
     # --- Operating point stats ---
     for label, col in [("LR_FULL", "P_GOF_lr_full"), ("LR_NOMISS", "P_GOF_lr_nomiss")]:
@@ -416,8 +447,12 @@ def hi3_analysis(
         tp = (above["mechanism_3class"] == "GOF").sum()
         fp = (above["mechanism_3class"] != "GOF").sum()
         n_gof = results["n_hi3_GOF"]
-        results[f"GOF_recall_at_0.4_{label}"] = float(tp / n_gof) if n_gof > 0 else float("nan")
-        results[f"GOF_precision_at_0.4_{label}"] = float(tp / (tp + fp)) if (tp + fp) > 0 else float("nan")
+        results[f"GOF_recall_at_0.4_{label}"] = (
+            float(tp / n_gof) if n_gof > 0 else float("nan")
+        )
+        results[f"GOF_precision_at_0.4_{label}"] = (
+            float(tp / (tp + fp)) if (tp + fp) > 0 else float("nan")
+        )
         results[f"GOF_flagged_at_0.4_{label}"] = int(tp + fp)
 
     # --- Plots ---
@@ -432,13 +467,27 @@ def _plot_roc_pr(hi3: pd.DataFrame, results: dict, out_dir: Path) -> None:
     fig, axes = plt.subplots(2, 2, figsize=(12, 10))
 
     configs = [
-        ("GOF", "P_GOF_lr_full", "P_GOF_lr_nomiss", "P_GOF_mlp_full",
-         "H1_GOF_vs_LOF_AUROC", "H1_GOF_vs_LOF_CI95"),
-        ("DN",  "P_DN_lr_full",  "P_DN_lr_nomiss",  "P_DN_mlp_full",
-         "H2_DN_vs_LOF_AUROC",  "H2_DN_vs_LOF_CI95"),
+        (
+            "GOF",
+            "P_GOF_lr_full",
+            "P_GOF_lr_nomiss",
+            "P_GOF_mlp_full",
+            "H1_GOF_vs_LOF_AUROC",
+            "H1_GOF_vs_LOF_CI95",
+        ),
+        (
+            "DN",
+            "P_DN_lr_full",
+            "P_DN_lr_nomiss",
+            "P_DN_mlp_full",
+            "H2_DN_vs_LOF_AUROC",
+            "H2_DN_vs_LOF_CI95",
+        ),
     ]
 
-    for row, (pos_cls, lr_full, lr_nomiss, mlp_col, auroc_key, ci_key) in enumerate(configs):
+    for row, (pos_cls, lr_full, lr_nomiss, mlp_col, auroc_key, ci_key) in enumerate(
+        configs
+    ):
         subset = hi3[hi3["mechanism_3class"].isin([pos_cls, "LOF"])]
         y_true = (subset["mechanism_3class"] == pos_cls).astype(int).values
 
@@ -449,22 +498,32 @@ def _plot_roc_pr(hi3: pd.DataFrame, results: dict, out_dir: Path) -> None:
         ax_pr = axes[row, 1]
 
         for label, col, color, ls in [
-            ("LR full",    lr_full,   "#e74c3c", "-"),
+            ("LR full", lr_full, "#e74c3c", "-"),
             ("LR no-miss", lr_nomiss, "#e67e22", "--"),
-            ("MLP full",   mlp_col,   "#3498db", "-."),
+            ("MLP full", mlp_col, "#3498db", "-."),
         ]:
             scores = subset[col].values
             fpr, tpr, _ = roc_curve(y_true, scores)
             auc = roc_auc_score(y_true, scores)
             key_suffix = label.replace(" ", "_").upper().replace("-", "_")
-            ci = results.get(f"{auroc_key}_{key_suffix.replace('LR_FULL','LR_FULL').replace('LR_NO_MISS','LR_NOMISS').replace('MLP_FULL','MLP_FULL')}", [None, None])
-            ax_roc.plot(fpr, tpr, color=color, lw=2, linestyle=ls,
-                        label=f"{label} AUC={auc:.3f}")
+            ci = results.get(
+                f"{auroc_key}_{key_suffix.replace('LR_FULL','LR_FULL').replace('LR_NO_MISS','LR_NOMISS').replace('MLP_FULL','MLP_FULL')}",
+                [None, None],
+            )
+            ax_roc.plot(
+                fpr,
+                tpr,
+                color=color,
+                lw=2,
+                linestyle=ls,
+                label=f"{label} AUC={auc:.3f}",
+            )
 
             prec, rec, _ = precision_recall_curve(y_true, scores)
             ap = average_precision_score(y_true, scores)
-            ax_pr.plot(rec, prec, color=color, lw=2, linestyle=ls,
-                       label=f"{label} AP={ap:.3f}")
+            ax_pr.plot(
+                rec, prec, color=color, lw=2, linestyle=ls, label=f"{label} AP={ap:.3f}"
+            )
 
         ax_roc.plot([0, 1], [0, 1], "k--", lw=0.8, alpha=0.4)
         ax_roc.set_xlabel("FPR")
@@ -474,15 +533,21 @@ def _plot_roc_pr(hi3: pd.DataFrame, results: dict, out_dir: Path) -> None:
 
         # Chance line for PR
         base_rate = y_true.mean()
-        ax_pr.axhline(base_rate, color="gray", lw=0.8, linestyle="--",
-                      label=f"chance ({base_rate:.3f})")
+        ax_pr.axhline(
+            base_rate,
+            color="gray",
+            lw=0.8,
+            linestyle="--",
+            label=f"chance ({base_rate:.3f})",
+        )
         ax_pr.set_xlabel("Recall")
         ax_pr.set_ylabel("Precision")
         ax_pr.set_title(f"PR — {pos_cls} vs LOF within HI=3")
         ax_pr.legend(fontsize=8)
 
-    plt.suptitle("ROC and PR curves — ClinGen HI=3 (out-of-sample, family-split CV)",
-                 fontsize=12)
+    plt.suptitle(
+        "ROC and PR curves — ClinGen HI=3 (out-of-sample, family-split CV)", fontsize=12
+    )
     plt.tight_layout()
     plt.savefig(out_dir / "hi3_roc_pr_curves.png", dpi=150)
     plt.close()
@@ -491,19 +556,29 @@ def _plot_roc_pr(hi3: pd.DataFrame, results: dict, out_dir: Path) -> None:
 def _plot_calibration(hi3: pd.DataFrame, out_dir: Path) -> None:
     fig, axes = plt.subplots(1, 2, figsize=(10, 5))
 
-    for ax, (pos_cls, col, title) in zip(axes, [
-        ("GOF", "P_GOF_lr_full", "Calibration — P(GOF), LR full, HI=3"),
-        ("DN",  "P_DN_lr_full",  "Calibration — P(DN), LR full, HI=3"),
-    ]):
+    for ax, (pos_cls, col, title) in zip(
+        axes,
+        [
+            ("GOF", "P_GOF_lr_full", "Calibration — P(GOF), LR full, HI=3"),
+            ("DN", "P_DN_lr_full", "Calibration — P(DN), LR full, HI=3"),
+        ],
+    ):
         y_true = (hi3["mechanism_3class"] == pos_cls).astype(int).values
         y_prob = hi3[col].values
 
-        frac_pos, mean_pred = calibration_curve(y_true, y_prob, n_bins=8,
-                                                strategy="quantile")
+        frac_pos, mean_pred = calibration_curve(
+            y_true, y_prob, n_bins=8, strategy="quantile"
+        )
         ece = compute_ece(y_true, y_prob)
 
-        ax.plot(mean_pred, frac_pos, "s-", color="#e74c3c", lw=2,
-                label=f"LogReg (ECE={ece:.3f})")
+        ax.plot(
+            mean_pred,
+            frac_pos,
+            "s-",
+            color="#e74c3c",
+            lw=2,
+            label=f"LogReg (ECE={ece:.3f})",
+        )
         ax.plot([0, 1], [0, 1], "k--", lw=0.8, alpha=0.5, label="perfect")
         ax.set_xlabel("Mean predicted probability")
         ax.set_ylabel("Fraction positive")
@@ -519,36 +594,62 @@ def _plot_prob_distributions(hi3: pd.DataFrame, out_dir: Path) -> None:
     fig, axes = plt.subplots(1, 2, figsize=(10, 5))
     colors = {"GOF": "#e74c3c", "DN": "#3498db", "LOF": "#95a5a6"}
 
-    for ax, (col, xlabel, title) in zip(axes, [
-        ("P_GOF_lr_full", "P(GOF) — LR full features",
-         "P(GOF) by true class within HI=3"),
-        ("P_DN_lr_full",  "P(DN) — LR full features",
-         "P(DN) by true class within HI=3"),
-    ]):
+    for ax, (col, xlabel, title) in zip(
+        axes,
+        [
+            (
+                "P_GOF_lr_full",
+                "P(GOF) — LR full features",
+                "P(GOF) by true class within HI=3",
+            ),
+            (
+                "P_DN_lr_full",
+                "P(DN) — LR full features",
+                "P(DN) by true class within HI=3",
+            ),
+        ],
+    ):
         for mech in ["GOF", "DN", "LOF"]:
             vals = hi3[hi3["mechanism_3class"] == mech][col].values
             x_pos = ["GOF", "DN", "LOF"].index(mech)
             jitter = np.random.default_rng(0).uniform(-0.15, 0.15, len(vals))
             n = (hi3["mechanism_3class"] == mech).sum()
-            ax.scatter(jitter + x_pos, vals, alpha=0.5, s=18,
-                       color=colors[mech], label=f"{mech} (n={n})")
-            ax.boxplot(vals, positions=[x_pos], widths=0.25,
-                       patch_artist=True,
-                       boxprops=dict(facecolor=colors[mech], alpha=0.3),
-                       medianprops=dict(color="black", lw=2),
-                       showfliers=False)
+            ax.scatter(
+                jitter + x_pos,
+                vals,
+                alpha=0.5,
+                s=18,
+                color=colors[mech],
+                label=f"{mech} (n={n})",
+            )
+            ax.boxplot(
+                vals,
+                positions=[x_pos],
+                widths=0.25,
+                patch_artist=True,
+                boxprops=dict(facecolor=colors[mech], alpha=0.3),
+                medianprops=dict(color="black", lw=2),
+                showfliers=False,
+            )
 
         ax.set_xticks([0, 1, 2])
         ax.set_xticklabels(["GOF", "DN", "LOF"])
         ax.set_ylabel(xlabel)
         ax.set_title(title)
-        ax.axhline(CONF_THRESHOLD, color="black", linestyle="--", lw=0.8,
-                   alpha=0.5, label=f"thresh={CONF_THRESHOLD}")
+        ax.axhline(
+            CONF_THRESHOLD,
+            color="black",
+            linestyle="--",
+            lw=0.8,
+            alpha=0.5,
+            label=f"thresh={CONF_THRESHOLD}",
+        )
         ax.set_ylim(-0.05, 1.05)
         ax.legend(fontsize=8)
 
-    plt.suptitle("Predicted probabilities within ClinGen HI=3 (out-of-sample)",
-                 fontsize=12)
+    plt.suptitle(
+        "Predicted probabilities within ClinGen HI=3 (out-of-sample)", fontsize=12
+    )
     plt.tight_layout()
     plt.savefig(out_dir / "hi3_prob_distributions.png", dpi=150)
     plt.close()
@@ -590,16 +691,16 @@ def unannotated_analysis(
     }
 
     cols = ["gene", "mechanism_3class", "P_GOF_lr", "P_DN_lr", "P_LOF_lr", "HI_score"]
-    results["H4_top20_GOF"] = (
-        unannotated_labeled.nlargest(20, "P_GOF_lr")[cols].to_dict(orient="records")
-    )
-    results["H4_top20_DN"] = (
-        unannotated_labeled.nlargest(20, "P_DN_lr")[cols].to_dict(orient="records")
+    results["H4_top20_GOF"] = unannotated_labeled.nlargest(20, "P_GOF_lr")[
+        cols
+    ].to_dict(orient="records")
+    results["H4_top20_DN"] = unannotated_labeled.nlargest(20, "P_DN_lr")[cols].to_dict(
+        orient="records"
     )
 
     errors = unannotated_labeled[
-        (unannotated_labeled["mechanism_3class"] == "LOF") &
-        (unannotated_labeled["pred_class_lr"].isin(["GOF", "DN"]))
+        (unannotated_labeled["mechanism_3class"] == "LOF")
+        & (unannotated_labeled["pred_class_lr"].isin(["GOF", "DN"]))
     ]
     results["n_LOF_predicted_GOF_or_DN"] = len(errors)
 
@@ -608,18 +709,31 @@ def unannotated_analysis(
     return results
 
 
-def _plot_unannotated(df: pd.DataFrame, probs: np.ndarray, le: LabelEncoder,
-                      out_dir: Path) -> None:
+def _plot_unannotated(
+    df: pd.DataFrame, probs: np.ndarray, le: LabelEncoder, out_dir: Path
+) -> None:
     from matplotlib.patches import Patch
+
     gof_idx = list(le.classes_).index("GOF")
     dn_idx = list(le.classes_).index("DN")
     colors = {"GOF": "#e74c3c", "DN": "#3498db", "LOF": "#95a5a6"}
 
     fig, axes = plt.subplots(1, 2, figsize=(12, 6))
-    for ax, (prob_col_name, prob_idx, title) in zip(axes, [
-        ("P_GOF_lr", gof_idx, "Top 30 predicted GOF\n(unannotated genes, colored by true label)"),
-        ("P_DN_lr",  dn_idx,  "Top 30 predicted DN\n(unannotated genes, colored by true label)"),
-    ]):
+    for ax, (prob_col_name, prob_idx, title) in zip(
+        axes,
+        [
+            (
+                "P_GOF_lr",
+                gof_idx,
+                "Top 30 predicted GOF\n(unannotated genes, colored by true label)",
+            ),
+            (
+                "P_DN_lr",
+                dn_idx,
+                "Top 30 predicted DN\n(unannotated genes, colored by true label)",
+            ),
+        ],
+    ):
         top = df.nlargest(30, prob_col_name)
         p_vals = probs[top.index, prob_idx]
         gene_names = top["gene"].values
@@ -665,8 +779,11 @@ def feature_importance_plot(
     X_sc = scaler.fit_transform(X_sub)
 
     lr = LogisticRegression(
-        C=1.0, max_iter=2000, class_weight="balanced",
-        multi_class="ovr", random_state=RANDOM_STATE,
+        C=1.0,
+        max_iter=2000,
+        class_weight="balanced",
+        multi_class="ovr",
+        random_state=RANDOM_STATE,
     )
     lr.fit(X_sc, y)
 
@@ -687,15 +804,18 @@ def feature_importance_plot(
         ax.set_yticks(range(len(top_names)))
         ax.set_yticklabels(top_names[::-1], fontsize=8)
         ax.axvline(0, color="black", lw=0.8)
-        ax.set_title(f"Top features for {cls}\n(full-data LR, no-miss features)", fontsize=10)
+        ax.set_title(
+            f"Top features for {cls}\n(full-data LR, no-miss features)", fontsize=10
+        )
         ax.set_xlabel("Coefficient")
 
         results[f"top_features_{cls}"] = [
-            {"feature": n, "coefficient": float(v)}
-            for n, v in zip(top_names, top_vals)
+            {"feature": n, "coefficient": float(v)} for n, v in zip(top_names, top_vals)
         ]
 
-    plt.suptitle("LogReg feature importance (NO-MISS features, full-data fit)", fontsize=12)
+    plt.suptitle(
+        "LogReg feature importance (NO-MISS features, full-data fit)", fontsize=12
+    )
     plt.tight_layout()
     plt.savefig(out_dir / "feature_importance.png", dpi=150)
     plt.close()
@@ -741,9 +861,11 @@ def main(out_dir: Path) -> None:
     df["mechanism_3class"] = df["mechanism"].map(MECH_MAP)
 
     labeled = df[df["mechanism_3class"].notna()].copy()
-    print(f"Labeled genes: {len(labeled)} (GOF={( labeled['mechanism_3class']=='GOF').sum()}, "
-          f"DN={(labeled['mechanism_3class']=='DN').sum()}, "
-          f"LOF={(labeled['mechanism_3class']=='LOF').sum()})")
+    print(
+        f"Labeled genes: {len(labeled)} (GOF={( labeled['mechanism_3class']=='GOF').sum()}, "
+        f"DN={(labeled['mechanism_3class']=='DN').sum()}, "
+        f"LOF={(labeled['mechanism_3class']=='LOF').sum()})"
+    )
 
     labeled_idx = labeled.index.values
     X_labeled = X_all[labeled_idx]
@@ -796,7 +918,9 @@ def main(out_dir: Path) -> None:
     probs_out["P_LOF_lr_full"] = probs_lr_full_df[:, lof_idx_c]
     has_probs = ~np.isnan(probs_lr_full_df[:, 0])
     pred_classes = np.full(len(df), None, dtype=object)
-    pred_classes[has_probs] = le.classes_[np.argmax(probs_lr_full_df[has_probs], axis=1)]
+    pred_classes[has_probs] = le.classes_[
+        np.argmax(probs_lr_full_df[has_probs], axis=1)
+    ]
     probs_out["pred_class_lr_full"] = pred_classes
     probs_out.to_csv(out_dir / "gene_mechanism_probs.tsv", sep="\t", index=False)
 
@@ -808,21 +932,34 @@ def main(out_dir: Path) -> None:
     # --- HI=3 analysis ---
     print("\nRunning ClinGen HI=3 analysis...")
     hi3_results, hi3_df = hi3_analysis(
-        df, probs_lr_full_df, probs_lr_nomiss_df, probs_mlp_full_df,
-        le, feature_names, out_dir
+        df,
+        probs_lr_full_df,
+        probs_lr_nomiss_df,
+        probs_mlp_full_df,
+        le,
+        feature_names,
+        out_dir,
     )
 
-    print(f"  HI=3: n={hi3_results['n_hi3_total']} (GOF={hi3_results['n_hi3_GOF']}, "
-          f"DN={hi3_results['n_hi3_DN']}, LOF={hi3_results['n_hi3_LOF']})")
+    print(
+        f"  HI=3: n={hi3_results['n_hi3_total']} (GOF={hi3_results['n_hi3_GOF']}, "
+        f"DN={hi3_results['n_hi3_DN']}, LOF={hi3_results['n_hi3_LOF']})"
+    )
     print(f"\n  H1 GOF-vs-LOF AUROC:")
-    print(f"    LR FULL:    {hi3_results['H1_GOF_vs_LOF_AUROC_LR_FULL']:.3f} "
-          f"[{hi3_results['H1_GOF_vs_LOF_CI95_LR_FULL'][0]:.3f}–"
-          f"{hi3_results['H1_GOF_vs_LOF_CI95_LR_FULL'][1]:.3f}]")
-    print(f"    LR NO-MISS: {hi3_results['H1_GOF_vs_LOF_AUROC_LR_NOMISS']:.3f} "
-          f"[{hi3_results['H1_GOF_vs_LOF_CI95_LR_NOMISS'][0]:.3f}–"
-          f"{hi3_results['H1_GOF_vs_LOF_CI95_LR_NOMISS'][1]:.3f}]")
+    print(
+        f"    LR FULL:    {hi3_results['H1_GOF_vs_LOF_AUROC_LR_FULL']:.3f} "
+        f"[{hi3_results['H1_GOF_vs_LOF_CI95_LR_FULL'][0]:.3f}–"
+        f"{hi3_results['H1_GOF_vs_LOF_CI95_LR_FULL'][1]:.3f}]"
+    )
+    print(
+        f"    LR NO-MISS: {hi3_results['H1_GOF_vs_LOF_AUROC_LR_NOMISS']:.3f} "
+        f"[{hi3_results['H1_GOF_vs_LOF_CI95_LR_NOMISS'][0]:.3f}–"
+        f"{hi3_results['H1_GOF_vs_LOF_CI95_LR_NOMISS'][1]:.3f}]"
+    )
     print(f"    MLP FULL:   {hi3_results['H1_GOF_vs_LOF_AUROC_MLP_FULL']:.3f}")
-    print(f"    Missingness delta: {hi3_results['H3_missingness_ablation_delta_GOF']:+.3f}")
+    print(
+        f"    Missingness delta: {hi3_results['H3_missingness_ablation_delta_GOF']:+.3f}"
+    )
 
     print(f"\n  Baselines (GOF vs LOF within HI=3):")
     for feat in ["mis_z", "paralog_count", "PPI_degree", "pLI", "LOEUF"]:
@@ -833,13 +970,19 @@ def main(out_dir: Path) -> None:
             print(f"    {feat:20s}: {hi3_results[k]:.3f}{ci_s}")
 
     print(f"\n  H2 DN-vs-LOF AUROC:")
-    print(f"    LR FULL:    {hi3_results['H2_DN_vs_LOF_AUROC_LR_FULL']:.3f} "
-          f"[{hi3_results['H2_DN_vs_LOF_CI95_LR_FULL'][0]:.3f}–"
-          f"{hi3_results['H2_DN_vs_LOF_CI95_LR_FULL'][1]:.3f}]")
+    print(
+        f"    LR FULL:    {hi3_results['H2_DN_vs_LOF_AUROC_LR_FULL']:.3f} "
+        f"[{hi3_results['H2_DN_vs_LOF_CI95_LR_FULL'][0]:.3f}–"
+        f"{hi3_results['H2_DN_vs_LOF_CI95_LR_FULL'][1]:.3f}]"
+    )
     print(f"    LR NO-MISS: {hi3_results['H2_DN_vs_LOF_AUROC_LR_NOMISS']:.3f}")
-    print(f"    Missingness delta: {hi3_results['H3_missingness_ablation_delta_DN']:+.3f}")
+    print(
+        f"    Missingness delta: {hi3_results['H3_missingness_ablation_delta_DN']:+.3f}"
+    )
 
-    print(f"\n  Calibration ECE (GOF, LR full): {hi3_results['calibration_ECE_GOF_LR_FULL']:.3f}")
+    print(
+        f"\n  Calibration ECE (GOF, LR full): {hi3_results['calibration_ECE_GOF_LR_FULL']:.3f}"
+    )
 
     print(f"\n  Operating point (P_GOF > 0.4, LR FULL):")
     print(f"    Recall:    {hi3_results['GOF_recall_at_0.4_LR_FULL']:.3f}")
@@ -849,9 +992,13 @@ def main(out_dir: Path) -> None:
     # --- Unannotated analysis ---
     print("\nRunning unannotated gene analysis...")
     unann_results = unannotated_analysis(df, probs_lr_full_df, le, out_dir)
-    print(f"  Unannotated: {unann_results['n_unannotated_total']} "
-          f"(HI=0: {unann_results['n_unannotated_HI0']}, NaN: {unann_results['n_unannotated_NaN']})")
-    print(f"  Predicted distribution: {unann_results['H4_predicted_distribution_LogReg']}")
+    print(
+        f"  Unannotated: {unann_results['n_unannotated_total']} "
+        f"(HI=0: {unann_results['n_unannotated_HI0']}, NaN: {unann_results['n_unannotated_NaN']})"
+    )
+    print(
+        f"  Predicted distribution: {unann_results['H4_predicted_distribution_LogReg']}"
+    )
 
     # --- Feature importance (no-miss, full-data fit for interpretability) ---
     print("\nComputing feature importance (NO-MISS features)...")
@@ -910,7 +1057,9 @@ def run_seed(
     RANDOM_STATE = seed
 
     oos_lr_full = run_family_split_cv(X_labeled, y, families, "FULL", full_idx, le)
-    oos_lr_nomiss = run_family_split_cv(X_labeled, y, families, "NO_MISS", nomiss_idx, le)
+    oos_lr_nomiss = run_family_split_cv(
+        X_labeled, y, families, "NO_MISS", nomiss_idx, le
+    )
     oos_mlp_full = run_mlp_cv(X_labeled, y, families, full_idx)
 
     probs_lr_full_df = np.full((len(df), len(CLASSES)), np.nan)
@@ -922,8 +1071,13 @@ def run_seed(
         probs_mlp_full_df[orig_i] = oos_mlp_full[i]
 
     hi3_results, _ = hi3_analysis(
-        df, probs_lr_full_df, probs_lr_nomiss_df, probs_mlp_full_df,
-        le, feature_names, out_dir,
+        df,
+        probs_lr_full_df,
+        probs_lr_nomiss_df,
+        probs_mlp_full_df,
+        le,
+        feature_names,
+        out_dir,
     )
 
     return {
@@ -947,8 +1101,9 @@ def run_seed(
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--out-dir", default="results/clinical_utility")
-    parser.add_argument("--seed", type=int, default=None,
-                        help="Single seed (default: all 5 seeds 0-4)")
+    parser.add_argument(
+        "--seed", type=int, default=None, help="Single seed (default: all 5 seeds 0-4)"
+    )
     args = parser.parse_args()
 
     out_dir = PROJECT_ROOT / args.out_dir
@@ -986,8 +1141,10 @@ if __name__ == "__main__":
             with open(sr_path, "w") as f:
                 json.dump(sr, f, indent=2, default=str)
             print(f"  Saved {sr_path.name}")
-            print(f"  GOF AUROC LR_FULL: {sr['H1_GOF_vs_LOF_AUROC_LR_FULL']:.3f}  "
-                  f"DN AUROC LR_FULL: {sr['H2_DN_vs_LOF_AUROC_LR_FULL']:.3f}")
+            print(
+                f"  GOF AUROC LR_FULL: {sr['H1_GOF_vs_LOF_AUROC_LR_FULL']:.3f}  "
+                f"DN AUROC LR_FULL: {sr['H2_DN_vs_LOF_AUROC_LR_FULL']:.3f}"
+            )
 
         # Aggregate across seeds
         def mean_std(key):
@@ -1009,10 +1166,15 @@ if __name__ == "__main__":
             "H3_missingness_delta_DN_mean": mean_std("H3_missingness_delta_DN")[0],
             "H3_missingness_delta_DN_std": mean_std("H3_missingness_delta_DN")[1],
             "baselines_mean": {
-                feat: float(np.mean([
-                    sr["baselines"][feat] for sr in seed_results
-                    if sr["baselines"].get(feat) is not None
-                ]))
+                feat: float(
+                    np.mean(
+                        [
+                            sr["baselines"][feat]
+                            for sr in seed_results
+                            if sr["baselines"].get(feat) is not None
+                        ]
+                    )
+                )
                 for feat in ["mis_z", "paralog_count", "PPI_degree", "pLI", "LOEUF"]
             },
             "per_seed": seed_results,
@@ -1025,11 +1187,21 @@ if __name__ == "__main__":
         print(f"\n{'='*60}")
         print("SUMMARY across seeds")
         print(f"{'='*60}")
-        print(f"  H1 GOF AUROC LR FULL:    {summary['H1_GOF_AUROC_LR_FULL_mean']:.3f} ± {summary['H1_GOF_AUROC_LR_FULL_std']:.3f}")
-        print(f"  H1 GOF AUROC LR NO-MISS: {summary['H1_GOF_AUROC_LR_NOMISS_mean']:.3f} ± {summary['H1_GOF_AUROC_LR_NOMISS_std']:.3f}")
-        print(f"  H2 DN  AUROC LR FULL:    {summary['H2_DN_AUROC_LR_FULL_mean']:.3f} ± {summary['H2_DN_AUROC_LR_FULL_std']:.3f}")
-        print(f"  H2 DN  AUROC LR NO-MISS: {summary['H2_DN_AUROC_LR_NOMISS_mean']:.3f} ± {summary['H2_DN_AUROC_LR_NOMISS_std']:.3f}")
-        print(f"  H3 missingness delta GOF: {summary['H3_missingness_delta_GOF_mean']:+.3f} ± {summary['H3_missingness_delta_GOF_std']:.3f}")
+        print(
+            f"  H1 GOF AUROC LR FULL:    {summary['H1_GOF_AUROC_LR_FULL_mean']:.3f} ± {summary['H1_GOF_AUROC_LR_FULL_std']:.3f}"
+        )
+        print(
+            f"  H1 GOF AUROC LR NO-MISS: {summary['H1_GOF_AUROC_LR_NOMISS_mean']:.3f} ± {summary['H1_GOF_AUROC_LR_NOMISS_std']:.3f}"
+        )
+        print(
+            f"  H2 DN  AUROC LR FULL:    {summary['H2_DN_AUROC_LR_FULL_mean']:.3f} ± {summary['H2_DN_AUROC_LR_FULL_std']:.3f}"
+        )
+        print(
+            f"  H2 DN  AUROC LR NO-MISS: {summary['H2_DN_AUROC_LR_NOMISS_mean']:.3f} ± {summary['H2_DN_AUROC_LR_NOMISS_std']:.3f}"
+        )
+        print(
+            f"  H3 missingness delta GOF: {summary['H3_missingness_delta_GOF_mean']:+.3f} ± {summary['H3_missingness_delta_GOF_std']:.3f}"
+        )
         print(f"\n  Baselines (mean across seeds):")
         for feat, val in summary["baselines_mean"].items():
             print(f"    {feat:20s}: {val:.3f}")

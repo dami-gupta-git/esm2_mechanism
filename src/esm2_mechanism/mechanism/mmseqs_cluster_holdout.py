@@ -32,6 +32,7 @@ from sklearn.preprocessing import LabelEncoder
 from esm2_mechanism.utils_probes import run_mlp_cv, run_logreg_cv
 from esm2_mechanism.utils_paths import DATA_DIR, RESULTS_DIR
 import functools
+
 print = functools.partial(print, flush=True)
 
 warnings.filterwarnings("ignore")
@@ -112,8 +113,7 @@ def run_logreg(X, y, genes, groups, n_folds, seed, label):
 
 def run_mlp(X, y, genes, groups, hidden, n_folds, seed, label):
     splits = list(cluster_split_indices(groups, n_folds, seed))
-    return run_mlp_cv(X, y, splits, hidden=hidden, seed=seed,
-                      genes=genes, label=label)
+    return run_mlp_cv(X, y, splits, hidden=hidden, seed=seed, genes=genes, label=label)
 
 
 def run_seed(seed, n_folds, labels, genes, delta, X_prot, X_bad, gene_to_cluster):
@@ -141,33 +141,49 @@ def run_seed(seed, n_folds, labels, genes, delta, X_prot, X_bad, gene_to_cluster
     print(f"  Variants with cluster: {len(idx)}/{len(y)} ({n_clusters} clusters)")
     print(f"  Class dist: {cd}")
 
-    res = {"seed": seed, "n_variants": int(len(idx)),
-           "n_clusters": n_clusters, "class_dist": cd}
+    res = {
+        "seed": seed,
+        "n_variants": int(len(idx)),
+        "n_clusters": n_clusters,
+        "class_dist": cd,
+    }
 
     print(f"\n--- V1: ESM-2 delta MLP ---")
     res["V1"] = run_mlp(X_delta_f, y_f, genes_f, groups, (256, 64), n_folds, seed, "V1")
-    print(f"  V1 F1={res['V1']['macro_f1_mean']:.4f}±{res['V1']['macro_f1_std']:.4f}  "
-          f"pgF1={res['V1'].get('per_gene_f1_mean', float('nan')):.4f}")
+    print(
+        f"  V1 F1={res['V1']['macro_f1_mean']:.4f}±{res['V1']['macro_f1_std']:.4f}  "
+        f"pgF1={res['V1'].get('per_gene_f1_mean', float('nan')):.4f}"
+    )
 
     print(f"\n--- V2: Proteome LogReg ---")
     res["V2"] = run_logreg(X_prot_f, y_f, genes_f, groups, n_folds, seed, "V2")
-    print(f"  V2 F1={res['V2']['macro_f1_mean']:.4f}±{res['V2']['macro_f1_std']:.4f}  "
-          f"pgF1={res['V2'].get('per_gene_f1_mean', float('nan')):.4f}")
+    print(
+        f"  V2 F1={res['V2']['macro_f1_mean']:.4f}±{res['V2']['macro_f1_std']:.4f}  "
+        f"pgF1={res['V2'].get('per_gene_f1_mean', float('nan')):.4f}"
+    )
 
     print(f"\n--- V_bad: Badonyi LogReg ---")
     res["V_bad"] = run_logreg(X_bad_f, y_f, genes_f, groups, n_folds, seed, "V_bad")
-    print(f"  V_bad F1={res['V_bad']['macro_f1_mean']:.4f}±{res['V_bad']['macro_f1_std']:.4f}  "
-          f"pgF1={res['V_bad'].get('per_gene_f1_mean', float('nan')):.4f}")
+    print(
+        f"  V_bad F1={res['V_bad']['macro_f1_mean']:.4f}±{res['V_bad']['macro_f1_std']:.4f}  "
+        f"pgF1={res['V_bad'].get('per_gene_f1_mean', float('nan')):.4f}"
+    )
 
     print(f"\n--- V2+bad: Proteome+Badonyi LogReg ---")
     res["V2_bad"] = run_logreg(X_v2bad, y_f, genes_f, groups, n_folds, seed, "V2+bad")
-    print(f"  V2+bad F1={res['V2_bad']['macro_f1_mean']:.4f}±{res['V2_bad']['macro_f1_std']:.4f}  "
-          f"pgF1={res['V2_bad'].get('per_gene_f1_mean', float('nan')):.4f}")
+    print(
+        f"  V2+bad F1={res['V2_bad']['macro_f1_mean']:.4f}±{res['V2_bad']['macro_f1_std']:.4f}  "
+        f"pgF1={res['V2_bad'].get('per_gene_f1_mean', float('nan')):.4f}"
+    )
 
     print(f"\n--- V_all: ESM-2+proteome+Badonyi MLP ---")
-    res["V_all"] = run_mlp(X_vall, y_f, genes_f, groups, (256, 64), n_folds, seed, "V_all")
-    print(f"  V_all F1={res['V_all']['macro_f1_mean']:.4f}±{res['V_all']['macro_f1_std']:.4f}  "
-          f"pgF1={res['V_all'].get('per_gene_f1_mean', float('nan')):.4f}")
+    res["V_all"] = run_mlp(
+        X_vall, y_f, genes_f, groups, (256, 64), n_folds, seed, "V_all"
+    )
+    print(
+        f"  V_all F1={res['V_all']['macro_f1_mean']:.4f}±{res['V_all']['macro_f1_std']:.4f}  "
+        f"pgF1={res['V_all'].get('per_gene_f1_mean', float('nan')):.4f}"
+    )
 
     return res
 
@@ -176,15 +192,21 @@ def aggregate_seeds(all_res):
     out = {"n_seeds": len(all_res)}
     for key in ["V1", "V2", "V_bad", "V2_bad", "V_all"]:
         for metric in ["macro_f1_mean", "per_gene_f1_mean"]:
-            vals = [r[key].get(metric) for r in all_res
-                    if key in r and r[key].get(metric) is not None]
+            vals = [
+                r[key].get(metric)
+                for r in all_res
+                if key in r and r[key].get(metric) is not None
+            ]
             stem = f"{key}_{metric.replace('_mean','')}"
             if vals:
                 out[f"{stem}_mean"] = float(np.mean(vals))
                 out[f"{stem}_std"] = float(np.std(vals))
         for cls in CLASSES:
-            vals = [r[key].get(f"auroc_{cls}_mean") for r in all_res
-                    if key in r and r[key].get(f"auroc_{cls}_mean") is not None]
+            vals = [
+                r[key].get(f"auroc_{cls}_mean")
+                for r in all_res
+                if key in r and r[key].get(f"auroc_{cls}_mean") is not None
+            ]
             if vals:
                 out[f"{key}_auroc_{cls}_mean"] = float(np.mean(vals))
                 out[f"{key}_auroc_{cls}_std"] = float(np.std(vals))
@@ -195,7 +217,9 @@ def print_table(summary):
     print("\n" + "=" * 96)
     print("MMseqs2-20 cluster-holdout — 5-seed mean ± std")
     print("=" * 96)
-    print(f"{'Variant':<10} {'F1(variant)':<16} {'F1(gene)':<16} {'GOF AUROC':<14} {'DN AUROC':<14} {'LOF AUROC':<14}")
+    print(
+        f"{'Variant':<10} {'F1(variant)':<16} {'F1(gene)':<16} {'GOF AUROC':<14} {'DN AUROC':<14} {'LOF AUROC':<14}"
+    )
     print("-" * 96)
 
     def fmt(m, s):
@@ -203,19 +227,29 @@ def print_table(summary):
             return "    N/A      "
         return f"{m:.3f}±{s:.3f}"
 
-    for key, label in [("V1","V1(seq)"), ("V2","V2(prot)"),
-                       ("V_bad","V_bad"), ("V2_bad","V2+bad"),
-                       ("V_all","V_all")]:
-        f1 = fmt(summary.get(f"{key}_macro_f1_mean"),
-                 summary.get(f"{key}_macro_f1_std"))
-        pg = fmt(summary.get(f"{key}_per_gene_f1_mean"),
-                 summary.get(f"{key}_per_gene_f1_std"))
-        gof = fmt(summary.get(f"{key}_auroc_GOF_mean"),
-                  summary.get(f"{key}_auroc_GOF_std"))
-        dn = fmt(summary.get(f"{key}_auroc_DN_mean"),
-                 summary.get(f"{key}_auroc_DN_std"))
-        lof = fmt(summary.get(f"{key}_auroc_LOF_mean"),
-                  summary.get(f"{key}_auroc_LOF_std"))
+    for key, label in [
+        ("V1", "V1(seq)"),
+        ("V2", "V2(prot)"),
+        ("V_bad", "V_bad"),
+        ("V2_bad", "V2+bad"),
+        ("V_all", "V_all"),
+    ]:
+        f1 = fmt(
+            summary.get(f"{key}_macro_f1_mean"), summary.get(f"{key}_macro_f1_std")
+        )
+        pg = fmt(
+            summary.get(f"{key}_per_gene_f1_mean"),
+            summary.get(f"{key}_per_gene_f1_std"),
+        )
+        gof = fmt(
+            summary.get(f"{key}_auroc_GOF_mean"), summary.get(f"{key}_auroc_GOF_std")
+        )
+        dn = fmt(
+            summary.get(f"{key}_auroc_DN_mean"), summary.get(f"{key}_auroc_DN_std")
+        )
+        lof = fmt(
+            summary.get(f"{key}_auroc_LOF_mean"), summary.get(f"{key}_auroc_LOF_std")
+        )
         print(f"{label:<10} {f1:<16} {pg:<16} {gof:<14} {dn:<14} {lof:<14}")
     print("=" * 96)
 
@@ -228,8 +262,9 @@ def main():
     args = ap.parse_args()
 
     seeds = [args.seed] if args.seed is not None else list(range(5))
-    out_dir = Path(args.out_dir) if args.out_dir \
-        else RESULTS_DIR / "mmseqs_cluster_holdout"
+    out_dir = (
+        Path(args.out_dir) if args.out_dir else RESULTS_DIR / "mmseqs_cluster_holdout"
+    )
     out_dir.mkdir(parents=True, exist_ok=True)
 
     print("=== Loading data ===")
@@ -250,7 +285,9 @@ def main():
 
     all_res = []
     for s in seeds:
-        res = run_seed(s, args.n_folds, labels, genes, delta, X_prot, X_bad, gene_to_cluster)
+        res = run_seed(
+            s, args.n_folds, labels, genes, delta, X_prot, X_bad, gene_to_cluster
+        )
         all_res.append(res)
         path = out_dir / f"cluster_seed{s}.json"
         path.write_text(json.dumps(res, indent=2))

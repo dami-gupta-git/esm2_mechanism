@@ -15,6 +15,7 @@ class TestVkey:
 
     def setup_method(self):
         from esm2_mechanism.alphamissense.alphamissense_family_split import vkey
+
         self.vkey = vkey
 
     def test_basic_format(self):
@@ -45,6 +46,7 @@ class TestDist:
 
     def setup_method(self):
         from esm2_mechanism.alphamissense.proteingym_alphamissense import _dist
+
         self._dist = _dist
 
     def test_empty_returns_n_zero(self):

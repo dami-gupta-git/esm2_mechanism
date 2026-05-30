@@ -59,13 +59,29 @@ G2P_MECH_MAP = {
 G2P_CONFIDENCE_KEEP = {"definitive", "strong"}
 
 LEGACY_GENE_ALIASES: list[dict] = [
-    {"gene": "C12ORF65", "mechanism": "AR",  "uniprot_id": "Q9H3J6", "source": "gerasimavicius", "g2p_disagrees": ""},
-    {"gene": "C19ORF12", "mechanism": "LOF", "uniprot_id": "",        "source": "g2p",            "g2p_disagrees": ""},
+    {
+        "gene": "C12ORF65",
+        "mechanism": "AR",
+        "uniprot_id": "Q9H3J6",
+        "source": "gerasimavicius",
+        "g2p_disagrees": "",
+    },
+    {
+        "gene": "C19ORF12",
+        "mechanism": "LOF",
+        "uniprot_id": "",
+        "source": "g2p",
+        "g2p_disagrees": "",
+    },
 ]
 
 CV_MECH_MAP = {
-    "AR, Het": "AR", "AR": "AR", "HI": "HI",
-    "GOF": "GOF", "DN": "DN", "Unknown": "Unknown",
+    "AR, Het": "AR",
+    "AR": "AR",
+    "HI": "HI",
+    "GOF": "GOF",
+    "DN": "DN",
+    "Unknown": "Unknown",
 }
 
 
@@ -130,7 +146,9 @@ def _load_g2p(path: Path) -> dict[str, str]:
             skipped.append(gene)
 
     if skipped:
-        print(f"G2P: excluded {len(skipped)} genes with unresolvable conflicting mechanisms: {sorted(skipped)}")
+        print(
+            f"G2P: excluded {len(skipped)} genes with unresolvable conflicting mechanisms: {sorted(skipped)}"
+        )
     print(f"G2P (definitive/strong, unambiguous): {len(out)} genes")
     return out
 
@@ -160,24 +178,39 @@ def build(xlsx_path: Path, g2p_path: Path, out_path: Path) -> None:
 
         if mech and mech != "Unknown":
             disagrees = g2p_mech if (g2p_mech and g2p_mech != mech) else None
-            rows.append({
-                "gene": gene, "mechanism": mech, "uniprot_id": uid,
-                "source": "gerasimavicius", "g2p_disagrees": disagrees or "",
-            })
+            rows.append(
+                {
+                    "gene": gene,
+                    "mechanism": mech,
+                    "uniprot_id": uid,
+                    "source": "gerasimavicius",
+                    "g2p_disagrees": disagrees or "",
+                }
+            )
             emitted_genes.add(gene)
         elif g2p_mech:
-            rows.append({
-                "gene": gene, "mechanism": g2p_mech, "uniprot_id": uid,
-                "source": "g2p", "g2p_disagrees": "",
-            })
+            rows.append(
+                {
+                    "gene": gene,
+                    "mechanism": g2p_mech,
+                    "uniprot_id": uid,
+                    "source": "g2p",
+                    "g2p_disagrees": "",
+                }
+            )
             emitted_genes.add(gene)
 
     for gene in sorted(g2p_best):
         if gene not in emitted_genes:
-            rows.append({
-                "gene": gene, "mechanism": g2p_best[gene], "uniprot_id": "",
-                "source": "g2p", "g2p_disagrees": "",
-            })
+            rows.append(
+                {
+                    "gene": gene,
+                    "mechanism": g2p_best[gene],
+                    "uniprot_id": "",
+                    "source": "g2p",
+                    "g2p_disagrees": "",
+                }
+            )
             emitted_genes.add(gene)
 
     present_genes = {r["gene"] for r in rows}
@@ -231,10 +264,19 @@ def _build_gene_universe(merged_path: Path, pfam_path: Path, out_path: Path) -> 
         rows_out.append({**row, "pfam_family": pfam_family})
 
     if dropped:
-        print(f"Dropped {len(dropped)} genes with no Pfam annotation: {sorted(dropped)}")
+        print(
+            f"Dropped {len(dropped)} genes with no Pfam annotation: {sorted(dropped)}"
+        )
     print(f"gene_universe: {len(rows_out)} genes retained")
 
-    fieldnames = ["gene", "mechanism", "uniprot_id", "source", "g2p_disagrees", "pfam_family"]
+    fieldnames = [
+        "gene",
+        "mechanism",
+        "uniprot_id",
+        "source",
+        "g2p_disagrees",
+        "pfam_family",
+    ]
     with open(out_path, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames, delimiter="\t")
         writer.writeheader()

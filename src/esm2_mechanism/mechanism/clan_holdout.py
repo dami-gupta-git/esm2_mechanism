@@ -35,6 +35,7 @@ from sklearn.neural_network import MLPClassifier
 from sklearn.preprocessing import LabelEncoder
 from sklearn.neighbors import KNeighborsClassifier
 import functools
+
 print = functools.partial(print, flush=True)
 
 warnings.filterwarnings("ignore")
@@ -44,6 +45,7 @@ warnings.filterwarnings("ignore")
 # Data loading
 # ---------------------------------------------------------------------------
 
+
 def load_data(data_dir, emb_dir):
     mv_path = os.path.join(emb_dir, "merged_valid_variants.json")
     if not os.path.exists(mv_path):
@@ -52,14 +54,14 @@ def load_data(data_dir, emb_dir):
         variants = json.load(f)
 
     labels = np.array([v["label_3class"] for v in variants])
-    genes  = np.array([v["gene"] for v in variants])
+    genes = np.array([v["gene"] for v in variants])
 
     print(f"Loaded {len(variants)} variants, {len(set(genes))} genes")
     print(f"Class distribution: {dict(Counter(labels))}")
 
-    wt_mean  = np.load(os.path.join(emb_dir, "merged_embeddings_wt_mean.npy"))
+    wt_mean = np.load(os.path.join(emb_dir, "merged_embeddings_wt_mean.npy"))
     mut_mean = np.load(os.path.join(emb_dir, "merged_embeddings_mut_mean.npy"))
-    delta    = (mut_mean - wt_mean).astype(np.float32)
+    delta = (mut_mean - wt_mean).astype(np.float32)
     print(f"Delta embeddings: {delta.shape}")
     return variants, labels, genes, delta
 
@@ -71,7 +73,9 @@ def load_pfam(data_dir):
 
 def load_clan_map(clan_file):
     """Parse Pfam-A.clans.tsv.gz -> {pfam_acc: (clan_id, clan_name)}."""
-    result = subprocess.run(["gunzip", "-c", clan_file], capture_output=True, check=True)
+    result = subprocess.run(
+        ["gunzip", "-c", clan_file], capture_output=True, check=True
+    )
     clan_map = {}
     clan_names = {}
     for line in result.stdout.decode().strip().split("\n"):
@@ -87,6 +91,7 @@ def load_clan_map(clan_file):
 # ---------------------------------------------------------------------------
 # Probe: MLP with same architecture as result_7
 # ---------------------------------------------------------------------------
+
 
 def train_mlp(X_train, y_train, seed=42):
     clf = MLPClassifier(
@@ -129,6 +134,7 @@ def evaluate_probe(clf, X_test, y_test, le):
 # Main experiment
 # ---------------------------------------------------------------------------
 
+
 def run_clan_holdout(delta, labels, genes, gene_clan, clan_names, le, seed=42):
     """
     Leave-one-clan-out: for each qualifying clan, train on everything else,
@@ -154,25 +160,29 @@ def run_clan_holdout(delta, labels, genes, gene_clan, clan_names, le, seed=42):
         min_second = sorted_mechs[1][1]
         n_genes = len(set(genes[idxs]))
         if min_second >= 20 and n_genes >= 3:
-            qualifying.append({
-                "clan": clan,
-                "name": clan_names.get(clan, clan),
-                "idxs": idxs,
-                "mechs": dict(mech_counts),
-                "n_genes": n_genes,
-            })
+            qualifying.append(
+                {
+                    "clan": clan,
+                    "name": clan_names.get(clan, clan),
+                    "idxs": idxs,
+                    "mechs": dict(mech_counts),
+                    "n_genes": n_genes,
+                }
+            )
 
     qualifying.sort(key=lambda x: -len(x["idxs"]))
     print(f"\nQualifying clans for holdout: {len(qualifying)}")
     for q in qualifying:
-        print(f"  {q['clan']:8s} {q['name']:25s} genes={q['n_genes']:3d} "
-              f"variants={len(q['idxs']):4d} mechs={q['mechs']}")
+        print(
+            f"  {q['clan']:8s} {q['name']:25s} genes={q['n_genes']:3d} "
+            f"variants={len(q['idxs']):4d} mechs={q['mechs']}"
+        )
 
     clan_results = []
 
     for q in qualifying:
         clan = q["clan"]
-        test_idx  = np.array(q["idxs"])
+        test_idx = np.array(q["idxs"])
         train_mask = np.ones(len(delta), dtype=bool)
         train_mask[test_idx] = False
         train_idx = np.where(train_mask)[0]
@@ -186,14 +196,16 @@ def run_clan_holdout(delta, labels, genes, gene_clan, clan_names, le, seed=42):
             continue
 
         # Normalise on train stats
-        mu  = delta[train_idx].mean(0)
+        mu = delta[train_idx].mean(0)
         std = delta[train_idx].std(0) + 1e-8
         X_tr = (delta[train_idx] - mu) / std
-        X_te = (delta[test_idx]  - mu) / std
+        X_te = (delta[test_idx] - mu) / std
 
-        print(f"\n  Clan {clan} ({q['name']})  "
-              f"train={len(train_idx)} test={len(test_idx)} "
-              f"test_mechs={dict(Counter(labels[test_idx]))}")
+        print(
+            f"\n  Clan {clan} ({q['name']})  "
+            f"train={len(train_idx)} test={len(test_idx)} "
+            f"test_mechs={dict(Counter(labels[test_idx]))}"
+        )
 
         # MLP probe
         try:
@@ -218,35 +230,42 @@ def run_clan_holdout(delta, labels, genes, gene_clan, clan_names, le, seed=42):
         maj_pred = np.full(len(y_te), majority_class)
         maj_f1 = float(f1_score(y_te, maj_pred, average="macro", zero_division=0))
 
-        print(f"    MLP F1={mlp_res.get('macro_f1', float('nan')):.3f}  "
-              f"kNN F1={knn_f1:.3f}  "
-              f"majority F1={maj_f1:.3f}  "
-              f"GOF={mlp_res.get('auroc_GOF', float('nan')):.3f}  "
-              f"DN={mlp_res.get('auroc_DN', float('nan')):.3f}  "
-              f"LOF={mlp_res.get('auroc_LOF', float('nan')):.3f}")
+        print(
+            f"    MLP F1={mlp_res.get('macro_f1', float('nan')):.3f}  "
+            f"kNN F1={knn_f1:.3f}  "
+            f"majority F1={maj_f1:.3f}  "
+            f"GOF={mlp_res.get('auroc_GOF', float('nan')):.3f}  "
+            f"DN={mlp_res.get('auroc_DN', float('nan')):.3f}  "
+            f"LOF={mlp_res.get('auroc_LOF', float('nan')):.3f}"
+        )
 
-        clan_results.append({
-            "clan": clan,
-            "clan_name": q["name"],
-            "n_train": int(len(train_idx)),
-            "n_test": int(len(test_idx)),
-            "n_genes_test": int(q["n_genes"]),
-            "test_mechs": {k: int(v) for k, v in Counter(labels[test_idx]).items()},
-            "mlp": mlp_res,
-            "knn_macro_f1": knn_f1,
-            "majority_macro_f1": maj_f1,
-        })
+        clan_results.append(
+            {
+                "clan": clan,
+                "clan_name": q["name"],
+                "n_train": int(len(train_idx)),
+                "n_test": int(len(test_idx)),
+                "n_genes_test": int(q["n_genes"]),
+                "test_mechs": {k: int(v) for k, v in Counter(labels[test_idx]).items()},
+                "mlp": mlp_res,
+                "knn_macro_f1": knn_f1,
+                "majority_macro_f1": maj_f1,
+            }
+        )
 
     return clan_results, qualifying
 
 
 def aggregate(clan_results):
     """Weighted and unweighted aggregates across qualifying clans."""
-    mlp_f1s   = [r["mlp"].get("macro_f1", float("nan")) for r in clan_results
-                 if "error" not in r["mlp"]]
-    knn_f1s   = [r["knn_macro_f1"] for r in clan_results if "error" not in r["mlp"]]
-    maj_f1s   = [r["majority_macro_f1"] for r in clan_results if "error" not in r["mlp"]]
-    weights   = [r["n_test"] for r in clan_results if "error" not in r["mlp"]]
+    mlp_f1s = [
+        r["mlp"].get("macro_f1", float("nan"))
+        for r in clan_results
+        if "error" not in r["mlp"]
+    ]
+    knn_f1s = [r["knn_macro_f1"] for r in clan_results if "error" not in r["mlp"]]
+    maj_f1s = [r["majority_macro_f1"] for r in clan_results if "error" not in r["mlp"]]
+    weights = [r["n_test"] for r in clan_results if "error" not in r["mlp"]]
 
     per_class = defaultdict(list)
     for r in clan_results:
@@ -263,11 +282,13 @@ def aggregate(clan_results):
 
     return {
         "n_clans": len(clan_results),
-        "mlp_macro_f1_mean":     float(np.nanmean(mlp_f1s)) if mlp_f1s else float("nan"),
-        "mlp_macro_f1_std":      float(np.nanstd(mlp_f1s))  if mlp_f1s else float("nan"),
+        "mlp_macro_f1_mean": float(np.nanmean(mlp_f1s)) if mlp_f1s else float("nan"),
+        "mlp_macro_f1_std": float(np.nanstd(mlp_f1s)) if mlp_f1s else float("nan"),
         "mlp_macro_f1_weighted": wmean(mlp_f1s, weights),
-        "knn_macro_f1_mean":     float(np.nanmean(knn_f1s)) if knn_f1s else float("nan"),
-        "majority_macro_f1_mean": float(np.nanmean(maj_f1s)) if maj_f1s else float("nan"),
+        "knn_macro_f1_mean": float(np.nanmean(knn_f1s)) if knn_f1s else float("nan"),
+        "majority_macro_f1_mean": (
+            float(np.nanmean(maj_f1s)) if maj_f1s else float("nan")
+        ),
         "per_class_auroc_mean": {
             cls: float(np.mean(vs)) for cls, vs in per_class.items() if vs
         },
@@ -277,18 +298,19 @@ def aggregate(clan_results):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--data_dir", default="../data")
-    parser.add_argument("--emb_dir",  default="../data/embeddings")
-    parser.add_argument("--clan_file", required=True,
-                        help="Path to Pfam-A.clans.tsv.gz")
-    parser.add_argument("--out_dir",  default="../results/20260524_baseline_run/run_0")
-    parser.add_argument("--seed",     type=int, default=0)
+    parser.add_argument("--emb_dir", default="../data/embeddings")
+    parser.add_argument(
+        "--clan_file", required=True, help="Path to Pfam-A.clans.tsv.gz"
+    )
+    parser.add_argument("--out_dir", default="../results/20260524_baseline_run/run_0")
+    parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args()
 
     np.random.seed(args.seed)
 
     print("=== Loading data ===")
     variants, labels, genes, delta = load_data(args.data_dir, args.emb_dir)
-    pfam_map  = load_pfam(args.data_dir)
+    pfam_map = load_pfam(args.data_dir)
     clan_map, clan_names = load_clan_map(args.clan_file)
 
     # Build gene -> clan
@@ -313,19 +335,25 @@ def main():
     print("AGGREGATE RESULTS")
     print("=" * 60)
     print(f"  Clans evaluated: {agg['n_clans']}")
-    print(f"  MLP macro-F1 (unweighted mean ± std): "
-          f"{agg['mlp_macro_f1_mean']:.3f} ± {agg['mlp_macro_f1_std']:.3f}")
+    print(
+        f"  MLP macro-F1 (unweighted mean ± std): "
+        f"{agg['mlp_macro_f1_mean']:.3f} ± {agg['mlp_macro_f1_std']:.3f}"
+    )
     print(f"  MLP macro-F1 (weighted by clan size): {agg['mlp_macro_f1_weighted']:.3f}")
     print(f"  k-NN macro-F1 (mean):                 {agg['knn_macro_f1_mean']:.3f}")
-    print(f"  Majority baseline (mean):             {agg['majority_macro_f1_mean']:.3f}")
+    print(
+        f"  Majority baseline (mean):             {agg['majority_macro_f1_mean']:.3f}"
+    )
     print(f"  Per-class AUROC: {agg['per_class_auroc_mean']}")
 
     # Reference numbers from prior results
     refs = {
-        "Family-split MLP floor (result_7)":        0.352,
+        "Family-split MLP floor (result_7)": 0.352,
         "Family-split contrastive proj (result_9)": 0.387,
     }
-    print(f"\nVs. cross-family baselines (clan-holdout MLP F1 = {agg['mlp_macro_f1_mean']:.3f}):")
+    print(
+        f"\nVs. cross-family baselines (clan-holdout MLP F1 = {agg['mlp_macro_f1_mean']:.3f}):"
+    )
     for name, val in refs.items():
         delta_f1 = agg["mlp_macro_f1_mean"] - val
         symbol = "✓" if delta_f1 > 0.02 else ("~" if delta_f1 > -0.02 else "✗")

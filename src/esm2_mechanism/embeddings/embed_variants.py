@@ -47,7 +47,12 @@ import numpy as np
 
 print = functools.partial(print, flush=True)
 
-from esm2_mechanism.utils_sequences import fetch_uniprot_sequence, TransientFetchError, window_sequence, apply_missense
+from esm2_mechanism.utils_sequences import (
+    fetch_uniprot_sequence,
+    TransientFetchError,
+    window_sequence,
+    apply_missense,
+)
 
 ESM2_MODEL_650M = "esm2_t33_650M_UR50D"
 ESM2_MODEL_3B = "esm2_t36_3B_UR50D"
@@ -56,6 +61,7 @@ ESM2_MODEL_3B = "esm2_t36_3B_UR50D"
 # ---------------------------------------------------------------------------
 # Embedding extraction
 # ---------------------------------------------------------------------------
+
 
 def get_esm2_embeddings_for_pairs(
     wt_seqs: list[str],
@@ -89,11 +95,13 @@ def get_esm2_embeddings_for_pairs(
 
     total = len(wt_seqs)
     for batch_start in range(0, total, batch_size):
-        pairs = list(zip(
-            wt_seqs[batch_start:batch_start + batch_size],
-            mut_seqs[batch_start:batch_start + batch_size],
-            aa_positions[batch_start:batch_start + batch_size],
-        ))
+        pairs = list(
+            zip(
+                wt_seqs[batch_start : batch_start + batch_size],
+                mut_seqs[batch_start : batch_start + batch_size],
+                aa_positions[batch_start : batch_start + batch_size],
+            )
+        )
         interleaved = []
         for j, (wt, mut, _) in enumerate(pairs):
             interleaved.append((f"wt{j}", wt))
@@ -106,22 +114,24 @@ def get_esm2_embeddings_for_pairs(
         reps = out["representations"][n_layers].cpu().float()
 
         for j, (wt, mut, var_pos) in enumerate(pairs):
-            wt_rep  = reps[2 * j]
+            wt_rep = reps[2 * j]
             mut_rep = reps[2 * j + 1]
 
-            wt_mean_list.append(wt_rep[1:len(wt) + 1].mean(0).numpy())
-            mut_mean_list.append(mut_rep[1:len(mut) + 1].mean(0).numpy())
+            wt_mean_list.append(wt_rep[1 : len(wt) + 1].mean(0).numpy())
+            mut_mean_list.append(mut_rep[1 : len(mut) + 1].mean(0).numpy())
 
             # var_pos is 1-indexed; BOS occupies token 0, so sequence tokens are 1..len(wt)
             if 0 < var_pos <= len(wt):
                 wt_pos_list.append(wt_rep[var_pos].numpy())
                 mut_pos_list.append(mut_rep[var_pos].numpy())
             else:
-                wt_pos_list.append(wt_rep[1:len(wt) + 1].mean(0).numpy())
-                mut_pos_list.append(mut_rep[1:len(mut) + 1].mean(0).numpy())
+                wt_pos_list.append(wt_rep[1 : len(wt) + 1].mean(0).numpy())
+                mut_pos_list.append(mut_rep[1 : len(mut) + 1].mean(0).numpy())
 
         if (batch_start // batch_size) % 5 == 0:
-            print(f"  Embedded {min(batch_start + batch_size, total)}/{total} variant pairs")
+            print(
+                f"  Embedded {min(batch_start + batch_size, total)}/{total} variant pairs"
+            )
 
     return (
         np.stack(wt_mean_list),
@@ -134,6 +144,7 @@ def get_esm2_embeddings_for_pairs(
 # ---------------------------------------------------------------------------
 # Sequence cache (incremental)
 # ---------------------------------------------------------------------------
+
 
 def _load_sequence_cache(cache_path: str) -> dict[str, str]:
     if not os.path.exists(cache_path):
@@ -150,7 +161,11 @@ def _load_sequence_cache(cache_path: str) -> dict[str, str]:
 def _update_sequence_cache(variants: list[dict], cache_path: str) -> dict[str, str]:
     """Fetch any UniProt sequences missing from the cache and write back."""
     seq_cache = _load_sequence_cache(cache_path)
-    needed = {v["uniprot_id"] for v in variants if v.get("uniprot_id") and v["uniprot_id"] not in seq_cache}
+    needed = {
+        v["uniprot_id"]
+        for v in variants
+        if v.get("uniprot_id") and v["uniprot_id"] not in seq_cache
+    }
 
     if not needed:
         return seq_cache
@@ -169,7 +184,9 @@ def _update_sequence_cache(variants: list[dict], cache_path: str) -> dict[str, s
             seq_cache[uid] = seq
         time.sleep(0.3)
     if transient_failures:
-        print(f"  WARNING: {transient_failures} UIDs skipped due to transient failures — not cached, will retry next run")
+        print(
+            f"  WARNING: {transient_failures} UIDs skipped due to transient failures — not cached, will retry next run"
+        )
 
     os.makedirs(os.path.dirname(cache_path) or ".", exist_ok=True)
     tmp_path = cache_path + ".tmp"
@@ -183,6 +200,7 @@ def _update_sequence_cache(variants: list[dict], cache_path: str) -> dict[str, s
 # ---------------------------------------------------------------------------
 # Variant filtering
 # ---------------------------------------------------------------------------
+
 
 def _build_valid_pairs(
     variants: list[dict], seq_cache: dict[str, str]
@@ -219,15 +237,18 @@ def _build_valid_pairs(
 # Main
 # ---------------------------------------------------------------------------
 
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data_dir", default="data")
-    parser.add_argument("--model", default=ESM2_MODEL_650M,
-                        choices=[ESM2_MODEL_650M, ESM2_MODEL_3B])
+    parser.add_argument(
+        "--model", default=ESM2_MODEL_650M, choices=[ESM2_MODEL_650M, ESM2_MODEL_3B]
+    )
     parser.add_argument("--batch_size", type=int, default=32)
     args = parser.parse_args()
 
     import torch
+
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Device: {device} | Model: {args.model}")
 
@@ -245,17 +266,16 @@ def main() -> None:
 
     valid, wt_seqs, mut_seqs, positions = _build_valid_pairs(variants, seq_cache)
 
-
     print(f"3-class distribution: {dict(Counter(v['label_3class'] for v in valid))}")
 
     out_dir = os.path.join(args.data_dir, "embeddings", args.model)
     os.makedirs(out_dir, exist_ok=True)
 
-    ckpt_wt_mean  = os.path.join(out_dir, "embeddings_wt_mean.npy")
+    ckpt_wt_mean = os.path.join(out_dir, "embeddings_wt_mean.npy")
     ckpt_mut_mean = os.path.join(out_dir, "embeddings_mut_mean.npy")
-    ckpt_wt_pos   = os.path.join(out_dir, "embeddings_wt_pos.npy")
-    ckpt_mut_pos  = os.path.join(out_dir, "embeddings_mut_pos.npy")
-    ckpt_valid    = os.path.join(out_dir, "valid_variants.json")
+    ckpt_wt_pos = os.path.join(out_dir, "embeddings_wt_pos.npy")
+    ckpt_mut_pos = os.path.join(out_dir, "embeddings_mut_pos.npy")
+    ckpt_valid = os.path.join(out_dir, "valid_variants.json")
 
     all_ckpts = [ckpt_wt_mean, ckpt_mut_mean, ckpt_wt_pos, ckpt_mut_pos, ckpt_valid]
     if all(os.path.exists(p) for p in all_ckpts):
@@ -271,8 +291,12 @@ def main() -> None:
 
     print(f"\nExtracting ESM-2 embeddings ({args.model})...")
     wt_mean, mut_mean, wt_pos, mut_pos = get_esm2_embeddings_for_pairs(
-        wt_seqs, mut_seqs, positions,
-        model_name=args.model, device=device, batch_size=args.batch_size,
+        wt_seqs,
+        mut_seqs,
+        positions,
+        model_name=args.model,
+        device=device,
+        batch_size=args.batch_size,
     )
 
     # Write arrays before valid_variants.json so its presence signals a complete set.
@@ -280,7 +304,7 @@ def main() -> None:
     # rather than corrupt — the next run will re-extract cleanly.
     np.save(ckpt_wt_mean, wt_mean)
     np.save(ckpt_mut_mean, mut_mean)
-    np.save(ckpt_wt_pos,  wt_pos)
+    np.save(ckpt_wt_pos, wt_pos)
     np.save(ckpt_mut_pos, mut_pos)
     tmp_valid = ckpt_valid + ".tmp"
     with open(tmp_valid, "w") as f:

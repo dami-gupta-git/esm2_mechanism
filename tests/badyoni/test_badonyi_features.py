@@ -24,13 +24,20 @@ class TestFamilyResiduals:
         """Residuals within a family must sum to ~0 (they are mean-centred)."""
         genes = ["A", "B", "C", "D"]
         pfam = {"A": "FAM1", "B": "FAM1", "C": "FAM2", "D": "FAM2"}
-        df = make_df(genes, pDN=[0.1, 0.3, 0.6, 0.8], pGOF=[0.2, 0.4, 0.5, 0.7], pLOF=[0.9, 0.1, 0.3, 0.7])
+        df = make_df(
+            genes,
+            pDN=[0.1, 0.3, 0.6, 0.8],
+            pGOF=[0.2, 0.4, 0.5, 0.7],
+            pLOF=[0.9, 0.1, 0.3, 0.7],
+        )
         out = compute_family_residuals(df, pfam, FEATURE_COLS)
         for fam in ["FAM1", "FAM2"]:
             mask = out["pfam_family"] == fam
             for col in FEATURE_COLS:
                 resid_sum = out.loc[mask, f"{col}_familyresid"].sum()
-                assert abs(resid_sum) < 1e-10, f"{col} residuals in {fam} don't sum to 0: {resid_sum}"
+                assert (
+                    abs(resid_sum) < 1e-10
+                ), f"{col} residuals in {fam} don't sum to 0: {resid_sum}"
 
     def test_residual_values_correct(self):
         genes = ["A", "B"]
@@ -38,15 +45,21 @@ class TestFamilyResiduals:
         df = make_df(genes, pDN=[0.2, 0.6], pGOF=[0.1, 0.9], pLOF=[0.4, 0.4])
         out = compute_family_residuals(df, pfam, FEATURE_COLS)
         # Family mean of pDN = 0.4; residuals should be -0.2 and +0.2
-        np.testing.assert_allclose(out["pDN_familyresid"].values, [-0.2, 0.2], atol=1e-10)
+        np.testing.assert_allclose(
+            out["pDN_familyresid"].values, [-0.2, 0.2], atol=1e-10
+        )
         # pLOF mean = 0.4; both residuals = 0
-        np.testing.assert_allclose(out["pLOF_familyresid"].values, [0.0, 0.0], atol=1e-10)
+        np.testing.assert_allclose(
+            out["pLOF_familyresid"].values, [0.0, 0.0], atol=1e-10
+        )
 
     def test_singleton_residual_is_nan(self):
         """Genes alone in their family have undefined residuals (NaN, not 0)."""
         genes = ["A", "B", "C"]
         pfam = {"A": "FAM1", "B": "FAM1", "C": "FAM_SOLO"}
-        df = make_df(genes, pDN=[0.1, 0.9, 0.5], pGOF=[0.2, 0.8, 0.5], pLOF=[0.3, 0.7, 0.5])
+        df = make_df(
+            genes, pDN=[0.1, 0.9, 0.5], pGOF=[0.2, 0.8, 0.5], pLOF=[0.3, 0.7, 0.5]
+        )
         out = compute_family_residuals(df, pfam, FEATURE_COLS)
         solo_row = out[out["gene"] == "C"]
         for col in FEATURE_COLS:
@@ -55,7 +68,9 @@ class TestFamilyResiduals:
     def test_singleton_flag_set_correctly(self):
         genes = ["A", "B", "C"]
         pfam = {"A": "FAM1", "B": "FAM1", "C": "FAM_SOLO"}
-        df = make_df(genes, pDN=[0.1, 0.9, 0.5], pGOF=[0.2, 0.8, 0.5], pLOF=[0.3, 0.7, 0.5])
+        df = make_df(
+            genes, pDN=[0.1, 0.9, 0.5], pGOF=[0.2, 0.8, 0.5], pLOF=[0.3, 0.7, 0.5]
+        )
         out = compute_family_residuals(df, pfam, FEATURE_COLS)
         flags = dict(zip(out["gene"], out["is_singleton_family_badonyi"]))
         assert flags["A"] == 0
@@ -66,7 +81,9 @@ class TestFamilyResiduals:
         """Genes missing from pfam are treated as singletons (residual=NaN, flag=1)."""
         genes = ["A", "B", "UNKNOWN"]
         pfam = {"A": "FAM1", "B": "FAM1"}  # UNKNOWN not in pfam
-        df = make_df(genes, pDN=[0.1, 0.9, 0.5], pGOF=[0.2, 0.8, 0.5], pLOF=[0.3, 0.7, 0.5])
+        df = make_df(
+            genes, pDN=[0.1, 0.9, 0.5], pGOF=[0.2, 0.8, 0.5], pLOF=[0.3, 0.7, 0.5]
+        )
         out = compute_family_residuals(df, pfam, FEATURE_COLS)
         unk_row = out[out["gene"] == "UNKNOWN"]
         assert unk_row["is_singleton_family_badonyi"].values[0] == 1
@@ -106,7 +123,9 @@ class TestFamilyResiduals:
     def test_all_singletons_returns_nan_residuals(self):
         genes = ["A", "B", "C"]
         pfam = {"A": "F1", "B": "F2", "C": "F3"}
-        df = make_df(genes, pDN=[0.1, 0.5, 0.9], pGOF=[0.2, 0.5, 0.8], pLOF=[0.3, 0.5, 0.7])
+        df = make_df(
+            genes, pDN=[0.1, 0.5, 0.9], pGOF=[0.2, 0.5, 0.8], pLOF=[0.3, 0.5, 0.7]
+        )
         out = compute_family_residuals(df, pfam, FEATURE_COLS)
         for col in FEATURE_COLS:
             assert all(np.isnan(v) for v in out[f"{col}_familyresid"].values)
@@ -130,10 +149,16 @@ class TestFamilyResiduals:
         # C residual should be 0.5 - 0.4 = 0.1, not 0 as it would be if C were included
         genes = ["A", "B", "C"]
         pfam = {"A": "FAM1", "B": "FAM1", "C": "FAM1"}
-        df = make_df(genes, pDN=[0.2, 0.6, 0.5], pGOF=[0.5, 0.5, 0.5], pLOF=[0.5, 0.5, 0.5])
+        df = make_df(
+            genes, pDN=[0.2, 0.6, 0.5], pGOF=[0.5, 0.5, 0.5], pLOF=[0.5, 0.5, 0.5]
+        )
         observed_mask = pd.Series([True, True, False], index=df.index)
-        out = compute_family_residuals(df, pfam, FEATURE_COLS, observed_mask=observed_mask)
-        np.testing.assert_allclose(out["pDN_familyresid"].values, [-0.2, 0.2, 0.1], atol=1e-10)
+        out = compute_family_residuals(
+            df, pfam, FEATURE_COLS, observed_mask=observed_mask
+        )
+        np.testing.assert_allclose(
+            out["pDN_familyresid"].values, [-0.2, 0.2, 0.1], atol=1e-10
+        )
         # All three have a valid residual — missing flag must be 0 for all
         assert list(out["pDN_familyresid_missing"].values) == [0, 0, 0]
 
@@ -143,8 +168,15 @@ class TestFamilyResiduals:
         pfam = {"A": "FAM1", "B": "FAM1"}
         df = make_df(genes, pDN=[0.2, 0.6], pGOF=[0.1, 0.9], pLOF=[0.4, 0.4])
         out_no_mask = compute_family_residuals(df, pfam, FEATURE_COLS)
-        out_all_obs = compute_family_residuals(df, pfam, FEATURE_COLS, observed_mask=pd.Series([True, True], index=df.index))
-        np.testing.assert_array_equal(out_no_mask["pDN_familyresid"].values, out_all_obs["pDN_familyresid"].values)
+        out_all_obs = compute_family_residuals(
+            df,
+            pfam,
+            FEATURE_COLS,
+            observed_mask=pd.Series([True, True], index=df.index),
+        )
+        np.testing.assert_array_equal(
+            out_no_mask["pDN_familyresid"].values, out_all_obs["pDN_familyresid"].values
+        )
 
     def test_family_with_only_imputed_genes_gets_nan_residual(self):
         """If all genes in a family are imputed, no observed mean exists — residuals are NaN."""
@@ -152,5 +184,7 @@ class TestFamilyResiduals:
         pfam = {"A": "FAM1", "B": "FAM1"}
         df = make_df(genes, pDN=[0.3, 0.7], pGOF=[0.5, 0.5], pLOF=[0.5, 0.5])
         observed_mask = pd.Series([False, False], index=df.index)
-        out = compute_family_residuals(df, pfam, FEATURE_COLS, observed_mask=observed_mask)
+        out = compute_family_residuals(
+            df, pfam, FEATURE_COLS, observed_mask=observed_mask
+        )
         assert all(np.isnan(v) for v in out["pDN_familyresid"].values)

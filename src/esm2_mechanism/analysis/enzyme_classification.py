@@ -47,13 +47,14 @@ warnings.filterwarnings("ignore")
 ENZYME_CLASSES = ["kinase", "protease", "oxidoreductase", "non-enzyme"]
 
 # Reference numbers for comparison (from docs/README.md)
-MECHANISM_FAMILY_SPLIT_F1 = 0.385   # merged dataset, 5-seed (result 7)
-MECHANISM_GENE_SPLIT_F1 = 0.415     # merged dataset, MLP, seed 0 (result 7)
+MECHANISM_FAMILY_SPLIT_F1 = 0.385  # merged dataset, 5-seed (result 7)
+MECHANISM_GENE_SPLIT_F1 = 0.415  # merged dataset, MLP, seed 0 (result 7)
 
 
 # ---------------------------------------------------------------------------
 # Data loading
 # ---------------------------------------------------------------------------
+
 
 def load_gene_embeddings(data_dir: Path, emb_dir: Path) -> tuple:
     """
@@ -87,6 +88,7 @@ def load_gene_embeddings(data_dir: Path, emb_dir: Path) -> tuple:
 def load_enzyme_labels(data_dir: Path) -> dict:
     """Load gene -> enzyme_4class from enzyme_labels.tsv."""
     import csv
+
     labels: dict[str, str] = {}
     label_path = data_dir / "enzyme_labels.tsv"
     with open(label_path) as f:
@@ -109,6 +111,7 @@ def load_proteome_features(data_dir: Path) -> tuple:
         cols = json.load(f)
     # Load gene order from merged_gene_list.tsv
     import csv
+
     genes = []
     with open(data_dir / "merged_gene_list.tsv") as f:
         reader = csv.DictReader(f, delimiter="\t")
@@ -118,14 +121,20 @@ def load_proteome_features(data_dir: Path) -> tuple:
     return X, genes
 
 
-
 # ---------------------------------------------------------------------------
 # Probe runners
 # ---------------------------------------------------------------------------
 
-def run_logreg(X: np.ndarray, y: np.ndarray, splits: list[tuple],
-               classes: list[str], seed: int = 42) -> dict:
+
+def run_logreg(
+    X: np.ndarray,
+    y: np.ndarray,
+    splits: list[tuple],
+    classes: list[str],
+    seed: int = 42,
+) -> dict:
     from sklearn.linear_model import LogisticRegression
+
     n_cls = len(classes)
     fold_f1s, fold_aurocs = [], {c: [] for c in classes}
 
@@ -133,8 +142,9 @@ def run_logreg(X: np.ndarray, y: np.ndarray, splits: list[tuple],
         if len(set(y[tr])) < 2:
             continue
         sc = StandardScaler().fit(X[tr])
-        clf = LogisticRegression(max_iter=2000, class_weight="balanced",
-                                 random_state=seed)
+        clf = LogisticRegression(
+            max_iter=2000, class_weight="balanced", random_state=seed
+        )
         clf.fit(sc.transform(X[tr]), y[tr])
         proba_raw = clf.predict_proba(sc.transform(X[te]))
 
@@ -155,16 +165,23 @@ def run_logreg(X: np.ndarray, y: np.ndarray, splits: list[tuple],
     return {
         "macro_f1_mean": float(np.mean(fold_f1s)) if fold_f1s else None,
         "macro_f1_std": float(np.std(fold_f1s)) if fold_f1s else None,
-        "per_class_auroc_mean": {c: float(np.mean(v)) if v else None
-                                 for c, v in fold_aurocs.items()},
-        "per_class_auroc_std": {c: float(np.std(v)) if v else None
-                                for c, v in fold_aurocs.items()},
+        "per_class_auroc_mean": {
+            c: float(np.mean(v)) if v else None for c, v in fold_aurocs.items()
+        },
+        "per_class_auroc_std": {
+            c: float(np.std(v)) if v else None for c, v in fold_aurocs.items()
+        },
         "n_folds": len(fold_f1s),
     }
 
 
-def run_mlp(X: np.ndarray, y: np.ndarray, splits: list[tuple],
-            classes: list[str], seed: int = 42) -> dict:
+def run_mlp(
+    X: np.ndarray,
+    y: np.ndarray,
+    splits: list[tuple],
+    classes: list[str],
+    seed: int = 42,
+) -> dict:
     n_cls = len(classes)
     fold_f1s, fold_aurocs = [], {c: [] for c in classes}
 
@@ -201,10 +218,12 @@ def run_mlp(X: np.ndarray, y: np.ndarray, splits: list[tuple],
     return {
         "macro_f1_mean": float(np.mean(fold_f1s)) if fold_f1s else None,
         "macro_f1_std": float(np.std(fold_f1s)) if fold_f1s else None,
-        "per_class_auroc_mean": {c: float(np.mean(v)) if v else None
-                                 for c, v in fold_aurocs.items()},
-        "per_class_auroc_std": {c: float(np.std(v)) if v else None
-                                for c, v in fold_aurocs.items()},
+        "per_class_auroc_mean": {
+            c: float(np.mean(v)) if v else None for c, v in fold_aurocs.items()
+        },
+        "per_class_auroc_std": {
+            c: float(np.std(v)) if v else None for c, v in fold_aurocs.items()
+        },
         "n_folds": len(fold_f1s),
     }
 
@@ -219,9 +238,16 @@ def majority_baseline_f1(y: np.ndarray) -> float:
 # Multi-seed runner
 # ---------------------------------------------------------------------------
 
-def run_multiseed(X: np.ndarray, y: np.ndarray, genes: list[str],
-                  pfam_map: dict, le: LabelEncoder,
-                  seeds: list[int], n_folds: int = 5) -> dict:
+
+def run_multiseed(
+    X: np.ndarray,
+    y: np.ndarray,
+    genes: list[str],
+    pfam_map: dict,
+    le: LabelEncoder,
+    seeds: list[int],
+    n_folds: int = 5,
+) -> dict:
     classes = list(le.classes_)
     print(f"\nClasses: {classes}")
     print(f"Class distribution: {dict(Counter(y.tolist()))}")
@@ -252,9 +278,14 @@ def run_multiseed(X: np.ndarray, y: np.ndarray, genes: list[str],
             v = fs["per_class_auroc_mean"].get(c)
             if v is not None:
                 fs_aurocs[c].append(v)
-        print(f"    LogReg family-split F1={fs['macro_f1_mean']:.3f}  "
-              f"AUROC: " + " ".join(f"{c}={fs['per_class_auroc_mean'].get(c, float('nan')):.3f}"
-                                    for c in classes))
+        print(
+            f"    LogReg family-split F1={fs['macro_f1_mean']:.3f}  "
+            f"AUROC: "
+            + " ".join(
+                f"{c}={fs['per_class_auroc_mean'].get(c, float('nan')):.3f}"
+                for c in classes
+            )
+        )
 
         # Family-split MLP
         mlp = run_mlp(X, y, fs_splits, classes, seed=seed)
@@ -269,8 +300,10 @@ def run_multiseed(X: np.ndarray, y: np.ndarray, genes: list[str],
 
     def _agg(vals):
         vals = [v for v in vals if v is not None]
-        return (float(np.mean(vals)) if vals else None,
-                float(np.std(vals)) if vals else None)
+        return (
+            float(np.mean(vals)) if vals else None,
+            float(np.std(vals)) if vals else None,
+        )
 
     gs_mean, gs_std = _agg(gs_f1s)
     fs_mean, fs_std = _agg(fs_f1s)
@@ -283,31 +316,48 @@ def run_multiseed(X: np.ndarray, y: np.ndarray, genes: list[str],
     print(f"\n  Results ({len(seeds)} seeds):")
     print(f"    Majority baseline:       F1={maj_f1:.3f}")
     print(f"    LogReg gene-split:       F1={gs_mean:.3f} ± {gs_std:.3f}")
-    print(f"    LogReg family-split:     F1={fs_mean:.3f} ± {fs_std:.3f}  ← primary metric")
+    print(
+        f"    LogReg family-split:     F1={fs_mean:.3f} ± {fs_std:.3f}  ← primary metric"
+    )
     print(f"    MLP    family-split:     F1={mlp_mean:.3f} ± {mlp_std:.3f}")
     if leakage_pct is not None:
         print(f"    Leakage fraction:        {leakage_pct:.1f}%")
     print(f"\n  vs mechanism family-split floor ({MECHANISM_FAMILY_SPLIT_F1:.3f}):")
     if fs_mean is not None:
         delta = fs_mean - MECHANISM_FAMILY_SPLIT_F1
-        sym = ">>>" if delta > 0.15 else (">>" if delta > 0.05 else (">" if delta > 0 else "~"))
-        print(f"    {sym} enzyme {fs_mean:.3f}  vs  mechanism {MECHANISM_FAMILY_SPLIT_F1:.3f}  Δ={delta:+.3f}")
+        sym = (
+            ">>>"
+            if delta > 0.15
+            else (">>" if delta > 0.05 else (">" if delta > 0 else "~"))
+        )
+        print(
+            f"    {sym} enzyme {fs_mean:.3f}  vs  mechanism {MECHANISM_FAMILY_SPLIT_F1:.3f}  Δ={delta:+.3f}"
+        )
 
     return {
         "majority_f1": maj_f1,
         "logreg_gene_split": {
-            "macro_f1_mean": gs_mean, "macro_f1_std": gs_std,
-            "per_class_auroc_mean": {c: float(np.mean(v)) if v else None for c, v in gs_aurocs.items()},
+            "macro_f1_mean": gs_mean,
+            "macro_f1_std": gs_std,
+            "per_class_auroc_mean": {
+                c: float(np.mean(v)) if v else None for c, v in gs_aurocs.items()
+            },
             "n_seeds": len(seeds),
         },
         "logreg_family_split": {
-            "macro_f1_mean": fs_mean, "macro_f1_std": fs_std,
-            "per_class_auroc_mean": {c: float(np.mean(v)) if v else None for c, v in fs_aurocs.items()},
+            "macro_f1_mean": fs_mean,
+            "macro_f1_std": fs_std,
+            "per_class_auroc_mean": {
+                c: float(np.mean(v)) if v else None for c, v in fs_aurocs.items()
+            },
             "n_seeds": len(seeds),
         },
         "mlp_family_split": {
-            "macro_f1_mean": mlp_mean, "macro_f1_std": mlp_std,
-            "per_class_auroc_mean": {c: float(np.mean(v)) if v else None for c, v in mlp_aurocs.items()},
+            "macro_f1_mean": mlp_mean,
+            "macro_f1_std": mlp_std,
+            "per_class_auroc_mean": {
+                c: float(np.mean(v)) if v else None for c, v in mlp_aurocs.items()
+            },
             "n_seeds": len(seeds),
         },
         "leakage_pct": leakage_pct,
@@ -319,18 +369,19 @@ def run_multiseed(X: np.ndarray, y: np.ndarray, genes: list[str],
 # Main
 # ---------------------------------------------------------------------------
 
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--data_dir", default=str(DATA_DIR))
-    parser.add_argument("--emb_dir",  default=str(DATA_DIR / "embeddings"))
-    parser.add_argument("--out_dir",  default=str(RESULTS_DIR / "enzyme_classification"))
+    parser.add_argument("--emb_dir", default=str(DATA_DIR / "embeddings"))
+    parser.add_argument("--out_dir", default=str(RESULTS_DIR / "enzyme_classification"))
     parser.add_argument("--seeds", type=int, nargs="+", default=[0, 1, 2, 3, 4])
     parser.add_argument("--n_folds", type=int, default=5)
     args = parser.parse_args()
 
     data_dir = Path(args.data_dir)
-    emb_dir  = Path(args.emb_dir)
-    out_dir  = Path(args.out_dir)
+    emb_dir = Path(args.emb_dir)
+    out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     print("=== Enzyme Classification from ESM-2 WT Embeddings ===")
@@ -344,35 +395,40 @@ def main():
     # Align labels to gene_list order
     missing = [g for g in gene_list if g not in enzyme_labels]
     if missing:
-        print(f"  WARNING: {len(missing)} genes have no enzyme label and will be assigned 'non-enzyme': "
-              f"{missing[:5]}{'...' if len(missing) > 5 else ''}")
+        print(
+            f"  WARNING: {len(missing)} genes have no enzyme label and will be assigned 'non-enzyme': "
+            f"{missing[:5]}{'...' if len(missing) > 5 else ''}"
+        )
     y_str = [enzyme_labels.get(g, "non-enzyme") for g in gene_list]
     le = LabelEncoder()
     le.fit(ENZYME_CLASSES)
     y = le.transform(y_str)
 
     print(f"\nGenes in embedding: {len(gene_list)}")
-    print(f"Label coverage: {sum(1 for g in gene_list if g in enzyme_labels)}/{len(gene_list)}")
+    print(
+        f"Label coverage: {sum(1 for g in gene_list if g in enzyme_labels)}/{len(gene_list)}"
+    )
     print(f"Class distribution: {dict(Counter(y_str))}")
-    print(f"Pfam-annotated genes: {sum(1 for g in gene_list if pfam_map.get(g))}/{len(gene_list)}")
+    print(
+        f"Pfam-annotated genes: {sum(1 for g in gene_list if pfam_map.get(g))}/{len(gene_list)}"
+    )
 
     # -----------------------------------------------------------------------
     # ESM-2 WT embedding probes
     # -----------------------------------------------------------------------
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("PART 1: ESM-2 WT embedding (1280-dim)")
-    print("="*60)
+    print("=" * 60)
     emb_results = run_multiseed(
-        X_emb, y, gene_list, pfam_map, le,
-        seeds=args.seeds, n_folds=args.n_folds
+        X_emb, y, gene_list, pfam_map, le, seeds=args.seeds, n_folds=args.n_folds
     )
 
     # -----------------------------------------------------------------------
     # Proteome feature baseline
     # -----------------------------------------------------------------------
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("PART 2: Proteome features (37-dim) — baseline comparison")
-    print("="*60)
+    print("=" * 60)
 
     proteome_results = None
     try:
@@ -380,7 +436,9 @@ def main():
         prot_gene_to_idx = {g: i for i, g in enumerate(prot_genes)}
 
         # Align proteome features to gene_list
-        prot_aligned_idxs = [prot_gene_to_idx[g] for g in gene_list if g in prot_gene_to_idx]
+        prot_aligned_idxs = [
+            prot_gene_to_idx[g] for g in gene_list if g in prot_gene_to_idx
+        ]
         prot_aligned_genes = [g for g in gene_list if g in prot_gene_to_idx]
         prot_aligned_y = y[[gene_list.index(g) for g in prot_aligned_genes]]
         X_prot_aligned = X_prot[prot_aligned_idxs]
@@ -390,14 +448,21 @@ def main():
         # (imputation must be done per-fold inside CV to avoid test-set leakage).
         if np.isnan(X_prot_aligned).any():
             n_nan = int(np.isnan(X_prot_aligned).sum())
-            print(f"  WARNING: {n_nan} NaN values found in proteome features — "
-                  f"these will cause errors in StandardScaler. "
-                  f"Re-run build_proteome_features.py to regenerate pre-imputed features.")
+            print(
+                f"  WARNING: {n_nan} NaN values found in proteome features — "
+                f"these will cause errors in StandardScaler. "
+                f"Re-run build_proteome_features.py to regenerate pre-imputed features."
+            )
 
         print(f"Proteome-aligned genes: {len(prot_aligned_genes)}")
         proteome_results = run_multiseed(
-            X_prot_aligned, prot_aligned_y, prot_aligned_genes, pfam_map, le,
-            seeds=args.seeds, n_folds=args.n_folds
+            X_prot_aligned,
+            prot_aligned_y,
+            prot_aligned_genes,
+            pfam_map,
+            le,
+            seeds=args.seeds,
+            n_folds=args.n_folds,
         )
     except Exception as e:
         print(f"Proteome baseline failed: {e}")
@@ -405,23 +470,28 @@ def main():
     # -----------------------------------------------------------------------
     # Decision rule evaluation (pre-registered)
     # -----------------------------------------------------------------------
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("PRE-REGISTERED DECISION RULES")
-    print("="*60)
+    print("=" * 60)
     fs_f1 = emb_results["logreg_family_split"]["macro_f1_mean"]
     mlp_f1 = emb_results["mlp_family_split"]["macro_f1_mean"]
     gs_f1 = emb_results["logreg_gene_split"]["macro_f1_mean"]
 
     h1 = fs_f1 is not None and fs_f1 >= 0.70
     h2 = fs_f1 is not None and (fs_f1 - MECHANISM_FAMILY_SPLIT_F1) > 0.10
-    h4 = (mlp_f1 is not None and fs_f1 is not None and
-          abs(mlp_f1 - fs_f1) < 0.05)
+    h4 = mlp_f1 is not None and fs_f1 is not None and abs(mlp_f1 - fs_f1) < 0.05
 
-    print(f"\nH1 — family-split F1 ≥ 0.70:  {'PASS' if h1 else 'FAIL'}  (F1={fs_f1:.3f})")
-    print(f"H2 — enzyme >> mechanism floor:  {'CONFIRMED' if h2 else 'NOT CONFIRMED'}  "
-          f"(Δ={fs_f1 - MECHANISM_FAMILY_SPLIT_F1:+.3f})")
-    print(f"H4 — MLP ≈ LogReg family-split:  {'CONFIRMED' if h4 else 'NOT CONFIRMED'}  "
-          f"(ΔMLP-LR={mlp_f1 - fs_f1:+.3f})")
+    print(
+        f"\nH1 — family-split F1 ≥ 0.70:  {'PASS' if h1 else 'FAIL'}  (F1={fs_f1:.3f})"
+    )
+    print(
+        f"H2 — enzyme >> mechanism floor:  {'CONFIRMED' if h2 else 'NOT CONFIRMED'}  "
+        f"(Δ={fs_f1 - MECHANISM_FAMILY_SPLIT_F1:+.3f})"
+    )
+    print(
+        f"H4 — MLP ≈ LogReg family-split:  {'CONFIRMED' if h4 else 'NOT CONFIRMED'}  "
+        f"(ΔMLP-LR={mlp_f1 - fs_f1:+.3f})"
+    )
 
     # -----------------------------------------------------------------------
     # Save results

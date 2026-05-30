@@ -114,7 +114,9 @@ def fetch_pfam_for_uniprot(uniprot_id: str) -> Optional[str]:
             last_exc = e
         if attempt < _PFAM_RETRIES - 1:
             time.sleep(_PFAM_DELAY * (attempt + 1))
-    print(f"  WARNING: failed to fetch {uniprot_id}: {last_exc} — not caching, will retry next run")
+    print(
+        f"  WARNING: failed to fetch {uniprot_id}: {last_exc} — not caching, will retry next run"
+    )
     raise _TransientFetchError(str(last_exc))
 
 
@@ -227,7 +229,9 @@ def main_uniprot(from_scratch: bool = False) -> None:
         if SEQUENCES_EXTENDED_OUT.exists():
             with open(SEQUENCES_EXTENDED_OUT) as f:
                 extended_existing = json.load(f)
-            print(f"Loaded {len(extended_existing)} sequences from uniprot_sequences_extended.json")
+            print(
+                f"Loaded {len(extended_existing)} sequences from uniprot_sequences_extended.json"
+            )
 
     new_results: dict[str, str] = {}
     todo = sorted(all_uniprots - set(base) - set(extended_existing))
@@ -248,7 +252,7 @@ def main_uniprot(from_scratch: bool = False) -> None:
     t0 = time.time()
 
     for bi in range(n_batches):
-        batch = todo[bi * _UNIPROT_BATCH_SIZE: (bi + 1) * _UNIPROT_BATCH_SIZE]
+        batch = todo[bi * _UNIPROT_BATCH_SIZE : (bi + 1) * _UNIPROT_BATCH_SIZE]
         for attempt in range(_UNIPROT_RETRIES):
             try:
                 text = _fetch_uniprot_batch(batch)
@@ -261,7 +265,9 @@ def main_uniprot(from_scratch: bool = False) -> None:
             print(f"  GAVE UP on batch {bi+1}/{n_batches}")
 
         elapsed = time.time() - t0
-        print(f"  batch {bi+1}/{n_batches}: {len(new_results)} fetched ({elapsed:.0f}s)")
+        print(
+            f"  batch {bi+1}/{n_batches}: {len(new_results)} fetched ({elapsed:.0f}s)"
+        )
         _atomic_write_json(
             SEQUENCES_EXTENDED_OUT,
             select_extended(base, extended_existing, new_results, all_uniprots),
@@ -330,7 +336,9 @@ def parse_ec_and_keywords(entry: dict) -> tuple:
 
     try:
         prot = entry.get("proteinDescription", {})
-        name_blocks = [prot.get("recommendedName") or {}] + (prot.get("alternativeNames") or [])
+        name_blocks = [prot.get("recommendedName") or {}] + (
+            prot.get("alternativeNames") or []
+        )
         for name_block in name_blocks:
             for ec_obj in name_block.get("ecNumbers", []):
                 val = ec_obj.get("value", "")
@@ -348,7 +356,11 @@ def parse_ec_and_keywords(entry: dict) -> tuple:
                     ec_numbers.append(ec_val)
                 elif isinstance(ec_val, list):
                     for ec_obj in ec_val:
-                        val = ec_obj if isinstance(ec_obj, str) else ec_obj.get("value", "")
+                        val = (
+                            ec_obj
+                            if isinstance(ec_obj, str)
+                            else ec_obj.get("value", "")
+                        )
                         if val and val not in ec_numbers:
                             ec_numbers.append(val)
     except Exception:
@@ -392,7 +404,9 @@ def assign_4class(ec_numbers: list[str], keyword_ids: list[str]) -> str:
 def main_enzyme() -> None:
     missing = [p for p in [MERGED_VARIANTS, MERGED_GENE_LIST] if not p.exists()]
     if missing:
-        raise FileNotFoundError("Required input(s) not found:\n" + "\n".join(f"  {p}" for p in missing))
+        raise FileNotFoundError(
+            "Required input(s) not found:\n" + "\n".join(f"  {p}" for p in missing)
+        )
 
     ENZYME_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -452,9 +466,16 @@ def main_enzyme() -> None:
         time.sleep(0.35)
 
     n_found = sum(1 for v in acc_to_data.values() if v is not None)
-    print(f"Done: {n_found}/{len(unique_accs)} entries found "
-          f"({fetched} fetched from network, {loaded_from_cache} from cache"
-          + (f", {fetch_errors} transient errors — will retry next run" if fetch_errors else "") + ")")
+    print(
+        f"Done: {n_found}/{len(unique_accs)} entries found "
+        f"({fetched} fetched from network, {loaded_from_cache} from cache"
+        + (
+            f", {fetch_errors} transient errors — will retry next run"
+            if fetch_errors
+            else ""
+        )
+        + ")"
+    )
 
     rows = []
     class_counts: dict[str, int] = defaultdict(int)
@@ -463,19 +484,33 @@ def main_enzyme() -> None:
     for gene in canonical_genes:
         acc = gene_to_uniprot.get(gene)
         if not acc:
-            rows.append({
-                "gene": gene, "uniprot_id": "", "ec_numbers": "", "keyword_ids": "",
-                "enzyme_4class": None, "multi_class_flag": None, "uniprot_missing_flag": "1",
-            })
+            rows.append(
+                {
+                    "gene": gene,
+                    "uniprot_id": "",
+                    "ec_numbers": "",
+                    "keyword_ids": "",
+                    "enzyme_4class": None,
+                    "multi_class_flag": None,
+                    "uniprot_missing_flag": "1",
+                }
+            )
             class_counts["missing"] += 1
             continue
 
         entry = acc_to_data.get(acc)
         if entry is None:
-            rows.append({
-                "gene": gene, "uniprot_id": acc, "ec_numbers": "", "keyword_ids": "",
-                "enzyme_4class": None, "multi_class_flag": None, "uniprot_missing_flag": "1",
-            })
+            rows.append(
+                {
+                    "gene": gene,
+                    "uniprot_id": acc,
+                    "ec_numbers": "",
+                    "keyword_ids": "",
+                    "enzyme_4class": None,
+                    "multi_class_flag": None,
+                    "uniprot_missing_flag": "1",
+                }
+            )
             class_counts["missing"] += 1
             continue
 
@@ -507,21 +542,32 @@ def main_enzyme() -> None:
         if is_multi:
             multi_class_count += 1
 
-        rows.append({
-            "gene": gene, "uniprot_id": acc,
-            "ec_numbers": ";".join(ec_numbers),
-            "keyword_ids": ";".join(keyword_ids),
-            "enzyme_4class": enzyme_class,
-            "multi_class_flag": "1" if is_multi else "0",
-            "uniprot_missing_flag": "0",
-        })
+        rows.append(
+            {
+                "gene": gene,
+                "uniprot_id": acc,
+                "ec_numbers": ";".join(ec_numbers),
+                "keyword_ids": ";".join(keyword_ids),
+                "enzyme_4class": enzyme_class,
+                "multi_class_flag": "1" if is_multi else "0",
+                "uniprot_missing_flag": "0",
+            }
+        )
         class_counts[enzyme_class] += 1
 
-    fieldnames = ["gene", "uniprot_id", "ec_numbers", "keyword_ids",
-                  "enzyme_4class", "multi_class_flag", "uniprot_missing_flag"]
+    fieldnames = [
+        "gene",
+        "uniprot_id",
+        "ec_numbers",
+        "keyword_ids",
+        "enzyme_4class",
+        "multi_class_flag",
+        "uniprot_missing_flag",
+    ]
     with open(ENZYME_OUT, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames, delimiter="\t",
-                                extrasaction="ignore")
+        writer = csv.DictWriter(
+            f, fieldnames=fieldnames, delimiter="\t", extrasaction="ignore"
+        )
         writer.writeheader()
         for row in rows:
             writer.writerow({k: ("" if v is None else v) for k, v in row.items()})
@@ -555,12 +601,17 @@ def _build_am_gene_uniprot_map() -> dict[str, str]:
     for g, uid_counts in counts.items():
         best = max(uid_counts, key=lambda u: uid_counts[u])
         if len(uid_counts) > 1:
-            print(f"WARN: gene {g} has multiple UniProt IDs {uid_counts} — using most frequent: {best}", file=sys.stderr)
+            print(
+                f"WARN: gene {g} has multiple UniProt IDs {uid_counts} — using most frequent: {best}",
+                file=sys.stderr,
+            )
         g2u[g] = best
     return g2u
 
 
-def _build_am_lookup(variants: list[dict], g2u: dict[str, str]) -> tuple[dict, list, list]:
+def _build_am_lookup(
+    variants: list[dict], g2u: dict[str, str]
+) -> tuple[dict, list, list]:
     """
     Returns (index, skipped_no_uniprot, skipped_key_collision).
 
@@ -584,9 +635,11 @@ def _build_am_lookup(variants: list[dict], g2u: dict[str, str]) -> tuple[dict, l
             continue
         index[key] = vkey
     if skipped_key_collision:
-        print(f"  WARNING: {len(skipped_key_collision)} variants dropped due to duplicate "
-              f"(uniprot, protein_variant) key — these will have no AM score. "
-              f"First 5: {[v['gene'] for v in skipped_key_collision[:5]]}")
+        print(
+            f"  WARNING: {len(skipped_key_collision)} variants dropped due to duplicate "
+            f"(uniprot, protein_variant) key — these will have no AM score. "
+            f"First 5: {[v['gene'] for v in skipped_key_collision[:5]]}"
+        )
     return index, skipped_no_uniprot, skipped_key_collision
 
 
@@ -611,7 +664,9 @@ def _download_am(url: str, dest: Path) -> None:
     print(f"done: {dest.stat().st_size:,} bytes")
 
 
-def _stream_am_filter(am_gz: Path, index: dict[tuple[str, str], str]) -> dict[str, float]:
+def _stream_am_filter(
+    am_gz: Path, index: dict[tuple[str, str], str]
+) -> dict[str, float]:
     scores: dict[str, float] = {}
     needed = len(index)
     print(f"streaming {am_gz}, looking for {needed:,} (uniprot, variant) pairs")
@@ -619,7 +674,10 @@ def _stream_am_filter(am_gz: Path, index: dict[tuple[str, str], str]) -> dict[st
         header_skipped = False
         for i, line in enumerate(f):
             if i % 5_000_000 == 0 and i:
-                print(f"  read {i:,} rows, matched {len(scores):,}/{needed:,}", file=sys.stderr)
+                print(
+                    f"  read {i:,} rows, matched {len(scores):,}/{needed:,}",
+                    file=sys.stderr,
+                )
             if not line or line.startswith("#"):
                 continue
             if not header_skipped:
@@ -638,15 +696,20 @@ def _stream_am_filter(am_gz: Path, index: dict[tuple[str, str], str]) -> dict[st
     return scores
 
 
-def main_alphamissense(am_file: Optional[Path] = None, no_download: bool = False,
-                       out: Optional[Path] = None) -> None:
+def main_alphamissense(
+    am_file: Optional[Path] = None,
+    no_download: bool = False,
+    out: Optional[Path] = None,
+) -> None:
     am_file = am_file or AM_CACHE
     out = out or AM_OUT
 
     required = [AM_MERGED_VALID_VARIANTS, AM_PATHOGENICITY_VARIANTS]
     missing = [p for p in required if not p.exists()]
     if missing:
-        raise FileNotFoundError("Required input(s) not found:\n" + "\n".join(f"  {p}" for p in missing))
+        raise FileNotFoundError(
+            "Required input(s) not found:\n" + "\n".join(f"  {p}" for p in missing)
+        )
 
     am_file.parent.mkdir(parents=True, exist_ok=True)
 
@@ -658,13 +721,18 @@ def main_alphamissense(am_file: Optional[Path] = None, no_download: bool = False
     index, skipped_no_uniprot, skipped_key_collision = _build_am_lookup(variants, g2u)
     print(f"variants with UniProt mapping: {len(index):,}")
     if skipped_no_uniprot:
-        print(f"variants missing UniProt mapping (first 5): {[s['gene'] for s in skipped_no_uniprot[:5]]}")
+        print(
+            f"variants missing UniProt mapping (first 5): {[s['gene'] for s in skipped_no_uniprot[:5]]}"
+        )
     if skipped_key_collision:
         print(f"variants dropped due to key collision: {len(skipped_key_collision)}")
 
     if not am_file.exists():
         if no_download:
-            print(f"ERROR: --no-download set but {am_file} does not exist", file=sys.stderr)
+            print(
+                f"ERROR: --no-download set but {am_file} does not exist",
+                file=sys.stderr,
+            )
             sys.exit(2)
         _download_am(AM_URL, am_file)
 
@@ -688,14 +756,25 @@ def main() -> None:
         choices=["pfam", "uniprot", "enzyme", "alphamissense"],
         required=True,
     )
-    parser.add_argument("--from-scratch", action="store_true",
-                        help="(pfam / uniprot) Ignore existing cache and re-fetch.")
-    parser.add_argument("--am-file", type=Path, default=None,
-                        help="(alphamissense) Local path for the AM bulk file.")
-    parser.add_argument("--no-download", action="store_true",
-                        help="(alphamissense) Do not download; require --am-file to exist.")
-    parser.add_argument("--out", type=Path, default=None,
-                        help="(alphamissense) Output path.")
+    parser.add_argument(
+        "--from-scratch",
+        action="store_true",
+        help="(pfam / uniprot) Ignore existing cache and re-fetch.",
+    )
+    parser.add_argument(
+        "--am-file",
+        type=Path,
+        default=None,
+        help="(alphamissense) Local path for the AM bulk file.",
+    )
+    parser.add_argument(
+        "--no-download",
+        action="store_true",
+        help="(alphamissense) Do not download; require --am-file to exist.",
+    )
+    parser.add_argument(
+        "--out", type=Path, default=None, help="(alphamissense) Output path."
+    )
     args = parser.parse_args()
 
     if args.step == "pfam":

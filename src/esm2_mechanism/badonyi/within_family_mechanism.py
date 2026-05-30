@@ -42,14 +42,15 @@ from sklearn.preprocessing import LabelEncoder, StandardScaler
 from esm2_mechanism.utils_probes import compute_metrics, align_proba
 from esm2_mechanism.utils_paths import DATA_DIR, RESULTS_DIR
 import functools
+
 print = functools.partial(print, flush=True)
 
 warnings.filterwarnings("ignore")
 
 MERGED_GENE_LIST = DATA_DIR / "merged_gene_list.tsv"
 PFAM_FAMILIES = DATA_DIR / "pfam_families.json"
-PROTEOME_FEATURES = DATA_DIR / "proteome_features_aligned.npy"   # (2424, 37)
-BADONYI_FEATURES = DATA_DIR / "badonyi_features_aligned.npy"     # (2424, 13)
+PROTEOME_FEATURES = DATA_DIR / "proteome_features_aligned.npy"  # (2424, 37)
+BADONYI_FEATURES = DATA_DIR / "badonyi_features_aligned.npy"  # (2424, 13)
 
 CLASSES = ["GOF", "DN", "LOF"]
 
@@ -65,9 +66,29 @@ CLASSES = ["GOF", "DN", "LOF"]
 # LOEUF=5, LOEUF_missing=6, LOEUF_familyresid=7, ..., etc.
 # Actually the npy has 37 cols = all_columns[2:] (skipping gene and pfam_family)
 
-RAW_INDICES = [1, 5, 9, 13, 17, 21, 25, 29, 33]          # pLI,LOEUF,mis_z,paralog,tau,abund,PPI,HI,TS
-RESID_INDICES = [3, 7, 11, 15, 19, 23, 27, 31, 35]        # *_familyresid cols
-RAW_NAMES = ["pLI","LOEUF","mis_z","paralog_count","tissue_tau","log_abundance","PPI_degree","HI_score","TS_score"]
+RAW_INDICES = [
+    1,
+    5,
+    9,
+    13,
+    17,
+    21,
+    25,
+    29,
+    33,
+]  # pLI,LOEUF,mis_z,paralog,tau,abund,PPI,HI,TS
+RESID_INDICES = [3, 7, 11, 15, 19, 23, 27, 31, 35]  # *_familyresid cols
+RAW_NAMES = [
+    "pLI",
+    "LOEUF",
+    "mis_z",
+    "paralog_count",
+    "tissue_tau",
+    "log_abundance",
+    "PPI_degree",
+    "HI_score",
+    "TS_score",
+]
 
 # Badonyi npy cols: 0=pDN, 1=pGOF, 2=pLOF, 3=pDN_missing, ..., 6=pDN_familyresid, 7=pGOF_familyresid, 8=pLOF_familyresid
 BAD_RAW_INDICES = [0, 1, 2]
@@ -89,9 +110,12 @@ def load_gene_list():
 
 
 def collapse_3class(mech: str) -> str | None:
-    if mech in ("GOF",): return "GOF"
-    if mech in ("DN",): return "DN"
-    if mech in ("HI", "LOF"): return "LOF"
+    if mech in ("GOF",):
+        return "GOF"
+    if mech in ("DN",):
+        return "DN"
+    if mech in ("HI", "LOF"):
+        return "LOF"
     return None
 
 
@@ -133,8 +157,9 @@ def get_qualifying_families(genes, mechs, pfam_map, min_genes, min_classes):
     return qualifying
 
 
-def logo_cv(X: np.ndarray, y: np.ndarray, gene_names: list[str],
-            seed: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+def logo_cv(
+    X: np.ndarray, y: np.ndarray, gene_names: list[str], seed: int
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Leave-one-gene-out CV with LogReg.
     Returns (y_true, y_pred, y_proba) concatenated across all left-out genes.
@@ -155,16 +180,20 @@ def logo_cv(X: np.ndarray, y: np.ndarray, gene_names: list[str],
 
         sc = StandardScaler().fit(X_tr)
         clf = LogisticRegression(
-            max_iter=1000, class_weight="balanced", random_state=seed,
-            solver="lbfgs", multi_class="auto",
+            max_iter=1000,
+            class_weight="balanced",
+            random_state=seed,
+            solver="lbfgs",
+            multi_class="auto",
         )
         try:
             clf.fit(sc.transform(X_tr), y_tr)
         except Exception:
             continue
 
-        proba = align_proba(clf.predict_proba(sc.transform(X_te)),
-                            clf.classes_, len(CLASSES))
+        proba = align_proba(
+            clf.predict_proba(sc.transform(X_te)), clf.classes_, len(CLASSES)
+        )
 
         all_true.append(y_te[0])
         all_pred.append(int(proba.argmax()))
@@ -173,9 +202,7 @@ def logo_cv(X: np.ndarray, y: np.ndarray, gene_names: list[str],
     if not all_true:
         return np.array([]), np.array([]), np.zeros((0, len(CLASSES)))
 
-    return (np.array(all_true), np.array(all_pred),
-            np.stack(all_proba))
-
+    return (np.array(all_true), np.array(all_pred), np.stack(all_proba))
 
 
 def run_feature_set(
@@ -232,14 +259,17 @@ def run_feature_set(
         all_proba_pool.append(y_proba)
         family_names_pool.extend([fam] * len(y_true))
 
-        f1_str = f"{fm['macro_f1']:.3f}" if fm['macro_f1'] is not None else "N/A"
+        f1_str = f"{fm['macro_f1']:.3f}" if fm["macro_f1"] is not None else "N/A"
         auroc_parts = []
         for cls in CLASSES:
-            v = fm['per_class_auroc'].get(cls)
+            v = fm["per_class_auroc"].get(cls)
             auroc_parts.append(f"{cls}={v:.3f}" if v is not None else f"{cls}=NA")
-        print(f"  [{label}] {fam:<20} n={len(gene_list):2d}  "
-              f"F1={f1_str}  " + "  ".join(auroc_parts)
-              + f"  classes={dict(class_counts)}")
+        print(
+            f"  [{label}] {fam:<20} n={len(gene_list):2d}  "
+            f"F1={f1_str}  "
+            + "  ".join(auroc_parts)
+            + f"  classes={dict(class_counts)}"
+        )
 
     # Aggregate across all families
     if all_true_pool:
@@ -272,48 +302,87 @@ def run_feature_set(
     }
 
 
-def run_seed(seed: int, qualifying: dict, gene_to_row: dict,
-             prot_matrix: np.ndarray, bad_matrix: np.ndarray) -> dict:
+def run_seed(
+    seed: int,
+    qualifying: dict,
+    gene_to_row: dict,
+    prot_matrix: np.ndarray,
+    bad_matrix: np.ndarray,
+) -> dict:
     print(f"\n{'='*60}\nSEED {seed}\n{'='*60}")
     results = {"seed": seed}
 
     # 1. Raw proteome features (cross-family signal, baseline)
     print(f"\n--- RAW proteome features (cross-family baseline) ---")
     results["raw_proteome"] = run_feature_set(
-        qualifying, gene_to_row, prot_matrix,
-        RAW_INDICES, RAW_NAMES, "raw_prot", seed)
+        qualifying, gene_to_row, prot_matrix, RAW_INDICES, RAW_NAMES, "raw_prot", seed
+    )
 
     # 2. Family-residual proteome features (within-family signal)
     print(f"\n--- RESIDUAL proteome features (within-family) ---")
     results["resid_proteome"] = run_feature_set(
-        qualifying, gene_to_row, prot_matrix,
-        RESID_INDICES, [n + "_resid" for n in RAW_NAMES], "resid_prot", seed)
+        qualifying,
+        gene_to_row,
+        prot_matrix,
+        RESID_INDICES,
+        [n + "_resid" for n in RAW_NAMES],
+        "resid_prot",
+        seed,
+    )
 
     # 3. Raw Badonyi (cross-family structural prior)
     print(f"\n--- RAW Badonyi pDN/pGOF/pLOF ---")
     results["raw_badonyi"] = run_feature_set(
-        qualifying, gene_to_row, bad_matrix,
-        BAD_RAW_INDICES, ["pDN", "pGOF", "pLOF"], "raw_bad", seed)
+        qualifying,
+        gene_to_row,
+        bad_matrix,
+        BAD_RAW_INDICES,
+        ["pDN", "pGOF", "pLOF"],
+        "raw_bad",
+        seed,
+    )
 
     # 4. Residual Badonyi (within-family structural variation)
     print(f"\n--- RESIDUAL Badonyi (within-family structural) ---")
     results["resid_badonyi"] = run_feature_set(
-        qualifying, gene_to_row, bad_matrix,
-        BAD_RESID_INDICES, ["pDN_resid", "pGOF_resid", "pLOF_resid"], "resid_bad", seed)
+        qualifying,
+        gene_to_row,
+        bad_matrix,
+        BAD_RESID_INDICES,
+        ["pDN_resid", "pGOF_resid", "pLOF_resid"],
+        "resid_bad",
+        seed,
+    )
 
     # 5. Combined residuals: proteome + Badonyi within-family
     combined_matrix = np.concatenate([prot_matrix, bad_matrix], axis=1)
-    combined_resid_idx = RESID_INDICES + [prot_matrix.shape[1] + i for i in BAD_RESID_INDICES]
-    combined_resid_names = [n + "_resid" for n in RAW_NAMES] + ["pDN_resid", "pGOF_resid", "pLOF_resid"]
+    combined_resid_idx = RESID_INDICES + [
+        prot_matrix.shape[1] + i for i in BAD_RESID_INDICES
+    ]
+    combined_resid_names = [n + "_resid" for n in RAW_NAMES] + [
+        "pDN_resid",
+        "pGOF_resid",
+        "pLOF_resid",
+    ]
     print(f"\n--- COMBINED residuals: proteome + Badonyi (within-family) ---")
     results["resid_combined"] = run_feature_set(
-        qualifying, gene_to_row, combined_matrix,
-        combined_resid_idx, combined_resid_names, "resid_comb", seed)
+        qualifying,
+        gene_to_row,
+        combined_matrix,
+        combined_resid_idx,
+        combined_resid_names,
+        "resid_comb",
+        seed,
+    )
 
     # Print seed summary
     print(f"\n--- Seed {seed} summary ---")
     majority_f1 = results["raw_proteome"]["majority_accuracy"]
-    print(f"  Majority accuracy (per-family modal class): {majority_f1:.3f}" if majority_f1 else "  Majority: N/A")
+    print(
+        f"  Majority accuracy (per-family modal class): {majority_f1:.3f}"
+        if majority_f1
+        else "  Majority: N/A"
+    )
     for key, label in [
         ("raw_proteome", "Raw proteome    "),
         ("resid_proteome", "Resid proteome  "),
@@ -327,40 +396,56 @@ def run_seed(seed: int, qualifying: dict, gene_to_row: dict,
         dn = agg["per_class_auroc"].get("DN")
         gof = agg["per_class_auroc"].get("GOF")
         lof = agg["per_class_auroc"].get("LOF")
-        def _f(v): return f"{v:.3f}" if v is not None else "N/A"
-        print(f"  {label}  F1={_f(f1)}  n={n}  "
-              f"GOF={_f(gof)}  DN={_f(dn)}  LOF={_f(lof)}")
+
+        def _f(v):
+            return f"{v:.3f}" if v is not None else "N/A"
+
+        print(
+            f"  {label}  F1={_f(f1)}  n={n}  "
+            f"GOF={_f(gof)}  DN={_f(dn)}  LOF={_f(lof)}"
+        )
 
     return results
 
 
 def aggregate_seeds(all_results: list[dict]) -> dict:
     summary: dict = {"n_seeds": len(all_results)}
-    for key in ["raw_proteome", "resid_proteome", "raw_badonyi",
-                "resid_badonyi", "resid_combined"]:
-        f1_vals = [r[key]["aggregate"]["macro_f1"] for r in all_results
-                   if r[key]["aggregate"].get("macro_f1") is not None]
+    for key in [
+        "raw_proteome",
+        "resid_proteome",
+        "raw_badonyi",
+        "resid_badonyi",
+        "resid_combined",
+    ]:
+        f1_vals = [
+            r[key]["aggregate"]["macro_f1"]
+            for r in all_results
+            if r[key]["aggregate"].get("macro_f1") is not None
+        ]
         summary[f"{key}_macro_f1_mean"] = float(np.mean(f1_vals)) if f1_vals else None
         summary[f"{key}_macro_f1_std"] = float(np.std(f1_vals)) if f1_vals else None
         for cls in CLASSES:
-            vals = [r[key]["aggregate"]["per_class_auroc"].get(cls)
-                    for r in all_results
-                    if r[key]["aggregate"]["per_class_auroc"].get(cls) is not None]
+            vals = [
+                r[key]["aggregate"]["per_class_auroc"].get(cls)
+                for r in all_results
+                if r[key]["aggregate"]["per_class_auroc"].get(cls) is not None
+            ]
             summary[f"{key}_auroc_{cls}_mean"] = float(np.mean(vals)) if vals else None
             summary[f"{key}_auroc_{cls}_std"] = float(np.std(vals)) if vals else None
     return summary
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Result 16: within-family mechanism prediction")
+    parser = argparse.ArgumentParser(
+        description="Result 16: within-family mechanism prediction"
+    )
     parser.add_argument("--min-genes", type=int, default=6)
     parser.add_argument("--min-classes", type=int, default=2)
     parser.add_argument("--seeds", type=int, nargs="+", default=list(range(5)))
     parser.add_argument("--out-dir", type=str, default=None)
     args = parser.parse_args()
 
-    out_dir = Path(args.out_dir) if args.out_dir else \
-        RESULTS_DIR / "within_family"
+    out_dir = Path(args.out_dir) if args.out_dir else RESULTS_DIR / "within_family"
     out_dir.mkdir(parents=True, exist_ok=True)
 
     print("=== Loading gene list ===")
@@ -372,9 +457,12 @@ def main():
 
     print("\n=== Finding qualifying families ===")
     qualifying = get_qualifying_families(
-        genes, mechs, pfam_map, args.min_genes, args.min_classes)
-    print(f"  {len(qualifying)} qualifying families "
-          f"(>= {args.min_genes} genes, >= {args.min_classes} classes)")
+        genes, mechs, pfam_map, args.min_genes, args.min_classes
+    )
+    print(
+        f"  {len(qualifying)} qualifying families "
+        f"(>= {args.min_genes} genes, >= {args.min_classes} classes)"
+    )
     for fam, gmap in sorted(qualifying.items(), key=lambda x: -len(x[1])):
         cc = Counter(gmap.values())
         print(f"    {fam:<20} n={len(gmap):2d}  {dict(cc)}")
@@ -386,10 +474,12 @@ def main():
     print(f"  Proteome: {prot_matrix.shape}  Badonyi: {bad_matrix.shape}")
 
     # Sanity check residual col indices
-    assert max(RESID_INDICES) < prot_matrix.shape[1], \
-        f"Residual index {max(RESID_INDICES)} out of range for matrix width {prot_matrix.shape[1]}"
-    assert max(BAD_RESID_INDICES) < bad_matrix.shape[1], \
-        f"Badonyi residual index out of range"
+    assert (
+        max(RESID_INDICES) < prot_matrix.shape[1]
+    ), f"Residual index {max(RESID_INDICES)} out of range for matrix width {prot_matrix.shape[1]}"
+    assert (
+        max(BAD_RESID_INDICES) < bad_matrix.shape[1]
+    ), f"Badonyi residual index out of range"
 
     all_results = []
     for seed in args.seeds:
@@ -405,37 +495,43 @@ def main():
     print(f"\nSaved summary: {summary_path}")
 
     # Final summary table
-    print("\n" + "="*72)
+    print("\n" + "=" * 72)
     print("SUMMARY — macro-F1 (mean ± std across seeds, LOGO CV within families)")
-    print("="*72)
+    print("=" * 72)
     print(f"{'Feature set':<22} {'F1':<16} {'GOF':<12} {'DN':<12} {'LOF':<12}")
-    print("-"*72)
+    print("-" * 72)
 
     # A missing std must NOT be reported as ±0.000 — that would falsely claim
     # zero variance across seeds. Render as N/A so the gap is visible.
     def fmt(m, s):
-        if m is None: return "   N/A     "
-        if s is None: return f"{m:.3f}±N/A"
+        if m is None:
+            return "   N/A     "
+        if s is None:
+            return f"{m:.3f}±N/A"
         return f"{m:.3f}±{s:.3f}"
 
     for key, label in [
-        ("raw_proteome",   "Raw proteome   "),
+        ("raw_proteome", "Raw proteome   "),
         ("resid_proteome", "Resid proteome "),
-        ("raw_badonyi",    "Raw Badonyi    "),
-        ("resid_badonyi",  "Resid Badonyi  "),
+        ("raw_badonyi", "Raw Badonyi    "),
+        ("resid_badonyi", "Resid Badonyi  "),
         ("resid_combined", "Resid combined "),
     ]:
-        f1 = fmt(summary.get(f"{key}_macro_f1_mean"),
-                 summary.get(f"{key}_macro_f1_std"))
-        gof = fmt(summary.get(f"{key}_auroc_GOF_mean"),
-                  summary.get(f"{key}_auroc_GOF_std"))
-        dn = fmt(summary.get(f"{key}_auroc_DN_mean"),
-                 summary.get(f"{key}_auroc_DN_std"))
-        lof = fmt(summary.get(f"{key}_auroc_LOF_mean"),
-                  summary.get(f"{key}_auroc_LOF_std"))
+        f1 = fmt(
+            summary.get(f"{key}_macro_f1_mean"), summary.get(f"{key}_macro_f1_std")
+        )
+        gof = fmt(
+            summary.get(f"{key}_auroc_GOF_mean"), summary.get(f"{key}_auroc_GOF_std")
+        )
+        dn = fmt(
+            summary.get(f"{key}_auroc_DN_mean"), summary.get(f"{key}_auroc_DN_std")
+        )
+        lof = fmt(
+            summary.get(f"{key}_auroc_LOF_mean"), summary.get(f"{key}_auroc_LOF_std")
+        )
         print(f"{label:<22} {f1:<16} {gof:<12} {dn:<12} {lof:<12}")
 
-    print("="*72)
+    print("=" * 72)
     print(f"Results: {out_dir}")
 
 

@@ -32,6 +32,7 @@ _LEGACY_GENES = {a["gene"] for a in LEGACY_GENE_ALIASES}
 # helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_workbook(func_rows: list[tuple], cv_rows: list[tuple]) -> openpyxl.Workbook:
     """
     Build an in-memory workbook with Functional_protein_class and
@@ -52,7 +53,9 @@ def _make_workbook(func_rows: list[tuple], cv_rows: list[tuple]) -> openpyxl.Wor
 
     # ClinVar_gene_level sheet
     ws_cv = wb.create_sheet("ClinVar_gene_level")
-    ws_cv.append(["gene", "uniprot_id", "c2", "c3", "c4", "c5", "c6", "c7", "c8", "mechanism"])
+    ws_cv.append(
+        ["gene", "uniprot_id", "c2", "c3", "c4", "c5", "c6", "c7", "c8", "mechanism"]
+    )
     for row in cv_rows:
         # pad to 10 columns
         padded = [row[0], row[1]] + [None] * 7 + [row[2]]
@@ -64,7 +67,9 @@ def _make_workbook(func_rows: list[tuple], cv_rows: list[tuple]) -> openpyxl.Wor
 def _make_g2p_csv(rows: list[dict], tmp_path: Path) -> Path:
     """Write a minimal AllG2P.csv to tmp_path and return its path."""
     path = tmp_path / "AllG2P.csv"
-    df = pd.DataFrame(rows, columns=["gene symbol", "confidence", "molecular mechanism"])
+    df = pd.DataFrame(
+        rows, columns=["gene symbol", "confidence", "molecular mechanism"]
+    )
     df.to_csv(path, index=False)
     return path
 
@@ -72,6 +77,7 @@ def _make_g2p_csv(rows: list[dict], tmp_path: Path) -> Path:
 # ---------------------------------------------------------------------------
 # _load_functional_protein_class
 # ---------------------------------------------------------------------------
+
 
 class TestLoadFunctionalProteinClass:
 
@@ -110,6 +116,7 @@ class TestLoadFunctionalProteinClass:
 # _load_clinvar_gene_level
 # ---------------------------------------------------------------------------
 
+
 class TestLoadClinvarGeneLevel:
 
     def test_uid_extracted(self):
@@ -143,7 +150,9 @@ class TestLoadClinvarGeneLevel:
         assert mech_map["GENE1"] == "Unknown"
 
     def test_unmapped_mechanism_falls_back_to_unknown(self):
-        wb = _make_workbook(func_rows=[], cv_rows=[("GENE1", "P00001", "BIZARRE_VALUE")])
+        wb = _make_workbook(
+            func_rows=[], cv_rows=[("GENE1", "P00001", "BIZARRE_VALUE")]
+        )
         _, mech_map = _load_clinvar_gene_level(wb)
         assert mech_map["GENE1"] == "Unknown"
 
@@ -157,33 +166,48 @@ class TestLoadClinvarGeneLevel:
 # _load_g2p
 # ---------------------------------------------------------------------------
 
+
 class TestLoadG2p:
 
     def _g2p_row(self, gene, confidence, mechanism):
-        return {"gene symbol": gene, "confidence": confidence, "molecular mechanism": mechanism}
+        return {
+            "gene symbol": gene,
+            "confidence": confidence,
+            "molecular mechanism": mechanism,
+        }
 
     def test_lof_mapped_correctly(self, tmp_path):
-        path = _make_g2p_csv([self._g2p_row("GENE1", "definitive", "loss of function")], tmp_path)
+        path = _make_g2p_csv(
+            [self._g2p_row("GENE1", "definitive", "loss of function")], tmp_path
+        )
         result = _load_g2p(path)
         assert result["GENE1"] == "LOF"
 
     def test_gof_mapped_correctly(self, tmp_path):
-        path = _make_g2p_csv([self._g2p_row("GENE1", "strong", "gain of function")], tmp_path)
+        path = _make_g2p_csv(
+            [self._g2p_row("GENE1", "strong", "gain of function")], tmp_path
+        )
         result = _load_g2p(path)
         assert result["GENE1"] == "GOF"
 
     def test_dn_mapped_correctly(self, tmp_path):
-        path = _make_g2p_csv([self._g2p_row("GENE1", "definitive", "dominant negative")], tmp_path)
+        path = _make_g2p_csv(
+            [self._g2p_row("GENE1", "definitive", "dominant negative")], tmp_path
+        )
         result = _load_g2p(path)
         assert result["GENE1"] == "DN"
 
     def test_low_confidence_excluded(self, tmp_path):
-        path = _make_g2p_csv([self._g2p_row("GENE1", "moderate", "loss of function")], tmp_path)
+        path = _make_g2p_csv(
+            [self._g2p_row("GENE1", "moderate", "loss of function")], tmp_path
+        )
         result = _load_g2p(path)
         assert "GENE1" not in result
 
     def test_undetermined_mechanism_excluded(self, tmp_path):
-        path = _make_g2p_csv([self._g2p_row("GENE1", "definitive", "undetermined")], tmp_path)
+        path = _make_g2p_csv(
+            [self._g2p_row("GENE1", "definitive", "undetermined")], tmp_path
+        )
         result = _load_g2p(path)
         assert "GENE1" not in result
 
@@ -230,6 +254,7 @@ class TestLoadG2p:
 # build() — integration tests using tmp_path fixtures
 # ---------------------------------------------------------------------------
 
+
 def _read_tsv(path: Path) -> list[dict]:
     with open(path) as f:
         return list(csv.DictReader(f, delimiter="\t"))
@@ -266,7 +291,13 @@ class TestBuild:
             tmp_path,
             func_rows=[],
             cv_rows=[],
-            g2p_rows=[{"gene symbol": "KRAS", "confidence": "definitive", "molecular mechanism": "gain of function"}],
+            g2p_rows=[
+                {
+                    "gene symbol": "KRAS",
+                    "confidence": "definitive",
+                    "molecular mechanism": "gain of function",
+                }
+            ],
         )
         assert len(rows) == 1
         assert rows[0]["gene"] == "KRAS"
@@ -278,7 +309,13 @@ class TestBuild:
             tmp_path,
             func_rows=[("GENE1", "AD", "Unknown")],
             cv_rows=[("GENE1", "P00001", "Unknown")],
-            g2p_rows=[{"gene symbol": "GENE1", "confidence": "definitive", "molecular mechanism": "loss of function"}],
+            g2p_rows=[
+                {
+                    "gene symbol": "GENE1",
+                    "confidence": "definitive",
+                    "molecular mechanism": "loss of function",
+                }
+            ],
         )
         assert len(rows) == 1
         assert rows[0]["mechanism"] == "LOF"
@@ -298,7 +335,13 @@ class TestBuild:
             tmp_path,
             func_rows=[("BRCA1", "AD", "HI")],
             cv_rows=[("BRCA1", "P38398", "HI")],
-            g2p_rows=[{"gene symbol": "BRCA1", "confidence": "definitive", "molecular mechanism": "loss of function"}],
+            g2p_rows=[
+                {
+                    "gene symbol": "BRCA1",
+                    "confidence": "definitive",
+                    "molecular mechanism": "loss of function",
+                }
+            ],
         )
         assert rows[0]["source"] == "gerasimavicius"
         assert rows[0]["g2p_disagrees"] == "LOF"
@@ -308,7 +351,13 @@ class TestBuild:
             tmp_path,
             func_rows=[("GENE1", "AD", "GOF")],
             cv_rows=[("GENE1", "P00001", "GOF")],
-            g2p_rows=[{"gene symbol": "GENE1", "confidence": "definitive", "molecular mechanism": "gain of function"}],
+            g2p_rows=[
+                {
+                    "gene symbol": "GENE1",
+                    "confidence": "definitive",
+                    "molecular mechanism": "gain of function",
+                }
+            ],
         )
         assert rows[0]["g2p_disagrees"] == ""
 
@@ -347,7 +396,13 @@ class TestBuild:
             tmp_path,
             func_rows=[("GENE1", "AD", "HI")],
             cv_rows=[("GENE1", "P00001", "HI")],
-            g2p_rows=[{"gene symbol": "GENE1", "confidence": "definitive", "molecular mechanism": "loss of function"}],
+            g2p_rows=[
+                {
+                    "gene symbol": "GENE1",
+                    "confidence": "definitive",
+                    "molecular mechanism": "loss of function",
+                }
+            ],
         )
         assert len(rows) == 1
 

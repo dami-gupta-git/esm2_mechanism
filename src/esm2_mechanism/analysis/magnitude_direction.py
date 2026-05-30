@@ -38,9 +38,13 @@ import sys
 import numpy as np
 from collections import defaultdict
 import functools
+
 print = functools.partial(print, flush=True)
 
-from esm2_mechanism.utils_paths import DATA_DIR as _DATA_DIR, RESULTS_DIR as _RESULTS_DIR
+from esm2_mechanism.utils_paths import (
+    DATA_DIR as _DATA_DIR,
+    RESULTS_DIR as _RESULTS_DIR,
+)
 import esm2_mechanism.mechanism.multiseed_v1 as ms  # loaders, CV helpers, probes
 from esm2_mechanism.utils_probes import run_logreg_binary_cv
 
@@ -50,21 +54,21 @@ OUT = str(_RESULTS_DIR / "magnitude_direction")
 os.makedirs(OUT, exist_ok=True)
 
 # ── Pre-registered thresholds ────────────────────────────────────────────────
-P1_PATH_MAG_MIN = 0.85   # magnitude-only pathogenicity AUROC, family-split
-P2_PATH_DIR_MAX = 0.70   # direction-only pathogenicity AUROC, family-split
-P3_MECH_MARGIN  = 0.02   # direction-only mechanism F1 vs chance floor, family-split
+P1_PATH_MAG_MIN = 0.85  # magnitude-only pathogenicity AUROC, family-split
+P2_PATH_DIR_MAX = 0.70  # direction-only pathogenicity AUROC, family-split
+P3_MECH_MARGIN = 0.02  # direction-only mechanism F1 vs chance floor, family-split
 P4_SIGN_AUROC_MIN = 0.65  # S1724 sign(ddG) AUROC
 P4_MAG_SPEARMAN_MIN = 0.30  # S1724 Spearman(||d||, |ddG|)
 
 # S1724 caches produced by megascale_stability.py (result_21)
-S1724_WT_EMB  = os.path.join(EMB, "megascale_wt_mean.npy")
+S1724_WT_EMB = os.path.join(EMB, "megascale_wt_mean.npy")
 S1724_MUT_EMB = os.path.join(EMB, "megascale_mut_mean.npy")
 S1724_VARIANTS = os.path.join(DATA, "megascale_variants.json")
 
 # Canonical pathogenicity set (the one result_6's 0.884 family-split AUROC was
 # computed on — n=16,576). NOT the older n17259 extraction in multiseed_v1.
 PATH_CANON_VARIANTS = os.path.join(DATA, "pathogenicity_valid_variants_canonical.json")
-PATH_CANON_WT_EMB  = os.path.join(EMB, "emb_wt_mean_path_canonical_n16576.npy")
+PATH_CANON_WT_EMB = os.path.join(EMB, "emb_wt_mean_path_canonical_n16576.npy")
 PATH_CANON_MUT_EMB = os.path.join(EMB, "emb_mut_mean_path_canonical_n16576.npy")
 
 
@@ -78,22 +82,26 @@ def load_pathogenicity_canonical():
     genes = np.array([v["gene"] for v in variants])
     y = np.array([1 if v["label"] == "pathogenic" else 0 for v in variants])
     assert len(delta) == len(y), f"path emb/variant mismatch: {len(delta)} vs {len(y)}"
-    print(f"  Pathogenicity (canonical): {len(variants)} variants, "
-          f"{len(set(genes))} genes, {int(y.sum())} path / {int((1-y).sum())} benign")
+    print(
+        f"  Pathogenicity (canonical): {len(variants)} variants, "
+        f"{len(set(genes))} genes, {int(y.sum())} path / {int((1-y).sum())} benign"
+    )
     return delta, y, genes
 
 
 # ── Feature transforms ───────────────────────────────────────────────────────
 
+
 def decompose(delta):
     """Return {'full': delta, 'mag': ||d|| (N,1), 'dir': d/||d|| (N,1280)}."""
     norm = np.linalg.norm(delta, axis=1, keepdims=True)
-    mag = norm.astype(np.float32)                     # (N, 1)
+    mag = norm.astype(np.float32)  # (N, 1)
     direction = (delta / (norm + 1e-8)).astype(np.float32)
     return {"full": delta.astype(np.float32), "mag": mag, "dir": direction}
 
 
 # ── Multiclass logreg probe (macro-F1 + per-class AUROC) ─────────────────────
+
 
 def run_logreg_multi(X, labels, splits, seed=42):
     from sklearn.linear_model import LogisticRegression
@@ -109,16 +117,20 @@ def run_logreg_multi(X, labels, splits, seed=42):
         if len(set(y[tr])) < len(classes):
             continue
         sc = StandardScaler()
-        Xtr = sc.fit_transform(X[tr]); Xte = sc.transform(X[te])
-        clf = LogisticRegression(max_iter=2000, C=1.0,
-                                 class_weight="balanced", random_state=seed)
+        Xtr = sc.fit_transform(X[tr])
+        Xte = sc.transform(X[te])
+        clf = LogisticRegression(
+            max_iter=2000, C=1.0, class_weight="balanced", random_state=seed
+        )
         clf.fit(Xtr, y[tr])
         raw_proba = clf.predict_proba(Xte)
         proba = np.zeros((len(Xte), len(classes)), dtype=np.float32)
         for ci, c in enumerate(clf.classes_):
             proba[:, c] = raw_proba[:, ci]
         pred = proba.argmax(axis=1)
-        fm = {"macro_f1": float(f1_score(y[te], pred, average="macro", zero_division=0))}
+        fm = {
+            "macro_f1": float(f1_score(y[te], pred, average="macro", zero_division=0))
+        }
         for i, cls in enumerate(classes):
             yb = (y[te] == i).astype(int)
             if yb.sum() > 0 and (1 - yb).sum() > 0:
@@ -140,6 +152,7 @@ def chance_floor_multi(labels, splits):
     from sklearn.dummy import DummyClassifier
     from sklearn.preprocessing import LabelEncoder
     from sklearn.metrics import f1_score
+
     le = LabelEncoder()
     y = le.fit_transform(labels)
     f1s = []
@@ -155,6 +168,7 @@ def chance_floor_multi(labels, splits):
 
 # ── Aggregation across seeds ─────────────────────────────────────────────────
 
+
 def agg_seeds(per_seed_vals):
     vals = [v for v in per_seed_vals if v is not None and not np.isnan(v)]
     if not vals:
@@ -163,6 +177,7 @@ def agg_seeds(per_seed_vals):
 
 
 # ── Probe A + B: pathogenicity (binary) ──────────────────────────────────────
+
 
 def run_pathogenicity(pfam_map, seeds):
     print("\n" + "=" * 60)
@@ -182,8 +197,10 @@ def run_pathogenicity(pfam_map, seeds):
                 mlp = ms.run_mlp_binary(X, y, splits, seed=seed).get("auroc_mean")
                 collect[fname][split_name]["logreg"].append(lr)
                 collect[fname][split_name]["mlp"].append(mlp)
-                print(f"  seed{seed} {fname:4s} {split_name:12s} "
-                      f"logreg={_f(lr)} mlp={_f(mlp)}")
+                print(
+                    f"  seed{seed} {fname:4s} {split_name:12s} "
+                    f"logreg={_f(lr)} mlp={_f(mlp)}"
+                )
 
     out = {}
     for fname in feats:
@@ -197,6 +214,7 @@ def run_pathogenicity(pfam_map, seeds):
 
 
 # ── Probe A + B: mechanism (3-class) ─────────────────────────────────────────
+
 
 def run_mechanism(pfam_map, seeds):
     print("\n" + "=" * 60)
@@ -218,11 +236,15 @@ def run_mechanism(pfam_map, seeds):
                 mlp = ms.run_mlp_probe(X, labels, splits, seed=seed)
                 collect[fname][split_name]["logreg_f1"].append(lr.get("macro_f1_mean"))
                 collect[fname][split_name]["mlp_f1"].append(mlp.get("macro_f1_mean"))
-                collect[fname][split_name]["logreg_gof"].append(lr.get("auroc_GOF_mean"))
+                collect[fname][split_name]["logreg_gof"].append(
+                    lr.get("auroc_GOF_mean")
+                )
                 collect[fname][split_name]["mlp_gof"].append(mlp.get("auroc_GOF_mean"))
-                print(f"  seed{seed} {fname:4s} {split_name:12s} "
-                      f"F1(lr={_f(lr.get('macro_f1_mean'))} "
-                      f"mlp={_f(mlp.get('macro_f1_mean'))})")
+                print(
+                    f"  seed{seed} {fname:4s} {split_name:12s} "
+                    f"F1(lr={_f(lr.get('macro_f1_mean'))} "
+                    f"mlp={_f(mlp.get('macro_f1_mean'))})"
+                )
 
     out = {"chance_floor": {k: agg_seeds(v) for k, v in floor.items()}}
     for fname in feats:
@@ -240,22 +262,30 @@ def run_mechanism(pfam_map, seeds):
 
 # ── Probe C: biophysical direction on S1724 signed ddG ───────────────────────
 
+
 def run_biophysical_direction(seeds):
-    if not (os.path.exists(S1724_WT_EMB) and os.path.exists(S1724_MUT_EMB)
-            and os.path.exists(S1724_VARIANTS)):
-        print("\n[Probe C] S1724 embeddings not cached yet "
-              "(run megascale_stability.py / result_21 first) — skipping.")
+    if not (
+        os.path.exists(S1724_WT_EMB)
+        and os.path.exists(S1724_MUT_EMB)
+        and os.path.exists(S1724_VARIANTS)
+    ):
+        print(
+            "\n[Probe C] S1724 embeddings not cached yet "
+            "(run megascale_stability.py / result_21 first) — skipping."
+        )
         return None
 
     print("\n" + "=" * 60)
     print("PROBE C  biophysical direction (S1724 signed ddG, protein-holdout)")
     print("=" * 60)
     from scipy.stats import spearmanr
+
     with open(S1724_VARIANTS) as _f:
         variants = json.load(_f)
     ddg = np.array([v["ddg"] for v in variants], dtype=np.float64)
     proteins = np.array([v["protein"] for v in variants])
-    wt = np.load(S1724_WT_EMB); mut = np.load(S1724_MUT_EMB)
+    wt = np.load(S1724_WT_EMB)
+    mut = np.load(S1724_MUT_EMB)
     delta = mut - wt
     n = min(len(delta), len(ddg), len(proteins))
     delta, ddg, proteins = delta[:n], ddg[:n], proteins[:n]
@@ -277,7 +307,9 @@ def run_biophysical_direction(seeds):
         c2[fname] = agg_seeds(per_seed)
 
     print(f"  C1 Spearman(||d||, |ddG|) = {c1_rho:.3f}")
-    print(f"  C2 sign(ddG) AUROC full={_f(c2['full']['mean'])} dir={_f(c2['dir']['mean'])}")
+    print(
+        f"  C2 sign(ddG) AUROC full={_f(c2['full']['mean'])} dir={_f(c2['dir']['mean'])}"
+    )
     return {
         "n_variants": int(n),
         "n_proteins": int(len(set(proteins.tolist()))),
@@ -301,38 +333,55 @@ def _best(path_block, split, metric_lr, metric_mlp):
 
 # ── Gates ────────────────────────────────────────────────────────────────────
 
+
 def evaluate_gates(path_res, mech_res, bio_res):
     gates = {}
 
     # P1: magnitude-only pathogenicity AUROC >= 0.85 (family-split, best probe)
     p1_val = _best(path_res["mag"], "family_split", "logreg_auroc", "mlp_auroc")
-    gates["P1"] = {"desc": "magnitude-only pathogenicity AUROC >= 0.85 (family-split)",
-                   "value": p1_val, "threshold": P1_PATH_MAG_MIN,
-                   "passed": bool(p1_val >= P1_PATH_MAG_MIN)}
+    gates["P1"] = {
+        "desc": "magnitude-only pathogenicity AUROC >= 0.85 (family-split)",
+        "value": p1_val,
+        "threshold": P1_PATH_MAG_MIN,
+        "passed": bool(p1_val >= P1_PATH_MAG_MIN),
+    }
 
     # P2: direction-only pathogenicity AUROC <= 0.70 (family-split, best probe)
     p2_val = _best(path_res["dir"], "family_split", "logreg_auroc", "mlp_auroc")
-    gates["P2"] = {"desc": "direction-only pathogenicity AUROC <= 0.70 (family-split)",
-                   "value": p2_val, "threshold": P2_PATH_DIR_MAX,
-                   "passed": bool(p2_val <= P2_PATH_DIR_MAX)}
+    gates["P2"] = {
+        "desc": "direction-only pathogenicity AUROC <= 0.70 (family-split)",
+        "value": p2_val,
+        "threshold": P2_PATH_DIR_MAX,
+        "passed": bool(p2_val <= P2_PATH_DIR_MAX),
+    }
 
     # P3: direction-only mechanism F1 <= chance_floor + 0.02 (family-split, MLP)
     floor = mech_res["chance_floor"]["family_split"]["mean"]
     p3_val = mech_res["dir"]["family_split"]["mlp_macro_f1"]["mean"]
     p3_thr = floor + P3_MECH_MARGIN
-    gates["P3"] = {"desc": "direction-only mechanism macro-F1 <= chance_floor + 0.02 (family-split)",
-                   "value": p3_val, "chance_floor": floor, "threshold": p3_thr,
-                   "passed": bool(p3_val <= p3_thr)}
+    gates["P3"] = {
+        "desc": "direction-only mechanism macro-F1 <= chance_floor + 0.02 (family-split)",
+        "value": p3_val,
+        "chance_floor": floor,
+        "threshold": p3_thr,
+        "passed": bool(p3_val <= p3_thr),
+    }
 
     # P4: S1724 sign(ddG) AUROC >= 0.65 AND Spearman(||d||,|ddG|) >= 0.30
     if bio_res is not None:
-        sign_auroc = max(bio_res["c2_sign_auroc"]["full"]["mean"],
-                         bio_res["c2_sign_auroc"]["dir"]["mean"])
+        sign_auroc = max(
+            bio_res["c2_sign_auroc"]["full"]["mean"],
+            bio_res["c2_sign_auroc"]["dir"]["mean"],
+        )
         rho = bio_res["c1_spearman_mag_absddg"]
-        gates["P4"] = {"desc": "S1724 sign(ddG) AUROC >= 0.65 AND Spearman >= 0.30",
-                       "sign_auroc": sign_auroc, "spearman": rho,
-                       "passed": bool(sign_auroc >= P4_SIGN_AUROC_MIN
-                                      and rho >= P4_MAG_SPEARMAN_MIN)}
+        gates["P4"] = {
+            "desc": "S1724 sign(ddG) AUROC >= 0.65 AND Spearman >= 0.30",
+            "sign_auroc": sign_auroc,
+            "spearman": rho,
+            "passed": bool(
+                sign_auroc >= P4_SIGN_AUROC_MIN and rho >= P4_MAG_SPEARMAN_MIN
+            ),
+        }
     else:
         gates["P4"] = {"desc": "S1724 not cached — Probe C skipped", "passed": None}
 
@@ -357,12 +406,23 @@ def main():
     print("\n" + "=" * 60)
     print("HEADLINE — magnitude vs direction (family-split)")
     print("=" * 60)
-    def pa(feat, probe): return path_res[feat]["family_split"][probe]["mean"]
-    def me(feat): return mech_res[feat]["family_split"]["mlp_macro_f1"]["mean"]
+
+    def pa(feat, probe):
+        return path_res[feat]["family_split"][probe]["mean"]
+
+    def me(feat):
+        return mech_res[feat]["family_split"]["mlp_macro_f1"]["mean"]
+
     print("  Pathogenicity AUROC (family-split):")
-    print(f"    full delta   logreg={pa('full','logreg_auroc'):.3f}  mlp={pa('full','mlp_auroc'):.3f}")
-    print(f"    magnitude    logreg={pa('mag','logreg_auroc'):.3f}  mlp={pa('mag','mlp_auroc'):.3f}")
-    print(f"    direction    logreg={pa('dir','logreg_auroc'):.3f}  mlp={pa('dir','mlp_auroc'):.3f}")
+    print(
+        f"    full delta   logreg={pa('full','logreg_auroc'):.3f}  mlp={pa('full','mlp_auroc'):.3f}"
+    )
+    print(
+        f"    magnitude    logreg={pa('mag','logreg_auroc'):.3f}  mlp={pa('mag','mlp_auroc'):.3f}"
+    )
+    print(
+        f"    direction    logreg={pa('dir','logreg_auroc'):.3f}  mlp={pa('dir','mlp_auroc'):.3f}"
+    )
     print("  Mechanism macro-F1 (family-split, MLP):")
     print(f"    chance floor = {mech_res['chance_floor']['family_split']['mean']:.3f}")
     print(f"    full delta   = {me('full'):.3f}")
@@ -378,9 +438,14 @@ def main():
         print(f"       -> {status}")
 
     p1, p3 = gates["P1"]["passed"], gates["P3"]["passed"]
-    print("\n  Load-bearing (P1 AND P3):",
-          "PASS — magnitude carries pathogenicity, direction carries no mechanism."
-          if (p1 and p3) else "NOT MET — see plan failure modes.")
+    print(
+        "\n  Load-bearing (P1 AND P3):",
+        (
+            "PASS — magnitude carries pathogenicity, direction carries no mechanism."
+            if (p1 and p3)
+            else "NOT MET — see plan failure modes."
+        ),
+    )
 
     result = {
         "seeds": args.seeds,

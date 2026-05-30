@@ -41,6 +41,7 @@ import numpy as np
 import pandas as pd
 from sklearn.metrics import roc_auc_score
 import functools
+
 print = functools.partial(print, flush=True)
 
 from esm2_mechanism.utils_paths import DATA_DIR, RESULTS_DIR
@@ -62,6 +63,7 @@ N_FOLDS = 5
 # Data
 # ---------------------------------------------------------------------------
 
+
 def load_gene_table():
     """Per-gene table with raw Badonyi pDN/pGOF/pLOF, family, cluster,
     training-set membership, 3-class label."""
@@ -71,11 +73,13 @@ def load_gene_table():
 
     print(f"Loading Badonyi S3...")
     s3 = pd.read_excel(BADONYI_S3, sheet_name="table_S3")
+
     # Parse train flag "DN|GOF|LOF"
     def parse(s):
         if pd.isna(s):
             return (0, 0, 0)
         return tuple(int(b) for b in str(s).split("|"))
+
     parts = s3["train_dn_gof_lof"].map(parse)
     s3["tr_DN"] = [p[0] for p in parts]
     s3["tr_GOF"] = [p[1] for p in parts]
@@ -98,11 +102,14 @@ def load_gene_table():
         if m in ("HI", "AR", "LOF"):
             return "LOF"
         return None
+
     df["label3"] = df["mechanism"].map(collapse)
 
     s3_lookup = s3.set_index("gene")
     for col in ["pDN", "pGOF", "pLOF", "tr_DN", "tr_GOF", "tr_LOF", "in_any"]:
-        df[col] = df["gene"].map(lambda g: s3_lookup[col].get(g) if g in s3_lookup.index else None)
+        df[col] = df["gene"].map(
+            lambda g: s3_lookup[col].get(g) if g in s3_lookup.index else None
+        )
 
     df["pfam"] = df["gene"].map(lambda g: pfam.get(g))
     df["cluster"] = df["gene"].map(lambda g: gene_to_cluster.get(g))
@@ -119,6 +126,7 @@ def load_gene_table():
 # Group-based holdout
 # ---------------------------------------------------------------------------
 
+
 def assign_folds(df, group_col, n_folds, seed):
     """Return per-row fold assignment. Rows where group_col is None get
     fold=-1 (excluded from CV)."""
@@ -133,6 +141,7 @@ def assign_folds(df, group_col, n_folds, seed):
 # AUROC evaluation
 # ---------------------------------------------------------------------------
 
+
 def compute_aurocs(df, mask=None):
     """Three binary AUROCs from raw Badonyi predictions.
 
@@ -144,8 +153,10 @@ def compute_aurocs(df, mask=None):
         base = base[mask].copy()
     base = base[base["label3"].notna() & base["pDN"].notna()].copy()
 
-    out = {"n_total": int(len(base)),
-           "class_dist": dict(Counter(base["label3"].tolist()))}
+    out = {
+        "n_total": int(len(base)),
+        "class_dist": dict(Counter(base["label3"].tolist())),
+    }
 
     # DN-vs-LOF
     sub = base[base["label3"].isin(["DN", "LOF"])].copy()
@@ -222,14 +233,18 @@ def run_holdout(df, group_col, n_folds, seed):
             fold_mean[key + "_fold_std"] = float(np.std(vals))
             fold_mean[key + "_n_folds_valid"] = len(vals)
 
-    return {"all_holdout": agg, "fold_mean_aurocs": fold_mean,
-            "folds": fold_results,
-            "n_rows_with_group": int(mask.sum())}
+    return {
+        "all_holdout": agg,
+        "fold_mean_aurocs": fold_mean,
+        "folds": fold_results,
+        "n_rows_with_group": int(mask.sum()),
+    }
 
 
 # ---------------------------------------------------------------------------
 # Seed runner
 # ---------------------------------------------------------------------------
+
 
 def _fmt(v):
     return f"{v:.3f}" if v is not None else "N/A"
@@ -250,15 +265,19 @@ def run_seed(df, seed, n_folds):
     print("\n  Pfam family-split holdout")
     out["family_holdout"] = run_holdout(df, "pfam", n_folds, seed)
     fa = out["family_holdout"]["all_holdout"]
-    print(f"    All-rows (held-out): DN={_fmt(fa['DN_vs_LOF'])}  "
-          f"GOF={_fmt(fa['GOF_vs_LOF'])}  LOF={_fmt(fa['LOF_vs_nonLOF'])}")
+    print(
+        f"    All-rows (held-out): DN={_fmt(fa['DN_vs_LOF'])}  "
+        f"GOF={_fmt(fa['GOF_vs_LOF'])}  LOF={_fmt(fa['LOF_vs_nonLOF'])}"
+    )
 
     # MMseqs2-20 holdout
     print("\n  MMseqs2-20 cluster-split holdout")
     out["mmseqs_holdout"] = run_holdout(df, "cluster", n_folds, seed)
     ma = out["mmseqs_holdout"]["all_holdout"]
-    print(f"    All-rows (held-out): DN={_fmt(ma['DN_vs_LOF'])}  "
-          f"GOF={_fmt(ma['GOF_vs_LOF'])}  LOF={_fmt(ma['LOF_vs_nonLOF'])}")
+    print(
+        f"    All-rows (held-out): DN={_fmt(ma['DN_vs_LOF'])}  "
+        f"GOF={_fmt(ma['GOF_vs_LOF'])}  LOF={_fmt(ma['LOF_vs_nonLOF'])}"
+    )
 
     # Stratified: IN vs OUT of Badonyi training
     print("\n  Stratified by Badonyi training-set membership (in any classifier)")
@@ -266,14 +285,18 @@ def run_seed(df, seed, n_folds):
     out_mask = df["in_any"] == 0
     out["badonyi_in_train"] = compute_aurocs(df, mask=in_mask)
     out["badonyi_out_train"] = compute_aurocs(df, mask=out_mask)
-    print(f"    IN-Badonyi: n={out['badonyi_in_train']['n_total']}, "
-          f"DN={out['badonyi_in_train'].get('DN_vs_LOF', 'NA')}, "
-          f"GOF={out['badonyi_in_train'].get('GOF_vs_LOF', 'NA')}, "
-          f"LOF={out['badonyi_in_train'].get('LOF_vs_nonLOF', 'NA')}")
-    print(f"    OUT-Badonyi: n={out['badonyi_out_train']['n_total']}, "
-          f"DN={out['badonyi_out_train'].get('DN_vs_LOF', 'NA')}, "
-          f"GOF={out['badonyi_out_train'].get('GOF_vs_LOF', 'NA')}, "
-          f"LOF={out['badonyi_out_train'].get('LOF_vs_nonLOF', 'NA')}")
+    print(
+        f"    IN-Badonyi: n={out['badonyi_in_train']['n_total']}, "
+        f"DN={out['badonyi_in_train'].get('DN_vs_LOF', 'NA')}, "
+        f"GOF={out['badonyi_in_train'].get('GOF_vs_LOF', 'NA')}, "
+        f"LOF={out['badonyi_in_train'].get('LOF_vs_nonLOF', 'NA')}"
+    )
+    print(
+        f"    OUT-Badonyi: n={out['badonyi_out_train']['n_total']}, "
+        f"DN={out['badonyi_out_train'].get('DN_vs_LOF', 'NA')}, "
+        f"GOF={out['badonyi_out_train'].get('GOF_vs_LOF', 'NA')}, "
+        f"LOF={out['badonyi_out_train'].get('LOF_vs_nonLOF', 'NA')}"
+    )
 
     return out
 
@@ -282,11 +305,13 @@ def aggregate_seeds(all_seed):
     """Mean ± std of the 'all_holdout' AUROC across seeds, per holdout."""
     summary = {"n_seeds": len(all_seed)}
 
-    for key, label in [("baseline_no_holdout", "baseline_no_holdout"),
-                       ("family_holdout", "family_holdout"),
-                       ("mmseqs_holdout", "mmseqs_holdout"),
-                       ("badonyi_in_train", "badonyi_in_train"),
-                       ("badonyi_out_train", "badonyi_out_train")]:
+    for key, label in [
+        ("baseline_no_holdout", "baseline_no_holdout"),
+        ("family_holdout", "family_holdout"),
+        ("mmseqs_holdout", "mmseqs_holdout"),
+        ("badonyi_in_train", "badonyi_in_train"),
+        ("badonyi_out_train", "badonyi_out_train"),
+    ]:
         cur = {}
         for metric in ["DN_vs_LOF", "GOF_vs_LOF", "LOF_vs_nonLOF"]:
             vals = []
@@ -339,20 +364,29 @@ def print_table(summary):
             return "      N/A      "
         return f"{m:.3f} ± {s:.3f}"
 
-    for h, label in [("baseline_no_holdout",   "none (whole labeled set)"),
-                     ("family_holdout",        "Pfam family-split"),
-                     ("mmseqs_holdout",        "MMseqs2-20 cluster-split"),
-                     ("badonyi_in_train",      "Badonyi IN-train (no h-out)"),
-                     ("badonyi_out_train",     "Badonyi OUT-train (no h-out)")]:
+    for h, label in [
+        ("baseline_no_holdout", "none (whole labeled set)"),
+        ("family_holdout", "Pfam family-split"),
+        ("mmseqs_holdout", "MMseqs2-20 cluster-split"),
+        ("badonyi_in_train", "Badonyi IN-train (no h-out)"),
+        ("badonyi_out_train", "Badonyi OUT-train (no h-out)"),
+    ]:
         d = summary[h]
         n = d.get("n_total_first", "—")
-        print(f"{label:<28} {fmt(d,'DN_vs_LOF'):<22} {fmt(d,'GOF_vs_LOF'):<22} {fmt(d,'LOF_vs_nonLOF'):<22}  n={n}")
+        print(
+            f"{label:<28} {fmt(d,'DN_vs_LOF'):<22} {fmt(d,'GOF_vs_LOF'):<22} {fmt(d,'LOF_vs_nonLOF'):<22}  n={n}"
+        )
 
-    print("\nΔ AUROC vs no-holdout baseline (pre-registered: ≥−0.03 robust, ≤−0.10 mostly leakage)")
+    print(
+        "\nΔ AUROC vs no-holdout baseline (pre-registered: ≥−0.03 robust, ≤−0.10 mostly leakage)"
+    )
     print("-" * 100)
-    for h_key, label in [("family_holdout", "Pfam family-split"),
-                         ("mmseqs_holdout", "MMseqs2-20 cluster-split")]:
+    for h_key, label in [
+        ("family_holdout", "Pfam family-split"),
+        ("mmseqs_holdout", "MMseqs2-20 cluster-split"),
+    ]:
         d = summary["deltas_vs_baseline"][h_key]
+
         def f(k):
             v = d.get(f"delta_{k}")
             if v is None:
@@ -365,7 +399,10 @@ def print_table(summary):
             else:
                 tag = "  PARTIAL"
             return f"{v:+.3f}{tag}"
-        print(f"{label:<28} DN: {f('DN_vs_LOF'):<24} GOF: {f('GOF_vs_LOF'):<24} LOF: {f('LOF_vs_nonLOF')}")
+
+        print(
+            f"{label:<28} DN: {f('DN_vs_LOF'):<24} GOF: {f('GOF_vs_LOF'):<24} LOF: {f('LOF_vs_nonLOF')}"
+        )
     print("=" * 100)
 
 

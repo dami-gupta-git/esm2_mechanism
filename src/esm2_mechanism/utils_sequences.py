@@ -16,8 +16,8 @@ import urllib.request
 print = functools.partial(print, flush=True)
 
 UNIPROT_REST = "https://rest.uniprot.org/uniprotkb"
-MAX_SEQ_LEN = 1022   # ESM-2 token limit
-WINDOW_HALF = 500    # half-window size for sequences > MAX_SEQ_LEN
+MAX_SEQ_LEN = 1022  # ESM-2 token limit
+WINDOW_HALF = 500  # half-window size for sequences > MAX_SEQ_LEN
 
 
 class TransientFetchError(Exception):
@@ -30,7 +30,10 @@ class TransientFetchError(Exception):
 # UniProt sequence fetching
 # ---------------------------------------------------------------------------
 
-def fetch_uniprot_sequence(uniprot_id: str, retries: int = 3, delay: float = 1.0) -> str | None:
+
+def fetch_uniprot_sequence(
+    uniprot_id: str, retries: int = 3, delay: float = 1.0
+) -> str | None:
     """Fetch canonical protein sequence from UniProt.
 
     Returns the sequence string on success, or None when the server definitively
@@ -40,6 +43,7 @@ def fetch_uniprot_sequence(uniprot_id: str, retries: int = 3, delay: float = 1.0
     network or server error. Callers must not cache this outcome.
     """
     import urllib.error
+
     url = f"{UNIPROT_REST}/{uniprot_id}.fasta"
     last_exc: Exception | None = None
     for attempt in range(retries):
@@ -57,7 +61,9 @@ def fetch_uniprot_sequence(uniprot_id: str, retries: int = 3, delay: float = 1.0
             last_exc = exc
         if attempt < retries - 1:
             time.sleep(delay)
-    print(f"  WARNING: transient fetch failure for {uniprot_id}: {last_exc} — will retry next run")
+    print(
+        f"  WARNING: transient fetch failure for {uniprot_id}: {last_exc} — will retry next run"
+    )
     raise TransientFetchError(uniprot_id) from last_exc
 
 
@@ -93,7 +99,9 @@ def build_sequence_cache(variants: list[dict], cache_dir: str) -> dict[str, str]
             sequences[uid] = seq
         time.sleep(0.3)
     if transient_failures:
-        print(f"  WARNING: {transient_failures} UIDs had transient failures — skipping cache write, will retry next run")
+        print(
+            f"  WARNING: {transient_failures} UIDs had transient failures — skipping cache write, will retry next run"
+        )
         return sequences
 
     tmp_path = cache_path + ".tmp"
@@ -108,6 +116,7 @@ def build_sequence_cache(variants: list[dict], cache_dir: str) -> dict[str, str]
 # ---------------------------------------------------------------------------
 # Pfam family fetching
 # ---------------------------------------------------------------------------
+
 
 def fetch_pfam_families(variants: list[dict], cache_dir: str) -> dict[str, str | None]:
     """Fetch primary Pfam family for each unique gene via UniProt.
@@ -128,7 +137,9 @@ def fetch_pfam_families(variants: list[dict], cache_dir: str) -> dict[str, str |
             os.remove(cache_path)
 
     pfam_map: dict[str, str | None] = {}
-    unique_pairs = {(v["gene"], v["uniprot_id"]) for v in variants if v.get("uniprot_id")}
+    unique_pairs = {
+        (v["gene"], v["uniprot_id"]) for v in variants if v.get("uniprot_id")
+    }
     print(f"Fetching Pfam families for {len(unique_pairs)} genes...")
 
     transient_failures = 0
@@ -148,17 +159,25 @@ def fetch_pfam_families(variants: list[dict], cache_dir: str) -> dict[str, str |
             if exc.code == 404:
                 pfam_map[gene] = None
             else:
-                print(f"  WARNING: transient HTTP {exc.code} for {uniprot_id} — skipping, will retry next run")
+                print(
+                    f"  WARNING: transient HTTP {exc.code} for {uniprot_id} — skipping, will retry next run"
+                )
                 transient_failures += 1
         except Exception as exc:
-            print(f"  WARNING: transient fetch failure for {uniprot_id}: {exc} — skipping, will retry next run")
+            print(
+                f"  WARNING: transient fetch failure for {uniprot_id}: {exc} — skipping, will retry next run"
+            )
             transient_failures += 1
         time.sleep(0.3)
 
     if transient_failures:
-        print(f"  WARNING: {transient_failures} genes had transient failures — skipping cache write, will retry next run")
+        print(
+            f"  WARNING: {transient_failures} genes had transient failures — skipping cache write, will retry next run"
+        )
         n_annotated = sum(1 for v in pfam_map.values() if v is not None)
-        print(f"  Pfam annotations so far: {n_annotated}/{len(pfam_map)} genes (partial)")
+        print(
+            f"  Pfam annotations so far: {n_annotated}/{len(pfam_map)} genes (partial)"
+        )
         return pfam_map
 
     tmp_path = cache_path + ".tmp"
@@ -175,6 +194,7 @@ def fetch_pfam_families(variants: list[dict], cache_dir: str) -> dict[str, str |
 # Sequence manipulation
 # ---------------------------------------------------------------------------
 
+
 def apply_missense(sequence: str, aa_pos: int, aa_wt: str, aa_mut: str) -> str | None:
     """Apply a missense mutation (1-indexed aa_pos). Returns None on mismatch or OOB."""
     idx = aa_pos - 1
@@ -187,9 +207,12 @@ def apply_missense(sequence: str, aa_pos: int, aa_wt: str, aa_mut: str) -> str |
     return "".join(seq_list)
 
 
-def window_sequence(sequence: str, aa_pos: int,
-                    window_half: int = WINDOW_HALF,
-                    max_len: int = MAX_SEQ_LEN) -> tuple[str, int]:
+def window_sequence(
+    sequence: str,
+    aa_pos: int,
+    window_half: int = WINDOW_HALF,
+    max_len: int = MAX_SEQ_LEN,
+) -> tuple[str, int]:
     """Extract a window of at most max_len residues centred on aa_pos.
 
     Returns (windowed_seq, new_aa_pos) where new_aa_pos is 1-indexed in the

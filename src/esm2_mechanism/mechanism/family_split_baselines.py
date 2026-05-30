@@ -18,13 +18,23 @@ from collections import Counter
 
 import numpy as np
 
-from esm2_mechanism.embeddings.esm2_mechanism import _load_data, _load_alphamissense_scores, ESM2_MODEL_650M
-from esm2_mechanism.utils_sequences import build_sequence_cache, window_sequence, apply_missense, fetch_pfam_families
+from esm2_mechanism.embeddings.esm2_mechanism import (
+    _load_data,
+    _load_alphamissense_scores,
+    ESM2_MODEL_650M,
+)
+from esm2_mechanism.utils_sequences import (
+    build_sequence_cache,
+    window_sequence,
+    apply_missense,
+    fetch_pfam_families,
+)
 from esm2_mechanism.utils_probes import gene_split_cv, family_split_cv
 
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import roc_auc_score, f1_score, precision_recall_curve, auc
 import functools
+
 print = functools.partial(print, flush=True)
 
 
@@ -40,14 +50,16 @@ def run_probe_on_splits(X, y, splits, seed=42):
         y_train, y_test = y[train_idx], y[test_idx]
         if len(set(y_train)) < 2:
             continue
-        clf = LogisticRegression(max_iter=1000, C=1.0, solver="lbfgs",
-                                  random_state=seed)
+        clf = LogisticRegression(
+            max_iter=1000, C=1.0, solver="lbfgs", random_state=seed
+        )
         clf.fit(X_train, y_train)
         proba = clf.predict_proba(X_test)
         pred = clf.predict(X_test)
 
-        fm = {"macro_f1": float(f1_score(y_test, pred, average="macro",
-                                          zero_division=0))}
+        fm = {
+            "macro_f1": float(f1_score(y_test, pred, average="macro", zero_division=0))
+        }
         for i, cls in enumerate(clf.classes_):
             y_bin = (y_test == cls).astype(int)
             if y_bin.sum() > 0 and (1 - y_bin).sum() > 0:
@@ -83,8 +95,12 @@ def build_onehot(aa_wt_list, aa_mut_list):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--run_dir", type=str, default="run_0",
-                        help="Directory containing data/ with cached embeddings")
+    parser.add_argument(
+        "--run_dir",
+        type=str,
+        default="run_0",
+        help="Directory containing data/ with cached embeddings",
+    )
     parser.add_argument("--model", type=str, default=ESM2_MODEL_650M)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--n_folds", type=int, default=5)
@@ -119,8 +135,8 @@ def main():
     # 2. Load cached embeddings
     # ------------------------------------------------------------------
     emb_dir = os.path.join(data_dir, "embeddings", args.model)
-    emb_cache_wt     = os.path.join(emb_dir, "embeddings_wt_mean.npy")
-    emb_cache_mut    = os.path.join(emb_dir, "embeddings_mut_mean.npy")
+    emb_cache_wt = os.path.join(emb_dir, "embeddings_wt_mean.npy")
+    emb_cache_mut = os.path.join(emb_dir, "embeddings_mut_mean.npy")
     emb_cache_wt_pos = os.path.join(emb_dir, "embeddings_wt_pos.npy")
     emb_cache_mut_pos = os.path.join(emb_dir, "embeddings_mut_pos.npy")
 
@@ -133,10 +149,14 @@ def main():
 
     emb_wt_mean = np.load(emb_cache_wt)
     emb_mut_mean = np.load(emb_cache_mut)
-    emb_wt_pos = (np.load(emb_cache_wt_pos)
-                  if os.path.exists(emb_cache_wt_pos) else emb_wt_mean)
-    emb_mut_pos = (np.load(emb_cache_mut_pos)
-                   if os.path.exists(emb_cache_mut_pos) else emb_mut_mean)
+    emb_wt_pos = (
+        np.load(emb_cache_wt_pos) if os.path.exists(emb_cache_wt_pos) else emb_wt_mean
+    )
+    emb_mut_pos = (
+        np.load(emb_cache_mut_pos)
+        if os.path.exists(emb_cache_mut_pos)
+        else emb_mut_mean
+    )
 
     deltas_mean = emb_mut_mean - emb_wt_mean
     deltas_pos = emb_mut_pos - emb_wt_pos
@@ -153,8 +173,12 @@ def main():
     # ------------------------------------------------------------------
     labels_3class = np.array([v["label_3class"] for v in valid_variants])
     genes_arr = np.array([v["gene"] for v in valid_variants])
-    foldx_ddg = np.array([v["foldx_ddg"] if v["foldx_ddg"] is not None else np.nan
-                          for v in valid_variants])
+    foldx_ddg = np.array(
+        [
+            v["foldx_ddg"] if v["foldx_ddg"] is not None else np.nan
+            for v in valid_variants
+        ]
+    )
     aa_wt_list = [v["aa_wt"] for v in valid_variants]
     aa_mut_list = [v["aa_mut"] for v in valid_variants]
 
@@ -167,14 +191,14 @@ def main():
     # 4. Build feature matrices
     # ------------------------------------------------------------------
     features = {
-        "wt_only_mean":        emb_wt_mean,
-        "mut_only_mean":       emb_mut_mean,
-        "delta_mean":          deltas_mean,
-        "delta_per_residue":   deltas_pos,
-        "wt_concat_mut":       np.concatenate([emb_wt_mean, emb_mut_mean], axis=1),
-        "onehot_aa":           build_onehot(aa_wt_list, aa_mut_list),
-        "foldx_ddg":           np.nan_to_num(foldx_ddg, nan=0.0).reshape(-1, 1),
-        "alphamissense":       np.nan_to_num(alphamissense_scores, nan=0.0).reshape(-1, 1),
+        "wt_only_mean": emb_wt_mean,
+        "mut_only_mean": emb_mut_mean,
+        "delta_mean": deltas_mean,
+        "delta_per_residue": deltas_pos,
+        "wt_concat_mut": np.concatenate([emb_wt_mean, emb_mut_mean], axis=1),
+        "onehot_aa": build_onehot(aa_wt_list, aa_mut_list),
+        "foldx_ddg": np.nan_to_num(foldx_ddg, nan=0.0).reshape(-1, 1),
+        "alphamissense": np.nan_to_num(alphamissense_scores, nan=0.0).reshape(-1, 1),
     }
 
     # ------------------------------------------------------------------
@@ -183,8 +207,9 @@ def main():
     print("\n=== Building CV splits ===")
     pfam_map = fetch_pfam_families(valid_variants, data_dir)
     gene_splits = gene_split_cv(genes_arr, n_folds=args.n_folds, seed=args.seed)
-    family_splits = family_split_cv(genes_arr, pfam_map,
-                                     n_folds=args.n_folds, seed=args.seed)
+    family_splits = family_split_cv(
+        genes_arr, pfam_map, n_folds=args.n_folds, seed=args.seed
+    )
 
     print(f"Gene-split folds:   {len(gene_splits)}")
     print(f"Family-split folds: {len(family_splits)}")
@@ -211,24 +236,31 @@ def main():
 
         gs = run_probe_on_splits(X, labels_3class, gene_splits, seed=args.seed)
         results["gene_split"][name] = gs
-        print(f"  gene-split   macro-F1 = {gs.get('macro_f1_mean', float('nan')):.3f} "
-              f"± {gs.get('macro_f1_std', float('nan')):.3f}  "
-              f"(GOF AUROC {gs.get('auroc_GOF_mean', float('nan')):.3f}, "
-              f"DN {gs.get('auroc_DN_mean', float('nan')):.3f}, "
-              f"LOF {gs.get('auroc_LOF_mean', float('nan')):.3f})")
+        print(
+            f"  gene-split   macro-F1 = {gs.get('macro_f1_mean', float('nan')):.3f} "
+            f"± {gs.get('macro_f1_std', float('nan')):.3f}  "
+            f"(GOF AUROC {gs.get('auroc_GOF_mean', float('nan')):.3f}, "
+            f"DN {gs.get('auroc_DN_mean', float('nan')):.3f}, "
+            f"LOF {gs.get('auroc_LOF_mean', float('nan')):.3f})"
+        )
 
         if family_splits:
             fs = run_probe_on_splits(X, labels_3class, family_splits, seed=args.seed)
             results["family_split"][name] = fs
-            delta_macro = (gs.get("macro_f1_mean", float("nan"))
-                           - fs.get("macro_f1_mean", float("nan")))
-            print(f"  family-split macro-F1 = {fs.get('macro_f1_mean', float('nan')):.3f} "
-                  f"± {fs.get('macro_f1_std', float('nan')):.3f}  "
-                  f"(GOF AUROC {fs.get('auroc_GOF_mean', float('nan')):.3f}, "
-                  f"DN {fs.get('auroc_DN_mean', float('nan')):.3f}, "
-                  f"LOF {fs.get('auroc_LOF_mean', float('nan')):.3f})")
-            print(f"  Δ(gene − family) macro-F1 = {delta_macro:+.3f}  "
-                  f"← positive ⇒ homology leakage")
+            delta_macro = gs.get("macro_f1_mean", float("nan")) - fs.get(
+                "macro_f1_mean", float("nan")
+            )
+            print(
+                f"  family-split macro-F1 = {fs.get('macro_f1_mean', float('nan')):.3f} "
+                f"± {fs.get('macro_f1_std', float('nan')):.3f}  "
+                f"(GOF AUROC {fs.get('auroc_GOF_mean', float('nan')):.3f}, "
+                f"DN {fs.get('auroc_DN_mean', float('nan')):.3f}, "
+                f"LOF {fs.get('auroc_LOF_mean', float('nan')):.3f})"
+            )
+            print(
+                f"  Δ(gene − family) macro-F1 = {delta_macro:+.3f}  "
+                f"← positive ⇒ homology leakage"
+            )
 
     # ------------------------------------------------------------------
     # 7. Write results
@@ -244,10 +276,20 @@ def main():
     print("\n" + "=" * 60)
     print("HEADLINE")
     print("=" * 60)
-    wt_gene   = results["gene_split"].get("wt_only_mean", {}).get("macro_f1_mean", float("nan"))
-    wt_family = results["family_split"].get("wt_only_mean", {}).get("macro_f1_mean", float("nan"))
-    delta_gene   = results["gene_split"].get("delta_mean", {}).get("macro_f1_mean", float("nan"))
-    delta_family = results["family_split"].get("delta_mean", {}).get("macro_f1_mean", float("nan"))
+    wt_gene = (
+        results["gene_split"].get("wt_only_mean", {}).get("macro_f1_mean", float("nan"))
+    )
+    wt_family = (
+        results["family_split"]
+        .get("wt_only_mean", {})
+        .get("macro_f1_mean", float("nan"))
+    )
+    delta_gene = (
+        results["gene_split"].get("delta_mean", {}).get("macro_f1_mean", float("nan"))
+    )
+    delta_family = (
+        results["family_split"].get("delta_mean", {}).get("macro_f1_mean", float("nan"))
+    )
 
     def _fmt(val):
         return f"{val:.3f}" if not np.isnan(val) else "n/a"
@@ -255,10 +297,14 @@ def main():
     def _fmt_delta(a, b):
         return f"{a - b:+.3f}" if not (np.isnan(a) or np.isnan(b)) else "n/a"
 
-    print(f"WT-only macro-F1:  gene-split {_fmt(wt_gene)}  →  family-split {_fmt(wt_family)}  "
-          f"(Δ = {_fmt_delta(wt_gene, wt_family)})")
-    print(f"Delta   macro-F1:  gene-split {_fmt(delta_gene)}  →  family-split {_fmt(delta_family)}  "
-          f"(Δ = {_fmt_delta(delta_gene, delta_family)})")
+    print(
+        f"WT-only macro-F1:  gene-split {_fmt(wt_gene)}  →  family-split {_fmt(wt_family)}  "
+        f"(Δ = {_fmt_delta(wt_gene, wt_family)})"
+    )
+    print(
+        f"Delta   macro-F1:  gene-split {_fmt(delta_gene)}  →  family-split {_fmt(delta_family)}  "
+        f"(Δ = {_fmt_delta(delta_gene, delta_family)})"
+    )
     print(f"Chance (3-class):  0.333\n")
 
     if not family_splits:
@@ -266,12 +312,18 @@ def main():
         print("    Gene-split results only — homology leakage cannot be assessed.")
     elif not np.isnan(wt_family):
         if wt_family > 0.50:
-            print("  ⇒ WT-only signal SURVIVES family-split — real protein-family→mechanism")
+            print(
+                "  ⇒ WT-only signal SURVIVES family-split — real protein-family→mechanism"
+            )
             print("    association in ESM-2 embeddings.")
         elif wt_family > 0.40:
-            print("  ⇒ WT-only signal PARTIALLY survives — some real signal + some leakage.")
+            print(
+                "  ⇒ WT-only signal PARTIALLY survives — some real signal + some leakage."
+            )
         else:
-            print("  ⇒ WT-only signal COLLAPSES under family-split — apparent mechanism")
+            print(
+                "  ⇒ WT-only signal COLLAPSES under family-split — apparent mechanism"
+            )
             print("    classification was largely paralog/homology leakage.")
 
 

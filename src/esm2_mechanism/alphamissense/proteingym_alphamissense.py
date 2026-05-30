@@ -37,9 +37,14 @@ import pandas as pd
 from scipy.stats import spearmanr
 from sklearn.metrics import roc_auc_score
 import functools
+
 print = functools.partial(print, flush=True)
 
-from esm2_mechanism.utils_paths import DATA_DIR as _DATA_DIR, RESULTS_DIR as _RESULTS_DIR
+from esm2_mechanism.utils_paths import (
+    DATA_DIR as _DATA_DIR,
+    RESULTS_DIR as _RESULTS_DIR,
+)
+
 DATA = _DATA_DIR / "cache" / "proteingym"
 RESULTS = _RESULTS_DIR / "proteingym_alphamissense"
 AM_FILE = _DATA_DIR / "cache" / "AlphaMissense_aa_substitutions.tsv.gz"
@@ -81,8 +86,9 @@ def load_mnemonic_map(mnemonics: list[str]) -> dict[str, str]:
     return cache
 
 
-def collect_target_keys(assays: list[dict], acc_map: dict[str, str]
-                        ) -> tuple[dict[tuple[str, str], list[tuple[str, str]]], dict]:
+def collect_target_keys(
+    assays: list[dict], acc_map: dict[str, str]
+) -> tuple[dict[tuple[str, str], list[tuple[str, str]]], dict]:
     """
     Returns:
       index: (accession, protein_variant) -> list of (dms_id, mutant_string)
@@ -96,7 +102,10 @@ def collect_target_keys(assays: list[dict], acc_map: dict[str, str]
         acc = acc_map.get(mnemonic, "")
         dms_path = DMS_DIR / a["DMS_filename"]
         if not acc or not dms_path.exists():
-            meta[dms_id] = {"skipped": True, "reason": "no_acc" if not acc else "no_dms_file"}
+            meta[dms_id] = {
+                "skipped": True,
+                "reason": "no_acc" if not acc else "no_dms_file",
+            }
             continue
         try:
             df = pd.read_csv(dms_path, usecols=["mutant", "DMS_score", "DMS_score_bin"])
@@ -127,8 +136,10 @@ def stream_am(index: dict[tuple[str, str], list]) -> dict[tuple[str, str], float
     with gzip.open(AM_FILE, "rt") as f:
         for i, line in enumerate(f):
             if i % 10_000_000 == 0 and i:
-                print(f"  read {i:,} rows; matched {len(out):,}/{needed:,}",
-                      file=sys.stderr)
+                print(
+                    f"  read {i:,} rows; matched {len(out):,}/{needed:,}",
+                    file=sys.stderr,
+                )
             if not line or line.startswith("#") or line.startswith("uniprot_id"):
                 continue
             parts = line.rstrip("\n").split("\t")
@@ -147,8 +158,11 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--taxon", default="Human")
     ap.add_argument("--min-variants", type=int, default=20)
-    ap.add_argument("--use-score-cache", action="store_true",
-                    help="skip AM streaming if score cache exists")
+    ap.add_argument(
+        "--use-score-cache",
+        action="store_true",
+        help="skip AM streaming if score cache exists",
+    )
     args = ap.parse_args()
 
     RESULTS.mkdir(parents=True, exist_ok=True)
@@ -161,11 +175,15 @@ def main() -> int:
 
     mnemonics = sorted({a["UniProt_ID"] for a in human})
     acc_map = load_mnemonic_map(mnemonics)
-    print(f"mapped {sum(1 for m in mnemonics if acc_map.get(m))}/{len(mnemonics)} mnemonics")
+    print(
+        f"mapped {sum(1 for m in mnemonics if acc_map.get(m))}/{len(mnemonics)} mnemonics"
+    )
 
     index, meta = collect_target_keys(human, acc_map)
-    print(f"built lookup index: {len(index):,} (accession, variant) pairs across "
-          f"{sum(1 for m in meta.values() if not m['skipped'])} usable assays")
+    print(
+        f"built lookup index: {len(index):,} (accession, variant) pairs across "
+        f"{sum(1 for m in meta.values() if not m['skipped'])} usable assays"
+    )
 
     if args.use_score_cache and SCORE_CACHE.exists():
         with open(SCORE_CACHE) as _f:
@@ -200,7 +218,11 @@ def main() -> int:
         sc = df["DMS_score"].to_numpy()[mask]
         ss = s[mask].astype(float)
         try:
-            auroc = float(roc_auc_score(bin_dmg, ss)) if len(np.unique(bin_dmg)) >= 2 else None
+            auroc = (
+                float(roc_auc_score(bin_dmg, ss))
+                if len(np.unique(bin_dmg)) >= 2
+                else None
+            )
         except Exception:
             auroc = None
         # Spearman: AM_score vs DMS_score. Conventionally AM should anti-correlate
@@ -246,16 +268,28 @@ def main() -> int:
     print(json.dumps(summary["auroc"], indent=2))
     print("\n=== Spearman across assays ===")
     print(json.dumps(summary["spearman"], indent=2))
-    print(f"\nmedian per-assay coverage (AM/DMS variants): {summary['median_coverage']:.3f}")
+    print(
+        f"\nmedian per-assay coverage (AM/DMS variants): {summary['median_coverage']:.3f}"
+    )
 
-    ranked = sorted(((k, v) for k, v in per_assay.items() if not v["skipped"] and v["auroc"] is not None),
-                    key=lambda kv: kv[1]["auroc"])
+    ranked = sorted(
+        (
+            (k, v)
+            for k, v in per_assay.items()
+            if not v["skipped"] and v["auroc"] is not None
+        ),
+        key=lambda kv: kv[1]["auroc"],
+    )
     print("\nWORST 5 (by AUROC):")
     for k, v in ranked[:5]:
-        print(f"  {k:55s}  AUROC={v['auroc']:.3f}  -ρ={v['spearman_neg']:.3f}  n={v['n_variants']}")
+        print(
+            f"  {k:55s}  AUROC={v['auroc']:.3f}  -ρ={v['spearman_neg']:.3f}  n={v['n_variants']}"
+        )
     print("\nBEST 5 (by AUROC):")
     for k, v in ranked[-5:]:
-        print(f"  {k:55s}  AUROC={v['auroc']:.3f}  -ρ={v['spearman_neg']:.3f}  n={v['n_variants']}")
+        print(
+            f"  {k:55s}  AUROC={v['auroc']:.3f}  -ρ={v['spearman_neg']:.3f}  n={v['n_variants']}"
+        )
 
     with open(RESULTS / "per_assay.json", "w") as f:
         json.dump(per_assay, f, indent=2, sort_keys=True, default=str)

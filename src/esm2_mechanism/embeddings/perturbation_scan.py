@@ -36,25 +36,31 @@ Usage:
 
 import argparse, json, os, sys, numpy as np
 import functools
+
 print = functools.partial(print, flush=True)
 from collections import defaultdict
 from pathlib import Path
 
 from esm2_mechanism.utils_paths import DATA_DIR as DATA, RESULTS_DIR as _RESULTS_DIR
-from esm2_mechanism.embeddings.esm2_mechanism import get_esm2_embeddings_for_pairs, ESM2_MODEL_650M
+from esm2_mechanism.embeddings.esm2_mechanism import (
+    get_esm2_embeddings_for_pairs,
+    ESM2_MODEL_650M,
+)
 from esm2_mechanism.utils_sequences import window_sequence, apply_missense
-EMB  = DATA / "embeddings"
-OUT  = _RESULTS_DIR / "perturbation_scan"
+
+EMB = DATA / "embeddings"
+OUT = _RESULTS_DIR / "perturbation_scan"
 OUT.mkdir(parents=True, exist_ok=True)
 
-PROBE_AAS  = ["A", "D", "W"]   # Ala, Asp, Trp
+PROBE_AAS = ["A", "D", "W"]  # Ala, Asp, Trp
 PROBE_NAMES = ["ala", "asp", "trp"]
-N_POSITIONS = 100               # evenly-spaced positions per gene
-MIN_GENE_LEN = 10               # skip very short sequences
-CHECKPOINT_EVERY = 100          # genes between saves
+N_POSITIONS = 100  # evenly-spaced positions per gene
+MIN_GENE_LEN = 10  # skip very short sequences
+CHECKPOINT_EVERY = 100  # genes between saves
 
 
 # ── Phase 1: build probe list ─────────────────────────────────────────────────
+
 
 def load_sequences():
     """Merge sequences.json + extended cache."""
@@ -81,7 +87,9 @@ def build_probe_list(seqs):
         if g and u:
             gene_to_uniprot[g] = u
 
-    probes = []   # list of dicts: gene, uniprot_id, aa_pos, probe_aa, probe_name, seq_len
+    probes = (
+        []
+    )  # list of dicts: gene, uniprot_id, aa_pos, probe_aa, probe_name, seq_len
     covered_genes = []
     missing_genes = []
 
@@ -103,16 +111,18 @@ def build_probe_list(seqs):
             wt_aa = seq[pos - 1]
             for probe_aa, probe_name in zip(PROBE_AAS, PROBE_NAMES):
                 if probe_aa == wt_aa:
-                    continue   # skip if WT is already the probe AA
-                probes.append({
-                    "gene": gene,
-                    "uniprot_id": uniprot_id,
-                    "aa_pos": int(pos),
-                    "aa_wt": wt_aa,
-                    "aa_mut": probe_aa,
-                    "probe_name": probe_name,
-                    "seq_len": L,
-                })
+                    continue  # skip if WT is already the probe AA
+                probes.append(
+                    {
+                        "gene": gene,
+                        "uniprot_id": uniprot_id,
+                        "aa_pos": int(pos),
+                        "aa_wt": wt_aa,
+                        "aa_mut": probe_aa,
+                        "probe_name": probe_name,
+                        "seq_len": L,
+                    }
+                )
         covered_genes.append(gene)
 
     print(f"Covered genes: {len(covered_genes)} / {len(gene_to_uniprot)}")
@@ -123,20 +133,22 @@ def build_probe_list(seqs):
 
 # ── Phase 2: embedding extraction (GPU) ───────────────────────────────────────
 
+
 def extract_probe_embeddings(probes, seqs, batch_size=128):
     import torch
+
     device = "cuda" if torch.cuda.is_available() else "cpu"
     if device != "cuda":
         raise RuntimeError("GPU required for embedding extraction. Run on RunPod.")
 
-    wt_out  = EMB / "scan_embeddings_wt.npy"
+    wt_out = EMB / "scan_embeddings_wt.npy"
     mut_out = EMB / "scan_embeddings_mut.npy"
 
     if wt_out.exists() and mut_out.exists():
         print(f"Cached scan embeddings found: {wt_out}")
         return np.load(wt_out), np.load(mut_out)
 
-    ckpt_wt  = EMB / "scan_ckpt_wt.npy"
+    ckpt_wt = EMB / "scan_ckpt_wt.npy"
     ckpt_mut = EMB / "scan_ckpt_mut.npy"
     ckpt_idx = EMB / "scan_ckpt_idx.txt"
 
@@ -145,7 +157,7 @@ def extract_probe_embeddings(probes, seqs, batch_size=128):
     all_wt, all_mut = [], []
     if ckpt_idx.exists():
         start_idx = int(ckpt_idx.read_text().strip())
-        all_wt  = [np.load(ckpt_wt)]
+        all_wt = [np.load(ckpt_wt)]
         all_mut = [np.load(ckpt_mut)]
         print(f"Resuming from checkpoint: {start_idx}/{len(probes)} done")
 
@@ -172,32 +184,43 @@ def extract_probe_embeddings(probes, seqs, batch_size=128):
             wt_seqs[chunk_start:chunk_end],
             mut_seqs[chunk_start:chunk_end],
             positions[chunk_start:chunk_end],
-            model_name=ESM2_MODEL_650M, device=device, batch_size=batch_size)
+            model_name=ESM2_MODEL_650M,
+            device=device,
+            batch_size=batch_size,
+        )
         all_wt.append(wt_emb)
         all_mut.append(mut_emb)
         n_done = start_idx + chunk_end
-        np.save(ckpt_wt,  np.vstack(all_wt))
+        np.save(ckpt_wt, np.vstack(all_wt))
         np.save(ckpt_mut, np.vstack(all_mut))
         ckpt_idx.write_text(str(n_done))
         try:
             import torch
+
             mem_used = torch.cuda.memory_allocated() / 1e9
-            mem_res  = torch.cuda.memory_reserved() / 1e9
-            print(f"  Checkpoint: {n_done}/{len(probes)} probes done  "
-                  f"[GPU mem: {mem_used:.1f}GB alloc / {mem_res:.1f}GB reserved]", flush=True)
+            mem_res = torch.cuda.memory_reserved() / 1e9
+            print(
+                f"  Checkpoint: {n_done}/{len(probes)} probes done  "
+                f"[GPU mem: {mem_used:.1f}GB alloc / {mem_res:.1f}GB reserved]",
+                flush=True,
+            )
         except Exception:
             print(f"  Checkpoint: {n_done}/{len(probes)} probes done", flush=True)
 
-    wt_final  = np.vstack(all_wt)
+    wt_final = np.vstack(all_wt)
     mut_final = np.vstack(all_mut)
-    np.save(wt_out,  wt_final);  print(f"Saved {wt_out}")
-    np.save(mut_out, mut_final); print(f"Saved {mut_out}")
+    np.save(wt_out, wt_final)
+    print(f"Saved {wt_out}")
+    np.save(mut_out, mut_final)
+    print(f"Saved {mut_out}")
     for f in [ckpt_wt, ckpt_mut, ckpt_idx]:
-        if f.exists(): f.unlink()
+        if f.exists():
+            f.unlink()
     return wt_final, mut_final
 
 
 # ── Phase 3: feature computation ─────────────────────────────────────────────
+
 
 def compute_scan_features(probes, wt_emb, mut_emb, covered_genes, ablation=False):
     """
@@ -206,7 +229,7 @@ def compute_scan_features(probes, wt_emb, mut_emb, covered_genes, ablation=False
     """
     from sklearn.decomposition import PCA
 
-    deltas = mut_emb - wt_emb   # (n_probes, 1280)
+    deltas = mut_emb - wt_emb  # (n_probes, 1280)
 
     # Group probes by gene
     gene_probe_idx = defaultdict(list)
@@ -214,13 +237,18 @@ def compute_scan_features(probes, wt_emb, mut_emb, covered_genes, ablation=False
         gene_probe_idx[p["gene"]].append(i)
 
     feature_names = [
-        "scan_mag_mean", "scan_mag_cv", "scan_hotspot_frac",
-        "scan_pc1_var", "scan_sub_variance",
+        "scan_mag_mean",
+        "scan_mag_cv",
+        "scan_hotspot_frac",
+        "scan_pc1_var",
+        "scan_sub_variance",
     ]
     if ablation:
         feature_names += [
-            "scan_mag_skew", "scan_hotspot_spacing_cv",
-            "scan_top5_range", "scan_pc1_pc2_ratio",
+            "scan_mag_skew",
+            "scan_hotspot_spacing_cv",
+            "scan_top5_range",
+            "scan_pc1_pc2_ratio",
         ]
 
     gene_list, X = [], []
@@ -231,15 +259,15 @@ def compute_scan_features(probes, wt_emb, mut_emb, covered_genes, ablation=False
             continue
 
         gene_probes = [probes[i] for i in idxs]
-        gene_deltas = deltas[idxs]   # (n, 1280)
+        gene_deltas = deltas[idxs]  # (n, 1280)
 
         # Magnitudes per probe
-        mags = np.linalg.norm(gene_deltas, axis=1)   # (n,)
+        mags = np.linalg.norm(gene_deltas, axis=1)  # (n,)
 
         # --- Pre-registered features ---
         mag_mean = float(np.mean(mags))
-        mag_std  = float(np.std(mags))
-        mag_cv   = mag_std / (mag_mean + 1e-8)
+        mag_std = float(np.std(mags))
+        mag_cv = mag_std / (mag_mean + 1e-8)
 
         threshold = mag_mean + mag_std
         hotspot_frac = float(np.mean(mags > threshold))
@@ -249,7 +277,11 @@ def compute_scan_features(probes, wt_emb, mut_emb, covered_genes, ablation=False
             pca = PCA(n_components=min(2, len(idxs) - 1))
             pca.fit(gene_deltas)
             pc1_var = float(pca.explained_variance_ratio_[0])
-            pc2_var = float(pca.explained_variance_ratio_[1]) if len(pca.explained_variance_ratio_) > 1 else 0.0
+            pc2_var = (
+                float(pca.explained_variance_ratio_[1])
+                if len(pca.explained_variance_ratio_) > 1
+                else 0.0
+            )
         else:
             pc1_var, pc2_var = 0.0, 0.0
 
@@ -266,6 +298,7 @@ def compute_scan_features(probes, wt_emb, mut_emb, covered_genes, ablation=False
         # --- Ablation features ---
         if ablation:
             from scipy.stats import skew as scipy_skew
+
             mag_skew = float(scipy_skew(mags))
 
             hotspot_positions = np.where(mags > threshold)[0]
@@ -278,7 +311,9 @@ def compute_scan_features(probes, wt_emb, mut_emb, covered_genes, ablation=False
             top5_idx = np.argsort(mags)[-5:]
             top5_positions = np.array([gene_probes[i]["aa_pos"] for i in top5_idx])
             seq_len = gene_probes[0]["seq_len"]
-            top5_range = float((top5_positions.max() - top5_positions.min()) / max(seq_len, 1))
+            top5_range = float(
+                (top5_positions.max() - top5_positions.min()) / max(seq_len, 1)
+            )
 
             pc1_pc2_ratio = float(pc1_var / (pc2_var + 1e-8))
 
@@ -304,13 +339,20 @@ def save_features(gene_list, X, feature_names):
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--run_phase", default="123",
-                        help="Which phases to run: '1', '2', '3', '12', '123' (default: all)")
+    parser.add_argument(
+        "--run_phase",
+        default="123",
+        help="Which phases to run: '1', '2', '3', '12', '123' (default: all)",
+    )
     parser.add_argument("--batch_size", type=int, default=128)
-    parser.add_argument("--ablation", action="store_true",
-                        help="Also compute ablation features (phases 3 only)")
+    parser.add_argument(
+        "--ablation",
+        action="store_true",
+        help="Also compute ablation features (phases 3 only)",
+    )
     args = parser.parse_args()
 
     phases = set(args.run_phase)
@@ -331,25 +373,30 @@ def main():
         print(f"Saved probe list to {probe_cache}")
 
     if "1" in phases:
-        print(f"\n=== Phase 1 complete: {len(probes)} probes for {len(covered_genes)} genes ===")
+        print(
+            f"\n=== Phase 1 complete: {len(probes)} probes for {len(covered_genes)} genes ==="
+        )
 
     if "2" in phases:
         print("\n=== Phase 2: embedding extraction ===")
-        wt_emb, mut_emb = extract_probe_embeddings(probes, seqs, batch_size=args.batch_size)
+        wt_emb, mut_emb = extract_probe_embeddings(
+            probes, seqs, batch_size=args.batch_size
+        )
     elif "3" in phases:
         wt_path = EMB / "scan_embeddings_wt.npy"
         mut_path = EMB / "scan_embeddings_mut.npy"
         if not wt_path.exists():
             print("ERROR: scan embeddings not found. Run phase 2 first (requires GPU).")
             sys.exit(1)
-        wt_emb  = np.load(wt_path)
+        wt_emb = np.load(wt_path)
         mut_emb = np.load(mut_path)
         print(f"Loaded scan embeddings: {wt_emb.shape}")
 
     if "3" in phases:
         print("\n=== Phase 3: feature computation ===")
         gene_list, X, feature_names = compute_scan_features(
-            probes, wt_emb, mut_emb, covered_genes, ablation=args.ablation)
+            probes, wt_emb, mut_emb, covered_genes, ablation=args.ablation
+        )
         save_features(gene_list, X, feature_names)
         print(f"\nReady for probe runs. Next: python3 scripts/perturbation_probe.py")
 

@@ -65,7 +65,9 @@ def _load_state() -> dict:
         with open(STATE_FILE) as f:
             return json.load(f)
     except Exception as exc:
-        print(f"WARNING: could not read pipeline state file ({exc}) — treating as no prior state")
+        print(
+            f"WARNING: could not read pipeline state file ({exc}) — treating as no prior state"
+        )
         return {}
 
 
@@ -76,19 +78,29 @@ def _save_state(state: dict) -> None:
     os.replace(tmp, STATE_FILE)
 
 
-def _make_steps(pathogenic_only: bool, from_scratch: bool) -> list[tuple[int, str, callable]]:
+def _make_steps(
+    pathogenic_only: bool, from_scratch: bool
+) -> list[tuple[int, str, callable]]:
     return [
-        (1,  "build_gene_universe gene-list",   main_gene_list),
-        (2,  "fetch_variants gerasimavicius",    main_gerasimavicius),
-        (3,  "fetch_variants clinvar",           main_clinvar),
-        (4,  "fetch_variants merge",             lambda: main_merge(pathogenic_only=pathogenic_only)),
-        (5,  "fetch_annotations pfam",           lambda: main_pfam(from_scratch=from_scratch)),
-        (6,  "build_gene_universe universe",     main_universe),
-        (7,  "fetch_annotations uniprot",        lambda: main_uniprot(from_scratch=from_scratch)),
-        (8,  "fetch_annotations enzyme",         main_enzyme),
-        (9,  "build_proteome_features",          main_proteome),
-        (10, "build_badonyi_features",           main_badonyi),
-        (11, "fetch_annotations alphamissense",  main_alphamissense),
+        (1, "build_gene_universe gene-list", main_gene_list),
+        (2, "fetch_variants gerasimavicius", main_gerasimavicius),
+        # (3,  "fetch_variants clinvar",           main_clinvar),  # skipped — already completed in Run 2
+        (
+            4,
+            "fetch_variants merge",
+            lambda: main_merge(pathogenic_only=pathogenic_only),
+        ),
+        (5, "fetch_annotations pfam", lambda: main_pfam(from_scratch=from_scratch)),
+        (6, "build_gene_universe universe", main_universe),
+        (
+            7,
+            "fetch_annotations uniprot",
+            lambda: main_uniprot(from_scratch=from_scratch),
+        ),
+        (8, "fetch_annotations enzyme", main_enzyme),
+        (9, "build_proteome_features", main_proteome),
+        (10, "build_badonyi_features", main_badonyi),
+        (11, "fetch_annotations alphamissense", main_alphamissense),
     ]
 
 
@@ -162,7 +174,11 @@ def main() -> None:
         try:
             fn()
         except Exception:
-            print(f"\nERROR: step {step_num} ({label}) failed:", file=sys.stderr, flush=True)
+            print(
+                f"\nERROR: step {step_num} ({label}) failed:",
+                file=sys.stderr,
+                flush=True,
+            )
             traceback.print_exc(file=sys.stderr)
             print(
                 f"\nPipeline aborted at step {step_num}. "
@@ -173,7 +189,9 @@ def main() -> None:
             sys.exit(1)
 
         state["last_completed_step"] = step_num
-        state["last_completed_at"] = datetime.datetime.now().isoformat(timespec="seconds")
+        state["last_completed_at"] = datetime.datetime.now().isoformat(
+            timespec="seconds"
+        )
         state[f"step_{step_num}_completed_at"] = state["last_completed_at"]
         _save_state(state)
         print(f"[step {step_num:2d}] done: {label}")

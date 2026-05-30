@@ -17,15 +17,19 @@ import numpy as np
 import pytest
 from sklearn.preprocessing import LabelEncoder
 
-
 # ---------------------------------------------------------------------------
 # probe4_axis_identity — biochem_features
 # ---------------------------------------------------------------------------
 
+
 class TestBiochemFeatures:
 
     def setup_method(self):
-        from esm2_mechanism.analysis.probe4_axis_identity import biochem_features, FEAT_NAMES
+        from esm2_mechanism.analysis.probe4_axis_identity import (
+            biochem_features,
+            FEAT_NAMES,
+        )
+
         self.biochem_features = biochem_features
         self.FEAT_NAMES = FEAT_NAMES
 
@@ -41,19 +45,19 @@ class TestBiochemFeatures:
 
     def test_same_aa_delta_hydro_is_zero(self):
         result = self.biochem_features("V", "V")
-        assert result[1] == pytest.approx(0.0)   # d_hydro
-        assert result[2] == pytest.approx(0.0)   # abs_d_hydro
+        assert result[1] == pytest.approx(0.0)  # d_hydro
+        assert result[2] == pytest.approx(0.0)  # abs_d_hydro
 
     def test_same_aa_delta_charge_is_zero(self):
         result = self.biochem_features("K", "K")
-        assert result[3] == pytest.approx(0.0)   # d_charge
-        assert result[4] == pytest.approx(0.0)   # abs_d_charge
+        assert result[3] == pytest.approx(0.0)  # d_charge
+        assert result[4] == pytest.approx(0.0)  # abs_d_charge
 
     def test_abs_values_are_nonnegative(self):
         result = self.biochem_features("D", "K")
-        assert result[2] >= 0   # abs_d_hydro
-        assert result[4] >= 0   # abs_d_charge
-        assert result[5] >= 0   # abs_d_volume
+        assert result[2] >= 0  # abs_d_hydro
+        assert result[4] >= 0  # abs_d_charge
+        assert result[5] >= 0  # abs_d_volume
 
     def test_unknown_wt_returns_none(self):
         assert self.biochem_features("B", "A") is None
@@ -76,10 +80,12 @@ class TestBiochemFeatures:
 # direction_geometry — fit_direction, auroc
 # ---------------------------------------------------------------------------
 
+
 class TestFitDirection:
 
     def setup_method(self):
         from esm2_mechanism.analysis.direction_geometry import fit_direction, auroc
+
         self.fit_direction = fit_direction
         self.auroc = auroc
 
@@ -101,6 +107,7 @@ class TestFitDirection:
 
     def test_clf_returned(self):
         from sklearn.linear_model import LogisticRegression
+
         X, y = self._separable()
         _, clf = self.fit_direction(X, y)
         assert hasattr(clf, "predict_proba")
@@ -123,10 +130,12 @@ class TestFitDirection:
 # magnitude_direction — decompose, agg_seeds, _best, _f
 # ---------------------------------------------------------------------------
 
+
 class TestDecompose:
 
     def setup_method(self):
         from esm2_mechanism.analysis.magnitude_direction import decompose
+
         self.decompose = decompose
 
     def test_shapes(self):
@@ -163,6 +172,7 @@ class TestAggSeeds:
 
     def setup_method(self):
         from esm2_mechanism.analysis.magnitude_direction import agg_seeds
+
         self.agg_seeds = agg_seeds
 
     def test_empty_returns_nan(self):
@@ -192,6 +202,7 @@ class TestBestAndF:
 
     def setup_method(self):
         from esm2_mechanism.analysis.magnitude_direction import _best, _f
+
         self._best = _best
         self._f = _f
 
@@ -205,15 +216,21 @@ class TestBestAndF:
 
     def test_best_picks_mlp_when_higher(self):
         block = self._make_block(0.7, 0.85)
-        assert self._best(block, "family_split", "logreg_auroc", "mlp_auroc") == pytest.approx(0.85)
+        assert self._best(
+            block, "family_split", "logreg_auroc", "mlp_auroc"
+        ) == pytest.approx(0.85)
 
     def test_best_picks_logreg_when_higher(self):
         block = self._make_block(0.9, 0.7)
-        assert self._best(block, "family_split", "logreg_auroc", "mlp_auroc") == pytest.approx(0.9)
+        assert self._best(
+            block, "family_split", "logreg_auroc", "mlp_auroc"
+        ) == pytest.approx(0.9)
 
     def test_best_nan_in_one_uses_other(self):
         block = self._make_block(float("nan"), 0.75)
-        assert self._best(block, "family_split", "logreg_auroc", "mlp_auroc") == pytest.approx(0.75)
+        assert self._best(
+            block, "family_split", "logreg_auroc", "mlp_auroc"
+        ) == pytest.approx(0.75)
 
     def test_best_both_nan_returns_nan(self):
         block = self._make_block(float("nan"), float("nan"))
@@ -233,15 +250,18 @@ class TestBestAndF:
 # transfer_contrast — _auroc, _make_clf, transfer_test
 # ---------------------------------------------------------------------------
 
+
 class TestTransferContrastHelpers:
 
     def setup_method(self):
         from esm2_mechanism.analysis.transfer_contrast import _auroc, _make_clf
+
         self._auroc = _auroc
         self._make_clf = _make_clf
 
     def _fit_clf(self, kind="linear", seed=0):
         from sklearn.preprocessing import StandardScaler
+
         rng = np.random.RandomState(seed)
         X = np.vstack([rng.randn(30, 4) + 2, rng.randn(30, 4) - 2])
         y = np.array([1] * 30 + [0] * 30)
@@ -263,11 +283,13 @@ class TestTransferContrastHelpers:
 
     def test_make_clf_linear(self):
         from sklearn.linear_model import LogisticRegression
+
         clf = self._make_clf("linear", seed=0)
         assert isinstance(clf, LogisticRegression)
 
     def test_make_clf_gbm(self):
         from sklearn.ensemble import HistGradientBoostingClassifier
+
         clf = self._make_clf("gbm", seed=0)
         assert isinstance(clf, HistGradientBoostingClassifier)
 
@@ -280,6 +302,7 @@ class TestTransferTest:
 
     def setup_method(self):
         from esm2_mechanism.analysis.transfer_contrast import transfer_test
+
         self.transfer_test = transfer_test
 
     def _make_data(self, n=120, dim=4, seed=0):
@@ -291,13 +314,17 @@ class TestTransferTest:
 
     def test_returns_transfer_and_pooled_keys(self):
         delta, y, groups = self._make_data()
-        result = self.transfer_test(delta, y, groups, kind="linear", n_partitions=3, seed=0)
+        result = self.transfer_test(
+            delta, y, groups, kind="linear", n_partitions=3, seed=0
+        )
         assert "transfer_auroc" in result
         assert "pooled_auroc" in result
 
     def test_transfer_auroc_has_three_elements(self):
         delta, y, groups = self._make_data()
-        result = self.transfer_test(delta, y, groups, kind="linear", n_partitions=3, seed=0)
+        result = self.transfer_test(
+            delta, y, groups, kind="linear", n_partitions=3, seed=0
+        )
         mean, std, n = result["transfer_auroc"]
         assert isinstance(mean, float)
         assert std >= 0
@@ -305,7 +332,9 @@ class TestTransferTest:
 
     def test_auroc_range(self):
         delta, y, groups = self._make_data()
-        result = self.transfer_test(delta, y, groups, kind="linear", n_partitions=3, seed=0)
+        result = self.transfer_test(
+            delta, y, groups, kind="linear", n_partitions=3, seed=0
+        )
         mean, _, _ = result["pooled_auroc"]
         assert 0.0 <= mean <= 1.0
 
@@ -314,10 +343,12 @@ class TestTransferTest:
 # enzyme_classification — majority_baseline_f1, run_logreg, run_mlp
 # ---------------------------------------------------------------------------
 
+
 class TestMajorityBaseline:
 
     def setup_method(self):
         from esm2_mechanism.analysis.enzyme_classification import majority_baseline_f1
+
         self.majority_baseline_f1 = majority_baseline_f1
 
     def test_all_same_class_returns_expected_f1(self):
@@ -340,7 +371,11 @@ class TestMajorityBaseline:
 class TestRunLogreg:
 
     def setup_method(self):
-        from esm2_mechanism.analysis.enzyme_classification import run_logreg, ENZYME_CLASSES
+        from esm2_mechanism.analysis.enzyme_classification import (
+            run_logreg,
+            ENZYME_CLASSES,
+        )
+
         self.run_logreg = run_logreg
         self.classes = ENZYME_CLASSES
 
@@ -388,7 +423,11 @@ class TestRunLogreg:
 class TestRunMlp:
 
     def setup_method(self):
-        from esm2_mechanism.analysis.enzyme_classification import run_mlp, ENZYME_CLASSES
+        from esm2_mechanism.analysis.enzyme_classification import (
+            run_mlp,
+            ENZYME_CLASSES,
+        )
+
         self.run_mlp = run_mlp
         self.classes = ENZYME_CLASSES
 

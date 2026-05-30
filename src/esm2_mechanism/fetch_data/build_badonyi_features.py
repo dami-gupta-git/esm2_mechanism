@@ -70,13 +70,14 @@ def compute_family_residuals(df, pfam, feature_cols, observed_mask=None):
 
     # Count observed genes per family — mirrors the residual loop's ≥2 observed condition.
     observed_family_counts = (
-        df.loc[observed_mask, "pfam_family"]
-        .dropna()
-        .value_counts()
-        .to_dict()
+        df.loc[observed_mask, "pfam_family"].dropna().value_counts().to_dict()
     )
     df["is_singleton_family_badonyi"] = df["pfam_family"].map(
-        lambda f: 1 if (f is None or pd.isna(f) or observed_family_counts.get(f, 0) <= 1) else 0
+        lambda f: (
+            1
+            if (f is None or pd.isna(f) or observed_family_counts.get(f, 0) <= 1)
+            else 0
+        )
     )
 
     for col in feature_cols:
@@ -100,7 +101,9 @@ def compute_family_residuals(df, pfam, feature_cols, observed_mask=None):
 def main():
     missing = [p for p in [S3_PATH, GENE_UNIVERSE] if not p.exists()]
     if missing:
-        raise FileNotFoundError("Required input(s) not found:\n" + "\n".join(f"  {p}" for p in missing))
+        raise FileNotFoundError(
+            "Required input(s) not found:\n" + "\n".join(f"  {p}" for p in missing)
+        )
 
     bad = load_badonyi_predictions()
     merged = load_gene_universe()
@@ -115,7 +118,9 @@ def main():
     result["pLOF"] = result["gene"].map(bad_lookup["pLOF"])
 
     n_covered = result["pDN"].notna().sum()
-    print(f"\nCoverage: {n_covered} / {len(result)} merged genes ({100*n_covered/len(result):.1f}%)")
+    print(
+        f"\nCoverage: {n_covered} / {len(result)} merged genes ({100*n_covered/len(result):.1f}%)"
+    )
     missing_genes = result[result["pDN"].isna()]["gene"].tolist()
     print(f"  Missing: {len(missing_genes)} genes")
     if missing_genes[:10]:
@@ -148,7 +153,9 @@ def main():
     for col in feature_cols:
         median_val = result[col].median()
         result[col] = result[col].fillna(median_val)
-        print(f"  {col}: median={median_val:.4f}, imputed {result[f'{col}_missing'].sum():.0f} genes")
+        print(
+            f"  {col}: median={median_val:.4f}, imputed {result[f'{col}_missing'].sum():.0f} genes"
+        )
 
     # Save TSV
     result.to_csv(OUT_TSV, sep="\t", index=False)
@@ -169,14 +176,20 @@ def main():
     # Column metadata
     col_meta = []
     for c in numeric_cols:
-        kind = "missing_indicator" if "_missing" in c else ("familyresid" if "_familyresid" in c else "raw")
+        kind = (
+            "missing_indicator"
+            if "_missing" in c
+            else ("familyresid" if "_familyresid" in c else "raw")
+        )
         col_meta.append({"name": c, "kind": kind, "source": "badonyi_2024_plosone"})
     with open(OUT_COLS, "w") as f:
         json.dump(col_meta, f, indent=2)
     print(f"Saved column metadata: {OUT_COLS}")
 
     print("\n--- Coverage summary ---")
-    print(f"Genes covered (raw):    {n_covered} / {len(result)} ({100*n_covered/len(result):.1f}%)")
+    print(
+        f"Genes covered (raw):    {n_covered} / {len(result)} ({100*n_covered/len(result):.1f}%)"
+    )
     print(f"Genes imputed:          {len(missing_genes)}")
     print(f"Matrix shape:           {mat.shape}")
     print(f"Columns:                {numeric_cols}")

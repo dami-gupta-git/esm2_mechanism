@@ -40,21 +40,45 @@ from sklearn.metrics import roc_auc_score, f1_score, precision_recall_curve, auc
 from esm2_mechanism.utils_probes import gene_split_cv, family_split_cv
 from esm2_mechanism.embeddings.esm2_mechanism import _load_data, ESM2_MODEL_650M
 from esm2_mechanism.embeddings.embed_variants import get_esm2_embeddings_for_pairs
-from esm2_mechanism.utils_sequences import build_sequence_cache, fetch_pfam_families, window_sequence, apply_missense
+from esm2_mechanism.utils_sequences import (
+    build_sequence_cache,
+    fetch_pfam_families,
+    window_sequence,
+    apply_missense,
+)
 
 import functools
+
 print = functools.partial(print, flush=True)
 
 
-CLINVAR_URL = "https://ftp.ncbi.nlm.nih.gov/pub/clinvar/tab_delimited/variant_summary.txt.gz"
+CLINVAR_URL = (
+    "https://ftp.ncbi.nlm.nih.gov/pub/clinvar/tab_delimited/variant_summary.txt.gz"
+)
 
 
 # 3-letter to 1-letter amino acid code (for parsing HGVSp like p.His77Tyr)
 AA3 = {
-    "Ala": "A", "Arg": "R", "Asn": "N", "Asp": "D", "Cys": "C",
-    "Gln": "Q", "Glu": "E", "Gly": "G", "His": "H", "Ile": "I",
-    "Leu": "L", "Lys": "K", "Met": "M", "Phe": "F", "Pro": "P",
-    "Ser": "S", "Thr": "T", "Trp": "W", "Tyr": "Y", "Val": "V",
+    "Ala": "A",
+    "Arg": "R",
+    "Asn": "N",
+    "Asp": "D",
+    "Cys": "C",
+    "Gln": "Q",
+    "Glu": "E",
+    "Gly": "G",
+    "His": "H",
+    "Ile": "I",
+    "Leu": "L",
+    "Lys": "K",
+    "Met": "M",
+    "Phe": "F",
+    "Pro": "P",
+    "Ser": "S",
+    "Thr": "T",
+    "Trp": "W",
+    "Tyr": "Y",
+    "Val": "V",
 }
 HGVSP_PAT = re.compile(r"p\.([A-Z][a-z]{2})(\d+)([A-Z][a-z]{2})(?=[^a-zA-Z]|$)")
 
@@ -63,8 +87,8 @@ HGVSP_PAT = re.compile(r"p\.([A-Z][a-z]{2})(\d+)([A-Z][a-z]{2})(?=[^a-zA-Z]|$)")
 # Phase 1: ClinVar variant fetch + filtering                                  #
 # --------------------------------------------------------------------------- #
 
-def fetch_clinvar_variants(target_genes, cache_dir,
-                            max_per_gene_per_class=20, seed=42):
+
+def fetch_clinvar_variants(target_genes, cache_dir, max_per_gene_per_class=20, seed=42):
     """
     Download ClinVar variant_summary.txt.gz, filter to:
       - Type == "single nucleotide variant"
@@ -87,10 +111,11 @@ def fetch_clinvar_variants(target_genes, cache_dir,
             print(f"  WARNING: corrupt cache {cache} — re-fetching")
             os.remove(cache)
 
-    print(f"  Downloading ClinVar variant_summary.txt.gz "
-          f"(this is ~150 MB compressed) ...")
-    req = urllib.request.Request(CLINVAR_URL,
-                                  headers={"User-Agent": "Mozilla/5.0"})
+    print(
+        f"  Downloading ClinVar variant_summary.txt.gz "
+        f"(this is ~150 MB compressed) ..."
+    )
+    req = urllib.request.Request(CLINVAR_URL, headers={"User-Agent": "Mozilla/5.0"})
     with urllib.request.urlopen(req, timeout=600) as resp:
         raw = resp.read()
 
@@ -99,8 +124,14 @@ def fetch_clinvar_variants(target_genes, cache_dir,
     text = io.TextIOWrapper(gz, encoding="utf-8", errors="replace")
     header = text.readline().rstrip("\n").split("\t")
     col = {h.lstrip("#"): i for i, h in enumerate(header)}
-    needed = ["Type", "GeneSymbol", "ClinicalSignificance",
-              "Name", "VariationID", "Assembly"]
+    needed = [
+        "Type",
+        "GeneSymbol",
+        "ClinicalSignificance",
+        "Name",
+        "VariationID",
+        "Assembly",
+    ]
     for c in needed:
         if c not in col:
             raise RuntimeError(f"Missing ClinVar column: {c}")
@@ -123,8 +154,10 @@ def fetch_clinvar_variants(target_genes, cache_dir,
             continue
         sig = parts[col["ClinicalSignificance"]].strip()
         sig_low = sig.lower()
-        if any(s in sig_low for s in ["conflict", "uncertain", "not provided",
-                                       "other", "no assertion"]):
+        if any(
+            s in sig_low
+            for s in ["conflict", "uncertain", "not provided", "other", "no assertion"]
+        ):
             continue
         if "pathogenic" in sig_low and "non-pathogenic" not in sig_low:
             label = "pathogenic"
@@ -143,16 +176,20 @@ def fetch_clinvar_variants(target_genes, cache_dir,
         if wt3 == mut3:
             continue
         clinvar_id = parts[col["VariationID"]]
-        by_gene_class[(gene, label)].append({
-            "gene": gene,
-            "aa_pos": int(pos_s),
-            "aa_wt": AA3[wt3],
-            "aa_mut": AA3[mut3],
-            "label": label,
-            "clinvar_id": clinvar_id,
-        })
+        by_gene_class[(gene, label)].append(
+            {
+                "gene": gene,
+                "aa_pos": int(pos_s),
+                "aa_wt": AA3[wt3],
+                "aa_mut": AA3[mut3],
+                "label": label,
+                "clinvar_id": clinvar_id,
+            }
+        )
 
-    print(f"  Scanned {n_seen} ClinVar rows; matched {sum(len(v) for v in by_gene_class.values())} variants")
+    print(
+        f"  Scanned {n_seen} ClinVar rows; matched {sum(len(v) for v in by_gene_class.values())} variants"
+    )
 
     rng = np.random.RandomState(seed)
     chosen = []
@@ -160,10 +197,12 @@ def fetch_clinvar_variants(target_genes, cache_dir,
         rng.shuffle(lst)
         chosen.extend(lst[:max_per_gene_per_class])
 
-    print(f"  After per-gene-per-class cap: {len(chosen)} variants "
-          f"({sum(1 for v in chosen if v['label']=='pathogenic')} pathogenic, "
-          f"{sum(1 for v in chosen if v['label']=='benign')} benign, "
-          f"{len(set(v['gene'] for v in chosen))} genes)")
+    print(
+        f"  After per-gene-per-class cap: {len(chosen)} variants "
+        f"({sum(1 for v in chosen if v['label']=='pathogenic')} pathogenic, "
+        f"{sum(1 for v in chosen if v['label']=='benign')} benign, "
+        f"{len(set(v['gene'] for v in chosen))} genes)"
+    )
 
     tmp_cache = cache + ".tmp"
     with open(tmp_cache, "w") as f:
@@ -185,14 +224,17 @@ def attach_uniprot_ids(variants, gerasimavicius_variants):
         if uid:
             v["uniprot_id"] = uid
             out.append(v)
-    print(f"  {len(out)}/{len(variants)} variants mapped to UniProt IDs "
-          f"present in the existing seq_cache")
+    print(
+        f"  {len(out)}/{len(variants)} variants mapped to UniProt IDs "
+        f"present in the existing seq_cache"
+    )
     return out
 
 
 # --------------------------------------------------------------------------- #
 # Phase 2: embedding extraction (GPU)                                          #
 # --------------------------------------------------------------------------- #
+
 
 def build_wt_mut_pairs(variants, seq_cache):
     """Apply each missense to its WT sequence, with windowing for long proteins.
@@ -220,15 +262,14 @@ def build_wt_mut_pairs(variants, seq_cache):
     return valid, valid_indices, wt_seqs, mut_seqs, var_positions
 
 
-def get_or_extract_embeddings(variants, seq_cache, data_dir, model_name,
-                               batch_size=32):
+def get_or_extract_embeddings(variants, seq_cache, data_dir, model_name, batch_size=32):
     """Cache key is a SHA-ish suffix derived from variant count + model.
     If the cache exists and matches the variant count, reuse it."""
     emb_dir = os.path.join(data_dir, "embeddings", model_name)
     os.makedirs(emb_dir, exist_ok=True)
     suffix = f"pathogenicity_n{len(variants)}"
-    wt_p   = os.path.join(emb_dir, f"emb_wt_mean_{suffix}.npy")
-    mut_p  = os.path.join(emb_dir, f"emb_mut_mean_{suffix}.npy")
+    wt_p = os.path.join(emb_dir, f"emb_wt_mean_{suffix}.npy")
+    mut_p = os.path.join(emb_dir, f"emb_mut_mean_{suffix}.npy")
     meta_p = os.path.join(emb_dir, f"emb_meta_{suffix}.json")
 
     if os.path.exists(wt_p) and os.path.exists(mut_p) and os.path.exists(meta_p):
@@ -241,12 +282,16 @@ def get_or_extract_embeddings(variants, seq_cache, data_dir, model_name,
             meta = {}
         if meta.get("n") == len(variants):
             print(f"  Cached pathogenicity embeddings found: {wt_p}")
-            return (np.load(wt_p), np.load(mut_p),
-                    [variants[i] for i in meta["valid_indices"]])
+            return (
+                np.load(wt_p),
+                np.load(mut_p),
+                [variants[i] for i in meta["valid_indices"]],
+            )
 
     print(f"  Extracting ESM-2 embeddings — requires GPU.")
     try:
         import torch
+
         device = "cuda" if torch.cuda.is_available() else "cpu"
     except ImportError:
         device = "cpu"
@@ -258,20 +303,31 @@ def get_or_extract_embeddings(variants, seq_cache, data_dir, model_name,
         )
 
     valid, valid_indices, wt_seqs, mut_seqs, var_positions = build_wt_mut_pairs(
-        variants, seq_cache)
+        variants, seq_cache
+    )
     print(f"  Embedding {len(valid)} WT/mut pairs at batch_size={batch_size} ...")
 
     wt_mean, mut_mean, _, _ = get_esm2_embeddings_for_pairs(
-        wt_seqs, mut_seqs, var_positions,
-        model_name=model_name, device=device, batch_size=batch_size,
+        wt_seqs,
+        mut_seqs,
+        var_positions,
+        model_name=model_name,
+        device=device,
+        batch_size=batch_size,
     )
     np.save(wt_p, wt_mean)
     np.save(mut_p, mut_mean)
     tmp_meta = meta_p + ".tmp"
     with open(tmp_meta, "w") as _f:
-        json.dump({"n": len(variants), "n_valid": len(valid),
-                   "valid_indices": valid_indices,
-                   "model": model_name}, _f)
+        json.dump(
+            {
+                "n": len(variants),
+                "n_valid": len(valid),
+                "valid_indices": valid_indices,
+                "model": model_name,
+            },
+            _f,
+        )
     os.replace(tmp_meta, meta_p)
     print(f"  Cached: {wt_p}")
     return wt_mean, mut_mean, valid
@@ -287,32 +343,37 @@ def run_binary_probe(X, y, splits, probe_kind, seed=42):
     aurocs, prs, f1s = [], [], []
     for tr, te in splits:
         sc = StandardScaler()
-        Xtr = sc.fit_transform(X[tr]); Xte = sc.transform(X[te])
+        Xtr = sc.fit_transform(X[tr])
+        Xte = sc.transform(X[te])
         ytr, yte = y[tr], y[te]
         if len(set(ytr)) < 2 or len(set(yte)) < 2:
             continue
         if probe_kind == "logreg":
-            clf = LogisticRegression(max_iter=1000, C=1.0, solver="lbfgs",
-                                      random_state=seed)
+            clf = LogisticRegression(
+                max_iter=1000, C=1.0, solver="lbfgs", random_state=seed
+            )
         else:
-            clf = MLPClassifier(hidden_layer_sizes=(256,), max_iter=300,
-                                 random_state=seed, early_stopping=True,
-                                 validation_fraction=0.1)
+            clf = MLPClassifier(
+                hidden_layer_sizes=(256,),
+                max_iter=300,
+                random_state=seed,
+                early_stopping=True,
+                validation_fraction=0.1,
+            )
         clf.fit(Xtr, ytr)
         proba = clf.predict_proba(Xte)[:, list(clf.classes_).index(1)]
         pred = clf.predict(Xte)
         aurocs.append(float(roc_auc_score(yte, proba)))
         p_, r_, _ = precision_recall_curve(yte, proba)
         prs.append(float(auc(r_, p_)))
-        f1s.append(float(f1_score(yte, pred, average="binary",
-                                   zero_division=0)))
+        f1s.append(float(f1_score(yte, pred, average="binary", zero_division=0)))
     if not aurocs:
         return {"note": "no usable folds"}
     return {
         "auroc_mean": float(np.mean(aurocs)),
-        "auroc_std":  float(np.std(aurocs)),
+        "auroc_std": float(np.std(aurocs)),
         "pr_auc_mean": float(np.mean(prs)),
-        "f1_mean":     float(np.mean(f1s)),
+        "f1_mean": float(np.mean(f1s)),
         "n_folds": len(aurocs),
     }
 
@@ -320,6 +381,7 @@ def run_binary_probe(X, y, splits, probe_kind, seed=42):
 # --------------------------------------------------------------------------- #
 # Main                                                                         #
 # --------------------------------------------------------------------------- #
+
 
 def main():
     p = argparse.ArgumentParser()
@@ -336,31 +398,40 @@ def main():
     # ----- Phase 1: data --------------------------------------------------- #
     print("\n=== Phase 1: ClinVar variant fetch ===")
     gerasimavicius = _load_data(data_dir)
-    target_genes = sorted(set(v["gene"].upper() for v in gerasimavicius
-                                if v.get("gene")))
+    target_genes = sorted(
+        set(v["gene"].upper() for v in gerasimavicius if v.get("gene"))
+    )
     print(f"  Target gene set: {len(target_genes)} genes from Gerasimavicius")
 
     variants = fetch_clinvar_variants(
-        target_genes, data_dir,
+        target_genes,
+        data_dir,
         max_per_gene_per_class=args.max_per_gene_per_class,
         seed=args.seed,
     )
     variants = attach_uniprot_ids(variants, gerasimavicius)
 
-    print(f"\n  Final ClinVar set: {len(variants)} variants  "
-          f"({Counter(v['label'] for v in variants)})  "
-          f"{len(set(v['gene'] for v in variants))} genes")
+    print(
+        f"\n  Final ClinVar set: {len(variants)} variants  "
+        f"({Counter(v['label'] for v in variants)})  "
+        f"{len(set(v['gene'] for v in variants))} genes"
+    )
 
     # ----- Phase 2: sequences + embeddings --------------------------------- #
     print("\n=== Phase 2: sequences + embeddings ===")
     seq_cache = build_sequence_cache(gerasimavicius, data_dir)
     wt_mean, mut_mean, valid = get_or_extract_embeddings(
-        variants, seq_cache, data_dir, args.model,
+        variants,
+        seq_cache,
+        data_dir,
+        args.model,
         batch_size=args.batch_size,
     )
     deltas = mut_mean - wt_mean
-    print(f"  Final: {len(valid)} embedded variants  "
-          f"({Counter(v['label'] for v in valid)})")
+    print(
+        f"  Final: {len(valid)} embedded variants  "
+        f"({Counter(v['label'] for v in valid)})"
+    )
 
     y = np.array([1 if v["label"] == "pathogenic" else 0 for v in valid])
     genes = np.array([v["gene"] for v in valid])
@@ -368,9 +439,15 @@ def main():
     # ----- Phase 3: probes ------------------------------------------------- #
     print("\n=== Phase 3: probes ===")
     pfam_map = fetch_pfam_families(
-        [{"gene": g, "uniprot_id": next((v["uniprot_id"] for v in valid
-                                          if v["gene"] == g), None)}
-         for g in set(genes)],
+        [
+            {
+                "gene": g,
+                "uniprot_id": next(
+                    (v["uniprot_id"] for v in valid if v["gene"] == g), None
+                ),
+            }
+            for g in set(genes)
+        ],
         data_dir,
     )
     gs = gene_split_cv(genes, seed=args.seed)
@@ -379,13 +456,13 @@ def main():
 
     features = {
         "delta_mean": deltas,
-        "wt_only":    wt_mean,
+        "wt_only": wt_mean,
     }
     results = {
         "n_variants": int(len(valid)),
         "n_genes": int(len(set(genes))),
         "n_pathogenic": int(int(y.sum())),
-        "n_benign": int(int((1-y).sum())),
+        "n_benign": int(int((1 - y).sum())),
         "n_families": int(len({pfam_map.get(g) for g in genes} - {None})),
         "by_feature": {},
     }
@@ -397,14 +474,15 @@ def main():
             for probe in ("logreg", "mlp"):
                 if not splits:
                     continue
-                r = run_binary_probe(X, y, splits, probe_kind=probe,
-                                      seed=args.seed)
+                r = run_binary_probe(X, y, splits, probe_kind=probe, seed=args.seed)
                 key = f"{split_name}_{probe}"
                 block[key] = r
                 if "auroc_mean" in r:
-                    print(f"    {key:25s}  AUROC={r['auroc_mean']:.3f}  "
-                          f"PR-AUC={r['pr_auc_mean']:.3f}  "
-                          f"F1={r['f1_mean']:.3f}  (folds={r['n_folds']})")
+                    print(
+                        f"    {key:25s}  AUROC={r['auroc_mean']:.3f}  "
+                        f"PR-AUC={r['pr_auc_mean']:.3f}  "
+                        f"F1={r['f1_mean']:.3f}  (folds={r['n_folds']})"
+                    )
         results["by_feature"][fname] = block
 
     out_path = os.path.join(args.run_dir, "pathogenicity_control.json")
@@ -416,27 +494,50 @@ def main():
     print("\n" + "=" * 60)
     print("HEADLINE — pathogenicity positive control")
     print("=" * 60)
-    def aur(k1, k2): return results["by_feature"][k1][k2].get("auroc_mean", float("nan"))
-    print(f"delta_mean  gene-split   logreg AUROC: {aur('delta_mean','gene_split_logreg'):.3f}")
-    print(f"delta_mean  gene-split   MLP    AUROC: {aur('delta_mean','gene_split_mlp'):.3f}")
-    print(f"delta_mean  family-split logreg AUROC: {aur('delta_mean','family_split_logreg'):.3f}")
-    print(f"delta_mean  family-split MLP    AUROC: {aur('delta_mean','family_split_mlp'):.3f}")
+
+    def aur(k1, k2):
+        return results["by_feature"][k1][k2].get("auroc_mean", float("nan"))
+
+    print(
+        f"delta_mean  gene-split   logreg AUROC: {aur('delta_mean','gene_split_logreg'):.3f}"
+    )
+    print(
+        f"delta_mean  gene-split   MLP    AUROC: {aur('delta_mean','gene_split_mlp'):.3f}"
+    )
+    print(
+        f"delta_mean  family-split logreg AUROC: {aur('delta_mean','family_split_logreg'):.3f}"
+    )
+    print(
+        f"delta_mean  family-split MLP    AUROC: {aur('delta_mean','family_split_mlp'):.3f}"
+    )
     print()
-    print(f"wt_only     gene-split   logreg AUROC: {aur('wt_only','gene_split_logreg'):.3f}")
-    print(f"wt_only     family-split logreg AUROC: {aur('wt_only','family_split_logreg'):.3f}")
+    print(
+        f"wt_only     gene-split   logreg AUROC: {aur('wt_only','gene_split_logreg'):.3f}"
+    )
+    print(
+        f"wt_only     family-split logreg AUROC: {aur('wt_only','family_split_logreg'):.3f}"
+    )
     print()
-    delta_gs = aur('delta_mean','gene_split_logreg')
+    delta_gs = aur("delta_mean", "gene_split_logreg")
     if delta_gs >= 0.85:
-        print("  ⇒ Pipeline PASSES positive control "
-              "(delta AUROC ≥ 0.85 on gene-split).")
-        print("    The mechanism null result (result_4) is therefore "
-              "interpretable as a real absence of mechanism signal,")
+        print(
+            "  ⇒ Pipeline PASSES positive control "
+            "(delta AUROC ≥ 0.85 on gene-split)."
+        )
+        print(
+            "    The mechanism null result (result_4) is therefore "
+            "interpretable as a real absence of mechanism signal,"
+        )
         print("    not a pipeline failure.")
     elif delta_gs >= 0.70:
-        print("  ⇒ Pipeline shows MODERATE pathogenicity signal "
-              "(delta AUROC 0.70-0.85).")
-        print("    The mechanism null is interpretable but the pipeline "
-              "is weaker than published ESM-2 pathogenicity work.")
+        print(
+            "  ⇒ Pipeline shows MODERATE pathogenicity signal "
+            "(delta AUROC 0.70-0.85)."
+        )
+        print(
+            "    The mechanism null is interpretable but the pipeline "
+            "is weaker than published ESM-2 pathogenicity work."
+        )
     else:
         print("  ⇒ Pipeline FAILS positive control (delta AUROC < 0.70).")
         print("    The mechanism null result is UNINTERPRETABLE — the pipeline")

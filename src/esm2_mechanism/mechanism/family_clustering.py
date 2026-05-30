@@ -29,10 +29,16 @@ from scipy.spatial.distance import cdist
 from scipy.stats import pearsonr
 
 import functools
+
 print = functools.partial(print, flush=True)
 
 from esm2_mechanism.embeddings.esm2_mechanism import _load_data, ESM2_MODEL_650M
-from esm2_mechanism.utils_sequences import build_sequence_cache, window_sequence, apply_missense, fetch_pfam_families
+from esm2_mechanism.utils_sequences import (
+    build_sequence_cache,
+    window_sequence,
+    apply_missense,
+    fetch_pfam_families,
+)
 from esm2_mechanism.utils_probes import gene_split_cv
 
 
@@ -54,7 +60,7 @@ def knn_family_purity(emb, families, k=5, n_shuffles=20, seed=42):
     nn = NearestNeighbors(n_neighbors=k + 1, metric="cosine").fit(emb)
     _, idx = nn.kneighbors(emb)
     # idx[:, 0] is the point itself; drop it
-    neighbor_idx = idx[:, 1:k+1]
+    neighbor_idx = idx[:, 1 : k + 1]
 
     purities = []
     for i in range(n):
@@ -97,19 +103,24 @@ def within_between_ratio(emb, families, n_shuffles=20, seed=42):
     null_ratios = []
     for _ in range(n_shuffles):
         shuf_fam = rng.permutation(families)
-        fam_pair_same_s = np.array([shuf_fam[i] == shuf_fam[j]
-                                     for i, j in zip(*iu)])
+        fam_pair_same_s = np.array([shuf_fam[i] == shuf_fam[j] for i, j in zip(*iu)])
         if fam_pair_same_s.sum() < 5:
             continue
         w = d[fam_pair_same_s].mean()
         b = d[~fam_pair_same_s].mean()
         null_ratios.append(w / (b + 1e-10))
     null_mean = float(np.mean(null_ratios)) if null_ratios else float("nan")
-    z = (ratio - null_mean) / (np.std(null_ratios) + 1e-10) if null_ratios else float("nan")
+    z = (
+        (ratio - null_mean) / (np.std(null_ratios) + 1e-10)
+        if null_ratios
+        else float("nan")
+    )
     return ratio, null_mean, float(z)
 
 
-def family_probe(gene_emb, gene_families, gene_names, seed=42, min_family_size=3, n_folds=5):
+def family_probe(
+    gene_emb, gene_families, gene_names, seed=42, min_family_size=3, n_folds=5
+):
     """Linear probe predicting Pfam family from gene-level embedding, using k-fold CV."""
     fam_counts = Counter(gene_families)
     kept = [f for f, c in fam_counts.items() if c >= min_family_size]
@@ -136,7 +147,9 @@ def family_probe(gene_emb, gene_families, gene_names, seed=42, min_family_size=3
             pred = clf.predict(X[test_idx])
             baseline_pred = np.full_like(y[test_idx], majority_overall)
             accs.append(float(accuracy_score(y[test_idx], pred)))
-            f1s.append(float(f1_score(y[test_idx], pred, average="macro", zero_division=0)))
+            f1s.append(
+                float(f1_score(y[test_idx], pred, average="macro", zero_division=0))
+            )
             baseline_accs.append(float(accuracy_score(y[test_idx], baseline_pred)))
         except Exception:
             continue
@@ -216,13 +229,16 @@ def main():
     }
 
     # Restrict to annotated, non-singleton families for meaningful clustering metrics
-    nonsingleton = np.array([f is not None and fam_counts.get(f, 0) >= 2
-                              for f in gene_families])
+    nonsingleton = np.array(
+        [f is not None and fam_counts.get(f, 0) >= 2 for f in gene_families]
+    )
     print(f"\nGenes in non-singleton families: {nonsingleton.sum()}")
 
-    for view_name, emb in [("wt_mean", emb_wt),
-                            ("mut_mean", emb_mut),
-                            ("delta_mean", emb_delta)]:
+    for view_name, emb in [
+        ("wt_mean", emb_wt),
+        ("mut_mean", emb_mut),
+        ("delta_mean", emb_delta),
+    ]:
         print(f"\n=== {view_name} ===")
         # Aggregate per-variant embeddings to per-gene
         gene_emb = np.zeros((len(gene_names), emb.shape[1]), dtype=np.float32)
@@ -242,8 +258,10 @@ def main():
             except Exception as e:
                 sil = float("nan")
             view_res["silhouette_family"] = sil
-            print(f"  silhouette by family (cosine): {sil:.3f}  "
-                  f"(>0.3 strong, 0.1-0.3 moderate, <0.1 weak, <0 anti-clustered)")
+            print(
+                f"  silhouette by family (cosine): {sil:.3f}  "
+                f"(>0.3 strong, 0.1-0.3 moderate, <0.1 weak, <0 anti-clustered)"
+            )
 
         # 2. kNN purity
         for k in (5, 10):
@@ -259,19 +277,25 @@ def main():
         view_res["within_between_ratio"] = ratio
         view_res["within_between_ratio_null"] = null
         view_res["within_between_ratio_z"] = z
-        print(f"  within/between cosine dist ratio: {ratio:.3f}  "
-              f"null {null:.3f}  z={z:+.1f}  (<1 ⇒ within tighter than between)")
+        print(
+            f"  within/between cosine dist ratio: {ratio:.3f}  "
+            f"null {null:.3f}  z={z:+.1f}  (<1 ⇒ within tighter than between)"
+        )
 
         # 4. Family probe (gene-level)
-        probe = family_probe(gene_emb[annotated_mask],
-                              gene_families[annotated_mask].tolist(),
-                              gene_names[annotated_mask].tolist(),
-                              seed=args.seed)
+        probe = family_probe(
+            gene_emb[annotated_mask],
+            gene_families[annotated_mask].tolist(),
+            gene_names[annotated_mask].tolist(),
+            seed=args.seed,
+        )
         view_res["family_probe"] = probe
         if "accuracy" in probe:
-            print(f"  family probe accuracy: {probe['accuracy']:.3f}  "
-                  f"(majority baseline {probe['majority_baseline_acc']:.3f}, "
-                  f"{probe['n_families']} families)")
+            print(
+                f"  family probe accuracy: {probe['accuracy']:.3f}  "
+                f"(majority baseline {probe['majority_baseline_acc']:.3f}, "
+                f"{probe['n_families']} families)"
+            )
 
         # 5. Per-gene: family-distance ratio vs mechanism-isolation
         #    For each gene, distance to same-family neighbors / distance to others.
@@ -284,10 +308,12 @@ def main():
             per_gene_ratio = []
             mech_matches_fam = []
             for i in range(len(gf_list)):
-                same = np.array([j != i and gf_list[j] == gf_list[i]
-                                  for j in range(len(gf_list))])
-                diff = np.array([j != i and gf_list[j] != gf_list[i]
-                                  for j in range(len(gf_list))])
+                same = np.array(
+                    [j != i and gf_list[j] == gf_list[i] for j in range(len(gf_list))]
+                )
+                diff = np.array(
+                    [j != i and gf_list[j] != gf_list[i] for j in range(len(gf_list))]
+                )
                 if same.sum() == 0 or diff.sum() == 0:
                     continue
                 ratio_i = D[i, same].mean() / (D[i, diff].mean() + 1e-10)
@@ -303,15 +329,22 @@ def main():
                 if mech_matches_fam:
                     frac_match = float(np.mean(mech_matches_fam))
                     view_res["frac_gene_mech_matches_family_majority"] = frac_match
-                    print(f"  fraction of genes whose mechanism matches their family's "
-                          f"majority mechanism: {frac_match:.3f}")
-                    if len(per_gene_ratio) == len(mech_matches_fam) and len(set(mech_matches_fam)) > 1:
+                    print(
+                        f"  fraction of genes whose mechanism matches their family's "
+                        f"majority mechanism: {frac_match:.3f}"
+                    )
+                    if (
+                        len(per_gene_ratio) == len(mech_matches_fam)
+                        and len(set(mech_matches_fam)) > 1
+                    ):
                         try:
                             r, p = pearsonr(per_gene_ratio, mech_matches_fam)
                             view_res["family_tightness_vs_mech_agreement_r"] = float(r)
                             view_res["family_tightness_vs_mech_agreement_p"] = float(p)
-                            print(f"  Pearson r(family_tightness, mech_matches_family) "
-                                  f"= {r:+.3f}  p={p:.3g}")
+                            print(
+                                f"  Pearson r(family_tightness, mech_matches_family) "
+                                f"= {r:+.3f}  p={p:.3g}"
+                            )
                         except Exception:
                             pass
 
@@ -330,8 +363,12 @@ def main():
     wt_knn5_null = results["by_view"]["wt_mean"].get("knn5_purity_null", float("nan"))
     delta_sil = results["by_view"]["delta_mean"].get("silhouette_family", float("nan"))
     delta_knn5 = results["by_view"]["delta_mean"].get("knn5_purity", float("nan"))
-    print(f"WT  embeddings: silhouette={wt_sil:+.3f}  k=5 family purity={wt_knn5:.3f} (null {wt_knn5_null:.3f})")
-    print(f"Δ   embeddings: silhouette={delta_sil:+.3f}  k=5 family purity={delta_knn5:.3f}")
+    print(
+        f"WT  embeddings: silhouette={wt_sil:+.3f}  k=5 family purity={wt_knn5:.3f} (null {wt_knn5_null:.3f})"
+    )
+    print(
+        f"Δ   embeddings: silhouette={delta_sil:+.3f}  k=5 family purity={delta_knn5:.3f}"
+    )
     # Use k=5 purity z-score as primary signal — silhouette is unreliable in
     # high-dimensional space with uneven cluster sizes and many singletons.
     wt_knn5_z = results["by_view"]["wt_mean"].get("knn5_purity_z", float("nan"))
@@ -344,7 +381,9 @@ def main():
             tag = "WEAK family clustering — minor homology leakage"
         else:
             tag = "NO family clustering — gene-level signal is gene-specific, not family-driven"
-        print(f"\n  ⇒ {tag}  (k=5 purity z={wt_knn5_z:+.1f}; silhouette unreliable here)")
+        print(
+            f"\n  ⇒ {tag}  (k=5 purity z={wt_knn5_z:+.1f}; silhouette unreliable here)"
+        )
 
 
 if __name__ == "__main__":

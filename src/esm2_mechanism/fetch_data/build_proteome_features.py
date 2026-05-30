@@ -78,9 +78,7 @@ ENSEMBL_PARALOG_URL = (
     "?type=paralogues;format=condensed"
 )
 
-HPA_PROTEINATLAS_URL = (
-    "https://www.proteinatlas.org/download/proteinatlas.tsv.zip"
-)
+HPA_PROTEINATLAS_URL = "https://www.proteinatlas.org/download/proteinatlas.tsv.zip"
 HPA_PROTEINATLAS_CACHE = CACHE_DIR / "proteinatlas.tsv.zip"
 
 PAXDB_URL = (
@@ -117,7 +115,9 @@ def _download_file(url: str, dest: Path, force: bool = False) -> bool:
     t0 = time.time()
     try:
         urllib.request.urlretrieve(url, dest)
-        print(f"  saved {dest.stat().st_size/1e6:.1f} MB in {time.time()-t0:.1f}s → {dest}")
+        print(
+            f"  saved {dest.stat().st_size/1e6:.1f} MB in {time.time()-t0:.1f}s → {dest}"
+        )
         return True
     except Exception as e:
         print(f"WARNING: download failed: {e}")
@@ -167,17 +167,26 @@ def get_gnomad_constraint(force: bool = False) -> dict[str, dict]:
     # Reuse pilot cache if it exists and is large enough
     cache_path = GNOMAD_CACHE
     if not cache_path.exists() or force:
-        if PILOT_GNOMAD_CACHE.exists() and PILOT_GNOMAD_CACHE.stat().st_size > 1_000_000 and not force:
+        if (
+            PILOT_GNOMAD_CACHE.exists()
+            and PILOT_GNOMAD_CACHE.stat().st_size > 1_000_000
+            and not force
+        ):
             print(f"  reusing pilot cache: {PILOT_GNOMAD_CACHE}")
             cache_path = PILOT_GNOMAD_CACHE
         else:
             ok = _download_file(GNOMAD_CONSTRAINT_URL, GNOMAD_CACHE, force=force)
             if not ok:
-                print("WARNING: gnomAD download failed — all gnomAD features will be None")
+                print(
+                    "WARNING: gnomAD download failed — all gnomAD features will be None"
+                )
                 return {}
     elif GNOMAD_CACHE.stat().st_size <= 1_000_000:
         # Stale/partial cache, try pilot
-        if PILOT_GNOMAD_CACHE.exists() and PILOT_GNOMAD_CACHE.stat().st_size > 1_000_000:
+        if (
+            PILOT_GNOMAD_CACHE.exists()
+            and PILOT_GNOMAD_CACHE.stat().st_size > 1_000_000
+        ):
             print(f"  reusing pilot cache: {PILOT_GNOMAD_CACHE}")
             cache_path = PILOT_GNOMAD_CACHE
         else:
@@ -221,7 +230,8 @@ def get_gnomad_constraint(force: bool = False) -> dict[str, dict]:
     # _mane and lof.exp tie-break columns — a row must be long enough for all
     # of them or we skip it (otherwise parts[idx_mane]/parts[idx_lof_exp] raises).
     needed = max(
-        i for i in (idx_gene, idx_pli, idx_loeuf, idx_misz, idx_mane, idx_lof_exp)
+        i
+        for i in (idx_gene, idx_pli, idx_loeuf, idx_misz, idx_mane, idx_lof_exp)
         if i is not None
     )
     n_skipped = 0
@@ -239,7 +249,8 @@ def get_gnomad_constraint(force: bool = False) -> dict[str, dict]:
                 continue
             is_mane = (
                 parts[idx_mane].strip().lower() in ("true", "1", "yes")
-                if idx_mane is not None else False
+                if idx_mane is not None
+                else False
             )
             lof_exp = _fnum(parts[idx_lof_exp]) if idx_lof_exp is not None else None
             row = {
@@ -255,8 +266,12 @@ def get_gnomad_constraint(force: bool = False) -> dict[str, dict]:
             elif row["_mane"] and not prev["_mane"]:
                 by_gene[gene] = row
             elif row["_mane"] == prev["_mane"] and (
-                (row["_lof_exp"] is not None and prev["_lof_exp"] is None) or
-                (row["_lof_exp"] is not None and prev["_lof_exp"] is not None and row["_lof_exp"] > prev["_lof_exp"])
+                (row["_lof_exp"] is not None and prev["_lof_exp"] is None)
+                or (
+                    row["_lof_exp"] is not None
+                    and prev["_lof_exp"] is not None
+                    and row["_lof_exp"] > prev["_lof_exp"]
+                )
             ):
                 by_gene[gene] = row
 
@@ -320,7 +335,9 @@ def _fetch_paralog_count_rest(gene: str, own_cache_dir: Path) -> Optional[int]:
         cache_file.write_text(json.dumps({"paralog_count": count}))
         return count
     except Exception as e:
-        print(f"  paralog fetch failed for {gene}: {e} — not caching, will retry next run")
+        print(
+            f"  paralog fetch failed for {gene}: {e} — not caching, will retry next run"
+        )
         return None
 
 
@@ -391,11 +408,14 @@ def get_hpa_features(genes: list[str], force: bool = False) -> dict[str, dict]:
 
     ok = _download_file(HPA_PROTEINATLAS_URL, HPA_PROTEINATLAS_CACHE, force=force)
     if not ok:
-        print("WARNING: HPA download failed — tissue features will be None for all genes")
+        print(
+            "WARNING: HPA download failed — tissue features will be None for all genes"
+        )
         return result
 
     try:
         import zipfile
+
         with zipfile.ZipFile(HPA_PROTEINATLAS_CACHE, "r") as zf:
             # Find the TSV inside the zip
             tsv_names = [n for n in zf.namelist() if n.endswith(".tsv")]
@@ -423,10 +443,14 @@ def get_hpa_features(genes: list[str], force: bool = False) -> dict[str, dict]:
                         col_tau_text = name
 
                 if col_gene is None:
-                    print(f"WARNING: HPA: gene column not found; header: {fieldnames[:15]}")
+                    print(
+                        f"WARNING: HPA: gene column not found; header: {fieldnames[:15]}"
+                    )
                     return result
                 if col_tau_text is None:
-                    print(f"WARNING: HPA: 'RNA tissue specificity' column not found; tau will be None for all genes. Header: {fieldnames[:15]}")
+                    print(
+                        f"WARNING: HPA: 'RNA tissue specificity' column not found; tau will be None for all genes. Header: {fieldnames[:15]}"
+                    )
 
                 n_tau = 0
                 for row in reader:
@@ -446,14 +470,18 @@ def get_hpa_features(genes: list[str], force: bool = False) -> dict[str, dict]:
         print(f"WARNING: HPA parse failed: {e}")
 
     n_tau = sum(1 for v in result.values() if v["tissue_specificity_tau"] is not None)
-    print(f"  HPA coverage: tau={n_tau}/{len(genes)} (n_tissues_expressed not available from bulk export)")
+    print(
+        f"  HPA coverage: tau={n_tau}/{len(genes)} (n_tissues_expressed not available from bulk export)"
+    )
     return result
 
 
 # ---------------------------------------------------------------------------
 # Source 4 — PaxDb protein abundance
 # ---------------------------------------------------------------------------
-def get_paxdb_abundance(genes: list[str], force: bool = False) -> dict[str, Optional[float]]:
+def get_paxdb_abundance(
+    genes: list[str], force: bool = False
+) -> dict[str, Optional[float]]:
     """
     Returns {gene: log10(abundance_ppm)} or {gene: None}.
     Genes with abundance_ppm < 1e-3 (below detection floor) are returned as None.
@@ -484,7 +512,9 @@ def get_paxdb_abundance(genes: list[str], force: bool = False) -> dict[str, Opti
         if ok:
             paxdb_path = PAXDB_CACHE
         else:
-            print("WARNING: PaxDb not available — log_abundance_ppm will be None for all genes")
+            print(
+                "WARNING: PaxDb not available — log_abundance_ppm will be None for all genes"
+            )
             return result
 
     try:
@@ -502,10 +532,17 @@ def get_paxdb_abundance(genes: list[str], force: bool = False) -> dict[str, Opti
                     continue
                 gene = parts[0].strip()
                 abund = _fnum(parts[2])
-                if gene in genes_set and abund is not None and abund >= 1e-3 and result[gene] is None:
+                if (
+                    gene in genes_set
+                    and abund is not None
+                    and abund >= 1e-3
+                    and result[gene] is None
+                ):
                     result[gene] = math.log10(abund)
         n_covered = sum(1 for v in result.values() if v is not None)
-        print(f"  PaxDb coverage: {n_covered}/{len(genes)} genes assigned log_abundance_ppm")
+        print(
+            f"  PaxDb coverage: {n_covered}/{len(genes)} genes assigned log_abundance_ppm"
+        )
         return result
     except Exception as e:
         print(f"WARNING: PaxDb parse failed: {e}")
@@ -515,7 +552,9 @@ def get_paxdb_abundance(genes: list[str], force: bool = False) -> dict[str, Opti
 # ---------------------------------------------------------------------------
 # Source 5 — BioPlex 3.0 PPI degree
 # ---------------------------------------------------------------------------
-def get_bioplex_degree(genes: list[str], force: bool = False) -> dict[str, Optional[int]]:
+def get_bioplex_degree(
+    genes: list[str], force: bool = False
+) -> dict[str, Optional[int]]:
     """
     Returns {gene: degree} (number of unique interaction partners).
     Handles TSV with GeneA/GeneB columns (gene symbols).
@@ -526,7 +565,9 @@ def get_bioplex_degree(genes: list[str], force: bool = False) -> dict[str, Optio
 
     ok = _download_file(BIOPLEX_URL, BIOPLEX_CACHE, force=force)
     if not ok:
-        print("WARNING: BioPlex download failed — PPI_degree will be None for all genes")
+        print(
+            "WARNING: BioPlex download failed — PPI_degree will be None for all genes"
+        )
         return result
 
     try:
@@ -541,9 +582,23 @@ def get_bioplex_degree(genes: list[str], force: bool = False) -> dict[str, Optio
             col_b = None
             for name in fieldnames:
                 nl = name.lower().strip()
-                if nl in ("genea", "gene_a", "symbola", "symbol_a", "gene a", "symbol a"):
+                if nl in (
+                    "genea",
+                    "gene_a",
+                    "symbola",
+                    "symbol_a",
+                    "gene a",
+                    "symbol a",
+                ):
                     col_a = name
-                elif nl in ("geneb", "gene_b", "symbolb", "symbol_b", "gene b", "symbol b"):
+                elif nl in (
+                    "geneb",
+                    "gene_b",
+                    "symbolb",
+                    "symbol_b",
+                    "gene b",
+                    "symbol b",
+                ):
                     col_b = name
             if col_a is None or col_b is None:
                 print(
@@ -564,8 +619,8 @@ def get_bioplex_degree(genes: list[str], force: bool = False) -> dict[str, Optio
         # Sanity check: verify matched column values look like HGNC gene symbols,
         # not database IDs (ENSG*, 6-char UniProt). Sample the first 50 keys from
         # the degree dict — they come directly from the matched columns.
-        _ENSG_RE = re.compile(r'^ENSG\d{8,}$')
-        _UNIPROT_RE = re.compile(r'^[A-NR-Z]\d[A-Z\d]{3}\d$|^[OPQ]\d[A-Z\d]{3}\d$')
+        _ENSG_RE = re.compile(r"^ENSG\d{8,}$")
+        _UNIPROT_RE = re.compile(r"^[A-NR-Z]\d[A-Z\d]{3}\d$|^[OPQ]\d[A-Z\d]{3}\d$")
         _sample = list(itertools.islice(degree, 50))
         _n_db_ids = sum(1 for k in _sample if _ENSG_RE.match(k) or _UNIPROT_RE.match(k))
         if degree and _n_db_ids > len(_sample) * 0.5:
@@ -623,7 +678,9 @@ def _load_ensg_to_symbol() -> dict[str, str]:
             idx_gene = header.index("gene") if "gene" in header else None
             idx_ensg = header.index("gene_id") if "gene_id" in header else None
             if idx_gene is None or idx_ensg is None:
-                print(f"WARNING: gnomAD v2.1.1 missing gene/gene_id columns: {header[:10]}")
+                print(
+                    f"WARNING: gnomAD v2.1.1 missing gene/gene_id columns: {header[:10]}"
+                )
                 return {}
             needed = max(idx_gene, idx_ensg)
             for line in gz:
@@ -696,11 +753,11 @@ CONT_FEATURES = [
     "LOEUF",
     "mis_z",
     "paralog_count",
-    "tissue_specificity_tau",   # HPA text label mapped to {0, 0.2, 0.6, 0.7, 0.8}
+    "tissue_specificity_tau",  # HPA text label mapped to {0, 0.2, 0.6, 0.7, 0.8}
     # n_tissues_expressed: dropped — not in HPA bulk export (0% coverage)
-    "log_abundance_ppm",        # PaxDb integrated human, manually downloaded
+    "log_abundance_ppm",  # PaxDb integrated human, manually downloaded
     "PPI_degree",
-    "s_het",                    # GeneBayes posterior mean (Zeng et al. 2023); replaces ClinGen HI/TS
+    "s_het",  # GeneBayes posterior mean (Zeng et al. 2023); replaces ClinGen HI/TS
 ]
 
 
@@ -785,14 +842,18 @@ def build_feature_table(
 
     # --- is_singleton_family indicator ---
     for row in rows:
-        row["is_singleton_family"] = 1 if row["pfam_family"] in singleton_families else 0
+        row["is_singleton_family"] = (
+            1 if row["pfam_family"] in singleton_families else 0
+        )
 
     # --- Missingness indicators ---
     for feat in CONT_FEATURES:
         for row in rows:
             row[f"{feat}_missing"] = 0 if row[feat] is not None else 1
         for row in rows:
-            row[f"{feat}_familyresid_missing"] = 0 if row.get(f"{feat}_familyresid") is not None else 1
+            row[f"{feat}_familyresid_missing"] = (
+                0 if row.get(f"{feat}_familyresid") is not None else 1
+            )
 
     # Build column list in a defined order
     col_names: list[str] = ["gene", "pfam_family", "is_singleton_family"]
@@ -850,8 +911,10 @@ def build_aligned_matrix(
         if nan_mask.any():
             finite = col_data[~nan_mask]
             if finite.size == 0:
-                print(f"WARNING: column '{num_cols[j]}' has no observed values — "
-                      f"source likely failed; leaving as NaN in matrix.")
+                print(
+                    f"WARNING: column '{num_cols[j]}' has no observed values — "
+                    f"source likely failed; leaving as NaN in matrix."
+                )
                 continue
             X[nan_mask, j] = float(np.median(finite))
 
@@ -925,7 +988,9 @@ def main():
     try:
         paralogs = get_paralogs(genes)
     except Exception as e:
-        print(f"WARNING: Paralog source failed entirely: {e} — using None for all genes")
+        print(
+            f"WARNING: Paralog source failed entirely: {e} — using None for all genes"
+        )
 
     hpa: dict[str, dict] = {g: {"tissue_specificity_tau": None} for g in genes}
     try:
@@ -943,7 +1008,9 @@ def main():
     try:
         bioplex = get_bioplex_degree(genes, force=force)
     except Exception as e:
-        print(f"WARNING: BioPlex source failed entirely: {e} — using None for all genes")
+        print(
+            f"WARNING: BioPlex source failed entirely: {e} — using None for all genes"
+        )
 
     shet: dict[str, Optional[float]] = {g: None for g in genes}
     try:
