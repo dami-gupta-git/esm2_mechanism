@@ -19,7 +19,7 @@ Missing-data policy (from plan_experiment.md §Phase 2):
 
 Outputs:
   data/gene_proteome_features.tsv          human-readable gene × feature table
-  data/proteome_features_aligned.npy       float32 matrix aligned to gene_list.tsv order
+  data/proteome_features_aligned.npy       float32 matrix aligned to gene_universe.tsv order
   data/proteome_feature_columns.json       column metadata
 
 Usage:

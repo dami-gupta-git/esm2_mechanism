@@ -137,13 +137,13 @@ In-silico perturbation scan: mutates 100 evenly-spaced positions per gene to 3 p
 
 ```
 # Phase 1 — CPU: build probe variant list
-python -m esm2_mechanism.perturb.perturbation_scan --phase 1 --run_dir run_0
+python -m esm2_mechanism.perturb.perturbation_scan --run_phase 1
 
-# Phase 2 — GPU: extract embeddings
-python -m esm2_mechanism.perturb.perturbation_scan --phase 2 --run_dir run_0
+# GPU: extract embeddings (~600k forward passes, ~3h on A100)
+python -m esm2_mechanism.embeddings.embed_scan --batch_size 128
 
-# Phase 3 — CPU: compute scan features
-python -m esm2_mechanism.perturb.perturbation_scan --phase 3 --run_dir run_0
+# Phase 3 — CPU: compute scan features from cached embeddings
+python -m esm2_mechanism.perturb.perturbation_scan --run_phase 3
 ```
 
 Outputs `data/scan_features.npy` with 5 pre-registered scalar features per gene.

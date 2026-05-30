@@ -13,7 +13,7 @@ Pipeline
 3. For each variant, extract a window of up to 1022 residues centred on the mutation
    site (ESM-2's token limit), apply the missense substitution to build the mutant
    sequence, and discard variants where the sequence is unavailable or the WT amino
-   acid does not match the reference sequence.
+   acid does not match the reference sequence at the stated position.
 4. Run WT and mutant sequences through a pretrained ESM-2 model (650M or 3B),
    interleaved in the same batch to halve the number of forward passes.
 5. Extract two embedding types per variant from the final transformer layer:
@@ -31,6 +31,14 @@ The four arrays and valid_variants.json are aligned by row: index i in each arra
 corresponds to valid_variants[i]. Together they provide WT and mutant state at two
 granularities (global and local), ready to train a pathogenicity classifier on the
 difference between them.
+
+Checkpointing
+-------------
+Embeddings are flushed atomically every checkpoint_every variants so a GPU job can
+survive an interrupt. On restart, if all five output files exist and their row counts
+match the current valid variant list, extraction is skipped entirely. A corrupt
+checkpoint (truncated JSON or mismatched row counts) is detected and deleted so the
+run starts cleanly from scratch.
 
 Usage (requires GPU):
     python -m esm2_mechanism.embeddings.embed_variants \\

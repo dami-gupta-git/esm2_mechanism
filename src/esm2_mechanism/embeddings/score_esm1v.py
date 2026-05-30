@@ -23,6 +23,7 @@ from __future__ import annotations
 import argparse
 import functools
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -60,24 +61,26 @@ def score_variants_single_model(
     g2u: dict[str, str],
     seqs: dict[str, str],
     batch_size: int,
-) -> dict[str, float]:
+) -> tuple[dict[str, float], set[str]]:
     """
     Score all variants for one model checkpoint.
-    Returns {variant_key: delta_ll}.
+    Returns ({variant_key: delta_ll}, genes_without_sequence).
+    Genes without a sequence are not scored and must not be marked done in the
+    checkpoint — they should be retried if sequences.json is updated.
     """
     import torch
 
     batch_converter = alphabet.get_batch_converter()
-    mask_idx = alphabet.mask_idx
     aa_to_idx = {aa: alphabet.get_idx(aa) for aa in "ACDEFGHIKLMNPQRSTVWY"}
 
     scores: dict[str, float] = {}
+    genes_without_sequence: set[str] = set()
     for gene, variants in gene_variants.items():
         uniprot = g2u.get(gene)
         seq = seqs.get(uniprot, "") if uniprot else ""
         if not seq:
-            for v in variants:
-                scores[v["key"]] = float("nan")
+            print(f"  WARNING: no sequence for gene {gene!r} (uniprot={uniprot!r}) — skipping")
+            genes_without_sequence.add(gene)
             continue
 
         # Group by position — one forward pass per unique position.
@@ -120,7 +123,7 @@ def score_variants_single_model(
                         delta = float("nan")
                     scores[v["key"]] = delta
 
-    return scores
+    return scores, genes_without_sequence
 
 
 def main() -> int:
@@ -178,15 +181,23 @@ def main() -> int:
     ckpt_done: dict[str, set[str]] = {c: set() for c in CHECKPOINTS}
 
     if ckpt_path.exists():
-        with open(ckpt_path) as _f:
-            saved = json.load(_f)
-        per_ckpt = saved.get("per_ckpt", per_ckpt)
-        for c in CHECKPOINTS:
-            ckpt_done[c] = set(saved.get("ckpt_done", {}).get(c, []))
-        done_genes = set.intersection(*[ckpt_done[c] for c in CHECKPOINTS])
-        print(
-            f"Resuming from checkpoint: {len(done_genes)}/{len(gene_variants)} genes fully done"
-        )
+        try:
+            with open(ckpt_path) as _f:
+                saved = json.load(_f)
+        except json.JSONDecodeError:
+            print(f"WARNING: corrupt checkpoint at {ckpt_path} — discarding and restarting")
+            ckpt_path.unlink()
+            saved = None
+        if saved is not None:
+            per_ckpt = saved.get("per_ckpt", per_ckpt)
+            for c in CHECKPOINTS:
+                ckpt_done[c] = set(saved.get("ckpt_done", {}).get(c, []))
+            done_genes = set.intersection(*[ckpt_done[c] for c in CHECKPOINTS])
+            print(
+                f"Resuming from checkpoint: {len(done_genes)}/{len(gene_variants)} genes fully done"
+            )
+        else:
+            done_genes = set()
     else:
         done_genes = set()
 
@@ -207,7 +218,7 @@ def main() -> int:
 
             if len(gene_batch) >= args.checkpoint_every or i == len(genes_for_ckpt) - 1:
                 batch_gene_variants = {g: gene_variants[g] for g in gene_batch}
-                new_scores = score_variants_single_model(
+                new_scores, no_seq_genes = score_variants_single_model(
                     model,
                     alphabet,
                     device,
@@ -217,7 +228,10 @@ def main() -> int:
                     args.batch_size,
                 )
                 per_ckpt[ckpt_name].update(new_scores)
-                ckpt_done[ckpt_name].update(gene_batch)
+                # Only mark genes done when they were actually scored. Genes
+                # without a sequence are left out of ckpt_done so they are
+                # retried if sequences.json is updated between runs.
+                ckpt_done[ckpt_name].update(g for g in gene_batch if g not in no_seq_genes)
                 n_ok = sum(1 for v in new_scores.values() if not np.isnan(v))
                 print(
                     f"  [{i+1}/{len(genes_for_ckpt)}] batch of {len(gene_batch)} genes "
@@ -232,8 +246,12 @@ def main() -> int:
                     "per_ckpt": per_ckpt,
                     "ckpt_done": {c: list(ckpt_done[c]) for c in CHECKPOINTS},
                 }
-                with open(ckpt_path, "w") as _f:
+                ckpt_tmp = str(ckpt_path) + ".tmp"
+                with open(ckpt_tmp, "w") as _f:
                     json.dump(ckpt_state, _f)
+                    _f.flush()
+                    os.fsync(_f.fileno())
+                os.replace(ckpt_tmp, ckpt_path)
                 print(
                     f"  Checkpoint saved ({len(all_fully_done)} genes fully done)",
                     flush=True,
@@ -261,8 +279,12 @@ def main() -> int:
     n_scored = sum(1 for v in averaged.values() if not np.isnan(v))
     print(f"\nFinal: {n_scored:,}/{len(averaged):,} variants with finite ΔLL")
 
-    with open(args.out, "w") as f:
+    out_tmp = str(args.out) + ".tmp"
+    with open(out_tmp, "w") as f:
         json.dump(averaged, f, indent=2, sort_keys=True)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(out_tmp, args.out)
     print(f"Wrote {args.out}")
 
     if ckpt_path.exists():

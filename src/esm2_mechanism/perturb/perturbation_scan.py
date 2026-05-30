@@ -7,8 +7,10 @@ delta embeddings, and computes 5 pre-registered scalar features per gene.
 
 Phases:
   1. CPU: build probe variant list, check sequence coverage
-  2. GPU: extract embeddings (~600k forward passes, ~3h on A100)
-  3. CPU: compute features, save to data/scan_features.npy
+  3. CPU: compute features from cached embeddings, save to data/scan_features.npy
+
+Embedding extraction (GPU) is a separate step:
+  python -m esm2_mechanism.embeddings.embed_scan
 
 Pre-registered features (plan_perturb.md):
   1. scan_mag_mean        — mean ||delta|| across positions and substitutions
@@ -47,14 +49,8 @@ from esm2_mechanism.utils_paths import (
     VALID_VARIANTS_JSON,
     SCAN_EMB_WT,
     SCAN_EMB_MUT,
-    SCAN_CKPT_WT,
-    SCAN_CKPT_MUT,
-    EMB_DIR,
-    ESM2_MODEL,
 )
-from esm2_mechanism.embeddings.embed_variants import get_esm2_embeddings_for_pairs
 from esm2_mechanism.utils_sequences import window_sequence, apply_missense
-from esm2_mechanism.utils_io import save_npy
 
 OUT = _RESULTS_DIR / "perturbation_scan"
 OUT.mkdir(parents=True, exist_ok=True)
@@ -63,7 +59,6 @@ PROBE_AAS = ["A", "D", "W"]  # Ala, Asp, Trp
 PROBE_NAMES = ["ala", "asp", "trp"]
 N_POSITIONS = 100  # evenly-spaced positions per gene
 MIN_GENE_LEN = 10  # skip very short sequences
-CHECKPOINT_EVERY = 100  # genes between saves
 
 
 # ── Phase 1: build probe list ─────────────────────────────────────────────────
@@ -138,92 +133,16 @@ def build_probe_list(seqs):
     return probes, covered_genes
 
 
-# ── Phase 2: embedding extraction (GPU) ───────────────────────────────────────
-
-
-def extract_probe_embeddings(probes, seqs, batch_size=128):
-    import torch
-
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    if device != "cuda":
-        raise RuntimeError("GPU required for embedding extraction. Run on RunPod.")
-
-    wt_out = SCAN_EMB_WT
-    mut_out = SCAN_EMB_MUT
-
-    if wt_out.exists() and mut_out.exists():
-        print(f"Cached scan embeddings found: {wt_out}")
-        return np.load(wt_out), np.load(mut_out)
-
-    ckpt_wt = SCAN_CKPT_WT
-    ckpt_mut = SCAN_CKPT_MUT
-    ckpt_idx = EMB_DIR / "scan_ckpt_idx.txt"
-
-    # Resume from checkpoint
-    start_idx = 0
-    all_wt, all_mut = [], []
-    if ckpt_idx.exists():
-        start_idx = int(ckpt_idx.read_text().strip())
-        all_wt = [np.load(ckpt_wt)]
-        all_mut = [np.load(ckpt_mut)]
-        print(f"Resuming from checkpoint: {start_idx}/{len(probes)} done")
-
-    # Build sequences for remaining probes
-    remaining = probes[start_idx:]
-    wt_seqs, mut_seqs, positions = [], [], []
-    for p in remaining:
-        seq = seqs[p["uniprot_id"]]
-        wt_win, new_pos = window_sequence(seq, p["aa_pos"])
-        mut_win = apply_missense(wt_win, new_pos, p["aa_wt"], p["aa_mut"])
-        if mut_win is None:
-            mut_win = wt_win  # zero delta fallback
-        wt_seqs.append(wt_win)
-        mut_seqs.append(mut_win)
-        positions.append(new_pos)
-
-    print(f"Extracting {len(wt_seqs)} probe embeddings on {device}...")
-
-    # Process in chunks with checkpointing
-    chunk_size = CHECKPOINT_EVERY * batch_size
-    for chunk_start in range(0, len(wt_seqs), chunk_size):
-        chunk_end = min(chunk_start + chunk_size, len(wt_seqs))
-        wt_emb, mut_emb, _, _ = get_esm2_embeddings_for_pairs(
-            wt_seqs[chunk_start:chunk_end],
-            mut_seqs[chunk_start:chunk_end],
-            positions[chunk_start:chunk_end],
-            model_name=ESM2_MODEL,
-            device=device,
-            batch_size=batch_size,
-        )
-        all_wt.append(wt_emb)
-        all_mut.append(mut_emb)
-        n_done = start_idx + chunk_end
-        save_npy(ckpt_wt, np.vstack(all_wt))
-        save_npy(ckpt_mut, np.vstack(all_mut))
-        ckpt_idx.write_text(str(n_done))
-        try:
-            import torch
-
-            mem_used = torch.cuda.memory_allocated() / 1e9
-            mem_res = torch.cuda.memory_reserved() / 1e9
-            print(
-                f"  Checkpoint: {n_done}/{len(probes)} probes done  "
-                f"[GPU mem: {mem_used:.1f}GB alloc / {mem_res:.1f}GB reserved]",
-                flush=True,
+def _load_scan_embeddings():
+    """Load scan embeddings. Raises FileNotFoundError if not found."""
+    for path in [SCAN_EMB_WT, SCAN_EMB_MUT]:
+        if not path.exists():
+            raise FileNotFoundError(
+                f"Scan embedding file missing: {path}\n"
+                f"Run: python -m esm2_mechanism.embeddings.embed_scan"
             )
-        except Exception:
-            print(f"  Checkpoint: {n_done}/{len(probes)} probes done", flush=True)
-
-    wt_final = np.vstack(all_wt)
-    mut_final = np.vstack(all_mut)
-    save_npy(wt_out, wt_final)
-    print(f"Saved {wt_out}")
-    save_npy(mut_out, mut_final)
-    print(f"Saved {mut_out}")
-    for f in [ckpt_wt, ckpt_mut, ckpt_idx]:
-        if f.exists():
-            f.unlink()
-    return wt_final, mut_final
+    print(f"Loading scan embeddings: {SCAN_EMB_WT}")
+    return np.load(SCAN_EMB_WT), np.load(SCAN_EMB_MUT)
 
 
 # ── Phase 3: feature computation ─────────────────────────────────────────────
@@ -351,14 +270,14 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--run_phase",
-        default="123",
-        help="Which phases to run: '1', '2', '3', '12', '123' (default: all)",
+        default="13",
+        help="Which phases to run: '1', '3', '13' (default: all). "
+             "For embedding extraction (phase 2) run: python -m esm2_mechanism.embeddings.embed_scan",
     )
-    parser.add_argument("--batch_size", type=int, default=128)
     parser.add_argument(
         "--ablation",
         action="store_true",
-        help="Also compute ablation features (phases 3 only)",
+        help="Also compute ablation features (phase 3 only)",
     )
     args = parser.parse_args()
 
@@ -384,28 +303,15 @@ def main():
             f"\n=== Phase 1 complete: {len(probes)} probes for {len(covered_genes)} genes ==="
         )
 
-    if "2" in phases:
-        print("\n=== Phase 2: embedding extraction ===")
-        wt_emb, mut_emb = extract_probe_embeddings(
-            probes, seqs, batch_size=args.batch_size
-        )
-    elif "3" in phases:
-        wt_path = SCAN_EMB_WT
-        mut_path = SCAN_EMB_MUT
-        if not wt_path.exists():
-            print("ERROR: scan embeddings not found. Run phase 2 first (requires GPU).")
-            sys.exit(1)
-        wt_emb = np.load(wt_path)
-        mut_emb = np.load(mut_path)
-        print(f"Loaded scan embeddings: {wt_emb.shape}")
-
     if "3" in phases:
+        wt_emb, mut_emb = _load_scan_embeddings()
+        print(f"Loaded scan embeddings: {wt_emb.shape}")
         print("\n=== Phase 3: feature computation ===")
         gene_list, X, feature_names = compute_scan_features(
             probes, wt_emb, mut_emb, covered_genes, ablation=args.ablation
         )
         save_features(gene_list, X, feature_names)
-        print(f"\nReady for probe runs. Next: python3 scripts/perturbation_probe.py")
+        print(f"\nReady for probe runs. Next: python -m esm2_mechanism.perturb.perturbation_probe")
 
 
 if __name__ == "__main__":

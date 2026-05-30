@@ -7,7 +7,7 @@ Source: Badonyi & Marsh 2024 PLOS One (DOI: 10.1371/journal.pone.0307312)
 
 Outputs:
     data/badonyi_features.tsv          — gene x 10 columns (raw + missing + familyresid)
-    data/badonyi_features_aligned.npy  — float32 matrix aligned to gene_list.tsv row order
+    data/badonyi_features_aligned.npy  — float32 matrix aligned to gene_universe.tsv row order
     data/badonyi_feature_columns.json  — column metadata
 """
 
