@@ -41,9 +41,18 @@ import numpy as np
 
 print = functools.partial(print, flush=True)
 
-from esm2_mechanism.utils_paths import DATA_DIR as DATA, RESULTS_DIR as _RESULTS_DIR
+from esm2_mechanism.utils_paths import (
+    DATA_DIR as DATA,
+    RESULTS_DIR as _RESULTS_DIR,
+    ESM3_EMB_DIR,
+    ESM3_EMB_SEQ,
+    ESM3_EMB_SEQ_STRUCT,
+    ESM3_VALID_IDX,
+    ESM3_STRUCT_META,
+    ESM3_MODEL,
+)
+from esm2_mechanism.utils_io import save_npy
 
-EMB = DATA / "embeddings"
 AF2_DIR = DATA / "cache" / "af2_structures"
 OUT = _RESULTS_DIR / "esm3_mechanism"
 
@@ -52,17 +61,13 @@ SEQUENCES_JSON = DATA / "sequences.json"
 PFAM_JSON = DATA / "pfam_families.json"
 
 # ESM-3 embedding cache files (phase 2 output)
-EMB_SEQ = EMB / "esm3_geras_seq_mean.npy"
-EMB_SEQ_STRUCT = EMB / "esm3_geras_seq_struct_mean.npy"
-EMB_VALID_IDX = EMB / "esm3_geras_valid_idx.npy"  # indices of non-skipped variants
-STRUCT_META = (
-    EMB / "esm3_geras_struct_meta.json"
-)  # structure-application coverage (phase 2)
+EMB_SEQ = ESM3_EMB_SEQ
+EMB_SEQ_STRUCT = ESM3_EMB_SEQ_STRUCT
+EMB_VALID_IDX = ESM3_VALID_IDX
+STRUCT_META = ESM3_STRUCT_META
 
 # AF2 structure token cache (phase 1 output)
 STRUCT_TOKENS = DATA / "cache" / "esm3_struct_tokens.json"
-
-ESM3_MODEL = "esm3-sm-open-v1"  # 1.4B open weights, loaded via ESM3_sm_open_v0()
 AF2_API_URL = "https://alphafold.ebi.ac.uk/api/prediction/{uniprot_id}"
 
 # Match result_7 exactly
@@ -253,7 +258,7 @@ def phase2_extract_embeddings(batch_size: int = 4) -> None:
         print("All conditions already cached.")
         return
 
-    EMB.mkdir(parents=True, exist_ok=True)
+    ESM3_EMB_DIR.mkdir(parents=True, exist_ok=True)
 
     # Resume from checkpoints if available
     wt_embs: dict[str, list] = {}
@@ -384,23 +389,23 @@ def phase2_extract_embeddings(batch_size: int = 4) -> None:
             rate = done / elapsed if elapsed > 0 else 0
             eta = (n - i - 1) / rate if rate > 0 else 0
             print(f"  [{i+1}/{n}] {rate:.1f} var/s  ETA {eta/60:.0f} min")
-            np.save(
+            save_npy(
                 str(EMB_VALID_IDX).replace(".npy", "_ckpt.npy"),
                 np.array(valid_indices, dtype=np.int32),
             )
             for cond in remaining_conds:
-                np.save(
+                save_npy(
                     str(conditions[cond]).replace(".npy", "_ckpt_wt.npy"),
                     np.array(wt_embs[cond]),
                 )
-                np.save(
+                save_npy(
                     str(conditions[cond]).replace(".npy", "_ckpt_mut.npy"),
                     np.array(mut_embs[cond]),
                 )
 
     # Save valid variant indices for phase 3 label alignment
     valid_idx_arr = np.array(valid_indices, dtype=np.int32)
-    np.save(str(EMB_VALID_IDX), valid_idx_arr)
+    save_npy(str(EMB_VALID_IDX), valid_idx_arr)
     n_skipped = n - len(valid_indices)
     print(f"\nVariants embedded: {len(valid_indices)}/{n}  skipped={n_skipped}")
     print(
@@ -429,7 +434,7 @@ def phase2_extract_embeddings(batch_size: int = 4) -> None:
         wt_arr = np.array(wt_embs[cond])
         mut_arr = np.array(mut_embs[cond])
         delta = mut_arr - wt_arr
-        np.save(str(conditions[cond]), delta)
+        save_npy(str(conditions[cond]), delta)
         print(f"  {cond}: delta saved → {conditions[cond]}  shape={delta.shape}")
         for suffix in ("_ckpt_wt.npy", "_ckpt_mut.npy"):
             p = Path(str(conditions[cond]).replace(".npy", suffix))

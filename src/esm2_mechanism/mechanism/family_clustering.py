@@ -32,7 +32,8 @@ import functools
 
 print = functools.partial(print, flush=True)
 
-from esm2_mechanism.embeddings.esm2_mechanism import _load_data, ESM2_MODEL_650M
+from esm2_mechanism.mechanism.esm2_mechanism import _load_data
+from esm2_mechanism.utils_paths import EMB_WT_MEAN, EMB_MUT_MEAN, ESM2_MODEL
 from esm2_mechanism.utils_sequences import (
     build_sequence_cache,
     window_sequence,
@@ -170,7 +171,7 @@ def family_probe(
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--run_dir", type=str, default="run_0")
-    parser.add_argument("--model", type=str, default=ESM2_MODEL_650M)
+    parser.add_argument("--model", type=str, default=ESM2_MODEL)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--out", type=str, default="family_clustering.json")
     args = parser.parse_args()
@@ -194,9 +195,8 @@ def main():
             continue
         valid_variants.append(v)
 
-    emb_dir = os.path.join(data_dir, "embeddings", args.model)
-    emb_wt = np.load(os.path.join(emb_dir, "embeddings_wt_mean.npy"))
-    emb_mut = np.load(os.path.join(emb_dir, "embeddings_mut_mean.npy"))
+    emb_wt = np.load(EMB_WT_MEAN)
+    emb_mut = np.load(EMB_MUT_MEAN)
     emb_delta = emb_mut - emb_wt
     print(f"Variants: {len(valid_variants)}  Embedding dim: {emb_wt.shape[1]}")
     assert len(valid_variants) == emb_wt.shape[0]

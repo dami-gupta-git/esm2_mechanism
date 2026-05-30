@@ -4,8 +4,7 @@ MLP nonlinearity probe for ESM-2 delta embeddings.
 Tests whether mechanism signal (GOF/DN/LOF) is nonlinearly separable in delta space
 where the linear probe (experiment.py) was at chance.
 
-Loads cached embeddings from --emb_dir (npy files written by experiment.py).
-If embeddings are missing, re-extracts them using the same pipeline.
+Loads cached embeddings from the canonical paths in utils_paths (written by embed_variants.py).
 
 Probe: 2-layer MLP (1280 -> 256 -> 64 -> 3), dropout 0.3, early stopping.
 CV: same 5-fold gene-split as experiment.py.
@@ -22,13 +21,12 @@ import numpy as np
 from sklearn.metrics import roc_auc_score, f1_score
 from sklearn.preprocessing import LabelEncoder
 from esm2_mechanism.utils_probes import gene_split_cv
+from esm2_mechanism.utils_paths import EMB_WT_MEAN, EMB_MUT_MEAN, EMB_WT_POS, EMB_MUT_POS
 import functools
 
 print = functools.partial(print, flush=True)
 
 warnings.filterwarnings("ignore")
-
-ESM2_MODEL_650M = "esm2_t33_650M_UR50D"
 
 
 # ---------------------------------------------------------------------------
@@ -38,7 +36,7 @@ ESM2_MODEL_650M = "esm2_t33_650M_UR50D"
 
 def load_variants_and_labels(data_dir, variants_file=None):
     if variants_file:
-        # Pre-filtered variant list (e.g. merged_valid_variants.json) — skip sequence filtering
+        # Pre-filtered variant list (e.g. valid_variants.json) — skip sequence filtering
         with open(variants_file) as f:
             valid_variants = json.load(f)
         for v in valid_variants:
@@ -87,31 +85,17 @@ def load_variants_and_labels(data_dir, variants_file=None):
     return valid_variants, labels, genes
 
 
-def load_embeddings(emb_dir, model_name=ESM2_MODEL_650M, prefix=""):
-    """Load embeddings. Use prefix='merged_' for merged dataset files."""
-    if prefix:
-        emb_wt_mean = np.load(os.path.join(emb_dir, f"{prefix}embeddings_wt_mean.npy"))
-        emb_mut_mean = np.load(
-            os.path.join(emb_dir, f"{prefix}embeddings_mut_mean.npy")
-        )
-        emb_wt_pos = np.load(os.path.join(emb_dir, f"{prefix}embeddings_wt_pos.npy"))
-        emb_mut_pos = np.load(os.path.join(emb_dir, f"{prefix}embeddings_mut_pos.npy"))
-    else:
-        emb_wt_mean = np.load(os.path.join(emb_dir, f"embeddings_wt_{model_name}.npy"))
-        emb_mut_mean = np.load(
-            os.path.join(emb_dir, f"embeddings_mut_{model_name}.npy")
-        )
-        emb_wt_pos = np.load(
-            os.path.join(emb_dir, f"embeddings_wt_pos_{model_name}.npy")
-        )
-        emb_mut_pos = np.load(
-            os.path.join(emb_dir, f"embeddings_mut_pos_{model_name}.npy")
-        )
-    delta_mean = emb_mut_mean - emb_wt_mean
-    delta_pos = emb_mut_pos - emb_wt_pos
-    print(
-        f"Embeddings loaded: delta_mean {delta_mean.shape}, delta_pos {delta_pos.shape}"
-    )
+def load_embeddings():
+    """Load Gerasimavicius embeddings from canonical paths."""
+    for path in [EMB_WT_MEAN, EMB_MUT_MEAN, EMB_WT_POS, EMB_MUT_POS]:
+        if not os.path.exists(path):
+            raise FileNotFoundError(
+                f"Embedding file missing: {path}\n"
+                f"Run: python -m esm2_mechanism.embeddings.embed_variants"
+            )
+    delta_mean = np.load(EMB_MUT_MEAN) - np.load(EMB_WT_MEAN)
+    delta_pos = np.load(EMB_MUT_POS) - np.load(EMB_WT_POS)
+    print(f"Embeddings loaded: delta_mean {delta_mean.shape}, delta_pos {delta_pos.shape}")
     return delta_mean, delta_pos
 
 
@@ -430,14 +414,7 @@ def main():
         default="run_0/data",
         help="Directory with cached gerasimavicius_variants.json and sequences.json",
     )
-    parser.add_argument(
-        "--emb_dir",
-        type=str,
-        default="run_0/data",
-        help="Directory with cached embedding .npy files",
-    )
     parser.add_argument("--out_dir", type=str, default="run_0")
-    parser.add_argument("--model", type=str, default=ESM2_MODEL_650M)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument(
         "--family_split",
@@ -456,14 +433,8 @@ def main():
         "--variants_file",
         type=str,
         default=None,
-        help="Pre-filtered variants JSON (e.g. merged_valid_variants.json). "
+        help="Pre-filtered variants JSON (e.g. valid_variants.json). "
         "Skips sequence filtering. Embeddings must be aligned.",
-    )
-    parser.add_argument(
-        "--emb_prefix",
-        type=str,
-        default="",
-        help="Embedding filename prefix, e.g. 'merged_' for merged dataset.",
     )
     args = parser.parse_args()
 
@@ -475,7 +446,7 @@ def main():
     )
 
     print("\n=== Loading embeddings ===")
-    delta_mean, delta_pos = load_embeddings(args.emb_dir, args.model, args.emb_prefix)
+    delta_mean, delta_pos = load_embeddings()
 
     assert len(delta_mean) == len(labels), (
         f"Embedding count {len(delta_mean)} != variant count {len(labels)}. "

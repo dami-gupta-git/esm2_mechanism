@@ -24,7 +24,7 @@ import functools
 import json, os, sys, numpy as np
 from pathlib import Path
 
-from esm2_mechanism.utils_paths import DATA_DIR as DATA, RESULTS_DIR as _RESULTS_DIR
+from esm2_mechanism.utils_paths import DATA_DIR as DATA, RESULTS_DIR as _RESULTS_DIR, VALID_VARIANTS_JSON, EMB_WT_MEAN, EMB_MUT_MEAN, GENE_LIST_TSV
 from esm2_mechanism.mechanism.multiseed_v1 import gene_split_cv, family_split_cv
 
 print = functools.partial(print, flush=True)
@@ -56,10 +56,10 @@ def load_all_features(gene_list):
     scan_idx = {g: i for i, g in enumerate(scan_genes)}
 
     # 2. Mean-pooled delta index
-    with open(DATA / "merged_valid_variants.json") as f:
+    with open(VALID_VARIANTS_JSON) as f:
         variants = json.load(f)
-    wt_emb = np.load(EMB / "merged_embeddings_wt_mean.npy")
-    mut_emb = np.load(EMB / "merged_embeddings_mut_mean.npy")
+    wt_emb = np.load(EMB_WT_MEAN)
+    mut_emb = np.load(EMB_MUT_MEAN)
     delta = mut_emb - wt_emb
 
     from collections import defaultdict
@@ -72,7 +72,7 @@ def load_all_features(gene_list):
     proteome_path = DATA / "proteome_features_aligned.npy"
     pg_idx: dict = {}
     if proteome_path.exists():
-        with open(DATA / "merged_gene_list.tsv") as f:
+        with open(GENE_LIST_TSV) as f:
             merged_genes = [
                 line.split("\t")[0].strip() for line in f if not line.startswith("gene")
             ]
@@ -177,7 +177,7 @@ def main():
     print("=== Loading data ===")
 
     # Gene list and labels from merged dataset
-    with open(DATA / "merged_valid_variants.json") as f:
+    with open(VALID_VARIANTS_JSON) as f:
         variants = json.load(f)
     for v in variants:
         if "label_3class" not in v:

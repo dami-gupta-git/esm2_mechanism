@@ -8,7 +8,7 @@ using ESM-1v checkpoints 1 and 2 (esm1v_t33_650M_UR90S_1/2).
 
 Inputs:
   data/pathogenicity_valid_variants.json  (17,236 variants)
-  data/merged_valid_variants.json         (gene -> uniprot_id mapping)
+  data/embeddings/esm2_t33_650M_UR50D/valid_variants.json  (gene -> uniprot_id mapping)
   data/sequences.json                     (uniprot_id -> sequence)
 
 Output:
@@ -30,7 +30,7 @@ import numpy as np
 
 print = functools.partial(print, flush=True)
 
-from esm2_mechanism.utils_paths import DATA_DIR as DATA
+from esm2_mechanism.utils_paths import DATA_DIR as DATA, VALID_VARIANTS_JSON
 from esm2_mechanism.utils_sequences import window_sequence
 
 CHECKPOINTS = [
@@ -42,7 +42,7 @@ CHECKPOINT_EVERY = 50  # genes between saves
 
 def build_gene_maps() -> tuple[dict[str, str], dict[str, str]]:
     """Return (gene->uniprot, uniprot->sequence)."""
-    with open(DATA / "merged_valid_variants.json") as _f:
+    with open(VALID_VARIANTS_JSON) as _f:
         merged = json.load(_f)
     g2u: dict[str, str] = {}
     for r in merged:

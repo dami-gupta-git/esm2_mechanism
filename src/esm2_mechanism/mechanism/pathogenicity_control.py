@@ -38,13 +38,15 @@ from sklearn.neural_network import MLPClassifier
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import roc_auc_score, f1_score, precision_recall_curve, auc
 from esm2_mechanism.utils_probes import gene_split_cv, family_split_cv
-from esm2_mechanism.embeddings.esm2_mechanism import _load_data, ESM2_MODEL_650M
-from esm2_mechanism.embeddings.embed_variants import get_esm2_embeddings_for_pairs
+from esm2_mechanism.mechanism.esm2_mechanism import _load_data
+from esm2_mechanism.utils_paths import (
+    PATH_EMB_WT_MEAN,
+    PATH_EMB_MUT_MEAN,
+    PATH_EMB_META,
+    ESM2_MODEL,
+)
 from esm2_mechanism.utils_sequences import (
-    build_sequence_cache,
     fetch_pfam_families,
-    window_sequence,
-    apply_missense,
 )
 
 import functools
@@ -236,101 +238,29 @@ def attach_uniprot_ids(variants, gerasimavicius_variants):
 # --------------------------------------------------------------------------- #
 
 
-def build_wt_mut_pairs(variants, seq_cache):
-    """Apply each missense to its WT sequence, with windowing for long proteins.
 
-    Returns valid variants, sequences, positions, and the original indices into
-    variants so callers can record which rows survived filtering.
-    """
-    valid = []
-    valid_indices = []
-    wt_seqs, mut_seqs, var_positions = [], [], []
-    for idx, v in enumerate(variants):
-        uid = v.get("uniprot_id")
-        if uid not in seq_cache:
-            continue
-        wt_full = seq_cache[uid]
-        wt_win, new_pos = window_sequence(wt_full, v["aa_pos"])
-        mut_win = apply_missense(wt_win, new_pos, v["aa_wt"], v["aa_mut"])
-        if mut_win is None:
-            continue
-        wt_seqs.append(wt_win)
-        mut_seqs.append(mut_win)
-        var_positions.append(new_pos)
-        valid.append(v)
-        valid_indices.append(idx)
-    return valid, valid_indices, wt_seqs, mut_seqs, var_positions
-
-
-def get_or_extract_embeddings(variants, seq_cache, data_dir, model_name, batch_size=32):
-    """Cache key is a SHA-ish suffix derived from variant count + model.
-    If the cache exists and matches the variant count, reuse it."""
-    emb_dir = os.path.join(data_dir, "embeddings", model_name)
-    os.makedirs(emb_dir, exist_ok=True)
-    suffix = f"pathogenicity_n{len(variants)}"
-    wt_p = os.path.join(emb_dir, f"emb_wt_mean_{suffix}.npy")
-    mut_p = os.path.join(emb_dir, f"emb_mut_mean_{suffix}.npy")
-    meta_p = os.path.join(emb_dir, f"emb_meta_{suffix}.json")
-
-    if os.path.exists(wt_p) and os.path.exists(mut_p) and os.path.exists(meta_p):
-        try:
-            with open(meta_p) as _f:
-                meta = json.load(_f)
-        except json.JSONDecodeError:
-            print(f"  WARNING: corrupt embedding metadata {meta_p} — re-extracting")
-            os.remove(meta_p)
-            meta = {}
-        if meta.get("n") == len(variants):
-            print(f"  Cached pathogenicity embeddings found: {wt_p}")
-            return (
-                np.load(wt_p),
-                np.load(mut_p),
-                [variants[i] for i in meta["valid_indices"]],
+def load_embeddings(variants):
+    """Load pathogenicity embeddings. Raises FileNotFoundError if not found."""
+    for path in [PATH_EMB_WT_MEAN, PATH_EMB_MUT_MEAN, PATH_EMB_META]:
+        if not os.path.exists(path):
+            raise FileNotFoundError(
+                f"Embedding file missing: {path}\n"
+                f"Run: python -m esm2_mechanism.embeddings.pathogenicity_control --phase 2"
             )
-
-    print(f"  Extracting ESM-2 embeddings — requires GPU.")
     try:
-        import torch
+        with open(PATH_EMB_META) as _f:
+            meta = json.load(_f)
+    except json.JSONDecodeError as exc:
+        raise FileNotFoundError(
+            f"Corrupt embedding metadata {PATH_EMB_META} — delete it and re-run phase 2"
+        ) from exc
 
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-    except ImportError:
-        device = "cpu"
-    if device != "cuda":
-        raise RuntimeError(
-            "GPU not detected. ESM-2 embedding extraction requires CUDA. "
-            "Run this script on runpod (or any CUDA host) for phase 2. "
-            "Once cached, phase 3 (the probe) runs anywhere."
-        )
-
-    valid, valid_indices, wt_seqs, mut_seqs, var_positions = build_wt_mut_pairs(
-        variants, seq_cache
+    print(f"  Loading pathogenicity embeddings: {PATH_EMB_WT_MEAN}")
+    return (
+        np.load(PATH_EMB_WT_MEAN),
+        np.load(PATH_EMB_MUT_MEAN),
+        [variants[i] for i in meta["valid_indices"]],
     )
-    print(f"  Embedding {len(valid)} WT/mut pairs at batch_size={batch_size} ...")
-
-    wt_mean, mut_mean, _, _ = get_esm2_embeddings_for_pairs(
-        wt_seqs,
-        mut_seqs,
-        var_positions,
-        model_name=model_name,
-        device=device,
-        batch_size=batch_size,
-    )
-    np.save(wt_p, wt_mean)
-    np.save(mut_p, mut_mean)
-    tmp_meta = meta_p + ".tmp"
-    with open(tmp_meta, "w") as _f:
-        json.dump(
-            {
-                "n": len(variants),
-                "n_valid": len(valid),
-                "valid_indices": valid_indices,
-                "model": model_name,
-            },
-            _f,
-        )
-    os.replace(tmp_meta, meta_p)
-    print(f"  Cached: {wt_p}")
-    return wt_mean, mut_mean, valid
 
 
 # --------------------------------------------------------------------------- #
@@ -386,10 +316,10 @@ def run_binary_probe(X, y, splits, probe_kind, seed=42):
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--run_dir", default="run_0")
-    p.add_argument("--model", default=ESM2_MODEL_650M)
+    p.add_argument("--model", default=ESM2_MODEL)
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--max_per_gene_per_class", type=int, default=20)
-    p.add_argument("--batch_size", type=int, default=32)
+
     args = p.parse_args()
 
     data_dir = os.path.join(args.run_dir, "data")
@@ -417,16 +347,9 @@ def main():
         f"{len(set(v['gene'] for v in variants))} genes"
     )
 
-    # ----- Phase 2: sequences + embeddings --------------------------------- #
-    print("\n=== Phase 2: sequences + embeddings ===")
-    seq_cache = build_sequence_cache(gerasimavicius, data_dir)
-    wt_mean, mut_mean, valid = get_or_extract_embeddings(
-        variants,
-        seq_cache,
-        data_dir,
-        args.model,
-        batch_size=args.batch_size,
-    )
+    # ----- Phase 2: embeddings --------------------------------------------- #
+    print("\n=== Phase 2: embeddings ===")
+    wt_mean, mut_mean, valid = load_embeddings(variants)
     deltas = mut_mean - wt_mean
     print(
         f"  Final: {len(valid)} embedded variants  "

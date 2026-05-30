@@ -56,7 +56,7 @@ import numpy as np
 
 print = functools.partial(print, flush=True)
 from esm2_mechanism.utils_probes import family_split_indices
-from esm2_mechanism.utils_paths import DATA_DIR, RESULTS_DIR as _PROJECT_RESULTS_DIR
+from esm2_mechanism.utils_paths import DATA_DIR, RESULTS_DIR as _PROJECT_RESULTS_DIR, GENE_LIST_TSV
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -68,7 +68,7 @@ RESULTS_DIR = _PROJECT_RESULTS_DIR / "proteome_pilot"
 for d in (CACHE_DIR, PARALOG_CACHE, RESULTS_DIR):
     d.mkdir(parents=True, exist_ok=True)
 
-MERGED_GENE_LIST = DATA_DIR / "merged_gene_list.tsv"
+MERGED_GENE_LIST = GENE_LIST_TSV
 GERASIMAVICIUS_GENE_LIST = DATA_DIR / "gerasimavicius_gene_list.tsv"
 PFAM_FAMILIES = DATA_DIR / "pfam_families.json"
 

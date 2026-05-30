@@ -34,11 +34,14 @@ print = functools.partial(print, flush=True)
 from esm2_mechanism.utils_paths import (
     DATA_DIR as _DATA_DIR,
     RESULTS_DIR as _RESULTS_DIR,
+    PATH_EMB_WT_MEAN,
+    PATH_EMB_MUT_MEAN,
+    MEGASCALE_EMB_WT_MEAN,
+    MEGASCALE_EMB_MUT_MEAN,
 )
 import esm2_mechanism.mechanism.multiseed_v1 as ms
 
 DATA = str(_DATA_DIR)
-EMB = str(_DATA_DIR / "embeddings")
 OUT = str(_RESULTS_DIR / "magnitude_direction")
 os.makedirs(OUT, exist_ok=True)
 
@@ -118,8 +121,8 @@ def load_pathogenicity():
     with open(os.path.join(DATA, "pathogenicity_valid_variants_canonical.json")) as _f:
         v = json.load(_f)
     delta = np.load(
-        os.path.join(EMB, "emb_mut_mean_path_canonical_n16576.npy")
-    ) - np.load(os.path.join(EMB, "emb_wt_mean_path_canonical_n16576.npy"))
+        PATH_EMB_MUT_MEAN
+    ) - np.load(PATH_EMB_WT_MEAN)
     with open(ms.PFAM_JSON) as _f:
         pfam = json.load(_f)
     genes = [x["gene"] for x in v]
@@ -135,8 +138,8 @@ def load_stability():
         return None
     with open(vpath) as _f:
         v = json.load(_f)
-    delta = np.load(os.path.join(EMB, "megascale_mut_mean.npy")) - np.load(
-        os.path.join(EMB, "megascale_wt_mean.npy")
+    delta = np.load(MEGASCALE_EMB_MUT_MEAN) - np.load(
+        MEGASCALE_EMB_WT_MEAN
     )
     n = min(len(v), len(delta))
     v, delta = v[:n], delta[:n]

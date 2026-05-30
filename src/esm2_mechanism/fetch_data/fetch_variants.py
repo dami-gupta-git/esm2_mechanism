@@ -10,17 +10,17 @@ Three pipeline steps:
 
   Step 2 — clinvar
     Fetch ClinVar pathogenic/likely-pathogenic missense variants for all genes
-    in merged_gene_list.tsv.  Resume-safe; rate-limited to ≤3 NCBI req/s.
-    Input : data/merged_gene_list.tsv
+    in gene_list.tsv.  Resume-safe; rate-limited to ≤3 NCBI req/s.
+    Input : data/gene_list.tsv
     Output: data/clinvar_variants.tsv
     Cache : data/cache/clinvar/<gene>.json, data/cache/uniprot/<gene>.json
 
   Step 3 — merge
     Merge Gerasimavicius + G2P/ClinVar into a single variant dataset.
     Priority: Gerasimavicius for genes present in both (has FoldX ddG).
-    Input : data/gerasimavicius_variants.json, data/merged_gene_list.tsv,
+    Input : data/gerasimavicius_variants.json, data/gene_list.tsv,
             data/clinvar_variants.tsv
-    Output: data/merged_variants.json
+    Output: data/variants.json
 
 Usage:
     python -m esm2_mechanism.fetch_data.fetch_variants --step gerasimavicius
@@ -44,7 +44,7 @@ from typing import Optional
 import openpyxl
 import requests
 
-from esm2_mechanism.utils_paths import DATA_DIR
+from esm2_mechanism.utils_paths import DATA_DIR, GENE_LIST_TSV, VARIANTS_JSON
 
 print = functools.partial(print, flush=True)
 
@@ -52,10 +52,9 @@ print = functools.partial(print, flush=True)
 # Paths
 # ---------------------------------------------------------------------------
 XLSX_PATH = DATA_DIR / "downloads" / "DiseaseMech_Stability_VEPS.xlsx"
-GENE_LIST_TSV = DATA_DIR / "merged_gene_list.tsv"
 GERAS_OUT = DATA_DIR / "gerasimavicius_variants.json"
 CLINVAR_OUT = DATA_DIR / "clinvar_variants.tsv"
-MERGED_OUT = DATA_DIR / "merged_variants.json"
+MERGED_OUT = VARIANTS_JSON
 CACHE_DIR = DATA_DIR / "cache"
 UNIPROT_CACHE = CACHE_DIR / "uniprot"
 CLINVAR_CACHE = CACHE_DIR / "clinvar"

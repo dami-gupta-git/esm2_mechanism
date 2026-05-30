@@ -1,13 +1,13 @@
 """
 Extract ESM-2 embeddings for the merged variant dataset.
 
-Reads data/merged_variants.json (a list of missense variants, each with a UniProt ID,
+Reads data/variants.json (a list of missense variants, each with a UniProt ID,
 amino acid position, wild-type AA, mutant AA, and pathogenicity label) and produces
 dense vector representations of each variant for downstream ML classification.
 
 Pipeline
 --------
-1. Load variants from data/merged_variants.json.
+1. Load variants from data/variants.json.
 2. Fetch canonical protein sequences from UniProt for each variant's UniProt ID,
    using data/cache/sequences.json as an incremental local cache.
 3. For each variant, extract a window of up to 1022 residues centred on the mutation
@@ -41,18 +41,17 @@ import argparse
 import functools
 import json
 import os
-import time
 from collections import Counter
 import numpy as np
 
 print = functools.partial(print, flush=True)
 
 from esm2_mechanism.utils_sequences import (
-    fetch_uniprot_sequence,
-    TransientFetchError,
+    build_sequence_cache,
     window_sequence,
     apply_missense,
 )
+from esm2_mechanism.utils_io import save_npy
 
 ESM2_MODEL_650M = "esm2_t33_650M_UR50D"
 ESM2_MODEL_3B = "esm2_t36_3B_UR50D"
@@ -63,18 +62,50 @@ ESM2_MODEL_3B = "esm2_t36_3B_UR50D"
 # ---------------------------------------------------------------------------
 
 
+def _flush_checkpoint(
+    out_dir: str,
+    wt_mean_list: list,
+    mut_mean_list: list,
+    wt_pos_list: list,
+    mut_pos_list: list,
+    valid_slice: list,
+    n_done: int,
+) -> None:
+    """Atomically write accumulated embeddings and valid_variants.json to checkpoint files."""
+    arrays = {
+        "embeddings_wt_mean": wt_mean_list,
+        "embeddings_mut_mean": mut_mean_list,
+        "embeddings_wt_pos": wt_pos_list,
+        "embeddings_mut_pos": mut_pos_list,
+    }
+    for name, lst in arrays.items():
+        save_npy(os.path.join(out_dir, f"{name}.npy"), np.stack(lst))
+    valid_path = os.path.join(out_dir, "valid_variants.json")
+    tmp_valid = valid_path + ".tmp"
+    with open(tmp_valid, "w") as f:
+        json.dump(valid_slice, f)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp_valid, valid_path)
+    print(f"  Checkpoint: {n_done} variants flushed to {out_dir}", flush=True)
+
+
 def get_esm2_embeddings_for_pairs(
     wt_seqs: list[str],
     mut_seqs: list[str],
     aa_positions: list[int],
+    valid_variants: list[dict] | None = None,
+    out_dir: str | None = None,
     model_name: str = ESM2_MODEL_650M,
     device: str = "cuda",
     batch_size: int = 32,
+    checkpoint_every: int = 100,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
     Extract ESM-2 embeddings for WT/mutant sequence pairs.
 
     WT and mutant are interleaved in the same batch to halve forward passes.
+    If out_dir is provided, partial results are checkpointed every checkpoint_every variants.
 
     Returns:
         wt_mean:  (N, D) mean-pooled WT embeddings
@@ -85,8 +116,10 @@ def get_esm2_embeddings_for_pairs(
     import torch
     import esm
 
+    print(f"Loading ESM-2 model {model_name}...", flush=True)
     model, alphabet = esm.pretrained.load_model_and_alphabet(model_name)
     model = model.to(device).eval()
+    print(f"Model loaded.", flush=True)
     batch_converter = alphabet.get_batch_converter()
     n_layers = model.num_layers
 
@@ -94,6 +127,7 @@ def get_esm2_embeddings_for_pairs(
     wt_pos_list, mut_pos_list = [], []
 
     total = len(wt_seqs)
+    n_done = 0
     for batch_start in range(0, total, batch_size):
         pairs = list(
             zip(
@@ -125,13 +159,29 @@ def get_esm2_embeddings_for_pairs(
                 wt_pos_list.append(wt_rep[var_pos].numpy())
                 mut_pos_list.append(mut_rep[var_pos].numpy())
             else:
+                print(
+                    f"  WARNING: var_pos={var_pos} out of range for sequence length {len(wt)}"
+                    f" (batch item {j}) — falling back to mean pooling for position embedding",
+                    flush=True,
+                )
                 wt_pos_list.append(wt_rep[1 : len(wt) + 1].mean(0).numpy())
                 mut_pos_list.append(mut_rep[1 : len(mut) + 1].mean(0).numpy())
 
-        if (batch_start // batch_size) % 5 == 0:
-            print(
-                f"  Embedded {min(batch_start + batch_size, total)}/{total} variant pairs"
-            )
+        n_done = len(wt_mean_list)
+        if n_done % checkpoint_every == 0:
+            if out_dir is not None:
+                _flush_checkpoint(
+                    out_dir, wt_mean_list, mut_mean_list, wt_pos_list, mut_pos_list,
+                    (valid_variants or [])[:n_done], n_done,
+                )
+            else:
+                print(f"  Embedded {n_done}/{total} variant pairs", flush=True)
+
+    if out_dir is not None and n_done % checkpoint_every != 0:
+        _flush_checkpoint(
+            out_dir, wt_mean_list, mut_mean_list, wt_pos_list, mut_pos_list,
+            (valid_variants or [])[:n_done], n_done,
+        )
 
     return (
         np.stack(wt_mean_list),
@@ -139,62 +189,6 @@ def get_esm2_embeddings_for_pairs(
         np.stack(wt_pos_list),
         np.stack(mut_pos_list),
     )
-
-
-# ---------------------------------------------------------------------------
-# Sequence cache (incremental)
-# ---------------------------------------------------------------------------
-
-
-def _load_sequence_cache(cache_path: str) -> dict[str, str]:
-    if not os.path.exists(cache_path):
-        return {}
-    try:
-        with open(cache_path, newline="") as f:
-            return json.load(f)
-    except json.JSONDecodeError:
-        print(f"WARNING: corrupt sequence cache at {cache_path} — starting empty")
-        os.remove(cache_path)
-        return {}
-
-
-def _update_sequence_cache(variants: list[dict], cache_path: str) -> dict[str, str]:
-    """Fetch any UniProt sequences missing from the cache and write back."""
-    seq_cache = _load_sequence_cache(cache_path)
-    needed = {
-        v["uniprot_id"]
-        for v in variants
-        if v.get("uniprot_id") and v["uniprot_id"] not in seq_cache
-    }
-
-    if not needed:
-        return seq_cache
-
-    print(f"Fetching {len(needed)} missing UniProt sequences...")
-    transient_failures = 0
-    for i, uid in enumerate(sorted(needed)):
-        if i % 100 == 0:
-            print(f"  {i}/{len(needed)}")
-        try:
-            seq = fetch_uniprot_sequence(uid)
-        except TransientFetchError:
-            transient_failures += 1
-            continue
-        if seq:
-            seq_cache[uid] = seq
-        time.sleep(0.3)
-    if transient_failures:
-        print(
-            f"  WARNING: {transient_failures} UIDs skipped due to transient failures — not cached, will retry next run"
-        )
-
-    os.makedirs(os.path.dirname(cache_path) or ".", exist_ok=True)
-    tmp_path = cache_path + ".tmp"
-    with open(tmp_path, "w") as f:
-        json.dump(seq_cache, f)
-    os.replace(tmp_path, cache_path)
-    print(f"  Sequences cached: {len(seq_cache)}")
-    return seq_cache
 
 
 # ---------------------------------------------------------------------------
@@ -245,6 +239,7 @@ def main() -> None:
         "--model", default=ESM2_MODEL_650M, choices=[ESM2_MODEL_650M, ESM2_MODEL_3B]
     )
     parser.add_argument("--batch_size", type=int, default=32)
+    parser.add_argument("--checkpoint_every", type=int, default=100)
     args = parser.parse_args()
 
     import torch
@@ -252,7 +247,7 @@ def main() -> None:
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Device: {device} | Model: {args.model}")
 
-    variants_path = os.path.join(args.data_dir, "merged_variants.json")
+    variants_path = os.path.join(args.data_dir, "variants.json")
     if not os.path.exists(variants_path):
         raise FileNotFoundError(
             f"{variants_path} not found — run fetch_data/fetch_variants.py --step merge first"
@@ -261,8 +256,7 @@ def main() -> None:
         variants = json.load(f)
     print(f"Loaded {len(variants)} merged variants")
 
-    seq_cache_path = os.path.join(args.data_dir, "cache", "sequences.json")
-    seq_cache = _update_sequence_cache(variants, seq_cache_path)
+    seq_cache = build_sequence_cache(variants, os.path.join(args.data_dir, "cache"))
 
     valid, wt_seqs, mut_seqs, positions = _build_valid_pairs(variants, seq_cache)
 
@@ -282,33 +276,41 @@ def main() -> None:
         try:
             with open(ckpt_valid) as f:
                 prev = json.load(f)
-            if len(prev) == len(valid):
+            n_on_disk = np.load(ckpt_wt_mean, mmap_mode="r").shape[0]
+            if len(prev) == n_on_disk == len(valid):
                 print("Embeddings already complete — nothing to do.")
                 return
-        except json.JSONDecodeError:
-            print("WARNING: corrupt valid_variants.json checkpoint — re-extracting")
-            os.remove(ckpt_valid)
+        except (json.JSONDecodeError, ValueError):
+            print("WARNING: corrupt checkpoint — re-extracting")
+            for ckpt in all_ckpts:
+                if os.path.exists(ckpt):
+                    os.remove(ckpt)
 
     print(f"\nExtracting ESM-2 embeddings ({args.model})...")
     wt_mean, mut_mean, wt_pos, mut_pos = get_esm2_embeddings_for_pairs(
         wt_seqs,
         mut_seqs,
         positions,
+        valid_variants=valid,
+        out_dir=out_dir,
         model_name=args.model,
         device=device,
         batch_size=args.batch_size,
+        checkpoint_every=args.checkpoint_every,
     )
 
     # Write arrays before valid_variants.json so its presence signals a complete set.
     # valid_variants.json is written atomically so a crash mid-write leaves it absent
     # rather than corrupt — the next run will re-extract cleanly.
-    np.save(ckpt_wt_mean, wt_mean)
-    np.save(ckpt_mut_mean, mut_mean)
-    np.save(ckpt_wt_pos, wt_pos)
-    np.save(ckpt_mut_pos, mut_pos)
+    save_npy(ckpt_wt_mean, wt_mean)
+    save_npy(ckpt_mut_mean, mut_mean)
+    save_npy(ckpt_wt_pos, wt_pos)
+    save_npy(ckpt_mut_pos, mut_pos)
     tmp_valid = ckpt_valid + ".tmp"
     with open(tmp_valid, "w") as f:
         json.dump(valid, f)
+        f.flush()
+        os.fsync(f.fileno())
     os.replace(tmp_valid, ckpt_valid)
 
     print(f"\nSaved embeddings: {wt_mean.shape} -> {out_dir}")

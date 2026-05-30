@@ -18,10 +18,12 @@ from collections import Counter
 
 import numpy as np
 
-from esm2_mechanism.embeddings.esm2_mechanism import (
+from esm2_mechanism.mechanism.esm2_mechanism import (
     _load_data,
     _load_alphamissense_scores,
-    ESM2_MODEL_650M,
+)
+from esm2_mechanism.utils_paths import (
+    EMB_WT_MEAN, EMB_MUT_MEAN, EMB_WT_POS, EMB_MUT_POS, ESM2_MODEL,
 )
 from esm2_mechanism.utils_sequences import (
     build_sequence_cache,
@@ -101,7 +103,7 @@ def main():
         default="run_0",
         help="Directory containing data/ with cached embeddings",
     )
-    parser.add_argument("--model", type=str, default=ESM2_MODEL_650M)
+    parser.add_argument("--model", type=str, default=ESM2_MODEL)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--n_folds", type=int, default=5)
     parser.add_argument("--out", type=str, default="family_split_baselines.json")
@@ -134,29 +136,17 @@ def main():
     # ------------------------------------------------------------------
     # 2. Load cached embeddings
     # ------------------------------------------------------------------
-    emb_dir = os.path.join(data_dir, "embeddings", args.model)
-    emb_cache_wt = os.path.join(emb_dir, "embeddings_wt_mean.npy")
-    emb_cache_mut = os.path.join(emb_dir, "embeddings_mut_mean.npy")
-    emb_cache_wt_pos = os.path.join(emb_dir, "embeddings_wt_pos.npy")
-    emb_cache_mut_pos = os.path.join(emb_dir, "embeddings_mut_pos.npy")
-
-    for p in [emb_cache_wt, emb_cache_mut]:
-        if not os.path.exists(p):
+    for path in [EMB_WT_MEAN, EMB_MUT_MEAN, EMB_WT_POS, EMB_MUT_POS]:
+        if not os.path.exists(path):
             raise FileNotFoundError(
-                f"Missing cached embedding: {p}\n"
-                f"Run experiment.py first to populate the cache."
+                f"Missing cached embedding: {path}\n"
+                f"Run embed_variants.py first to populate the cache."
             )
 
-    emb_wt_mean = np.load(emb_cache_wt)
-    emb_mut_mean = np.load(emb_cache_mut)
-    emb_wt_pos = (
-        np.load(emb_cache_wt_pos) if os.path.exists(emb_cache_wt_pos) else emb_wt_mean
-    )
-    emb_mut_pos = (
-        np.load(emb_cache_mut_pos)
-        if os.path.exists(emb_cache_mut_pos)
-        else emb_mut_mean
-    )
+    emb_wt_mean = np.load(EMB_WT_MEAN)
+    emb_mut_mean = np.load(EMB_MUT_MEAN)
+    emb_wt_pos = np.load(EMB_WT_POS)
+    emb_mut_pos = np.load(EMB_MUT_POS)
 
     deltas_mean = emb_mut_mean - emb_wt_mean
     deltas_pos = emb_mut_pos - emb_wt_pos

@@ -31,10 +31,10 @@ import argparse, functools, json, os, sys, numpy as np
 from collections import defaultdict
 from pathlib import Path
 
-from esm2_mechanism.utils_paths import DATA_DIR as DATA, RESULTS_DIR as _RESULTS_DIR
+from esm2_mechanism.utils_paths import DATA_DIR as DATA, RESULTS_DIR as _RESULTS_DIR, VALID_VARIANTS_JSON, EMB_WT_MEAN, EMB_MUT_MEAN
 
 print = functools.partial(print, flush=True)
-from esm2_mechanism.embeddings.esm2_mechanism import ESM2_MODEL_650M
+from esm2_mechanism.embeddings.embed_variants import ESM2_MODEL_650M
 from esm2_mechanism.utils_sequences import window_sequence
 
 OUT = _RESULTS_DIR / "ll_scan"
@@ -313,7 +313,7 @@ def run_probe_analysis():
     }
 
     print("=== Loading data ===")
-    with open(DATA / "merged_valid_variants.json") as f:
+    with open(VALID_VARIANTS_JSON) as f:
         variants = json.load(f)
     for v in variants:
         if "label_3class" not in v:
@@ -344,10 +344,10 @@ def run_probe_analysis():
     print(f"Genes with LL features: {len(gene_list)}  Classes: {dict(Counter(labels))}")
 
     # Load mean-pooled delta — use the same variants file as the label map above
-    with open(DATA / "merged_valid_variants.json") as f:
+    with open(VALID_VARIANTS_JSON) as f:
         mvv = json.load(f)
-    wt_emb = np.load(DATA / "embeddings" / "merged_embeddings_wt_mean.npy")
-    mut_emb = np.load(DATA / "embeddings" / "merged_embeddings_mut_mean.npy")
+    wt_emb = np.load(EMB_WT_MEAN)
+    mut_emb = np.load(EMB_MUT_MEAN)
     delta = mut_emb - wt_emb
     gene_delta = defaultdict(list)
     for i, v in enumerate(mvv):

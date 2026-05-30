@@ -19,7 +19,7 @@ Missing-data policy (from plan_experiment.md §Phase 2):
 
 Outputs:
   data/gene_proteome_features.tsv          human-readable gene × feature table
-  data/proteome_features_aligned.npy       float32 matrix aligned to merged_gene_list.tsv order
+  data/proteome_features_aligned.npy       float32 matrix aligned to gene_list.tsv order
   data/proteome_feature_columns.json       column metadata
 
 Usage:
@@ -46,7 +46,7 @@ from typing import Optional
 
 import numpy as np
 
-from esm2_mechanism.utils_paths import DATA_DIR
+from esm2_mechanism.utils_paths import DATA_DIR, GNOMAD_LOF_FILE, PAXDB_FILE, S_HET_FILE
 
 print = functools.partial(print, flush=True)
 
@@ -86,7 +86,7 @@ PAXDB_URL = (
 )
 PAXDB_CACHE = CACHE_DIR / "paxdb_9606_integrated.txt"
 # Manually placed file (PaxDb blocks automated download)
-PAXDB_MANUAL = DATA_DIR / "downloads" / "9606-WHOLE_ORGANISM-integrated.txt"
+PAXDB_MANUAL = PAXDB_FILE
 
 BIOPLEX_URL = (
     "https://bioplex.hms.harvard.edu/data/BioPlex_293T_Network_10K_Dec_2019.tsv"
@@ -94,12 +94,11 @@ BIOPLEX_URL = (
 BIOPLEX_CACHE = CACHE_DIR / "BioPlex_293T_Network_10K.tsv"
 
 # Manually placed file (Zeng et al. 2023 GeneBayes, https://doi.org/10.5281/zenodo.7939767)
-SHET_MANUAL = DATA_DIR / "downloads" / "s_het_estimates.genebayes.tsv"
+SHET_MANUAL = S_HET_FILE
 
 # gnomAD v2.1.1 — used only to build ensg→gene_symbol map for s_het join
 # (gnomAD v4.1 gene_id column is a bare integer, not an Ensembl ID)
-# Manually placed: data/downloads/gnomad.v2.1.1.lof_metrics.by_gene.txt.bgz
-GNOMAD_V2_MANUAL = DATA_DIR / "downloads" / "gnomad.v2.1.1.lof_metrics.by_gene.txt.bgz"
+GNOMAD_V2_MANUAL = GNOMAD_LOF_FILE
 GNOMAD_V2_ENSG_CACHE = CACHE_DIR / "gnomad_v2.1.1_ensg_symbol.json"
 
 
@@ -957,7 +956,7 @@ def main():
         action="store_true",
         help="Bypass all caches and re-download every source.",
     )
-    args = parser.parse_args()
+    args = parser.parse_args([])
     force = args.force_redownload
 
     if not GENE_UNIVERSE.exists():

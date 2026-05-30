@@ -41,14 +41,21 @@ print = functools.partial(print, flush=True)
 from collections import defaultdict
 from pathlib import Path
 
-from esm2_mechanism.utils_paths import DATA_DIR as DATA, RESULTS_DIR as _RESULTS_DIR
-from esm2_mechanism.embeddings.esm2_mechanism import (
-    get_esm2_embeddings_for_pairs,
-    ESM2_MODEL_650M,
+from esm2_mechanism.utils_paths import (
+    DATA_DIR as DATA,
+    RESULTS_DIR as _RESULTS_DIR,
+    VALID_VARIANTS_JSON,
+    SCAN_EMB_WT,
+    SCAN_EMB_MUT,
+    SCAN_CKPT_WT,
+    SCAN_CKPT_MUT,
+    EMB_DIR,
+    ESM2_MODEL,
 )
+from esm2_mechanism.embeddings.embed_variants import get_esm2_embeddings_for_pairs
 from esm2_mechanism.utils_sequences import window_sequence, apply_missense
+from esm2_mechanism.utils_io import save_npy
 
-EMB = DATA / "embeddings"
 OUT = _RESULTS_DIR / "perturbation_scan"
 OUT.mkdir(parents=True, exist_ok=True)
 
@@ -76,7 +83,7 @@ def load_sequences():
 
 def build_probe_list(seqs):
     """For each gene: sample N_POSITIONS evenly, create Ala/Asp/Trp probes."""
-    with open(DATA / "merged_valid_variants.json") as f:
+    with open(VALID_VARIANTS_JSON) as f:
         variants = json.load(f)
 
     # Gene → UniProt ID mapping
@@ -141,16 +148,16 @@ def extract_probe_embeddings(probes, seqs, batch_size=128):
     if device != "cuda":
         raise RuntimeError("GPU required for embedding extraction. Run on RunPod.")
 
-    wt_out = EMB / "scan_embeddings_wt.npy"
-    mut_out = EMB / "scan_embeddings_mut.npy"
+    wt_out = SCAN_EMB_WT
+    mut_out = SCAN_EMB_MUT
 
     if wt_out.exists() and mut_out.exists():
         print(f"Cached scan embeddings found: {wt_out}")
         return np.load(wt_out), np.load(mut_out)
 
-    ckpt_wt = EMB / "scan_ckpt_wt.npy"
-    ckpt_mut = EMB / "scan_ckpt_mut.npy"
-    ckpt_idx = EMB / "scan_ckpt_idx.txt"
+    ckpt_wt = SCAN_CKPT_WT
+    ckpt_mut = SCAN_CKPT_MUT
+    ckpt_idx = EMB_DIR / "scan_ckpt_idx.txt"
 
     # Resume from checkpoint
     start_idx = 0
@@ -184,15 +191,15 @@ def extract_probe_embeddings(probes, seqs, batch_size=128):
             wt_seqs[chunk_start:chunk_end],
             mut_seqs[chunk_start:chunk_end],
             positions[chunk_start:chunk_end],
-            model_name=ESM2_MODEL_650M,
+            model_name=ESM2_MODEL,
             device=device,
             batch_size=batch_size,
         )
         all_wt.append(wt_emb)
         all_mut.append(mut_emb)
         n_done = start_idx + chunk_end
-        np.save(ckpt_wt, np.vstack(all_wt))
-        np.save(ckpt_mut, np.vstack(all_mut))
+        save_npy(ckpt_wt, np.vstack(all_wt))
+        save_npy(ckpt_mut, np.vstack(all_mut))
         ckpt_idx.write_text(str(n_done))
         try:
             import torch
@@ -209,9 +216,9 @@ def extract_probe_embeddings(probes, seqs, batch_size=128):
 
     wt_final = np.vstack(all_wt)
     mut_final = np.vstack(all_mut)
-    np.save(wt_out, wt_final)
+    save_npy(wt_out, wt_final)
     print(f"Saved {wt_out}")
-    np.save(mut_out, mut_final)
+    save_npy(mut_out, mut_final)
     print(f"Saved {mut_out}")
     for f in [ckpt_wt, ckpt_mut, ckpt_idx]:
         if f.exists():
@@ -383,8 +390,8 @@ def main():
             probes, seqs, batch_size=args.batch_size
         )
     elif "3" in phases:
-        wt_path = EMB / "scan_embeddings_wt.npy"
-        mut_path = EMB / "scan_embeddings_mut.npy"
+        wt_path = SCAN_EMB_WT
+        mut_path = SCAN_EMB_MUT
         if not wt_path.exists():
             print("ERROR: scan embeddings not found. Run phase 2 first (requires GPU).")
             sys.exit(1)

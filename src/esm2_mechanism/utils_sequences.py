@@ -70,46 +70,53 @@ def fetch_uniprot_sequence(
 def build_sequence_cache(variants: list[dict], cache_dir: str) -> dict[str, str]:
     """Fetch and cache UniProt sequences for all unique UniProt IDs in variants.
 
+    Checkpoints to disk after every successful fetch so an interrupted run
+    resumes rather than re-fetching from scratch. Only IDs not already in the
+    cache are fetched.
+
     Returns dict: uniprot_id -> canonical sequence.
     """
     cache_path = os.path.join(cache_dir, "sequences.json")
+    os.makedirs(cache_dir, exist_ok=True)
+
+    sequences: dict[str, str] = {}
     if os.path.exists(cache_path):
         try:
             with open(cache_path) as f:
-                return json.load(f)
+                sequences = json.load(f)
         except json.JSONDecodeError:
-            print(f"WARNING: corrupt sequence cache at {cache_path} — re-fetching")
+            print(f"WARNING: corrupt sequence cache at {cache_path} — re-fetching all")
             os.remove(cache_path)
 
-    os.makedirs(cache_dir, exist_ok=True)
-    sequences: dict[str, str] = {}
     unique_uniprots = {v["uniprot_id"] for v in variants if v.get("uniprot_id")}
-    print(f"Fetching sequences for {len(unique_uniprots)} UniProt IDs...")
+    needed = sorted(unique_uniprots - sequences.keys())
+    if not needed:
+        return sequences
 
+    print(f"Fetching {len(needed)} UniProt sequences (resuming from {len(sequences)} cached)...")
+    tmp_path = cache_path + ".tmp"
     transient_failures = 0
-    for i, uid in enumerate(sorted(unique_uniprots)):
+    for i, uid in enumerate(needed):
         if i % 50 == 0:
-            print(f"  {i}/{len(unique_uniprots)}")
+            print(f"  {i}/{len(needed)}")
         try:
             seq = fetch_uniprot_sequence(uid)
         except TransientFetchError:
             transient_failures += 1
-            continue
-        if seq:
-            sequences[uid] = seq
+        else:
+            if seq:
+                sequences[uid] = seq
+        if (i + 1) % 50 == 0 or i == len(needed) - 1:
+            with open(tmp_path, "w") as f:
+                json.dump(sequences, f)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_path, cache_path)
         time.sleep(0.3)
+
     if transient_failures:
-        print(
-            f"  WARNING: {transient_failures} UIDs had transient failures — skipping cache write, will retry next run"
-        )
-        return sequences
-
-    tmp_path = cache_path + ".tmp"
-    with open(tmp_path, "w") as f:
-        json.dump(sequences, f)
-    os.replace(tmp_path, cache_path)
-
-    print(f"  Fetched {len(sequences)}/{len(unique_uniprots)} sequences")
+        print(f"  WARNING: {transient_failures} UIDs had transient failures — will retry next run")
+    print(f"  Sequences cached: {len(sequences)}/{len(unique_uniprots)}")
     return sequences
 
 

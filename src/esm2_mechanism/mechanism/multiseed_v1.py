@@ -37,36 +37,38 @@ from esm2_mechanism.utils_probes import (
 from esm2_mechanism.utils_paths import (
     DATA_DIR as _DATA_DIR,
     RESULTS_DIR as _RESULTS_DIR,
+    VALID_VARIANTS_JSON,
+    EMB_WT_MEAN,
+    EMB_MUT_MEAN,
+    EMB_WT_POS,
+    EMB_MUT_POS,
+    PATH_EMB_WT_MEAN,
+    PATH_EMB_MUT_MEAN,
 )
 
 # ── paths ────────────────────────────────────────────────────────────────────
 
 DATA_DIR = str(_DATA_DIR)
-EMB_DIR = str(_DATA_DIR / "embeddings")
 OUT_DIR = str(_RESULTS_DIR / "v1_multiseed")
 SEED0_DIR = str(_RESULTS_DIR / "20260524_baseline_run" / "run_0")
 
 PFAM_JSON = os.path.join(DATA_DIR, "pfam_families.json")
 GERAS_VARIANTS = os.path.join(DATA_DIR, "gerasimavicius_variants.json")
-MERGED_VARIANTS = os.path.join(DATA_DIR, "merged_valid_variants.json")
+MERGED_VARIANTS = str(VALID_VARIANTS_JSON)
 
 # Gerasimavicius embeddings
-GERAS_EMB_WT_MEAN = os.path.join(EMB_DIR, "embeddings_wt_esm2_t33_650M_UR50D.npy")
-GERAS_EMB_MUT_MEAN = os.path.join(EMB_DIR, "embeddings_mut_esm2_t33_650M_UR50D.npy")
-GERAS_EMB_WT_POS = os.path.join(EMB_DIR, "embeddings_wt_pos_esm2_t33_650M_UR50D.npy")
-GERAS_EMB_MUT_POS = os.path.join(EMB_DIR, "embeddings_mut_pos_esm2_t33_650M_UR50D.npy")
+GERAS_EMB_WT_MEAN = str(EMB_WT_MEAN)
+GERAS_EMB_MUT_MEAN = str(EMB_MUT_MEAN)
+GERAS_EMB_WT_POS = str(EMB_WT_POS)
+GERAS_EMB_MUT_POS = str(EMB_MUT_POS)
 
-# Merged embeddings
-MERGED_EMB_WT_MEAN = os.path.join(EMB_DIR, "merged_embeddings_wt_mean.npy")
-MERGED_EMB_MUT_MEAN = os.path.join(EMB_DIR, "merged_embeddings_mut_mean.npy")
+# Merged embeddings (same as Gerasimavicius in current pipeline)
+MERGED_EMB_WT_MEAN = str(EMB_WT_MEAN)
+MERGED_EMB_MUT_MEAN = str(EMB_MUT_MEAN)
 
 # Pathogenicity embeddings
-PATH_EMB_WT = os.path.join(
-    EMB_DIR, "emb_wt_mean_pathogenicity_esm2_t33_650M_UR50D_n17259.npy"
-)
-PATH_EMB_MUT = os.path.join(
-    EMB_DIR, "emb_mut_mean_pathogenicity_esm2_t33_650M_UR50D_n17259.npy"
-)
+PATH_EMB_WT = str(PATH_EMB_WT_MEAN)
+PATH_EMB_MUT = str(PATH_EMB_MUT_MEAN)
 PATH_VARIANTS = os.path.join(DATA_DIR, "clinvar_pathogenicity_variants.json")
 
 

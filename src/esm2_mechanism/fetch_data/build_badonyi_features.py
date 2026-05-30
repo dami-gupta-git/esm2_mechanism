@@ -7,7 +7,7 @@ Source: Badonyi & Marsh 2024 PLOS One (DOI: 10.1371/journal.pone.0307312)
 
 Outputs:
     data/badonyi_features.tsv          — gene x 10 columns (raw + missing + familyresid)
-    data/badonyi_features_aligned.npy  — float32 matrix aligned to merged_gene_list.tsv row order
+    data/badonyi_features_aligned.npy  — float32 matrix aligned to gene_list.tsv row order
     data/badonyi_feature_columns.json  — column metadata
 """
 
@@ -17,12 +17,12 @@ import pandas as pd
 from pathlib import Path
 import functools
 
-from esm2_mechanism.utils_paths import DATA_DIR
+from esm2_mechanism.utils_paths import DATA_DIR, TABLE_S3_FILE
 
 print = functools.partial(print, flush=True)
 
 DATA = DATA_DIR
-S3_PATH = DATA / "downloads" / "table_S3.xlsx"
+S3_PATH = TABLE_S3_FILE
 GENE_UNIVERSE = DATA / "gene_universe.tsv"
 
 OUT_TSV = DATA / "badonyi_features.tsv"

@@ -33,6 +33,7 @@ from sklearn.metrics import roc_auc_score, f1_score
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.preprocessing import LabelEncoder
 from esm2_mechanism.utils_probes import gene_split_cv, family_split_cv
+from esm2_mechanism.utils_paths import VALID_VARIANTS_JSON, EMB_WT_MEAN, EMB_MUT_MEAN
 import functools
 
 print = functools.partial(print, flush=True)
@@ -46,11 +47,7 @@ warnings.filterwarnings("ignore")
 
 def load_data(data_dir, emb_dir, merged=False):
     """Load variants and embeddings. Use merged=True for the full 19100-variant dataset."""
-    mv_path = os.path.join(data_dir, "embeddings", "merged_valid_variants.json")
-    if not os.path.exists(mv_path):
-        mv_path = os.path.join(data_dir, "merged_valid_variants.json")
-
-    with open(mv_path) as f:
+    with open(VALID_VARIANTS_JSON) as f:
         mv = json.load(f)
 
     if merged:
@@ -70,8 +67,8 @@ def load_data(data_dir, emb_dir, merged=False):
     print(f"Class distribution: {dict(Counter(labels))}")
     print(f"Unique genes: {len(set(genes))}")
 
-    wt_mean = np.load(os.path.join(emb_dir, "merged_embeddings_wt_mean.npy"))[:n]
-    mut_mean = np.load(os.path.join(emb_dir, "merged_embeddings_mut_mean.npy"))[:n]
+    wt_mean = np.load(EMB_WT_MEAN)[:n]
+    mut_mean = np.load(EMB_MUT_MEAN)[:n]
     delta_mean = (mut_mean - wt_mean).astype(np.float32)
 
     print(f"Delta embeddings: {delta_mean.shape}")

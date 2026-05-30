@@ -44,11 +44,11 @@ import functools
 
 print = functools.partial(print, flush=True)
 
-from esm2_mechanism.utils_paths import DATA_DIR, RESULTS_DIR
+from esm2_mechanism.utils_paths import DATA_DIR, RESULTS_DIR, GENE_LIST_TSV
 
 warnings.filterwarnings("ignore")
 
-MERGED_GENE_LIST = DATA_DIR / "merged_gene_list.tsv"
+MERGED_GENE_LIST = GENE_LIST_TSV
 PFAM_FAMILIES = DATA_DIR / "pfam_families.json"
 MMSEQS_CLUSTERS = DATA_DIR / "mmseqs_clusters.json"
 BADONYI_S3 = DATA_DIR / "cache" / "badonyi" / "table_S3.xlsx"

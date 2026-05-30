@@ -52,33 +52,35 @@ from sklearn.linear_model import Ridge
 from sklearn.metrics import roc_auc_score
 from sklearn.preprocessing import StandardScaler
 
-from esm2_mechanism.embeddings.esm2_mechanism import (
-    get_esm2_embeddings_for_pairs,
-    ESM2_MODEL_650M,
-)
-from esm2_mechanism.utils_sequences import window_sequence, apply_missense
 from esm2_mechanism.utils_paths import (
     DATA_DIR as _DATA_DIR,
     RESULTS_DIR as _RESULTS_DIR,
+    VALID_VARIANTS_JSON,
+    EMB_WT_MEAN,
+    EMB_MUT_MEAN,
+    MEGASCALE_EMB_WT_MEAN,
+    MEGASCALE_EMB_MUT_MEAN,
+    MEGASCALE_EMB_WT_POS,
+    MEGASCALE_EMB_MUT_POS,
+    ESM2_MODEL,
 )
 
 DATA = str(_DATA_DIR)
-EMB = str(_DATA_DIR / "embeddings")
 BM_ZIP = str(_DATA_DIR / "megascale" / "benchmarks.zip")
 PFAM_JSON = str(_DATA_DIR / "pfam_families.json")
 OUT = str(_RESULTS_DIR / "megascale_stability")
 
 VARIANTS_CACHE = os.path.join(DATA, "megascale_variants.json")
-WT_MEAN_EMB = os.path.join(EMB, "megascale_wt_mean.npy")
-MUT_MEAN_EMB = os.path.join(EMB, "megascale_mut_mean.npy")
-WT_POS_EMB = os.path.join(EMB, "megascale_wt_pos.npy")
-MUT_POS_EMB = os.path.join(EMB, "megascale_mut_pos.npy")
+WT_MEAN_EMB = MEGASCALE_EMB_WT_MEAN
+MUT_MEAN_EMB = MEGASCALE_EMB_MUT_MEAN
+WT_POS_EMB = MEGASCALE_EMB_WT_POS
+MUT_POS_EMB = MEGASCALE_EMB_MUT_POS
 
 N_SEEDS = 5
 N_FOLDS = 5
 
 os.makedirs(OUT, exist_ok=True)
-os.makedirs(EMB, exist_ok=True)
+os.makedirs(str(_DATA_DIR / "embeddings" / ESM2_MODEL), exist_ok=True)
 
 
 # ---------------------------------------------------------------------------
@@ -251,38 +253,6 @@ def _run_mmseqs2(proteins, min_seq_id=0.20, coverage=0.20):
 # Embedding extraction
 # ---------------------------------------------------------------------------
 
-
-def extract_embeddings(variants):
-    import torch
-
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-
-    wt_seqs, mut_seqs, positions = [], [], []
-    for v in variants:
-        wt_win, new_pos = window_sequence(v["wt_seq"], v["var_pos"])
-        # mut_seq is already built; re-derive windowed version for consistency
-        mut_win = (
-            wt_win[: new_pos - 1] + v["mut_seq"][v["var_pos"] - 1] + wt_win[new_pos:]
-        )
-        wt_seqs.append(wt_win)
-        mut_seqs.append(mut_win)
-        positions.append(new_pos)
-
-    print(f"Extracting ESM-2 embeddings for {len(wt_seqs)} S1724 pairs on {device}...")
-    wt_mean, mut_mean, wt_pos, mut_pos = get_esm2_embeddings_for_pairs(
-        wt_seqs,
-        mut_seqs,
-        positions,
-        model_name=ESM2_MODEL_650M,
-        device=device,
-        batch_size=64,
-    )
-    np.save(WT_MEAN_EMB, wt_mean)
-    np.save(MUT_MEAN_EMB, mut_mean)
-    np.save(WT_POS_EMB, wt_pos)
-    np.save(MUT_POS_EMB, mut_pos)
-    print(f"Saved embeddings: shape {wt_mean.shape}")
-    return wt_mean, mut_mean, wt_pos, mut_pos
 
 
 # ---------------------------------------------------------------------------
@@ -545,16 +515,17 @@ def main():
     print(f"Protein clusters: {len(set(proteins))} proteins → {n_clusters} clusters")
 
     # ── 3. Embeddings ─────────────────────────────────────────────────────────
-    if all(
-        os.path.exists(p) for p in [WT_MEAN_EMB, MUT_MEAN_EMB, WT_POS_EMB, MUT_POS_EMB]
-    ):
-        print("Loading cached embeddings...")
-        wt_mean = np.load(WT_MEAN_EMB)
-        mut_mean = np.load(MUT_MEAN_EMB)
-        wt_pos = np.load(WT_POS_EMB)
-        mut_pos = np.load(MUT_POS_EMB)
-    else:
-        wt_mean, mut_mean, wt_pos, mut_pos = extract_embeddings(variants)
+    for path in [WT_MEAN_EMB, MUT_MEAN_EMB, WT_POS_EMB, MUT_POS_EMB]:
+        if not os.path.exists(path):
+            raise FileNotFoundError(
+                f"Embedding file missing: {path}\n"
+                f"Run: python -m esm2_mechanism.embeddings.embed_variants --model {ESM2_MODEL}"
+            )
+    print("Loading embeddings...")
+    wt_mean = np.load(WT_MEAN_EMB)
+    mut_mean = np.load(MUT_MEAN_EMB)
+    wt_pos = np.load(WT_POS_EMB)
+    mut_pos = np.load(MUT_POS_EMB)
 
     delta_mean = mut_mean - wt_mean
     delta_pos = mut_pos - wt_pos
@@ -637,9 +608,9 @@ def main():
 
     # ── 7. H3 — stability projection out of mechanism ─────────────────────────
     h3_result = None
-    merged_variants_path = os.path.join(DATA, "merged_valid_variants.json")
-    merged_wt_path = os.path.join(EMB, "merged_embeddings_wt_mean.npy")
-    merged_mut_path = os.path.join(EMB, "merged_embeddings_mut_mean.npy")
+    merged_variants_path = VALID_VARIANTS_JSON
+    merged_wt_path = EMB_WT_MEAN
+    merged_mut_path = EMB_MUT_MEAN
     if all(
         os.path.exists(p)
         for p in [merged_variants_path, merged_wt_path, merged_mut_path, PFAM_JSON]

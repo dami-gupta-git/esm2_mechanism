@@ -34,22 +34,25 @@ import numpy as np
 import pandas as pd
 from sklearn.preprocessing import LabelEncoder
 from esm2_mechanism.utils_probes import family_split_indices, run_logreg_cv
-from esm2_mechanism.utils_paths import DATA_DIR, RESULTS_DIR
+from esm2_mechanism.utils_paths import (
+    DATA_DIR,
+    RESULTS_DIR,
+    VALID_VARIANTS_JSON,
+    GENE_LIST_TSV,
+)
 import functools
 
 print = functools.partial(print, flush=True)
 
 warnings.filterwarnings("ignore")
 
-EMB_DIR = DATA_DIR / "embeddings"
-
-MERGED_VALID_VARIANTS = EMB_DIR / "merged_valid_variants.json"
+MERGED_VALID_VARIANTS = VALID_VARIANTS_JSON
 PROTEOME_FEATURES = DATA_DIR / "proteome_features_aligned.npy"
 BADONYI_FEATURES = DATA_DIR / "badonyi_features_aligned.npy"
 BADONYI_S3 = DATA_DIR / "cache" / "badonyi" / "table_S3.xlsx"
 BADONYI_RAW_COLS = [0, 1, 2]  # pDN, pGOF, pLOF
 
-MERGED_GENE_LIST = DATA_DIR / "merged_gene_list.tsv"
+MERGED_GENE_LIST = GENE_LIST_TSV
 PFAM_FAMILIES = DATA_DIR / "pfam_families.json"
 
 CLASSES = ["GOF", "DN", "LOF"]

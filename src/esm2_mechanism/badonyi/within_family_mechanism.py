@@ -40,14 +40,14 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 from esm2_mechanism.utils_probes import compute_metrics, align_proba
-from esm2_mechanism.utils_paths import DATA_DIR, RESULTS_DIR
+from esm2_mechanism.utils_paths import DATA_DIR, RESULTS_DIR, GENE_LIST_TSV
 import functools
 
 print = functools.partial(print, flush=True)
 
 warnings.filterwarnings("ignore")
 
-MERGED_GENE_LIST = DATA_DIR / "merged_gene_list.tsv"
+MERGED_GENE_LIST = GENE_LIST_TSV
 PFAM_FAMILIES = DATA_DIR / "pfam_families.json"
 PROTEOME_FEATURES = DATA_DIR / "proteome_features_aligned.npy"  # (2424, 37)
 BADONYI_FEATURES = DATA_DIR / "badonyi_features_aligned.npy"  # (2424, 13)

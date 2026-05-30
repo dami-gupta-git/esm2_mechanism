@@ -61,9 +61,9 @@ warnings.filterwarnings("ignore")
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
-from esm2_mechanism.utils_paths import DATA_DIR, RESULTS_DIR, PROJECT_ROOT
+from esm2_mechanism.utils_paths import DATA_DIR, RESULTS_DIR, PROJECT_ROOT, GENE_LIST_TSV
 
-MERGED_GENE_LIST = DATA_DIR / "merged_gene_list.tsv"
+MERGED_GENE_LIST = GENE_LIST_TSV
 PROTEOME_FEATURES = DATA_DIR / "proteome_features_aligned.npy"
 PROTEOME_COLS = DATA_DIR / "proteome_feature_columns.json"
 GENE_FEATURES_TSV = DATA_DIR / "gene_proteome_features.tsv"

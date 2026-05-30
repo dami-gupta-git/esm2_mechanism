@@ -31,13 +31,16 @@ from collections import Counter, defaultdict
 from esm2_mechanism.utils_paths import (
     DATA_DIR as _DATA_DIR,
     RESULTS_DIR as _RESULTS_DIR,
+    EMB_WT_MEAN,
+    EMB_MUT_MEAN,
+    EMB_WT_POS,
+    EMB_MUT_POS,
 )
 
 print = functools.partial(print, flush=True)
 from esm2_mechanism.mechanism.multiseed_v1 import family_split_cv, gene_split_cv
 
 DATA = str(_DATA_DIR)
-EMB = str(_DATA_DIR / "embeddings")
 OUT = str(_RESULTS_DIR / "perturbation_pattern")
 os.makedirs(OUT, exist_ok=True)
 
@@ -53,10 +56,10 @@ def load_data():
                 else v.get("mechanism", "LOF")
             )
 
-    wt_pos = np.load(os.path.join(EMB, "embeddings_wt_pos_esm2_t33_650M_UR50D.npy"))
-    mut_pos = np.load(os.path.join(EMB, "embeddings_mut_pos_esm2_t33_650M_UR50D.npy"))
-    wt_mean = np.load(os.path.join(EMB, "embeddings_wt_esm2_t33_650M_UR50D.npy"))
-    mut_mean = np.load(os.path.join(EMB, "embeddings_mut_esm2_t33_650M_UR50D.npy"))
+    wt_pos = np.load(EMB_WT_POS)
+    mut_pos = np.load(EMB_MUT_POS)
+    wt_mean = np.load(EMB_WT_MEAN)
+    mut_mean = np.load(EMB_MUT_MEAN)
 
     delta_pos = mut_pos - wt_pos  # per-residue delta at variant position
     delta_mean = mut_mean - wt_mean  # mean-pooled delta (baseline)

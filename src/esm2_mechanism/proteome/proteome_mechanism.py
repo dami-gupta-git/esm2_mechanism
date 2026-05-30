@@ -45,7 +45,15 @@ from esm2_mechanism.utils_probes import (
     run_mlp_cv,
     run_logreg_cv,
 )
-from esm2_mechanism.utils_paths import DATA_DIR, RESULTS_DIR, PROJECT_ROOT
+from esm2_mechanism.utils_paths import (
+    DATA_DIR,
+    RESULTS_DIR,
+    PROJECT_ROOT,
+    VALID_VARIANTS_JSON,
+    EMB_WT_MEAN,
+    EMB_MUT_MEAN,
+    GENE_LIST_TSV,
+)
 import functools
 
 print = functools.partial(print, flush=True)
@@ -55,15 +63,13 @@ warnings.filterwarnings("ignore")
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
-EMB_DIR = DATA_DIR / "embeddings"
-
-MERGED_VALID_VARIANTS = EMB_DIR / "merged_valid_variants.json"
-MERGED_WT_MEAN = EMB_DIR / "merged_embeddings_wt_mean.npy"
-MERGED_MUT_MEAN = EMB_DIR / "merged_embeddings_mut_mean.npy"
+MERGED_VALID_VARIANTS = VALID_VARIANTS_JSON
+MERGED_WT_MEAN = EMB_WT_MEAN
+MERGED_MUT_MEAN = EMB_MUT_MEAN
 
 PROTEOME_FEATURES = DATA_DIR / "proteome_features_aligned.npy"
 PROTEOME_COLS = DATA_DIR / "proteome_feature_columns.json"
-MERGED_GENE_LIST = DATA_DIR / "merged_gene_list.tsv"
+MERGED_GENE_LIST = GENE_LIST_TSV
 PFAM_FAMILIES = DATA_DIR / "pfam_families.json"
 
 CLASSES = ["GOF", "DN", "LOF"]
@@ -185,7 +191,7 @@ def load_pfam() -> dict[str, str]:
 
 def build_gene_to_proteome_row() -> dict[str, int]:
     """
-    Read merged_gene_list.tsv; extract unique genes in order of first appearance.
+    Read gene_list.tsv; extract unique genes in order of first appearance.
     Returns {gene_symbol: row_index} for indexing into proteome_features_aligned.npy.
     """
     seen: dict[str, int] = {}

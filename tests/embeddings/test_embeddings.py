@@ -129,7 +129,7 @@ class TestWindowSequence:
 class TestRandomSplitCv:
 
     def setup_method(self):
-        from esm2_mechanism.embeddings.megascale_stability import random_split_cv
+        from esm2_mechanism.analysis.megascale_stability import random_split_cv
 
         self.random_split_cv = random_split_cv
 
@@ -162,7 +162,7 @@ class TestRandomSplitCv:
 class TestProteinSplitCv:
 
     def setup_method(self):
-        from esm2_mechanism.embeddings.megascale_stability import protein_split_cv
+        from esm2_mechanism.analysis.megascale_stability import protein_split_cv
 
         self.protein_split_cv = protein_split_cv
 
@@ -186,7 +186,7 @@ class TestProteinSplitCv:
 class TestClusterSplitCv:
 
     def setup_method(self):
-        from esm2_mechanism.embeddings.megascale_stability import cluster_split_cv
+        from esm2_mechanism.analysis.megascale_stability import cluster_split_cv
 
         self.cluster_split_cv = cluster_split_cv
 
@@ -218,7 +218,7 @@ class TestClusterSplitCv:
 class TestAurocAtMedian:
 
     def setup_method(self):
-        from esm2_mechanism.embeddings.megascale_stability import auroc_at_median
+        from esm2_mechanism.analysis.megascale_stability import auroc_at_median
 
         self.auroc_at_median = auroc_at_median
 
@@ -251,7 +251,7 @@ class TestAurocAtMedian:
 class TestApplyDecisionRule:
 
     def setup_method(self):
-        from esm2_mechanism.embeddings.megascale_stability import apply_decision_rule
+        from esm2_mechanism.analysis.megascale_stability import apply_decision_rule
 
         self.apply_decision_rule = apply_decision_rule
 
@@ -377,7 +377,7 @@ class TestGeneLevelEmbeddings:
 class TestLoadAlphaMissenseScores:
 
     def setup_method(self):
-        from esm2_mechanism.embeddings.esm2_mechanism import _load_alphamissense_scores
+        from esm2_mechanism.mechanism.esm2_mechanism import _load_alphamissense_scores
 
         self._load = _load_alphamissense_scores
 
@@ -425,14 +425,14 @@ class TestLoadAlphaMissenseScores:
 class TestLoadData:
 
     def setup_method(self):
-        from esm2_mechanism.embeddings.esm2_mechanism import _load_data
+        from esm2_mechanism.mechanism.esm2_mechanism import _load_data
 
         self._load_data = _load_data
 
     def _write_variants(self, tmp_path, variants):
         import json
 
-        (tmp_path / "merged_variants.json").write_text(json.dumps(variants))
+        (tmp_path / "variants.json").write_text(json.dumps(variants))
 
     def _valid_variant(self, **overrides):
         v = {

@@ -50,17 +50,18 @@ def _run_main(argv: list[str], step_side_effects: dict[int, Exception | None] = 
 
     def fake_make_steps(pathogenic_only, from_scratch):
         labels = {
-            1: "build_gene_universe gene-list",
-            2: "fetch_variants gerasimavicius",
-            3: "fetch_variants clinvar",
-            4: "fetch_variants merge",
-            5: "fetch_annotations pfam",
-            6: "build_gene_universe universe",
-            7: "fetch_annotations uniprot",
-            8: "fetch_annotations enzyme",
-            9: "build_proteome_features",
-            10: "build_badonyi_features",
-            11: "fetch_annotations alphamissense",
+            1:  "build_gene_universe gene-list",
+            2:  "fetch_variants gerasimavicius",
+            3:  "fetch_variants clinvar",
+            4:  "fetch_variants merge",
+            5:  "fetch_sequences",
+            6:  "fetch_annotations pfam",
+            7:  "build_gene_universe universe",
+            8:  "fetch_annotations uniprot",
+            9:  "fetch_annotations enzyme",
+            10: "build_proteome_features",
+            11: "build_badonyi_features",
+            12: "fetch_annotations alphamissense",
         }
         return [(n, labels[n], step_mocks[n]) for n in range(FIRST_STEP, LAST_STEP + 1)]
 

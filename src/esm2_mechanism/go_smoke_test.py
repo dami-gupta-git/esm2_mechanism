@@ -21,7 +21,7 @@ import gzip, io, json, os, sys, urllib.request
 import numpy as np
 from collections import defaultdict
 from esm2_mechanism.utils_probes import gene_split_cv, family_split_cv
-from esm2_mechanism.utils_paths import DATA_DIR, RESULTS_DIR
+from esm2_mechanism.utils_paths import DATA_DIR, RESULTS_DIR, VALID_VARIANTS_JSON, EMB_WT_MEAN
 import functools
 
 print = functools.partial(print, flush=True)
@@ -58,7 +58,7 @@ TOP_N_TERMS = 50  # number of GO terms to test in smoke run
 
 def load_gene_set():
     """Load merged dataset gene list and UniProt IDs."""
-    with open(os.path.join(DATA, "merged_valid_variants.json")) as f:
+    with open(VALID_VARIANTS_JSON) as f:
         variants = json.load(f)
     gene_to_uniprot = {}
     for v in variants:
@@ -175,10 +175,10 @@ def select_terms(
 def load_gene_embeddings(genes, gene_to_uniprot):
     """Load per-gene mean WT embeddings from the merged dataset embeddings.
     The merged embeddings are per-variant; we average to get per-gene."""
-    with open(os.path.join(DATA, "merged_valid_variants.json")) as f:
+    with open(VALID_VARIANTS_JSON) as f:
         variants = json.load(f)
 
-    emb_wt = np.load(os.path.join(EMB, "merged_embeddings_wt_mean.npy"))
+    emb_wt = np.load(EMB_WT_MEAN)
     assert len(emb_wt) == len(variants), "Embedding/variant count mismatch"
 
     # Average per gene

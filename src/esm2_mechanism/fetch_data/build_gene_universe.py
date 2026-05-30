@@ -4,16 +4,16 @@ Build the canonical gene universe for downstream feature scripts.
 Two pipeline steps, run in order:
 
   Step 1 — gene-list  (run before variant fetching)
-    Merges Gerasimavicius et al. and G2P datasets → merged_gene_list.tsv.
+    Merges Gerasimavicius et al. and G2P datasets → gene_list.tsv.
     Inputs : data/downloads/DiseaseMech_Stability_VEPS.xlsx
              data/downloads/AllG2P.csv
-    Output : data/merged_gene_list.tsv
+    Output : data/gene_list.tsv
 
   Step 2 — universe  (run after fetch_annotations --step pfam)
-    Filters merged_gene_list.tsv to genes with a Pfam family assignment.
+    Filters gene_list.tsv to genes with a Pfam family assignment.
     The output gene_universe.tsv is the canonical aligned row order for all
     feature matrices (proteome_features_aligned.npy, etc.).
-    Inputs : data/merged_gene_list.tsv
+    Inputs : data/gene_list.tsv
              data/pfam_families.json
     Output : data/gene_universe.tsv
              Columns: gene, mechanism, uniprot_id, source, g2p_disagrees, pfam_family
@@ -35,16 +35,15 @@ from pathlib import Path
 import openpyxl
 import pandas as pd
 
-from esm2_mechanism.utils_paths import DATA_DIR
+from esm2_mechanism.utils_paths import ALL_G2P_FILE, DISEASE_MECH_STABILITY_VEPS_FILE, DATA_DIR, GENE_LIST_TSV
 
 print = functools.partial(print, flush=True)
 
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
-XLSX = DATA_DIR / "downloads" / "DiseaseMech_Stability_VEPS.xlsx"
-G2P_CSV = DATA_DIR / "downloads" / "AllG2P.csv"
-MERGED_GENE_LIST = DATA_DIR / "merged_gene_list.tsv"
+XLSX = DISEASE_MECH_STABILITY_VEPS_FILE
+G2P_CSV = ALL_G2P_FILE
 PFAM_FAMILIES = DATA_DIR / "pfam_families.json"
 GENE_UNIVERSE = DATA_DIR / "gene_universe.tsv"
 
@@ -240,7 +239,7 @@ def build(xlsx_path: Path, g2p_path: Path, out_path: Path) -> None:
 # Step 2 — gene_universe.tsv
 # ---------------------------------------------------------------------------
 def _build_gene_universe(merged_path: Path, pfam_path: Path, out_path: Path) -> None:
-    """Filter merged_gene_list to Pfam-annotated genes → gene_universe.tsv."""
+    """Filter gene_list to Pfam-annotated genes → gene_universe.tsv."""
     with open(pfam_path) as f:
         pfam: dict[str, str | None] = json.load(f)
     n_annotated = sum(1 for v in pfam.values() if v is not None)
@@ -251,7 +250,7 @@ def _build_gene_universe(merged_path: Path, pfam_path: Path, out_path: Path) -> 
         reader = csv.DictReader(f, delimiter="\t")
         for row in reader:
             rows_in.append(row)
-    print(f"merged_gene_list: {len(rows_in)} genes")
+    print(f"gene_list: {len(rows_in)} genes")
 
     rows_out: list[dict] = []
     dropped: list[str] = []
@@ -291,14 +290,14 @@ def main_gene_list() -> None:
     for path in [XLSX, G2P_CSV]:
         if not path.exists():
             raise FileNotFoundError(f"Required input not found: {path}")
-    build(XLSX, G2P_CSV, MERGED_GENE_LIST)
+    build(XLSX, G2P_CSV, GENE_LIST_TSV)
 
 
 def main_universe() -> None:
-    for path in [MERGED_GENE_LIST, PFAM_FAMILIES]:
+    for path in [GENE_LIST_TSV, PFAM_FAMILIES]:
         if not path.exists():
             raise FileNotFoundError(f"Required input not found: {path}")
-    _build_gene_universe(MERGED_GENE_LIST, PFAM_FAMILIES, GENE_UNIVERSE)
+    _build_gene_universe(GENE_LIST_TSV, PFAM_FAMILIES, GENE_UNIVERSE)
 
 
 def main() -> None:
@@ -310,7 +309,7 @@ def main() -> None:
         choices=["gene-list", "universe"],
         required=True,
         help=(
-            "gene-list: merge Gerasimavicius + G2P → merged_gene_list.tsv  |  "
+            "gene-list: merge Gerasimavicius + G2P → gene_list.tsv  |  "
             "universe: filter to Pfam-annotated genes → gene_universe.tsv"
         ),
     )

@@ -20,21 +20,10 @@ Uses the EXACT same PyTorch MLP and class-weighting as experiment_mlp.py
 delta_mean MLP family-split F1 = 0.364 / 0.352 published in result_7.
 
 Usage:
-    # Gerasimavicius (default)
-    python mut_only_mlp.py \\
-        --data_dir ../results/20260524_baseline_run/run_0/data \\
-        --emb_dir ../data/embeddings \\
+    python -m esm2_mechanism.mechanism.mut_only_mlp \\
+        --data_dir run_0/data \\
         --family_split \\
-        --out ../results/20260524_baseline_run/run_0/mut_only_mlp_seed0.json
-
-    # Merged dataset
-    python mut_only_mlp.py \\
-        --data_dir ../data \\
-        --emb_dir ../data/embeddings \\
-        --emb_prefix merged_ \\
-        --variants_file ../data/merged_valid_variants.json \\
-        --family_split \\
-        --out ../results/20260524_baseline_run/run_0/mut_only_mlp_merged_seed0.json
+        --out run_0/mut_only_mlp_seed0.json
 """
 
 import argparse
@@ -54,32 +43,23 @@ from esm2_mechanism.mechanism.experiment_mlp import (
     gene_split_cv,
     make_family_splits,
     run_mlp_probe,
-    ESM2_MODEL_650M,
 )
+from esm2_mechanism.utils_paths import EMB_WT_MEAN, EMB_MUT_MEAN
 
 
-def load_wt_mut_mean_embeddings(emb_dir, model_name=ESM2_MODEL_650M, prefix=""):
+def load_wt_mut_mean_embeddings():
     """Load WT and mutant mean-pooled embeddings as separate arrays (not delta)."""
-    wt_path = os.path.join(emb_dir, f"{prefix}embeddings_wt_{model_name}.npy")
-    mut_path = os.path.join(emb_dir, f"{prefix}embeddings_mut_{model_name}.npy")
-    if not (os.path.exists(wt_path) and os.path.exists(mut_path)):
-        # Try the merged naming convention if prefix didn't match
-        alt_wt = os.path.join(emb_dir, f"{prefix}embeddings_wt_mean.npy")
-        alt_mut = os.path.join(emb_dir, f"{prefix}embeddings_mut_mean.npy")
-        if os.path.exists(alt_wt) and os.path.exists(alt_mut):
-            wt_path, mut_path = alt_wt, alt_mut
-        else:
+    for path in [EMB_WT_MEAN, EMB_MUT_MEAN]:
+        if not os.path.exists(path):
             raise FileNotFoundError(
-                f"Could not find WT/mut embeddings at:\n  {wt_path}\n  {mut_path}\n"
-                f"(also tried {alt_wt}, {alt_mut})"
+                f"Embedding file missing: {path}\n"
+                f"Run: python -m esm2_mechanism.embeddings.embed_variants"
             )
-    wt = np.load(wt_path)
-    mut = np.load(mut_path)
-    print(f"  WT  embeddings: {wt.shape}  ({wt_path})")
-    print(f"  mut embeddings: {mut.shape}  ({mut_path})")
-    assert (
-        wt.shape == mut.shape
-    ), f"WT and mut embedding shapes don't match: {wt.shape} vs {mut.shape}"
+    wt = np.load(EMB_WT_MEAN)
+    mut = np.load(EMB_MUT_MEAN)
+    print(f"  WT  embeddings: {wt.shape}")
+    print(f"  mut embeddings: {mut.shape}")
+    assert wt.shape == mut.shape, f"WT and mut embedding shapes don't match: {wt.shape} vs {mut.shape}"
     return wt.astype(np.float32), mut.astype(np.float32)
 
 
@@ -89,15 +69,6 @@ def main():
         "--data_dir",
         required=True,
         help="Directory containing variants JSON (and sequences.json, pfam_families.json if Gerasimavicius)",
-    )
-    p.add_argument(
-        "--emb_dir", required=True, help="Directory containing the .npy embedding files"
-    )
-    p.add_argument("--model", default=ESM2_MODEL_650M)
-    p.add_argument(
-        "--emb_prefix",
-        default="",
-        help="Prefix on embedding filenames, e.g. 'merged_' for merged dataset",
     )
     p.add_argument(
         "--variants_file",
@@ -135,12 +106,12 @@ def main():
     )
 
     print("\n=== Loading WT and mut mean-pooled embeddings ===")
-    wt, mut = load_wt_mut_mean_embeddings(args.emb_dir, args.model, args.emb_prefix)
+    wt, mut = load_wt_mut_mean_embeddings()
 
     assert len(wt) == len(labels), (
         f"Embedding count {len(wt)} != variant count {len(labels)}. "
-        f"Ensure --variants_file matches the embeddings (use merged_valid_variants.json "
-        f"with merged_ prefix)."
+        f"Ensure --variants_file matches the embeddings (use valid_variants.json "
+        f"from the model embeddings directory)."
     )
 
     # Build feature variants
@@ -181,7 +152,6 @@ def main():
                 k: int(v) for k, v in zip(*np.unique(labels, return_counts=True))
             },
             "features_tested": list(feature_specs.keys()),
-            "emb_prefix": args.emb_prefix,
             "data_dir": args.data_dir,
         }
     }

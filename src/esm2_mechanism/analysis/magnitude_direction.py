@@ -44,12 +44,15 @@ print = functools.partial(print, flush=True)
 from esm2_mechanism.utils_paths import (
     DATA_DIR as _DATA_DIR,
     RESULTS_DIR as _RESULTS_DIR,
+    PATH_EMB_WT_MEAN,
+    PATH_EMB_MUT_MEAN,
+    MEGASCALE_EMB_WT_MEAN,
+    MEGASCALE_EMB_MUT_MEAN,
 )
 import esm2_mechanism.mechanism.multiseed_v1 as ms  # loaders, CV helpers, probes
 from esm2_mechanism.utils_probes import run_logreg_binary_cv
 
 DATA = str(_DATA_DIR)
-EMB = str(_DATA_DIR / "embeddings")
 OUT = str(_RESULTS_DIR / "magnitude_direction")
 os.makedirs(OUT, exist_ok=True)
 
@@ -61,15 +64,15 @@ P4_SIGN_AUROC_MIN = 0.65  # S1724 sign(ddG) AUROC
 P4_MAG_SPEARMAN_MIN = 0.30  # S1724 Spearman(||d||, |ddG|)
 
 # S1724 caches produced by megascale_stability.py (result_21)
-S1724_WT_EMB = os.path.join(EMB, "megascale_wt_mean.npy")
-S1724_MUT_EMB = os.path.join(EMB, "megascale_mut_mean.npy")
+S1724_WT_EMB = MEGASCALE_EMB_WT_MEAN
+S1724_MUT_EMB = MEGASCALE_EMB_MUT_MEAN
 S1724_VARIANTS = os.path.join(DATA, "megascale_variants.json")
 
 # Canonical pathogenicity set (the one result_6's 0.884 family-split AUROC was
 # computed on — n=16,576). NOT the older n17259 extraction in multiseed_v1.
 PATH_CANON_VARIANTS = os.path.join(DATA, "pathogenicity_valid_variants_canonical.json")
-PATH_CANON_WT_EMB = os.path.join(EMB, "emb_wt_mean_path_canonical_n16576.npy")
-PATH_CANON_MUT_EMB = os.path.join(EMB, "emb_mut_mean_path_canonical_n16576.npy")
+PATH_CANON_WT_EMB = PATH_EMB_WT_MEAN
+PATH_CANON_MUT_EMB = PATH_EMB_MUT_MEAN
 
 
 def load_pathogenicity_canonical():

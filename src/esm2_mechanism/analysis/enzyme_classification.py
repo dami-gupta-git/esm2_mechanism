@@ -39,7 +39,7 @@ from sklearn.metrics import f1_score, roc_auc_score
 from sklearn.neural_network import MLPClassifier
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 from esm2_mechanism.utils_probes import gene_split_cv, family_split_cv
-from esm2_mechanism.utils_paths import DATA_DIR, RESULTS_DIR
+from esm2_mechanism.utils_paths import DATA_DIR, RESULTS_DIR, VALID_VARIANTS_JSON, EMB_WT_MEAN, GENE_LIST_TSV
 
 print = functools.partial(print, flush=True)
 warnings.filterwarnings("ignore")
@@ -61,11 +61,10 @@ def load_gene_embeddings(data_dir: Path, emb_dir: Path) -> tuple:
     Load per-gene WT embeddings by taking the first variant's embedding for each gene.
     Returns (X, gene_list, uniprot_list) where X has shape (n_genes, 1280).
     """
-    variants_path = data_dir / "merged_valid_variants.json"
-    with open(variants_path) as f:
+    with open(VALID_VARIANTS_JSON) as f:
         variants = json.load(f)
 
-    wt_mean = np.load(emb_dir / "merged_embeddings_wt_mean.npy")
+    wt_mean = np.load(EMB_WT_MEAN)
     print(f"Loaded {len(variants)} variants, wt_mean shape: {wt_mean.shape}")
 
     # Take the first variant index per gene to get one embedding per gene
@@ -109,11 +108,11 @@ def load_proteome_features(data_dir: Path) -> tuple:
     X = np.load(data_dir / "proteome_features_aligned.npy").astype(np.float32)
     with open(data_dir / "proteome_feature_columns.json") as f:
         cols = json.load(f)
-    # Load gene order from merged_gene_list.tsv
+    # Load gene order from gene_list.tsv
     import csv
 
     genes = []
-    with open(data_dir / "merged_gene_list.tsv") as f:
+    with open(GENE_LIST_TSV) as f:
         reader = csv.DictReader(f, delimiter="\t")
         for row in reader:
             genes.append(row["gene"])

@@ -4,13 +4,13 @@ ESM-2 delta-embedding mechanism geometry experiment.
 Tests whether ESM-2 delta-embeddings (mutant - wildtype) organize by molecular
 disease mechanism class (GOF / DN / LOF) after removing protein stability signal.
 
-Data: merged_variants.json (built by fetch_data/fetch_variants.py --step merge)
+Data: variants.json (built by fetch_data/fetch_variants.py --step merge)
   - Gerasimavicius et al. 2022 + ClinVar missense variants, gene-level mechanism labels
   - GOF, DN, HI, AR classes; FoldX ΔΔG provided
   - Primary: 3-class GOF / DN / LOF (HI+AR collapsed)
 
 Pipeline:
-  1. Load merged_variants.json
+  1. Load variants.json
   2. Load embeddings from data/embeddings/<model>/ (built by embed_variants.py)
   3. Compute delta-embeddings (mutant - WT), mean-pooled and per-residue
   4. Fit stability nuisance subspace on Megascale data; validate transfer
@@ -40,6 +40,16 @@ from esm2_mechanism.utils_sequences import (
     apply_missense,
     window_sequence,
 )
+from esm2_mechanism.utils_paths import (
+    EMB_WT_MEAN,
+    EMB_MUT_MEAN,
+    EMB_WT_POS,
+    EMB_MUT_POS,
+    MEGASCALE_DELTAS,
+    MEGASCALE_DDG,
+    STABILITY_SUBSPACE,
+    ESM2_MODEL,
+)
 
 warnings.filterwarnings("ignore")
 
@@ -47,7 +57,6 @@ warnings.filterwarnings("ignore")
 # Constants
 # ---------------------------------------------------------------------------
 
-ESM2_MODEL_650M = "esm2_t33_650M_UR50D"
 ESM2_MODEL_3B = "esm2_t36_3B_UR50D"
 
 CLASSES_3 = ["GOF", "DN", "LOF"]
@@ -63,91 +72,12 @@ BENIGN_LEAK_THRESHOLD = 0.50  # benign AUROC as fraction of pathogenic AUROC
 
 
 # ---------------------------------------------------------------------------
-# ESM-2 embedding extraction
-# ---------------------------------------------------------------------------
-
-
-def get_esm2_embeddings_for_pairs(
-    wt_seqs,
-    mut_seqs,
-    aa_positions,
-    model_name=ESM2_MODEL_650M,
-    device="cuda",
-    batch_size=32,
-):
-    """
-    Extract ESM-2 embeddings for WT and mutant sequences.
-    WT and mutant are interleaved in the same batch to halve forward passes.
-    Returns:
-        wt_mean: (N, D) mean-pooled WT embeddings
-        mut_mean: (N, D) mean-pooled mutant embeddings
-        wt_pos: (N, D) per-residue embedding at variant position for WT
-        mut_pos: (N, D) per-residue embedding at variant position for mutant
-    """
-    import torch
-    import esm
-
-    model, alphabet = esm.pretrained.load_model_and_alphabet(model_name)
-    model = model.to(device).eval()
-    batch_converter = alphabet.get_batch_converter()
-    n_layers = model.num_layers
-
-    wt_mean_list, mut_mean_list = [], []
-    wt_pos_list, mut_pos_list = [], []
-
-    N = len(wt_seqs)
-    for i in range(0, N, batch_size):
-        pairs = list(
-            zip(
-                wt_seqs[i : i + batch_size],
-                mut_seqs[i : i + batch_size],
-                aa_positions[i : i + batch_size],
-            )
-        )
-        interleaved = []
-        for j, (wt, mut, _) in enumerate(pairs):
-            interleaved.append((f"wt{j}", wt))
-            interleaved.append((f"mut{j}", mut))
-
-        _, _, tokens = batch_converter(interleaved)
-        tokens = tokens.to(device, non_blocking=True)
-        with torch.inference_mode():
-            out = model(tokens, repr_layers=[n_layers])
-        reps = out["representations"][n_layers].cpu().float()
-
-        for j, (wt, mut, var_pos) in enumerate(pairs):
-            wt_rep = reps[2 * j]
-            mut_rep = reps[2 * j + 1]
-
-            wt_mean_list.append(wt_rep[1 : len(wt) + 1].mean(0).numpy())
-            mut_mean_list.append(mut_rep[1 : len(mut) + 1].mean(0).numpy())
-
-            var_idx_token = var_pos  # 1-indexed; BOS occupies token 0, so sequence tokens are 1..len(wt)
-            if 0 < var_idx_token <= len(wt):
-                wt_pos_list.append(wt_rep[var_idx_token].numpy())
-                mut_pos_list.append(mut_rep[var_idx_token].numpy())
-            else:
-                wt_pos_list.append(wt_rep[1 : len(wt) + 1].mean(0).numpy())
-                mut_pos_list.append(mut_rep[1 : len(mut) + 1].mean(0).numpy())
-
-        if (i // batch_size) % 5 == 0:
-            print(f"  Embedded {min(i + batch_size, N)}/{N} variant pairs")
-
-    return (
-        np.stack(wt_mean_list),
-        np.stack(mut_mean_list),
-        np.stack(wt_pos_list),
-        np.stack(mut_pos_list),
-    )
-
-
-# ---------------------------------------------------------------------------
 # Stability nuisance subspace
 # ---------------------------------------------------------------------------
 
 
 def fit_stability_subspace_megascale(
-    cache_dir, n_components=10, model_name=ESM2_MODEL_650M, device="cuda"
+    n_components=10
 ):
     """
     Fit a stability nuisance subspace using the Megascale dataset
@@ -155,23 +85,19 @@ def fit_stability_subspace_megascale(
 
     Returns the projection matrix (n_components, D) or None if unavailable.
     """
-    subspace_cache = os.path.join(cache_dir, f"stability_subspace_{model_name}.npy")
-    if os.path.exists(subspace_cache):
+    if os.path.exists(STABILITY_SUBSPACE):
         print("Loading cached stability subspace...")
-        return np.load(subspace_cache)
+        return np.load(STABILITY_SUBSPACE)
 
-    megascale_cache = os.path.join(cache_dir, "megascale_deltas.npy")
-    megascale_ddg_cache = os.path.join(cache_dir, "megascale_ddg.npy")
-
-    if not (os.path.exists(megascale_cache) and os.path.exists(megascale_ddg_cache)):
+    if not (os.path.exists(MEGASCALE_DELTAS) and os.path.exists(MEGASCALE_DDG)):
         print(
             "Megascale delta embeddings not found — will fit subspace on Gerasimavicius data"
         )
         return None
 
     print("Fitting stability subspace on Megascale delta embeddings...")
-    deltas = np.load(megascale_cache)
-    ddg = np.load(megascale_ddg_cache)
+    deltas = np.load(MEGASCALE_DELTAS)
+    ddg = np.load(MEGASCALE_DDG)
 
     from sklearn.linear_model import Ridge
 
@@ -190,7 +116,7 @@ def fit_stability_subspace_megascale(
     subspace = np.vstack([stability_dir.reshape(1, -1), pca.components_])
     subspace = subspace[:n_components]
 
-    np.save(subspace_cache, subspace)
+    np.save(STABILITY_SUBSPACE, subspace)
     return subspace
 
 
@@ -556,7 +482,7 @@ def _load_alphamissense_scores(variants: list, data_dir: str) -> np.ndarray:
 
 def _load_data(data_dir):
     """Phase 1: load and filter the merged variant dataset."""
-    merged_path = os.path.join(data_dir, "merged_variants.json")
+    merged_path = os.path.join(data_dir, "variants.json")
     if not os.path.exists(merged_path):
         raise FileNotFoundError(
             f"{merged_path} not found — run fetch_data/fetch_variants.py --step merge first"
@@ -599,48 +525,21 @@ def _prepare_sequences(variants, data_dir):
     return valid_variants, seq_cache, wt_seqs, mut_seqs, var_positions
 
 
-def _load_or_extract_embeddings(
-    wt_seqs, mut_seqs, var_positions, data_dir, model_name, device, batch_size
-):
-    """Phase 3: load embeddings from data/embeddings/<model>/ or run ESM-2 forward pass."""
-    emb_dir = os.path.join(data_dir, "embeddings", model_name)
-    emb_cache = {
-        "wt": os.path.join(emb_dir, "embeddings_wt_mean.npy"),
-        "mut": os.path.join(emb_dir, "embeddings_mut_mean.npy"),
-        "wt_pos": os.path.join(emb_dir, "embeddings_wt_pos.npy"),
-        "mut_pos": os.path.join(emb_dir, "embeddings_mut_pos.npy"),
-    }
-    if os.path.exists(emb_cache["wt"]) and os.path.exists(emb_cache["mut"]):
-        print("\n=== Loading cached embeddings ===")
-        for key in ("wt_pos", "mut_pos"):
-            if not os.path.exists(emb_cache[key]):
-                raise FileNotFoundError(
-                    f"Mean embeddings found but positional embeddings missing: {emb_cache[key]}\n"
-                    f"Re-run embed_variants.py to regenerate the full embedding set."
-                )
-        emb_wt_mean = np.load(emb_cache["wt"])
-        emb_mut_mean = np.load(emb_cache["mut"])
-        emb_wt_pos = np.load(emb_cache["wt_pos"])
-        emb_mut_pos = np.load(emb_cache["mut_pos"])
-    else:
-        print(f"\n=== Extracting ESM-2 embeddings ({model_name}) ===")
-        os.makedirs(emb_dir, exist_ok=True)
-        emb_wt_mean, emb_mut_mean, emb_wt_pos, emb_mut_pos = (
-            get_esm2_embeddings_for_pairs(
-                wt_seqs,
-                mut_seqs,
-                var_positions,
-                model_name=model_name,
-                device=device,
-                batch_size=batch_size,
+def _load_embeddings():
+    """Phase 3: load Gerasimavicius embeddings. Raises FileNotFoundError if missing."""
+    for path in [EMB_WT_MEAN, EMB_MUT_MEAN, EMB_WT_POS, EMB_MUT_POS]:
+        if not os.path.exists(path):
+            raise FileNotFoundError(
+                f"Embedding file missing: {path}\n"
+                f"Run: python -m esm2_mechanism.embeddings.embed_variants --model {ESM2_MODEL}"
             )
-        )
-        np.save(emb_cache["wt"], emb_wt_mean)
-        np.save(emb_cache["mut"], emb_mut_mean)
-        np.save(emb_cache["wt_pos"], emb_wt_pos)
-        np.save(emb_cache["mut_pos"], emb_mut_pos)
-
-    return emb_wt_mean, emb_mut_mean, emb_wt_pos, emb_mut_pos
+    print("\n=== Loading embeddings ===")
+    return (
+        np.load(EMB_WT_MEAN),
+        np.load(EMB_MUT_MEAN),
+        np.load(EMB_WT_POS),
+        np.load(EMB_MUT_POS),
+    )
 
 
 def _run_primary_probes(
@@ -730,17 +629,12 @@ def _run_family_cv(
 def run(
     out_dir,
     seed=0,
-    model_name=ESM2_MODEL_650M,
     n_stability_components=10,
     n_cv_folds=5,
-    batch_size=32,
 ):
-    import torch
-
     os.makedirs(out_dir, exist_ok=True)
     np.random.seed(seed)
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    print(f"Device: {device} | Model: {model_name}")
+    print(f"Model: {ESM2_MODEL}")
 
     data_dir = os.path.join(out_dir, "data")
     os.makedirs(data_dir, exist_ok=True)
@@ -760,11 +654,9 @@ def run(
     )
 
     # ------------------------------------------------------------------
-    # 3. Extract embeddings
+    # 3. Load embeddings
     # ------------------------------------------------------------------
-    emb_wt_mean, emb_mut_mean, emb_wt_pos, emb_mut_pos = _load_or_extract_embeddings(
-        wt_seqs, mut_seqs, var_positions, data_dir, model_name, device, batch_size
-    )
+    emb_wt_mean, emb_mut_mean, emb_wt_pos, emb_mut_pos = _load_embeddings()
 
     deltas_mean = emb_mut_mean - emb_wt_mean
     deltas_pos = emb_mut_pos - emb_wt_pos
@@ -798,10 +690,7 @@ def run(
     # ------------------------------------------------------------------
     print("\n=== Stability subspace ===")
     megascale_subspace = fit_stability_subspace_megascale(
-        data_dir,
         n_components=n_stability_components,
-        model_name=model_name,
-        device=device,
     )
     stability_subspace, stability_path, transfer_rho = select_stability_subspace(
         megascale_subspace, deltas_mean, foldx_ddg, genes_arr, n_stability_components
@@ -941,8 +830,8 @@ def run(
         "n_GOF": int((labels_3class == "GOF").sum()),
         "n_DN": int((labels_3class == "DN").sum()),
         "n_LOF": int((labels_3class == "LOF").sum()),
-        "model": model_name,
-        "model_scale": "650M" if "650M" in model_name else "3B",
+        "model": ESM2_MODEL,
+        "model_scale": "650M" if "650M" in ESM2_MODEL else "3B",
         "seed": seed,
     }
 
@@ -981,20 +870,17 @@ if __name__ == "__main__":
     parser.add_argument(
         "--model",
         type=str,
-        default=ESM2_MODEL_650M,
-        choices=[ESM2_MODEL_650M, ESM2_MODEL_3B],
+        default=ESM2_MODEL,
+        choices=[ESM2_MODEL, ESM2_MODEL_3B],
     )
     parser.add_argument("--seeds", type=int, nargs="+", default=[0])
-    parser.add_argument("--batch_size", type=int, default=32)
     args = parser.parse_args()
     os.makedirs(args.out_dir, exist_ok=True)
 
     final_infos_list = []
     for seed in args.seeds:
         print(f"\n{'='*60}\n=== Seed {seed} ===\n{'='*60}")
-        fi = run(
-            args.out_dir, seed=seed, model_name=args.model, batch_size=args.batch_size
-        )
+        fi = run(args.out_dir, seed=seed)
         final_infos_list.append(fi)
 
     numeric_keys = [

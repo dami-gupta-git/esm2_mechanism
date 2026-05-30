@@ -35,17 +35,18 @@ print = functools.partial(print, flush=True)
 from esm2_mechanism.utils_paths import (
     DATA_DIR as _DATA_DIR,
     RESULTS_DIR as _RESULTS_DIR,
+    PATH_EMB_WT_MEAN,
+    PATH_EMB_MUT_MEAN,
 )
 import esm2_mechanism.mechanism.multiseed_v1 as ms
 
 DATA = str(_DATA_DIR)
-EMB = str(_DATA_DIR / "embeddings")
 OUT = str(_RESULTS_DIR / "magnitude_direction")
 os.makedirs(OUT, exist_ok=True)
 
 PATH_VARIANTS = os.path.join(DATA, "pathogenicity_valid_variants_canonical.json")
-PATH_WT = os.path.join(EMB, "emb_wt_mean_path_canonical_n16576.npy")
-PATH_MUT = os.path.join(EMB, "emb_mut_mean_path_canonical_n16576.npy")
+PATH_WT = PATH_EMB_WT_MEAN
+PATH_MUT = PATH_EMB_MUT_MEAN
 
 
 def load():

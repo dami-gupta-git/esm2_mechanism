@@ -13,15 +13,15 @@ Usage:
 Steps:
      1  build_gene_universe  gene-list   — merge Gerasimavicius + G2P
      2  fetch_variants       gerasimavicius
-     3  fetch_variants       clinvar
+     3  fetch_variants       clinvar      — resume-safe; rate-limited, takes ~2h
      4  fetch_variants       merge
-     5  fetch_annotations    pfam
-     6  build_gene_universe  universe
-     7  fetch_annotations    uniprot
-     8  fetch_annotations    enzyme
-     9  build_proteome_features
-    10  build_badonyi_features
-    11  fetch_annotations    alphamissense  (requires merged_valid_variants.json)
+     5  fetch_sequences                  — pre-fetch UniProt sequences → cache/sequences.json
+     6  fetch_annotations    pfam
+     7  build_gene_universe  universe
+     8  fetch_annotations    uniprot
+     9  fetch_annotations    enzyme
+    10  build_proteome_features
+    11  build_badonyi_features
 """
 
 from __future__ import annotations
@@ -41,15 +41,15 @@ from esm2_mechanism.fetch_data.fetch_variants import (
     main_clinvar,
     main_merge,
 )
+from esm2_mechanism.fetch_data.fetch_sequences import main as main_fetch_sequences
 from esm2_mechanism.fetch_data.fetch_annotations import (
     main_pfam,
     main_uniprot,
     main_enzyme,
-    main_alphamissense,
 )
 from esm2_mechanism.fetch_data.build_proteome_features import main as main_proteome
 from esm2_mechanism.fetch_data.build_badonyi_features import main as main_badonyi
-from esm2_mechanism.utils_paths import DATA_DIR
+from esm2_mechanism.utils_paths import DATA_DIR, check_prerequisites
 
 print = functools.partial(print, flush=True)
 
@@ -84,23 +84,23 @@ def _make_steps(
     return [
         (1, "build_gene_universe gene-list", main_gene_list),
         (2, "fetch_variants gerasimavicius", main_gerasimavicius),
-        # (3,  "fetch_variants clinvar",           main_clinvar),  # skipped — already completed in Run 2
+        (3, "fetch_variants clinvar", main_clinvar),
         (
             4,
             "fetch_variants merge",
             lambda: main_merge(pathogenic_only=pathogenic_only),
         ),
-        (5, "fetch_annotations pfam", lambda: main_pfam(from_scratch=from_scratch)),
-        (6, "build_gene_universe universe", main_universe),
+        (5, "fetch_sequences",                  main_fetch_sequences),
+        (6, "fetch_annotations pfam",           lambda: main_pfam(from_scratch=from_scratch)),
+        (7, "build_gene_universe universe",     main_universe),
         (
-            7,
+            8,
             "fetch_annotations uniprot",
             lambda: main_uniprot(from_scratch=from_scratch),
         ),
-        (8, "fetch_annotations enzyme", main_enzyme),
-        (9, "build_proteome_features", main_proteome),
-        (10, "build_badonyi_features", main_badonyi),
-        (11, "fetch_annotations alphamissense", main_alphamissense),
+        (9,  "fetch_annotations enzyme",        main_enzyme),
+        (10, "build_proteome_features",         main_proteome),
+        (11, "build_badonyi_features",          main_badonyi),
     ]
 
 
@@ -135,6 +135,11 @@ def main() -> None:
 
     if args.from_step is not None and not (FIRST_STEP <= args.from_step <= LAST_STEP):
         parser.error(f"--from-step must be between {FIRST_STEP} and {LAST_STEP}")
+
+    prereq = check_prerequisites()
+    if not prereq:
+        print("Prereqs not present, exiting")
+        sys.exit(1)
 
     state = _load_state()
     last_completed = state.get("last_completed_step", 0)
