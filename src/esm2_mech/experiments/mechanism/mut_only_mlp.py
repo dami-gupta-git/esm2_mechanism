@@ -20,7 +20,7 @@ Uses the EXACT same PyTorch MLP and class-weighting as mlp.py
 delta_mean MLP family-split F1 = 0.364 / 0.352 published in result_7.
 
 Usage:
-    python -m esm2_mechanism.mechanism.mut_only_mlp \\
+    python -m esm2_mech.experiments.mechanism.mut_only_mlp \\
         --data_dir run_0/data \\
         --family_split \\
         --out run_0/mut_only_mlp_seed0.json
@@ -53,7 +53,7 @@ def load_wt_mut_mean_embeddings():
         if not os.path.exists(path):
             raise FileNotFoundError(
                 f"Embedding file missing: {path}\n"
-                f"Run: python -m esm2_mechanism.embeddings.embed_variants"
+                f"Run: python -m esm2_mech.embeddings.embed_variants"
             )
     wt = np.load(EMB_WT_MEAN)
     mut = np.load(EMB_MUT_MEAN)

@@ -519,7 +519,7 @@ def main():
         if not os.path.exists(path):
             raise FileNotFoundError(
                 f"Embedding file missing: {path}\n"
-                f"Run: python -m esm2_mechanism.embeddings.embed_variants --model {ESM2_MODEL}"
+                f"Run: python -m esm2_mech.embeddings.embed_variants --model {ESM2_MODEL}"
             )
     print("Loading embeddings...")
     wt_mean = np.load(WT_MEAN_EMB)

@@ -44,7 +44,7 @@ survive an interrupt. On restart:
   deleted and extraction starts from scratch.
 
 Usage (requires GPU):
-    python -m esm2_mechanism.embeddings.embed_variants \\
+    python -m esm2_mech.embeddings.embed_variants \\
         --model esm2_t33_650M_UR50D --batch_size 32
 """
 

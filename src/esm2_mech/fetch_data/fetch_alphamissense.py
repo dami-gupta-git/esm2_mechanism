@@ -10,9 +10,9 @@ pathogenicity_valid_variants.json.
   Output: data/alphamissense_scores_full.json
 
 Usage:
-    python -m esm2_mechanism.fetch_data.fetch_alphamissense
-    python -m esm2_mechanism.fetch_data.fetch_alphamissense --no-download --am-file /path/to/file.tsv.gz
-    python -m esm2_mechanism.fetch_data.fetch_alphamissense --out /path/to/output.json
+    python -m esm2_mech.fetch_data.fetch_alphamissense
+    python -m esm2_mech.fetch_data.fetch_alphamissense --no-download --am-file /path/to/file.tsv.gz
+    python -m esm2_mech.fetch_data.fetch_alphamissense --out /path/to/output.json
 """
 
 from __future__ import annotations
@@ -46,6 +46,8 @@ def _build_am_gene_uniprot_map() -> dict[str, str]:
     with open(AM_MERGED_VALID_VARIANTS) as f:
         rows = json.load(f)
 
+    # Count how often each (gene, uniprot_id) pair appears so we can pick the
+    # most-frequent UniProt ID when a gene maps to more than one (e.g. isoforms).
     counts: dict[str, dict[str, int]] = {}
     for r in rows:
         g, u = r["gene"], r["uniprot_id"]
@@ -76,6 +78,9 @@ def _build_am_lookup(
     skipped_key_collision: variants dropped because another gene shares the same
         (uniprot, protein_variant) key — they will receive no AM score.
     """
+    # Maps (uniprot_id, protein_variant) → variant key string so that when we
+    # stream the AM file we can look up each row in O(1) and write the score
+    # back under the gene-level key used everywhere else in the project.
     index: dict[tuple[str, str], str] = {}
     skipped_no_uniprot = []
     skipped_key_collision = []
@@ -101,6 +106,8 @@ def _build_am_lookup(
 
 
 def _download_am(url: str, dest: Path) -> None:
+    # Writes to a .part file and atomically renames on completion so an
+    # interrupted download never leaves a corrupt file at dest.
     if dest.exists():
         print(f"already exists: {dest} ({dest.stat().st_size:,} bytes)")
         return
@@ -124,6 +131,9 @@ def _download_am(url: str, dest: Path) -> None:
 def _stream_am_filter(
     am_gz: Path, index: dict[tuple[str, str], str]
 ) -> dict[str, float]:
+    # Streams the ~5 GB gzipped AM file line-by-line to avoid loading it into
+    # memory. Only rows whose (uniprot, protein_variant) key appears in index
+    # are kept; the rest are discarded immediately.
     scores: dict[str, float] = {}
     needed = len(index)
     print(f"streaming {am_gz}, looking for {needed:,} (uniprot, variant) pairs")

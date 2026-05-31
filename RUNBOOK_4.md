@@ -61,6 +61,7 @@ python -m esm2_mech.fetch_data.build_gene_list
 | 4 | `python -m esm2_mech.fetch_data.fetch_variants --step merge` | Merge variant datasets | `gerasimavicius_variants.json`, `gene_list.tsv`, `clinvar_variants.tsv` | `variants.json` |
 | 5 | `python -m esm2_mech.fetch_data.fetch_sequences` | Fetch UniProt sequences | `variants.json` | `cache/sequences.json` |
 | 6 | `python -m esm2_mech.fetch_data.fetch_annotations --step pfam` | Fetch Pfam families | `variants.json` | `pfam_families.json` |
+| 7 | `python -m esm2_mech.fetch_data.fetch_alphamissense_mechanism` | Fetch AlphaMissense scores | `variants.json` | `alphamissense_scores_full.json` |
 
 ### Step 2 — embed variants (GPU, RunPod)
 
@@ -74,7 +75,7 @@ After completion, `scp` the `.npy` files and `valid_variants.json` back to `data
 
 | Command | Description | Inputs | Outputs |
 |---|---|---|---|
-| `python -m esm2_mech.experiments.mechanism_delta_cv` | Gene-split vs family-split baseline comparison (result 2) | `variants.json`, `cache/sequences.json`, `pfam_families.json`, `embeddings_*.npy`, `alphamissense_scores_full.json` | `results/run1/family_split_baselines_seed{0..4}.json` |
+| `python -m esm2_mech.experiments.classify_by_mechanism` | Gene-split vs family-split baseline comparison (result 2) | `variants.json`, `cache/sequences.json`, `pfam_families.json`, `embeddings_*.npy`, `alphamissense_scores_full.json` | `results/run1/family_split_baselines_seed{0..4}.json` |
 
 Run inside a `tmux` session on RunPod. `scp` results back to `results/run1/` locally.
 

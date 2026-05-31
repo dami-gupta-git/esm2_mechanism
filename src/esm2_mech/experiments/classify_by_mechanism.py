@@ -1,5 +1,5 @@
 """
-Result 2 — Gene-split vs family-split baseline comparison.
+Classify variants by disease mechanism (GOF/DN/LOF) using ESM-2 embeddings.
 
 Tests whether ESM-2 features (WT-only, delta, per-residue, onehot, FoldX, AlphaMissense)
 carry mechanism signal beyond protein family identity. Runs each feature under gene-split
@@ -16,7 +16,13 @@ import numpy as np
 
 from esm2_mech.experiments.mechanism.mechanism_delta_family_split import run as run_family_split
 from esm2_mech.experiments.mechanism.mechanism_delta_probe import _load_alphamissense_scores
+from esm2_mech.experiments.mechanism.aggregate_seeds import (
+    aggregate_across_seeds,
+    load_seed_files,
+    print_table,
+)
 from esm2_mech.utils.data import load_variants
+from esm2_mech.utils.io import atomic_write_json
 from esm2_mech.utils.paths import (
     EMB_WT_MEAN,
     EMB_MUT_MEAN,
@@ -127,6 +133,30 @@ def main():
     for seed in [0, 1, 2, 3, 4]:
         print(f"\n--- Seed {seed} ---")
         run_family_split(data=data, out_dir=out_dir, seed=seed)
+
+    # Final step: pool the per-seed files into one honest headline figure
+    # (mean ± std ACROSS seeds, not across folds within a seed).
+    print("\n=== Aggregating across seeds ===")
+    seed_results = load_seed_files(out_dir)
+    if not seed_results:
+        print(f"WARNING: no seed files to aggregate in {out_dir}")
+        return
+    print(f"Loaded {len(seed_results)} seed files:")
+    for filename, _result in seed_results:
+        print(f"  {filename}")
+
+    aggregated = aggregate_across_seeds(seed_results)
+    aggregate_path = os.path.join(out_dir, "aggregate.json")
+    atomic_write_json(
+        aggregate_path,
+        {
+            "n_seeds": len(seed_results),
+            "seed_files": [filename for filename, _result in seed_results],
+            "across_seed": aggregated,
+        },
+    )
+    print_table(aggregated)
+    print(f"\nWrote {aggregate_path}")
 
 
 if __name__ == "__main__":

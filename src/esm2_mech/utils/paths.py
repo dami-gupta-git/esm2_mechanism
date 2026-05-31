@@ -5,7 +5,7 @@ from esm2_mech.utils.constants import ESM2_MODEL, ESM3_MODEL, GENE_UNIVERSE_FILE
 
 print = functools.partial(print, flush=True)
 
-PACKAGE_ROOT = Path(__file__).parent.parent.resolve()  # src/esm/
+PACKAGE_ROOT = Path(__file__).parent.parent.resolve()  # src/esm2_mech/
 PROJECT_ROOT = PACKAGE_ROOT.parent.parent              # esm2_mechanism/
 
 DATA_DIR = PROJECT_ROOT / "data"

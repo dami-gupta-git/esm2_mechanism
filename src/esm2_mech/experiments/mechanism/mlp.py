@@ -91,7 +91,7 @@ def load_embeddings():
         if not os.path.exists(path):
             raise FileNotFoundError(
                 f"Embedding file missing: {path}\n"
-                f"Run: python -m esm2_mechanism.embeddings.embed_variants"
+                f"Run: python -m esm2_mech.embeddings.embed_variants"
             )
     delta_mean = np.load(EMB_MUT_MEAN) - np.load(EMB_WT_MEAN)
     delta_pos = np.load(EMB_MUT_POS) - np.load(EMB_WT_POS)

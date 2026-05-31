@@ -7,7 +7,7 @@ Checkpoints to disk every 50 fetches. Transient failures are logged and left
 for the next run to retry — successfully fetched sequences are always written.
 
 Usage:
-    python -m esm2_mechanism.fetch_data.prefetch_sequences
+    python -m esm2_mech.fetch_data.fetch_sequences
 """
 
 from __future__ import annotations

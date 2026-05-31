@@ -24,7 +24,7 @@ sequence fails the sanity check (an invalid sequence is a real corruption), so
 it can guard a pipeline run against that case.
 
 Usage:
-    python -m esm2_mechanism.fetch_data.check_sequence_cache
+    python -m esm2_mech.fetch_data.check_sequence_cache
 """
 
 from __future__ import annotations

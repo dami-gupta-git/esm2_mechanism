@@ -20,9 +20,9 @@ Three pipeline steps:
     Output: data/enzyme_labels.tsv
 
 Usage:
-    python -m esm2_mechanism.fetch_data.fetch_annotations --step pfam
-    python -m esm2_mechanism.fetch_data.fetch_annotations --step uniprot
-    python -m esm2_mechanism.fetch_data.fetch_annotations --step enzyme
+    python -m esm2_mech.fetch_data.fetch_annotations --step pfam
+    python -m esm2_mech.fetch_data.fetch_annotations --step uniprot
+    python -m esm2_mech.fetch_data.fetch_annotations --step enzyme
 """
 
 from __future__ import annotations

@@ -24,7 +24,7 @@ Each violation is reported with counts and example genes in both directions.
 The script exits non-zero if any required check fails, so it can gate a run.
 
 Usage:
-    python -m esm2_mechanism.fetch_data.check_gene_coverage
+    python -m esm2_mech.fetch_data.check_gene_coverage
 """
 
 from __future__ import annotations

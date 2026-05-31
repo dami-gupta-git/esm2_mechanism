@@ -10,7 +10,7 @@ Phases:
   3. CPU: compute features from cached embeddings, save to data/scan_features.npy
 
 Embedding extraction (GPU) is a separate step:
-  python -m esm2_mechanism.embeddings.embed_scan
+  python -m esm2_mech.embeddings.embed_scan
 
 Pre-registered features (plan_perturb.md):
   1. scan_mag_mean        — mean ||delta|| across positions and substitutions
@@ -140,7 +140,7 @@ def _load_scan_embeddings():
         if not path.exists():
             raise FileNotFoundError(
                 f"Scan embedding file missing: {path}\n"
-                f"Run: python -m esm2_mechanism.embeddings.embed_scan"
+                f"Run: python -m esm2_mech.embeddings.embed_scan"
             )
     print(f"Loading scan embeddings: {SCAN_EMB_WT}")
     return np.load(SCAN_EMB_WT), np.load(SCAN_EMB_MUT)
@@ -273,7 +273,7 @@ def main():
         "--run_phase",
         default="13",
         help="Which phases to run: '1', '3', '13' (default: all). "
-             "For embedding extraction (phase 2) run: python -m esm2_mechanism.embeddings.embed_scan",
+             "For embedding extraction (phase 2) run: python -m esm2_mech.embeddings.embed_scan",
     )
     parser.add_argument(
         "--ablation",
@@ -312,7 +312,7 @@ def main():
             probes, wt_emb, mut_emb, covered_genes, ablation=args.ablation
         )
         save_features(gene_list, X, feature_names)
-        print(f"\nReady for probe runs. Next: python -m esm2_mechanism.perturb.perturbation_probe")
+        print(f"\nReady for probe runs. Next: python -m esm2_mech.experiments.perturbation.perturbation_probe")
 
 
 if __name__ == "__main__":

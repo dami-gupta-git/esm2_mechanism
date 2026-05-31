@@ -23,8 +23,8 @@ Outputs:
   data/proteome_feature_columns.json       column metadata
 
 Usage:
-  python -m esm2_mechanism.fetch_data.build_proteome_features
-  python -m esm2_mechanism.fetch_data.build_proteome_features --force-redownload
+  python -m esm2_mech.fetch_data.build_proteome_features
+  python -m esm2_mech.fetch_data.build_proteome_features --force-redownload
 """
 
 from __future__ import annotations
@@ -966,7 +966,7 @@ def main():
     if not GENE_UNIVERSE.exists():
         raise FileNotFoundError(
             f"Required input not found: {GENE_UNIVERSE}\n"
-            "  Run: python -m esm2_mechanism.fetch_data.build_gene_universe --step universe"
+            "  Run: python -m esm2_mech.fetch_data.build_gene_universe --step universe"
         )
 
     for d in (CACHE_DIR, CACHE_DIR / "paralogs"):

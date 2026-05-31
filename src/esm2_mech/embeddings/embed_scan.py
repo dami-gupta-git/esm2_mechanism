@@ -10,7 +10,7 @@ writes the WT and mutant embeddings to the canonical paths in utils_paths:
 Checkpoints are written every --checkpoint_every probes so the run is resumable.
 
 Usage (requires GPU):
-    python -m esm2_mechanism.embeddings.embed_scan --batch_size 128
+    python -m esm2_mech.embeddings.embed_scan --batch_size 128
 """
 
 import functools
@@ -53,7 +53,7 @@ def embed_scan(batch_size: int = 128) -> None:
     if not PROBE_CACHE.exists():
         raise FileNotFoundError(
             f"Probe list not found: {PROBE_CACHE}\n"
-            f"Run: python -m esm2_mechanism.perturb.perturbation_scan --phase 1"
+            f"Run: python -m esm2_mech.experiments.perturbation.perturbation_scan --phase 1"
         )
     with open(PROBE_CACHE) as f:
         d = json.load(f)

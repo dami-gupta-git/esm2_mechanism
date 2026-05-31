@@ -23,9 +23,9 @@ Three pipeline steps:
     Output: data/variants.json
 
 Usage:
-    python -m esm2_mechanism.fetch_data.fetch_variants --step gerasimavicius
-    python -m esm2_mechanism.fetch_data.fetch_variants --step clinvar
-    python -m esm2_mechanism.fetch_data.fetch_variants --step merge [--pathogenic_only]
+    python -m esm2_mech.fetch_data.fetch_variants --step gerasimavicius
+    python -m esm2_mech.fetch_data.fetch_variants --step clinvar
+    python -m esm2_mech.fetch_data.fetch_variants --step merge [--pathogenic_only]
 """
 
 from __future__ import annotations
