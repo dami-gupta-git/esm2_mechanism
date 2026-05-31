@@ -48,8 +48,10 @@ import re
 import urllib.request
 import zlib
 from collections import Counter, defaultdict
+from pathlib import Path
 
 import numpy as np
+from joblib import Parallel, delayed
 
 from esm2_mech.utils.data import load_variants
 from esm2_mech.utils.embed import get_esm2_embeddings_for_pairs
@@ -62,7 +64,9 @@ from esm2_mech.utils.paths import (
     PATH_EMB_MUT_MEAN,
     PATH_EMB_WT_MEAN,
     PATHOGENICITY_CONTROL_JSON,
+    PATHOGENICITY_CONTROL_SEED_JSON,
     PFAM_JSON,
+    RESULTS_DIR,
     SEQUENCES_JSON,
     VARIANTS_JSON,
 )
@@ -347,7 +351,7 @@ def embed_phase(variants, model, batch_size):
 # ===========================================================================
 # Phase 3 — 5-seed probes
 # ===========================================================================
-def probe_phase(variants, n_seeds):
+def probe_phase(variants, n_seeds, n_jobs=-1):
     """Phase 3. 5-seed logreg + MLP probes on delta_mean and wt_only."""
     print("\n=== Phase 3: probes ===")
     with open(PATH_EMB_META) as f:
@@ -384,24 +388,51 @@ def probe_phase(variants, n_seeds):
     features = {"delta_mean": delta, "wt_only": wt_mean}
     probes = {"logreg": run_logreg_binary_cv, "mlp": run_mlp_binary_cv}
 
-    # per-(feature, probe, split) -> list of per-seed AUROC means
-    per_seed = defaultdict(list)
-    n_cells = n_seeds * len(features) * len(probes) * 2  # 2 splits
-    done = 0
+    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Run one seed at a time, writing that seed's per-cell AUROCs to its own file
+    # as it completes (resume + progress visibility). Within a seed the 8 cells
+    # (2 features x 2 probes x 2 splits) are independent, so they run in parallel.
     for seed in range(n_seeds):
+        seed_path = Path(PATHOGENICITY_CONTROL_SEED_JSON.format(seed=seed))
+        if seed_path.exists():
+            print(f"  seed {seed}: cached, skipping")
+            continue
+
         gs = gene_split_cv(genes, seed=seed)
         fs = family_split_cv(genes, pfam_map, seed=seed)
-        for fname, X in features.items():
-            for pname, probe_fn in probes.items():
-                for split_name, splits in [("gene", gs), ("family", fs)]:
-                    res = probe_fn(X, y, splits, seed=seed)
-                    auroc = res.get("auroc_mean", float("nan"))
-                    per_seed[(fname, pname, split_name)].append(auroc)
-                    done += 1
-                    print(
-                        f"  [{done}/{n_cells}] seed {seed} {fname} {pname} "
-                        f"{split_name}-split: AUROC={auroc:.3f}"
-                    )
+        cells = [
+            (fname, pname, split_name, splits)
+            for fname in features
+            for pname in probes
+            for split_name, splits in (("gene", gs), ("family", fs))
+        ]
+
+        def _run_cell(fname, pname, split_name, splits, seed=seed):
+            res = probes[pname](features[fname], y, splits, seed=seed)
+            return (fname, pname, split_name, res.get("auroc_mean", float("nan")))
+
+        outcomes = Parallel(n_jobs=n_jobs)(
+            delayed(_run_cell)(*c) for c in cells
+        )
+
+        seed_result = {}
+        for fname, pname, split_name, auroc in outcomes:
+            seed_result[f"{fname}_{pname}_{split_name}"] = auroc
+        with open(seed_path, "w") as f:
+            json.dump(seed_result, f, indent=2)
+        summary = "  ".join(
+            f"{k}={v:.3f}" for k, v in seed_result.items() if "mlp" in k
+        )
+        print(f"  seed {seed} done -> {seed_path.name}   {summary}")
+
+    # Aggregate per-seed files into the final mean ± std result.
+    per_cell = defaultdict(list)
+    for seed in range(n_seeds):
+        with open(PATHOGENICITY_CONTROL_SEED_JSON.format(seed=seed)) as f:
+            seed_result = json.load(f)
+        for key, auroc in seed_result.items():
+            per_cell[key].append(auroc)
 
     results = {
         "n_variants": int(len(valid)),
@@ -415,19 +446,19 @@ def probe_phase(variants, n_seeds):
         results["by_feature"][fname] = {}
         for pname in probes:
             for split_name in ("gene", "family"):
-                vals = [v for v in per_seed[(fname, pname, split_name)] if not np.isnan(v)]
+                key = f"{fname}_{pname}_{split_name}"
+                vals = [v for v in per_cell[key] if not np.isnan(v)]
                 mean = float(np.mean(vals)) if vals else float("nan")
                 std = float(np.std(vals)) if vals else float("nan")
                 results["by_feature"][fname][f"{pname}_{split_name}"] = {
                     "auroc_mean": mean,
                     "auroc_std": std,
-                    "per_seed": per_seed[(fname, pname, split_name)],
+                    "per_seed": per_cell[key],
                 }
 
-    PATHOGENICITY_CONTROL_JSON.parent.mkdir(parents=True, exist_ok=True)
     with open(PATHOGENICITY_CONTROL_JSON, "w") as f:
         json.dump(results, f, indent=2)
-    print(f"  Results written to {PATHOGENICITY_CONTROL_JSON}")
+    print(f"  Aggregated results written to {PATHOGENICITY_CONTROL_JSON}")
     return results
 
 
@@ -465,6 +496,7 @@ def main():
     parser.add_argument("--seeds", type=int, default=N_SEEDS, help="number of probe seeds (>=1)")
     parser.add_argument("--max_per_gene_per_class", type=int, default=20)
     parser.add_argument("--fetch_seed", type=int, default=42)
+    parser.add_argument("--n_jobs", type=int, default=-1, help="parallel jobs for probes (-1 = all cores)")
     args = parser.parse_args()
 
     if args.seeds < 1:
@@ -474,7 +506,7 @@ def main():
         max_per_gene_per_class=args.max_per_gene_per_class, seed=args.fetch_seed
     )
     embed_phase(variants, model=args.model, batch_size=args.batch_size)
-    results = probe_phase(variants, n_seeds=args.seeds)
+    results = probe_phase(variants, n_seeds=args.seeds, n_jobs=args.n_jobs)
     _print_headline(results)
 
 

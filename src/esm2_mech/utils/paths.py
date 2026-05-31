@@ -18,6 +18,9 @@ REPORTS_DIR = PROJECT_ROOT / "reports"
 FAMILY_CLUSTERING_JSON = RESULTS_DIR / "family_clustering.json"
 NAIVE_BASELINE_JSON = RESULTS_DIR / "naive_baseline.json"
 PATHOGENICITY_CONTROL_JSON = RESULTS_DIR / "pathogenicity_control.json"
+# Per-seed probe outputs, written as each seed completes (resume + progress).
+# Format with .format(seed=N).
+PATHOGENICITY_CONTROL_SEED_JSON = str(RESULTS_DIR / "pathogenicity_control_seed{seed}.json")
 WITHIN_FAMILY_MECHANISM_JSON = RESULTS_DIR / "within_family_mechanism.json"
 PAPERS_DIR = PROJECT_ROOT / "papers"
 DOCS_DIR = PROJECT_ROOT / "docs"
