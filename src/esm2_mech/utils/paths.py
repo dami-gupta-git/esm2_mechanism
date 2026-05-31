@@ -13,6 +13,9 @@ RUN_NAME="run6"
 DATA_DIR = PROJECT_ROOT / "data"
 RESULTS_DIR = PROJECT_ROOT / "results" / RUN_NAME
 REPORTS_DIR = PROJECT_ROOT / "reports"
+
+# ── Result files written under RESULTS_DIR ───────────────────────────────────
+FAMILY_CLUSTERING_JSON = RESULTS_DIR / "family_clustering.json"
 PAPERS_DIR = PROJECT_ROOT / "papers"
 DOCS_DIR = PROJECT_ROOT / "docs"
 

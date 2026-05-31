@@ -1,45 +1,58 @@
 """
 Diagnostic: do ESM-2 embeddings cluster by Pfam family?
 
-If yes, then gene-split CV in experiment.py was leaking via homology
-(BRCA1 in train → BRCA2 in test gets recognized via family similarity),
-inflating the WT-only baseline's apparent mechanism signal.
+If yes, then gene-split CV leaks via homology (BRCA1 in train → BRCA2 in test
+gets recognized via family similarity), inflating the WT-only baseline's apparent
+mechanism signal.
 
 Computes, on WT, mutant, and delta embeddings:
-  1. Silhouette score by Pfam family
+  1. Silhouette score by Pfam family (reported but unreliable here; see note below)
   2. k-NN family purity (k=5, 10) vs shuffled-family null
   3. Within-family vs between-family cosine distance ratio vs null
-  4. Linear probe predicting Pfam family from embedding (gene-split CV)
-  5. Per-gene correlation: family-distance ratio vs mechanism-prediction accuracy
+  4. Linear probe predicting Pfam family from embedding (stratified k-fold CV)
+  5. Per-gene: family-tightness vs whether the gene's mechanism matches its family majority
+
+The headline rests on k-NN purity (z-score) and the family probe. Silhouette is
+unreliable in high-dim space with many singleton families and is reported only
+for completeness.
+
+  Input : data/valid_variants.json, data/pfam_families.json,
+          embeddings_wt_mean.npy, embeddings_mut_mean.npy
+  Output: results/<run>/family_clustering.json (path from paths.FAMILY_CLUSTERING_JSON)
 
 Usage:
-    python family_clustering.py --run_dir run_0 --model esm2_t33_650M_UR50D
+    python -m esm2_mech.experiments.mechanism.family_clustering
+    python -m esm2_mech.experiments.mechanism.family_clustering --seed 1
 """
 
 import argparse
+import functools
 import json
-import os
-from collections import Counter, defaultdict
+from collections import Counter
 
 import numpy as np
-from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import silhouette_score, accuracy_score, f1_score
-from sklearn.neighbors import NearestNeighbors
 from scipy.spatial.distance import cdist
 from scipy.stats import pearsonr
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import accuracy_score, f1_score, silhouette_score
+from sklearn.model_selection import StratifiedKFold
+from sklearn.neighbors import NearestNeighbors
 
-import functools
+from esm2_mech.utils.data import load_variants
+from esm2_mech.utils.paths import (
+    EMB_MUT_MEAN,
+    EMB_WT_MEAN,
+    FAMILY_CLUSTERING_JSON,
+    PFAM_JSON,
+    VALID_VARIANTS_JSON,
+)
 
 print = functools.partial(print, flush=True)
 
-from pathlib import Path
-from esm2_mech.utils.data import load_variants
-from esm2_mech.utils.paths import EMB_WT_MEAN, EMB_MUT_MEAN, ESM2_MODEL, SEQUENCES_JSON, VARIANTS_JSON, RESULTS_DIR, PFAM_JSON
-from esm2_mech.utils.sequences import (
-    window_sequence,
-    apply_missense,
-)
-from esm2_mech.utils.splits import gene_split_cv
+# Clustering metrics need ≥2 members to form a family cluster. The family probe
+# needs ≥3 so a family can appear in both train and test under k-fold CV.
+MIN_FAMILY_SIZE_CLUSTER = 2
+MIN_FAMILY_SIZE_PROBE = 3
 
 
 def gene_level_embeddings(emb, genes_arr):
@@ -119,9 +132,13 @@ def within_between_ratio(emb, families, n_shuffles=20, seed=42):
 
 
 def family_probe(
-    gene_emb, gene_families, gene_names, seed=42, min_family_size=3, n_folds=5
+    gene_emb, gene_families, seed=42, min_family_size=MIN_FAMILY_SIZE_PROBE, n_folds=5
 ):
-    """Linear probe predicting Pfam family from gene-level embedding, using k-fold CV."""
+    """Linear probe predicting Pfam family from gene-level embedding.
+
+    Uses stratified k-fold CV so every fold sees each kept family in proportion,
+    which a plain random split can fail to do for small families.
+    """
     fam_counts = Counter(gene_families)
     kept = [f for f, c in fam_counts.items() if c >= min_family_size]
     mask = np.array([f in kept for f in gene_families])
@@ -130,29 +147,28 @@ def family_probe(
     X = gene_emb[mask]
     y = np.array(gene_families)[mask]
 
-    rng = np.random.RandomState(seed)
-    order = rng.permutation(len(X))
-    folds = np.array_split(order, n_folds)
+    # n_splits cannot exceed the smallest kept-family size.
+    min_kept_size = min(c for f, c in fam_counts.items() if f in kept)
+    n_splits = min(n_folds, min_kept_size)
+    if n_splits < 2:
+        return {"note": "smallest kept family too small for CV"}
+
+    majority_overall = Counter(y).most_common(1)[0][0]
+    skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=seed)
 
     accs, f1s, baseline_accs = [], [], []
-    majority_overall = Counter(y).most_common(1)[0][0]
-    for k in range(n_folds):
-        test_idx = folds[k]
-        train_idx = np.concatenate([folds[j] for j in range(n_folds) if j != k])
-        if len(set(y[train_idx])) < 2 or len(test_idx) < 2:
+    for train_idx, test_idx in skf.split(X, y):
+        if len(set(y[train_idx])) < 2:
             continue
         clf = LogisticRegression(max_iter=500, C=1.0, solver="lbfgs", random_state=seed)
-        try:
-            clf.fit(X[train_idx], y[train_idx])
-            pred = clf.predict(X[test_idx])
-            baseline_pred = np.full_like(y[test_idx], majority_overall)
-            accs.append(float(accuracy_score(y[test_idx], pred)))
-            f1s.append(
-                float(f1_score(y[test_idx], pred, average="macro", zero_division=0))
-            )
-            baseline_accs.append(float(accuracy_score(y[test_idx], baseline_pred)))
-        except Exception:
-            continue
+        clf.fit(X[train_idx], y[train_idx])
+        pred = clf.predict(X[test_idx])
+        baseline_pred = np.full_like(y[test_idx], majority_overall)
+        accs.append(float(accuracy_score(y[test_idx], pred)))
+        f1s.append(
+            float(f1_score(y[test_idx], pred, average="macro", zero_division=0))
+        )
+        baseline_accs.append(float(accuracy_score(y[test_idx], baseline_pred)))
 
     if not accs:
         return {"note": "all folds failed"}
@@ -169,51 +185,47 @@ def family_probe(
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--out_dir", type=str, default=str(RESULTS_DIR))
-    parser.add_argument("--model", type=str, default=ESM2_MODEL)
     parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--out", type=str, default="family_clustering.json")
     args = parser.parse_args()
 
-    # Rebuild valid_variants identically to experiment.py
+    # Load the pre-filtered variant list (the same row-aligned set the embeddings
+    # were extracted from), so no rebuild/refilter is needed here.
     print("=== Loading dataset and embeddings ===")
-    variants = load_variants(VARIANTS_JSON)
-    if not SEQUENCES_JSON.exists():
-        raise FileNotFoundError(f"{SEQUENCES_JSON} not found — run fetch_data/fetch_sequences first")
-    with open(SEQUENCES_JSON) as f:
-        seq_cache = json.load(f)
-
-    valid_variants = []
-    for v in variants:
-        uid = v["uniprot_id"]
-        if uid not in seq_cache:
-            continue
-        wt_full = seq_cache[uid]
-        wt_win, new_pos = window_sequence(wt_full, v["aa_pos"])
-        mut_win = apply_missense(wt_win, new_pos, v["aa_wt"], v["aa_mut"])
-        if mut_win is None:
-            continue
-        valid_variants.append(v)
+    valid_variants = load_variants(VALID_VARIANTS_JSON)
 
     emb_wt = np.load(EMB_WT_MEAN)
     emb_mut = np.load(EMB_MUT_MEAN)
     emb_delta = emb_mut - emb_wt
     print(f"Variants: {len(valid_variants)}  Embedding dim: {emb_wt.shape[1]}")
-    assert len(valid_variants) == emb_wt.shape[0]
+    if len(valid_variants) != emb_wt.shape[0]:
+        raise ValueError(
+            f"Row mismatch: {len(valid_variants)} variants in {VALID_VARIANTS_JSON.name} "
+            f"but {emb_wt.shape[0]} embedding rows."
+        )
 
     genes_arr = np.array([v["gene"] for v in valid_variants])
     labels_arr = np.array([v["label_3class"] for v in valid_variants])
 
     # Pfam map
-    if not PFAM_JSON.exists():
-        raise FileNotFoundError(f"{PFAM_JSON} not found — run fetch_data/fetch_annotations --step pfam first")
     with open(PFAM_JSON) as f:
         pfam_map = json.load(f)
 
-    # Gene-level views (one row per gene)
+    # Gene-level views (one row per gene). gene_names defines the canonical
+    # per-gene ordering used by every per-view embedding below.
     gene_names, _ = gene_level_embeddings(emb_wt, genes_arr)
     gene_families = np.array([pfam_map.get(g) for g in gene_names])
-    gene_mechs = np.array([labels_arr[genes_arr == g][0] for g in gene_names])
+
+    # label_3class is gene-level: every variant of a gene must share one label.
+    # Enforce that before collapsing to one label per gene, so a future per-variant
+    # label scheme can't silently pick an arbitrary value.
+    gene_mechs = []
+    for g in gene_names:
+        gene_labels = set(labels_arr[genes_arr == g])
+        if len(gene_labels) != 1:
+            raise ValueError(f"gene {g} has multiple label_3class values: {gene_labels}")
+        gene_mechs.append(gene_labels.pop())
+    gene_mechs = np.array(gene_mechs)
+
     annotated_mask = np.array([f is not None for f in gene_families])
 
     print(f"\nGenes: {len(gene_names)}  with Pfam annotation: {annotated_mask.sum()}")
@@ -233,7 +245,10 @@ def main():
 
     # Restrict to annotated, non-singleton families for meaningful clustering metrics
     nonsingleton = np.array(
-        [f is not None and fam_counts.get(f, 0) >= 2 for f in gene_families]
+        [
+            f is not None and fam_counts.get(f, 0) >= MIN_FAMILY_SIZE_CLUSTER
+            for f in gene_families
+        ]
     )
     print(f"\nGenes in non-singleton families: {nonsingleton.sum()}")
 
@@ -243,10 +258,9 @@ def main():
         ("delta_mean", emb_delta),
     ]:
         print(f"\n=== {view_name} ===")
-        # Aggregate per-variant embeddings to per-gene
-        gene_emb = np.zeros((len(gene_names), emb.shape[1]), dtype=np.float32)
-        for i, g in enumerate(gene_names):
-            gene_emb[i] = emb[genes_arr == g].mean(0)
+        # Aggregate per-variant embeddings to per-gene (same ordering as gene_names).
+        view_gene_names, gene_emb = gene_level_embeddings(emb, genes_arr)
+        assert np.array_equal(view_gene_names, gene_names)
 
         # Subset to annotated non-singleton families for metrics
         ge = gene_emb[nonsingleton]
@@ -258,13 +272,13 @@ def main():
         if len(set(gf)) >= 2 and len(ge) >= 5:
             try:
                 sil = float(silhouette_score(ge, gf, metric="cosine"))
-            except Exception as e:
+            except Exception:
                 sil = float("nan")
             view_res["silhouette_family"] = sil
-            print(
-                f"  silhouette by family (cosine): {sil:.3f}  "
-                f"(>0.3 strong, 0.1-0.3 moderate, <0.1 weak, <0 anti-clustered)"
-            )
+            # Silhouette is unreliable here (high-dim, many singletons, uneven
+            # cluster sizes); kNN purity / within-between ratio are the primary
+            # signals. Reported for completeness only.
+            print(f"  silhouette by family (cosine): {sil:.3f}  (unreliable here — see kNN purity)")
 
         # 2. kNN purity
         for k in (5, 10):
@@ -289,7 +303,6 @@ def main():
         probe = family_probe(
             gene_emb[annotated_mask],
             gene_families[annotated_mask].tolist(),
-            gene_names[annotated_mask].tolist(),
             seed=args.seed,
         )
         view_res["family_probe"] = probe
@@ -353,28 +366,29 @@ def main():
 
         results["by_view"][view_name] = view_res
 
-    out_path = os.path.join(args.out_dir, args.out)
-    with open(out_path, "w") as f:
+    FAMILY_CLUSTERING_JSON.parent.mkdir(parents=True, exist_ok=True)
+    with open(FAMILY_CLUSTERING_JSON, "w") as f:
         json.dump(results, f, indent=2, default=str)
-    print(f"\nResults written to {out_path}")
+    print(f"\nResults written to {FAMILY_CLUSTERING_JSON}")
 
     print("\n" + "=" * 60)
     print("HEADLINE")
     print("=" * 60)
-    wt_sil = results["by_view"]["wt_mean"].get("silhouette_family", float("nan"))
-    wt_knn5 = results["by_view"]["wt_mean"].get("knn5_purity", float("nan"))
-    wt_knn5_null = results["by_view"]["wt_mean"].get("knn5_purity_null", float("nan"))
-    delta_sil = results["by_view"]["delta_mean"].get("silhouette_family", float("nan"))
-    delta_knn5 = results["by_view"]["delta_mean"].get("knn5_purity", float("nan"))
+    wt_view = results["by_view"]["wt_mean"]
+    delta_view = results["by_view"]["delta_mean"]
+    wt_knn5 = wt_view.get("knn5_purity", float("nan"))
+    wt_knn5_null = wt_view.get("knn5_purity_null", float("nan"))
+    wt_knn5_z = wt_view.get("knn5_purity_z", float("nan"))
+    delta_knn5 = delta_view.get("knn5_purity", float("nan"))
+    wt_probe_acc = wt_view.get("family_probe", {}).get("accuracy", float("nan"))
+    wt_probe_base = wt_view.get("family_probe", {}).get("majority_baseline_acc", float("nan"))
     print(
-        f"WT  embeddings: silhouette={wt_sil:+.3f}  k=5 family purity={wt_knn5:.3f} (null {wt_knn5_null:.3f})"
+        f"WT  embeddings: k=5 family purity={wt_knn5:.3f} (null {wt_knn5_null:.3f}, z={wt_knn5_z:+.1f})  "
+        f"family-probe acc={wt_probe_acc:.3f} (majority {wt_probe_base:.3f})"
     )
-    print(
-        f"Δ   embeddings: silhouette={delta_sil:+.3f}  k=5 family purity={delta_knn5:.3f}"
-    )
-    # Use k=5 purity z-score as primary signal — silhouette is unreliable in
+    print(f"Δ   embeddings: k=5 family purity={delta_knn5:.3f}")
+    # k=5 purity z-score is the primary signal — silhouette is unreliable in
     # high-dimensional space with uneven cluster sizes and many singletons.
-    wt_knn5_z = results["by_view"]["wt_mean"].get("knn5_purity_z", float("nan"))
     if not np.isnan(wt_knn5_z):
         if wt_knn5_z > 20:
             tag = "STRONG family clustering — gene-split CV was leaking via homology"
@@ -384,9 +398,7 @@ def main():
             tag = "WEAK family clustering — minor homology leakage"
         else:
             tag = "NO family clustering — gene-level signal is gene-specific, not family-driven"
-        print(
-            f"\n  ⇒ {tag}  (k=5 purity z={wt_knn5_z:+.1f}; silhouette unreliable here)"
-        )
+        print(f"\n  ⇒ {tag}  (k=5 purity z={wt_knn5_z:+.1f})")
 
 
 if __name__ == "__main__":

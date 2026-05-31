@@ -84,8 +84,9 @@ After completion, `scp` the `.npy` files and `embedded_variants.json` back to `d
 |---|---|---|---------------------------------------------------------|
 | `python -m esm2_mech.experiments.mechanism.classify_by_mechanism` | Gene-split vs family-split baseline comparison | `variants.json`, `cache/sequences.json`, `pfam_families.json`, `embeddings_*.npy`, `alphamissense_scores_full.json` | `results/<run_name>/family_split_baselines_seed{0..4}.json` |
 | `python -m esm2_mech.experiments.mechanism.mlp --seed 0` | Nonlinear classifiers (MLP, GBM, RF, kNN) on delta embeddings | `valid_variants.json`, `pfam_families.json`, `embeddings_*.npy` | `results/<run_name>/nonlinear_results_seed0.json`                 |
+| `python -m esm2_mech.experiments.mechanism.family_clustering` | Diagnostic: do ESM-2 embeddings cluster by Pfam family? (kNN purity, within/between distance, family probe, mechanism–family overlap) — explains the homology leakage in the WT-only baseline | `valid_variants.json`, `pfam_families.json`, `embeddings_wt_mean.npy`, `embeddings_mut_mean.npy` | `results/<run_name>/family_clustering.json` |
 
-Run inside a `tmux` session on RunPod. `scp` results back to `results/<run_name>/` locally.
+The first two run on RunPod inside a `tmux` session; `scp` results back to `results/<run_name>/` locally. `family_clustering` is CPU-only and can run locally (it only needs the `.npy` embeddings and the two JSON inputs, all present locally after Step 2).
 
 ---
 
