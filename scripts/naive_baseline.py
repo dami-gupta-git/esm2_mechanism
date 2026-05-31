@@ -3,7 +3,7 @@ Measure the naive-classifier baseline for 3-class mechanism prediction.
 
 Computes the macro-F1 and per-class AUROC that a classifier with no learned
 signal achieves on the GOF/DN/LOF task, so the floor can be reported alongside
-the real feature scores in reports/run6/report_1.md (the `naive baseline` row).
+the real feature scores in reports/run6/report_classifier.md (the `naive baseline` row).
 
 To stay consistent with the experiment, this reuses the project's own
 cross-validation split functions (gene_split_cv / family_split_cv), the same

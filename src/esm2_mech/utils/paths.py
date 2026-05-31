@@ -17,6 +17,7 @@ REPORTS_DIR = PROJECT_ROOT / "reports"
 # ── Result files written under RESULTS_DIR ───────────────────────────────────
 FAMILY_CLUSTERING_JSON = RESULTS_DIR / "family_clustering.json"
 NAIVE_BASELINE_JSON = RESULTS_DIR / "naive_baseline.json"
+PATHOGENICITY_CONTROL_JSON = RESULTS_DIR / "pathogenicity_control.json"
 PAPERS_DIR = PROJECT_ROOT / "papers"
 DOCS_DIR = PROJECT_ROOT / "docs"
 
@@ -48,6 +49,9 @@ ENZYME_CACHE_DIR = CACHE_DIR / "enzyme_uniprot"
 SCAN_PROBE_CACHE_JSON = CACHE_DIR / "scan_probes.json"
 ESM3_STRUCT_TOKENS_JSON = CACHE_DIR / "esm3_struct_tokens.json"
 CLINVAR_PATHOGENICITY_VARIANTS_JSON = DATA_DIR / "clinvar_pathogenicity_variants.json"
+# Sidecar recording the fetch params the cache above was built with, so a param
+# change (cap / seed) re-fetches instead of silently serving the stale set.
+CLINVAR_PATHOGENICITY_PARAMS_JSON = DATA_DIR / "clinvar_pathogenicity_variants.params.json"
 
 # ── ESM-2 Gerasimavicius embeddings (embed_variants.py) ──────────────────────
 # Row-aligned subset of variants actually embedded (one row per .npy array row).

@@ -4,7 +4,7 @@ Run GBM / Random Forest / kNN on the delta features under FAMILY-split CV.
 The mechanism MLP experiment (experiments/mechanism/mlp.py) runs the MLP under
 both gene-split and family-split, but runs GBM, RF, and kNN under gene-split
 only. As a result the family-split column for those three models is empty in
-reports/run6/report_1.md, which makes statements like "best nonlinear
+reports/run6/report_classifier.md, which makes statements like "best nonlinear
 family-split score" best-among-available rather than best overall.
 
 This script fills that gap: it runs GBM, RF, and kNN on `delta_mean` and

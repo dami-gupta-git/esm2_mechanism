@@ -1,6 +1,6 @@
 # Results: Do ESM-2 Embeddings Cluster by Protein Family?
 
-*Companion to [`report_1.md`](report_1.md). report_1 found that ESM-2 predicts mechanism
+*Companion to [`report_classifier.md`](report_classifier.md). report_1 found that ESM-2 predicts mechanism
 above chance, but that the signal is the protein's family identity acting as a proxy rather
 than the mutation. This report measures that family clustering directly, turning report_1's
 inference into a measured result.*
