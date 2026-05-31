@@ -248,4 +248,10 @@ delta.
 
 Embeddings verified before analysis (clean exit; all four arrays `(17826, 1280)`;
 variant index row-aligned, length 17,826). AlphaMissense coverage 17,733 / 17,826 (99.5%).
-Linear baselines: 5 seeds. Nonlinear: 5 seeds. Full log: [`RUN_PROGRESS.md`](../../RUN_PROGRESS.md), Run 6.
+
+Sources:
+- Linear baselines (Tables 1–2, feature rows): `experiments/mechanism/classify_by_mechanism`, 5 seeds → `results/run6/family_split_baselines_seed{0..4}.json`, `aggregate.json`.
+- Nonlinear results: `experiments/mechanism/mlp`, 5 seeds → `results/run6/nonlinear_results_seed{0..4}.json`.
+- Naive baseline row (0.288 / 0.50): `scripts/naive_baseline.py`, a majority-class `DummyClassifier` run under the same labels and 5-seed gene/family-split CV as the feature rows → `results/run6/naive_baseline.json`.
+
+Full log: [`RUN_PROGRESS.md`](../../RUN_PROGRESS.md), Run 6.

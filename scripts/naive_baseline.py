@@ -17,9 +17,13 @@ Three dummy strategies are reported:
   - prior         : same predictions as most_frequent for a single-label argmax.
   - stratified    : predict randomly in proportion to class frequencies.
 
+Reported values are mean ± std across the 5 seeds (per-seed value = mean over
+that seed's folds), matching how the experiment aggregates seeds.
+
   Input : data/valid_variants.json   (label_3class, gene per variant)
           data/pfam_families.json    (gene -> Pfam family, for family-split)
-  Output: stdout table (not written to disk)
+  Output: results/<run>/naive_baseline.json (path from paths.NAIVE_BASELINE_JSON)
+          plus a summary table to stdout
 
 Usage:
     python -m scripts.naive_baseline
@@ -30,13 +34,14 @@ from __future__ import annotations
 
 import functools
 import json
+from collections import Counter
 
 import numpy as np
 from sklearn.dummy import DummyClassifier
 from sklearn.metrics import f1_score, roc_auc_score
 
 from esm2_mech.utils.constants import MECHANISM_CLASSES
-from esm2_mech.utils.paths import PFAM_JSON, VALID_VARIANTS_JSON
+from esm2_mech.utils.paths import NAIVE_BASELINE_JSON, PFAM_JSON, VALID_VARIANTS_JSON
 from esm2_mech.utils.splits import family_split_cv, gene_split_cv
 
 print = functools.partial(print, flush=True)
@@ -46,11 +51,12 @@ N_SEEDS = 5
 STRATEGIES = ["most_frequent", "prior", "stratified"]
 
 
-def _eval_dummy(strategy, labels, splits, seed):
-    """Run a DummyClassifier across pre-computed (train, test) splits.
+def _eval_dummy_one_seed(strategy, labels, splits, seed):
+    """Run a DummyClassifier across one seed's (train, test) folds.
 
-    Returns (list of per-fold macro-F1, dict class -> list of per-fold AUROC).
-    DummyClassifier ignores X, so a zero placeholder is passed.
+    Returns (mean macro-F1 over folds, dict class -> mean AUROC over folds).
+    DummyClassifier ignores X, so a zero placeholder is passed. NaN is returned
+    for a metric with no contributing fold.
     """
     placeholder_x = np.zeros((len(labels), 1))
     macro_f1_folds: list[float] = []
@@ -75,19 +81,49 @@ def _eval_dummy(strategy, labels, splits, seed):
                     float(roc_auc_score(y_bin, proba[:, class_idx]))
                 )
 
-    return macro_f1_folds, auroc_folds
+    macro_mean = float(np.mean(macro_f1_folds)) if macro_f1_folds else float("nan")
+    auroc_means = {
+        cls: (float(np.mean(auroc_folds[cls])) if auroc_folds[cls] else float("nan"))
+        for cls in MECHANISM_CLASSES
+    }
+    return macro_mean, auroc_means
+
+
+def _mean_std(values):
+    vals = [v for v in values if not np.isnan(v)]
+    if not vals:
+        return float("nan"), float("nan")
+    return float(np.mean(vals)), float(np.std(vals))
+
+
+def evaluate(strategy, split_name, labels, genes, pfam_map):
+    """Mean ± std across N_SEEDS for one (strategy, split) cell."""
+    per_seed_macro: list[float] = []
+    per_seed_auroc: dict[str, list[float]] = {c: [] for c in MECHANISM_CLASSES}
+    for seed in range(N_SEEDS):
+        if split_name == "gene":
+            splits = gene_split_cv(genes, n_folds=N_FOLDS, seed=seed)
+        else:
+            splits = family_split_cv(genes, pfam_map, n_folds=N_FOLDS, seed=seed)
+        macro, auroc = _eval_dummy_one_seed(strategy, labels, splits, seed)
+        per_seed_macro.append(macro)
+        for cls in MECHANISM_CLASSES:
+            per_seed_auroc[cls].append(auroc[cls])
+
+    macro_mean, macro_std = _mean_std(per_seed_macro)
+    result = {
+        "macro_f1_mean": macro_mean,
+        "macro_f1_std": macro_std,
+        "n_seeds": N_SEEDS,
+    }
+    for cls in MECHANISM_CLASSES:
+        mean, std = _mean_std(per_seed_auroc[cls])
+        result[f"auroc_{cls}_mean"] = mean
+        result[f"auroc_{cls}_std"] = std
+    return result
 
 
 def main() -> None:
-    if not VALID_VARIANTS_JSON.exists():
-        raise FileNotFoundError(
-            f"{VALID_VARIANTS_JSON} not found — run fetch_data/build_valid_variants first"
-        )
-    if not PFAM_JSON.exists():
-        raise FileNotFoundError(
-            f"{PFAM_JSON} not found — run fetch_data/fetch_annotations --step pfam first"
-        )
-
     with open(VALID_VARIANTS_JSON) as fh:
         variants = json.load(fh)
     with open(PFAM_JSON) as fh:
@@ -96,41 +132,38 @@ def main() -> None:
     labels = np.array([v["label_3class"] for v in variants])
     genes = np.array([v["gene"] for v in variants])
 
-    from collections import Counter
-
-    print(f"n = {len(labels)}  class distribution = {dict(Counter(labels))}")
+    class_distribution = dict(Counter(labels))
+    print(f"n = {len(labels)}  class distribution = {class_distribution}")
     print(f"Averaging over {N_SEEDS} seeds, {N_FOLDS}-fold CV\n")
 
-    header = f"{'strategy':14} {'split':7} {'macro_f1':>9}  " + "  ".join(
+    results = {
+        "n_variants": int(len(labels)),
+        "class_distribution": {k: int(v) for k, v in class_distribution.items()},
+        "n_seeds": N_SEEDS,
+        "n_folds": N_FOLDS,
+        "by_strategy": {},
+    }
+
+    header = f"{'strategy':14} {'split':7} {'macro_f1':>15}  " + "  ".join(
         f"{c:>5}" for c in MECHANISM_CLASSES
     )
     print(header)
 
     for strategy in STRATEGIES:
+        results["by_strategy"][strategy] = {}
         for split_name in ("gene", "family"):
-            all_macro: list[float] = []
-            all_auroc: dict[str, list[float]] = {c: [] for c in MECHANISM_CLASSES}
-            for seed in range(N_SEEDS):
-                if split_name == "gene":
-                    splits = gene_split_cv(genes, n_folds=N_FOLDS, seed=seed)
-                else:
-                    splits = family_split_cv(
-                        genes, pfam_map, n_folds=N_FOLDS, seed=seed
-                    )
-                macro_folds, auroc_folds = _eval_dummy(
-                    strategy, labels, splits, seed
-                )
-                all_macro += macro_folds
-                for cls in MECHANISM_CLASSES:
-                    all_auroc[cls] += auroc_folds[cls]
+            cell = evaluate(strategy, split_name, labels, genes, pfam_map)
+            results["by_strategy"][strategy][split_name] = cell
+            macro = f"{cell['macro_f1_mean']:.3f} ± {cell['macro_f1_std']:.3f}"
+            auroc_str = "  ".join(
+                f"{cell[f'auroc_{c}_mean']:.3f}" for c in MECHANISM_CLASSES
+            )
+            print(f"{strategy:14} {split_name:7} {macro:>15}  {auroc_str}")
 
-            macro_mean = float(np.mean(all_macro)) if all_macro else float("nan")
-            auroc_means = {
-                cls: (float(np.mean(all_auroc[cls])) if all_auroc[cls] else float("nan"))
-                for cls in MECHANISM_CLASSES
-            }
-            auroc_str = "  ".join(f"{auroc_means[c]:.3f}" for c in MECHANISM_CLASSES)
-            print(f"{strategy:14} {split_name:7} {macro_mean:9.3f}  {auroc_str}")
+    NAIVE_BASELINE_JSON.parent.mkdir(parents=True, exist_ok=True)
+    with open(NAIVE_BASELINE_JSON, "w") as fh:
+        json.dump(results, fh, indent=2)
+    print(f"\nResults written to {NAIVE_BASELINE_JSON}")
 
 
 if __name__ == "__main__":
