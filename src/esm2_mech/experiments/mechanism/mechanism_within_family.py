@@ -1,16 +1,13 @@
 """
-Within-family mechanism classification from ESM-2 embeddings (multi-seed).
+Within-family mechanism classification from ESM-2 embeddings.
 
-This is the multi-seed reimplementation of result_8. Results across the project
-established that *cross-family* mechanism classification is mostly family
-leakage: the classifier recognises which protein family a gene belongs to, not
-the mechanism. result_8 asked the narrower question — once family identity is
-held constant (so it cannot act as a shortcut), can ESM-2 embeddings distinguish
-mechanism (GOF/DN/LOF) *within* a single family? result_8 answered at a single
-seed; per-family gene counts are tiny (6-16 genes), so a single-seed macro-F1 is
-dominated by fold-assignment noise. This script repeats the analysis across N
-seeds and reports mean +/- std per family — the only honest way to read numbers
-at these sample sizes.
+Cross-family mechanism classification is mostly family leakage: the classifier
+recognises which protein family a gene belongs to, not the mechanism. This
+experiment asks the narrower question — once family identity is held constant (so
+it cannot act as a shortcut), can ESM-2 embeddings distinguish mechanism
+(GOF/DN/LOF) *within* a single family? Per-family gene counts are tiny (6-16
+genes), so each number is reported as mean +/- std across N seeds — the only
+honest way to read results at these sample sizes.
 
 Structure mirrors pathogenicity_control.py: phases run in sequence, the probe
 phase loops features x probes x seeds and reports per-seed values plus mean/std.
@@ -23,18 +20,18 @@ multiclass, so the multiclass probe runners run_logreg_cv / run_mlp_cv are used.
 
   Phase 2 (select) - select_families()
       Keep families with >= MIN_GENES genes AND >= MIN_CLASSES gene-level
-      mechanism classes. Largest first (result_8's "5 largest families").
+      mechanism classes, largest first.
 
   Phase 3 (probe)  - probe_phase()
-      For each family, N-seed within-family gene-split CV on two views
-      (wt_only, delta) with two probes (logreg, mlp), plus an
+      For each family, within-family gene-split CV on two views (wt_only, delta)
+      with two probes (logreg, mlp) across N seeds, plus an
       always-most-common-class baseline F1. -> WITHIN_FAMILY_MECHANISM_JSON.
 
   Inputs : VALID_VARIANTS_JSON, EMB_WT_MEAN, EMB_MUT_MEAN, PFAM_JSON
   Output : results/<run>/within_family_mechanism.json
 
 Usage:
-    python -m esm2_mech.experiments.mechanism.within_family_mechanism_multiseed
+    python -m esm2_mech.experiments.mechanism.mechanism_within_family
         --seeds 5 --min-genes 6 --min-classes 2
 """
 
@@ -137,7 +134,7 @@ def select_families(genes, labels, pfam_map, min_genes, min_classes):
     """Return ({family: gene_set}, gene_label) for families passing the gates.
 
     A family qualifies if it has >= min_genes distinct genes AND its genes span
-    >= min_classes distinct mechanism classes (gene-level), matching result_8.
+    >= min_classes distinct mechanism classes (gene-level).
     pfam_map is a flat {gene: family_id_or_None} dict.
     """
     print("\n=== Phase 2: select qualifying families ===")
@@ -166,7 +163,7 @@ def select_families(genes, labels, pfam_map, min_genes, min_classes):
 
 
 # ===========================================================================
-# Phase 3 - multi-seed within-family probes
+# Phase 3 - within-family probes
 # ===========================================================================
 def _majority_baseline_f1(y, classes):
     """Macro-F1 of always predicting the most common class in y."""
@@ -185,7 +182,7 @@ def _majority_baseline_f1(y, classes):
 
 
 def _probe_one_family(features_by_view, y, genes_rows, classes, n_seeds, n_folds):
-    """N-seed within-family gene-split CV for one family, both views x both probes.
+    """Within-family gene-split CV for one family, both views x both probes, N seeds.
 
     Returns {view: {probe: {"macro_f1": {mean,std,per_seed},
                             "auroc": {cls: {mean,std,per_seed}}}}}.
@@ -245,8 +242,8 @@ def _probe_one_family(features_by_view, y, genes_rows, classes, n_seeds, n_folds
 
 
 def probe_phase(wt_mean, delta, genes, labels, families, gene_label, n_seeds, n_folds):
-    """Phase 3. Multi-seed within-family probes for every qualifying family."""
-    print("\n=== Phase 3: multi-seed within-family probes ===")
+    """Phase 3. Within-family probes for every qualifying family."""
+    print("\n=== Phase 3: within-family probes ===")
     results = {
         "n_seeds": n_seeds,
         "n_folds": n_folds,
@@ -292,7 +289,7 @@ def probe_phase(wt_mean, delta, genes, labels, families, gene_label, n_seeds, n_
 
 def _print_headline(results):
     print("\n" + "=" * 78)
-    print("HEADLINE - within-family mechanism (multi-seed): delta vs wt_only macro-F1")
+    print("HEADLINE - within-family mechanism: delta vs wt_only macro-F1")
     print("=" * 78)
     for family, res in results["by_family"].items():
         base = res["majority_baseline_f1"]

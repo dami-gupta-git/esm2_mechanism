@@ -90,6 +90,44 @@ The first two run on RunPod inside a `tmux` session; `scp` results back to `resu
 
 ---
 
+## Experiment 2 — pathogenicity positive control (result_control)
+
+Tests whether the same ESM-2 delta embeddings that classify mechanism at chance can predict
+ClinVar pathogenic-vs-benign (published ESM-2 work: AUROC 0.88–0.94). If yes, the mechanism
+null is a real absence of signal, not a broken pipeline; the gene-split / family-split gap
+being ~0 shows the signal is per-variant biochemistry, not homology leakage.
+
+One consolidated module runs all three phases (fetch → embed → 5-seed probe) in sequence.
+Run on RunPod (Phase 2 needs GPU; the H200/A100 also has CPU for phases 1 and 3). Each phase
+skips itself when its output is already present and matches by content.
+
+| Command | Description | Inputs | Outputs |
+|---|---|---|---|
+| `python -m esm2_mech.experiments.pathogenicity.pathogenicity_control --model esm2_t33_650M_UR50D --batch_size 32` | Fetch balanced ClinVar P/B variants (GRCh38), extract ESM-2 WT+mut embeddings, run 5-seed logreg+MLP probes on delta_mean and wt_only × gene/family-split | `variants.json`, `cache/sequences.json`, `pfam_families.json` (ClinVar bulk file auto-downloaded) | `data/clinvar_pathogenicity_variants.json`, `pathogenicity_{wt,mut}_mean.npy`, `pathogenicity_meta.json`, `results/<run_name>/pathogenicity_control.json` |
+
+Run inside a `tmux` session on RunPod. `scp` `pathogenicity_control.json` back to
+`results/<run_name>/` locally. Headline: `delta_mean` MLP AUROC (pass threshold ≥ 0.85),
+and the gene→family Δ (~0 expected). Report written as `reports/<run_name>/report_control.md`.
+
+---
+
+## Experiment 3 — within-family mechanism
+
+Holds protein-family identity constant (so it cannot act as a leakage shortcut)
+and asks whether ESM-2 embeddings can distinguish mechanism (GOF/DN/LOF) *within*
+a single family. Per-family gene counts are tiny (6–16 genes), so results are
+reported as mean ± std per family — `wt_only` vs `delta`, logreg and MLP, with a
+per-family always-most-common-class baseline.
+
+CPU-only — it reads the existing run6 `.npy` embeddings (no model inference) and
+fits small per-family probes. Runs locally; no GPU or RunPod needed.
+
+| Command | Description | Inputs | Outputs |
+|---|---|---|---|
+| `python -m esm2_mech.experiments.mechanism.mechanism_within_family --seeds 5` | Within-family gene-split CV per qualifying Pfam family (≥6 genes, ≥2 classes); wt_only vs delta × logreg/MLP; per-family macro-F1 + per-class AUROC (mean ± std) and majority-baseline F1 | `valid_variants.json`, `pfam_families.json`, `embeddings_wt_mean.npy`, `embeddings_mut_mean.npy` | `results/<run_name>/within_family_mechanism.json` |
+
+---
+
 ## Verification checklist
 
 - [ ] `data/embeddings/esm2_t33_650M_UR50D/embedded_variants.json` row count matches all four `.npy` arrays. (This file is a write-only provenance artifact — no code reads it; it is the row-aligned variant index for the `.npy` arrays and should equal `data/valid_variants.json`. See `utils/embed.py` `_flush_checkpoint`.)
