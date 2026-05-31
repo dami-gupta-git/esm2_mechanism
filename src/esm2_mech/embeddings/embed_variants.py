@@ -1,21 +1,17 @@
 """
-Extract ESM-2 embeddings for the merged variant dataset.
+Extract ESM-2 embeddings for the filtered variant dataset.
 
-Reads data/variants.json (a list of missense variants, each with a UniProt ID,
-amino acid position, wild-type AA, mutant AA, and pathogenicity label) and produces
-dense vector representations of each variant for downstream ML classification.
+Reads data/valid_variants.json (built by fetch_data/build_valid_variants.py) and
+data/cache/sequences.json, then runs ESM-2 on each WT/mutant sequence pair.
 
 Pipeline
 --------
-1. Load variants from data/variants.json.
-2. Fetch canonical protein sequences from UniProt for each variant's UniProt ID,
-   using data/cache/sequences.json as an incremental local cache.
+1. Load pre-filtered variants from data/valid_variants.json.
+2. Load sequences from data/cache/sequences.json.
 3. For each variant, extract a window of up to 1022 residues centred on the mutation
-   site (ESM-2's token limit), apply the missense substitution to build the mutant
-   sequence, and discard variants where the sequence is unavailable or the WT amino
-   acid does not match the reference sequence at the stated position.
-4. Run WT and mutant sequences through a pretrained ESM-2 model (650M or 3B),
-   interleaved in the same batch to halve the number of forward passes.
+   site (ESM-2's token limit) and apply the missense substitution.
+4. Run WT and mutant sequences through ESM-2 (650M or 3B), interleaved in the same
+   batch to halve the number of forward passes.
 5. Extract two embedding types per variant from the final transformer layer:
      - Mean-pooled: average over all residue embeddings; captures global protein context.
      - Position-specific: embedding at the exact mutation site; captures local context.
@@ -25,23 +21,14 @@ Outputs (under data/embeddings/<model>/):
   embeddings_mut_mean.npy       (N, D)  mean-pooled mutant embeddings
   embeddings_wt_pos.npy         (N, D)  per-residue WT embedding at variant position
   embeddings_mut_pos.npy        (N, D)  per-residue mutant embedding at variant position
-  valid_variants.json           filtered variant list aligned with the arrays
 
-The four arrays and valid_variants.json are aligned by row: index i in each array
-corresponds to valid_variants[i]. Together they provide WT and mutant state at two
-granularities (global and local), ready to train a pathogenicity classifier on the
-difference between them.
+All four arrays are row-aligned to valid_variants.json.
 
 Checkpointing
 -------------
 Embeddings are flushed atomically every checkpoint_every variants so a GPU job can
-survive an interrupt. On restart:
-- If all five output files exist and row counts match the full valid variant list,
-  extraction is skipped entirely.
-- If a partial checkpoint exists (row count < full list, arrays and JSON agree),
-  extraction resumes from where it left off.
-- If the checkpoint is corrupt (truncated JSON or mismatched row counts), it is
-  deleted and extraction starts from scratch.
+survive an interrupt. On restart, extraction resumes from the last checkpoint or
+skips entirely if already complete.
 
 Usage (requires GPU):
     python -m esm2_mech.embeddings.embed_variants \\
@@ -63,7 +50,7 @@ from esm2_mech.utils.sequences import (
 )
 from esm2_mech.utils.io import save_npy
 from esm2_mech.utils.constants import ESM2_MODEL as ESM2_MODEL_650M, ESM2_MODEL_3B
-from esm2_mech.utils.paths import VARIANTS_JSON, EMB_DIR, SEQUENCES_JSON
+from esm2_mech.utils.paths import VALID_VARIANTS_JSON, EMB_DIR, SEQUENCES_JSON
 
 
 # ---------------------------------------------------------------------------
@@ -268,13 +255,13 @@ def main() -> None:
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Device: {device} | Model: {args.model}")
 
-    if not VARIANTS_JSON.exists():
+    if not VALID_VARIANTS_JSON.exists():
         raise FileNotFoundError(
-            f"{VARIANTS_JSON} not found — run fetch_data/fetch_variants.py --step merge first"
+            f"{VALID_VARIANTS_JSON} not found — run fetch_data/build_valid_variants first"
         )
-    with open(VARIANTS_JSON) as f:
-        variants = json.load(f)
-    print(f"Loaded {len(variants)} merged variants")
+    with open(VALID_VARIANTS_JSON) as f:
+        valid_variants = json.load(f)
+    print(f"Loaded {len(valid_variants):,} valid variants")
 
     if not SEQUENCES_JSON.exists():
         raise FileNotFoundError(
@@ -283,7 +270,7 @@ def main() -> None:
     with open(SEQUENCES_JSON) as f:
         seq_cache = json.load(f)
 
-    valid, wt_seqs, mut_seqs, positions = _build_valid_pairs(variants, seq_cache)
+    valid, wt_seqs, mut_seqs, positions = _build_valid_pairs(valid_variants, seq_cache)
 
     print(f"3-class distribution: {dict(Counter(v['label_3class'] for v in valid))}")
 
@@ -294,20 +281,17 @@ def main() -> None:
     ckpt_mut_mean = os.path.join(out_dir, "embeddings_mut_mean.npy")
     ckpt_wt_pos = os.path.join(out_dir, "embeddings_wt_pos.npy")
     ckpt_mut_pos = os.path.join(out_dir, "embeddings_mut_pos.npy")
-    ckpt_valid = os.path.join(out_dir, "valid_variants.json")
 
-    all_ckpts = [ckpt_wt_mean, ckpt_mut_mean, ckpt_wt_pos, ckpt_mut_pos, ckpt_valid]
+    all_ckpts = [ckpt_wt_mean, ckpt_mut_mean, ckpt_wt_pos, ckpt_mut_pos]
     resume_arrays = None
     resume_start = 0
     if all(os.path.exists(p) for p in all_ckpts):
         try:
-            with open(ckpt_valid) as f:
-                prev = json.load(f)
             n_on_disk = np.load(ckpt_wt_mean, mmap_mode="r").shape[0]
-            if len(prev) == n_on_disk == len(valid):
+            if n_on_disk == len(valid):
                 print("Embeddings already complete — nothing to do.")
                 return
-            if n_on_disk == len(prev) and n_on_disk < len(valid):
+            if n_on_disk < len(valid):
                 print(f"Partial checkpoint: {n_on_disk}/{len(valid)} rows — resuming")
                 resume_arrays = (
                     np.load(ckpt_wt_mean),
@@ -317,14 +301,11 @@ def main() -> None:
                 )
                 resume_start = n_on_disk
             else:
-                print(
-                    f"WARNING: checkpoint row count mismatch "
-                    f"(arrays={n_on_disk}, valid_variants.json={len(prev)}) — re-extracting"
-                )
+                print(f"WARNING: checkpoint row count mismatch (arrays={n_on_disk}, expected={len(valid)}) — re-extracting")
                 for ckpt in all_ckpts:
                     if os.path.exists(ckpt):
                         os.remove(ckpt)
-        except (json.JSONDecodeError, ValueError):
+        except ValueError:
             print("WARNING: corrupt checkpoint — re-extracting")
             for ckpt in all_ckpts:
                 if os.path.exists(ckpt):
@@ -344,19 +325,10 @@ def main() -> None:
         resume_arrays=resume_arrays,
     )
 
-    # Write arrays before valid_variants.json so its presence signals a complete set.
-    # valid_variants.json is written atomically so a crash mid-write leaves it absent
-    # rather than corrupt — the next run will re-extract cleanly.
     save_npy(ckpt_wt_mean, wt_mean)
     save_npy(ckpt_mut_mean, mut_mean)
     save_npy(ckpt_wt_pos, wt_pos)
     save_npy(ckpt_mut_pos, mut_pos)
-    tmp_valid = ckpt_valid + ".tmp"
-    with open(tmp_valid, "w") as f:
-        json.dump(valid, f)
-        f.flush()
-        os.fsync(f.fileno())
-    os.replace(tmp_valid, ckpt_valid)
 
     print(f"\nSaved embeddings: {wt_mean.shape} -> {out_dir}")
     print("Done.")

@@ -25,6 +25,7 @@ GENE_LIST_TSV = DATA_DIR / "gene_list.tsv"
 PFAM_JSON = DATA_DIR / "pfam_families.json"
 GERAS_VALID_VARIANTS_JSON = DATA_DIR / "geras_valid_variants.json"
 ALPHAMISSENSE_SCORES_JSON = DATA_DIR / "alphamissense_scores_full.json"
+VALID_VARIANTS_JSON = DATA_DIR / "valid_variants.json"
 
 # ── Cache ─────────────────────────────────────────────────────────────────────
 CACHE_DIR = DATA_DIR / "cache"
@@ -42,7 +43,6 @@ ESM3_STRUCT_TOKENS_JSON = CACHE_DIR / "esm3_struct_tokens.json"
 CLINVAR_PATHOGENICITY_VARIANTS_JSON = DATA_DIR / "clinvar_pathogenicity_variants.json"
 
 # ── ESM-2 Gerasimavicius embeddings (embed_variants.py) ──────────────────────
-VALID_VARIANTS_JSON = EMB_DIR / "valid_variants.json"
 EMB_WT_MEAN = EMB_DIR / "embeddings_wt_mean.npy"
 EMB_MUT_MEAN = EMB_DIR / "embeddings_mut_mean.npy"
 EMB_WT_POS = EMB_DIR / "embeddings_wt_pos.npy"
