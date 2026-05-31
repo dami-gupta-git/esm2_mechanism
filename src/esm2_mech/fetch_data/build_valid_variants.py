@@ -45,6 +45,7 @@ def build_valid_variants() -> list[dict]:
     valid = []
     skipped_no_uid = 0
     skipped_no_seq = 0
+    skipped_no_fields = 0
     skipped_invalid = 0
     for v in variants:
         uid = v.get("uniprot_id")
@@ -54,8 +55,14 @@ def build_valid_variants() -> list[dict]:
         if uid not in seq_cache:
             skipped_no_seq += 1
             continue
-        wt_win, new_pos = window_sequence(seq_cache[uid], v["aa_pos"])
-        mut_win = apply_missense(wt_win, new_pos, v["aa_wt"], v["aa_mut"])
+        aa_pos = v.get("aa_pos")
+        aa_wt = v.get("aa_wt")
+        aa_mut = v.get("aa_mut")
+        if aa_pos is None or not aa_wt or not aa_mut:
+            skipped_no_fields += 1
+            continue
+        wt_win, new_pos = window_sequence(seq_cache[uid], aa_pos)
+        mut_win = apply_missense(wt_win, new_pos, aa_wt, aa_mut)
         if mut_win is None:
             skipped_invalid += 1
             continue
@@ -65,6 +72,8 @@ def build_valid_variants() -> list[dict]:
         print(f"WARNING: {skipped_no_uid} variants skipped — missing UniProt ID")
     if skipped_no_seq:
         print(f"WARNING: {skipped_no_seq} variants skipped — UniProt ID not in sequence cache")
+    if skipped_no_fields:
+        print(f"WARNING: {skipped_no_fields} variants skipped — missing aa_pos/aa_wt/aa_mut")
     if skipped_invalid:
         print(f"WARNING: {skipped_invalid} variants skipped — invalid WT/mut window")
     print(f"Valid variants: {len(valid):,}")
