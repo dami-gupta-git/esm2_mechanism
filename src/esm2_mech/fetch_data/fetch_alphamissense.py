@@ -4,7 +4,7 @@ Fetch AlphaMissense scores for target variants.
 Stream the AlphaMissense bulk file and extract scores for variants in
 pathogenicity_valid_variants.json.
 
-  Input : data/embeddings/esm2_t33_650M_UR50D/valid_variants.json,
+  Input : data/valid_variants.json,
           data/pathogenicity_valid_variants.json,
           data/cache/AlphaMissense_aa_substitutions.tsv.gz  (auto-downloaded)
   Output: data/alphamissense_scores_full.json

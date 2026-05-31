@@ -46,6 +46,12 @@ ESM3_STRUCT_TOKENS_JSON = CACHE_DIR / "esm3_struct_tokens.json"
 CLINVAR_PATHOGENICITY_VARIANTS_JSON = DATA_DIR / "clinvar_pathogenicity_variants.json"
 
 # ── ESM-2 Gerasimavicius embeddings (embed_variants.py) ──────────────────────
+# Row-aligned subset of variants actually embedded (one row per .npy array row).
+# Distinct from VALID_VARIANTS_JSON (the pre-filter input written by build_valid_variants).
+# Write-only sanity/provenance artifact — NO code reads it; always identical to
+# VALID_VARIANTS_JSON because the embed step re-applies the same filters. See the
+# _flush_checkpoint docstring in utils/embed.py for the full rationale.
+EMB_VALID_VARIANTS_JSON = EMB_DIR / "embedded_variants.json"
 EMB_WT_MEAN = EMB_DIR / "embeddings_wt_mean.npy"
 EMB_MUT_MEAN = EMB_DIR / "embeddings_mut_mean.npy"
 EMB_WT_POS = EMB_DIR / "embeddings_wt_pos.npy"

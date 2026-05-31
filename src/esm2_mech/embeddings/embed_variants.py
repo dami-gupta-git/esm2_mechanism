@@ -21,8 +21,10 @@ Outputs (under data/embeddings/<model>/):
   embeddings_mut_mean.npy       (N, D)  mean-pooled mutant embeddings
   embeddings_wt_pos.npy         (N, D)  per-residue WT embedding at variant position
   embeddings_mut_pos.npy        (N, D)  per-residue mutant embedding at variant position
+  embedded_variants.json        (N,)    row-aligned subset of variants actually embedded
 
-All four arrays are row-aligned to valid_variants.json.
+All four arrays are row-aligned to embedded_variants.json (the row-aligned subset
+of the input data/valid_variants.json that was actually embedded).
 
 Checkpointing
 -------------
