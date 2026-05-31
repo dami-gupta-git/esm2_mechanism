@@ -10,10 +10,10 @@ Covers:
 - load_gene_delta: genes not in variants produce no entry
 - load_gene_delta: multiple variants for the same gene accumulate all deltas
 - load_gene_delta: delta vector equals mut - wt at that row index
-- _flush_checkpoint: writes all four .npy arrays plus valid_variants.json
+- _flush_checkpoint: writes all four .npy arrays plus embedded_variants.json
 - _flush_checkpoint: atomic — no .tmp file left after success
 - _flush_checkpoint: written arrays round-trip with correct shape/values
-- _flush_checkpoint: valid_variants.json holds the provided slice
+- _flush_checkpoint: embedded_variants.json holds the provided slice
 """
 
 import json
@@ -194,11 +194,11 @@ class TestFlushCheckpoint:
 
     def test_valid_variants_json_written(self, tmp_path):
         self._flush(tmp_path)
-        assert (tmp_path / "valid_variants.json").exists()
+        assert (tmp_path / "embedded_variants.json").exists()
 
     def test_no_tmp_file_left(self, tmp_path):
         self._flush(tmp_path)
-        assert not (tmp_path / "valid_variants.json.tmp").exists()
+        assert not (tmp_path / "embedded_variants.json.tmp").exists()
         for name in self.ARRAY_NAMES:
             assert not (tmp_path / f"{name}.npy.tmp").exists()
 
@@ -213,5 +213,5 @@ class TestFlushCheckpoint:
 
     def test_valid_variants_content(self, tmp_path):
         _, _, _, _, valid = self._flush(tmp_path, n=3)
-        written = json.loads((tmp_path / "valid_variants.json").read_text())
+        written = json.loads((tmp_path / "embedded_variants.json").read_text())
         assert written == valid

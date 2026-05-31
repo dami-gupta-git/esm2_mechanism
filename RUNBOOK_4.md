@@ -7,6 +7,12 @@ project root with the package installed (`pip install -e .`). The old
 
 **RunPod:** embedding extraction and analysis steps both run on RunPod (A100/H100). Run inside a `tmux` session. Fetch/data steps run locally on CPU.
 
+**RunPod SSH:** connect with the `id_runpod_2` key:
+```bash
+ssh -i ~/.ssh/id_runpod_2 root@<pod-ip> -p <pod-port>
+```
+(`id_runpod` does NOT work — use `id_runpod_2`.)
+
 ---
 
 ## Prerequisites — manually placed files
@@ -68,9 +74,9 @@ python -m esm2_mech.fetch_data.build_gene_list
 
 | Command | Description | Inputs | Outputs |
 |---|---|---|---|
-| `python -m esm2_mech.embeddings.embed_variants --model esm2_t33_650M_UR50D --batch_size 32` | Extract ESM-2 embeddings | `variants.json`, `cache/sequences.json` | `embeddings_wt_mean.npy`, `embeddings_mut_mean.npy`, `embeddings_wt_pos.npy`, `embeddings_mut_pos.npy`, `valid_variants.json` |
+| `python -m esm2_mech.embeddings.embed_variants --model esm2_t33_650M_UR50D --batch_size 32` | Extract ESM-2 embeddings | `valid_variants.json`, `cache/sequences.json` | `embeddings_wt_mean.npy`, `embeddings_mut_mean.npy`, `embeddings_wt_pos.npy`, `embeddings_mut_pos.npy`, `embedded_variants.json` |
 
-After completion, `scp` the `.npy` files and `valid_variants.json` back to `data/embeddings/esm2_t33_650M_UR50D/` locally.
+After completion, `scp` the `.npy` files and `embedded_variants.json` back to `data/embeddings/esm2_t33_650M_UR50D/` locally.
 
 ### Step 3 — run analysis (RunPod)
 
@@ -85,7 +91,7 @@ Run inside a `tmux` session on RunPod. `scp` results back to `results/<run_name>
 
 ## Verification checklist
 
-- [ ] `data/embeddings/esm2_t33_650M_UR50D/valid_variants.json` row count matches all four `.npy` arrays.
+- [ ] `data/embeddings/esm2_t33_650M_UR50D/embedded_variants.json` row count matches all four `.npy` arrays. (This file is a write-only provenance artifact — no code reads it; it is the row-aligned variant index for the `.npy` arrays and should equal `data/valid_variants.json`. See `utils/embed.py` `_flush_checkpoint`.)
 - [ ] `data/pfam_families.json` has entries for ≥ 1,900 genes (< 1,900 suggests a partial fetch).
 - [ ] `data/enzyme_labels.tsv` spot-checked against UniProt EC numbers for a handful of kinases and proteases.
 - [ ] `data/alphamissense_scores_full.json` non-empty and covers > 90% of `valid_variants.json`.

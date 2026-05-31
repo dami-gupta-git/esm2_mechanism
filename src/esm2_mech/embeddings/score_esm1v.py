@@ -8,7 +8,7 @@ using ESM-1v checkpoints 1 and 2 (esm1v_t33_650M_UR90S_1/2).
 
 Inputs:
   data/pathogenicity_valid_variants.json  (17,236 variants)
-  data/embeddings/esm2_t33_650M_UR50D/valid_variants.json  (gene -> uniprot_id mapping)
+  data/valid_variants.json                (gene -> uniprot_id mapping)
   data/sequences.json                     (uniprot_id -> sequence)
 
 Output:

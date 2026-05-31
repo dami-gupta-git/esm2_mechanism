@@ -2,7 +2,7 @@
 Fetch AlphaMissense scores for mechanism variants.
 
 Streams the AlphaMissense bulk file and extracts scores for all variants in
-data/embeddings/esm2_t33_650M_UR50D/valid_variants.json.
+data/variants.json.
 
   Input : data/variants.json
           data/cache/AlphaMissense_aa_substitutions.tsv.gz  (auto-downloaded)

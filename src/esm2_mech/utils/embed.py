@@ -24,7 +24,22 @@ def _flush_checkpoint(
     valid_slice: list,
     n_done: int,
 ) -> None:
-    """Atomically write accumulated embeddings and valid_variants.json to checkpoint files."""
+    """Atomically write accumulated embeddings and embedded_variants.json to checkpoint files.
+
+    embedded_variants.json is the row-aligned slice of variants whose embeddings
+    occupy the .npy arrays (row i of the json == row i of every array). It exists
+    purely as a sanity-check / provenance artifact — NO code reads it.
+
+    In practice it is always identical to the input data/valid_variants.json: the
+    embed step's _build_valid_pairs re-applies the same three filters (empty
+    uniprot_id, uid not in seq_cache, apply_missense → None) that
+    fetch_data/build_valid_variants already applied to produce valid_variants.json,
+    so the embed step can never drop a row further. It is written anyway so the
+    RUNBOOK verification step can confirm row count == .npy array length without
+    trusting that invariant. If you ever change the embed-step filters to diverge
+    from build_valid_variants, this file becomes the authoritative row index and
+    downstream loaders should read it instead of valid_variants.json.
+    """
     arrays = {
         "embeddings_wt_mean": wt_mean_list,
         "embeddings_mut_mean": mut_mean_list,
@@ -33,7 +48,7 @@ def _flush_checkpoint(
     }
     for name, lst in arrays.items():
         save_npy(os.path.join(out_dir, f"{name}.npy"), np.stack(lst))
-    valid_path = os.path.join(out_dir, "valid_variants.json")
+    valid_path = os.path.join(out_dir, "embedded_variants.json")
     tmp_valid = valid_path + ".tmp"
     with open(tmp_valid, "w") as f:
         json.dump(valid_slice, f)

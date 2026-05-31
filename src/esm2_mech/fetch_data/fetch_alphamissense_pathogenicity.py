@@ -5,7 +5,7 @@ Streams the AlphaMissense bulk file and extracts scores for all variants in
 data/clinvar_pathogenicity_variants.json.
 
   Input : data/clinvar_pathogenicity_variants.json  (from pathogenicity_fetch.py)
-          data/embeddings/esm2_t33_650M_UR50D/valid_variants.json  (for gene->uniprot map)
+          data/valid_variants.json  (for gene->uniprot map)
           data/cache/AlphaMissense_aa_substitutions.tsv.gz  (auto-downloaded)
   Output: data/alphamissense_pathogenicity_scores.json
 
