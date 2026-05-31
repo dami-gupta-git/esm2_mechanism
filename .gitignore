@@ -232,4 +232,9 @@ docs/explain.txt
 docs/plans/INTERVIEW.md
 data/
 results/
-scripts/
+
+# Track reports/ and scripts/ in this repo (override global gitignore)
+!reports
+!reports/**
+!scripts
+!scripts/**
