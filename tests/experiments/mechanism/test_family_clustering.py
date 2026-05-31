@@ -180,14 +180,22 @@ def test_family_probe_note_when_not_enough_families():
 
 
 def test_family_probe_note_when_smallest_kept_family_too_small():
-    # >= 30 genes across >= 5 families, but every kept family has exactly 2 members,
-    # so n_splits collapses to < 2 and CV cannot run.
+    # Pass the first guard (>= 30 genes, >= 5 families) but keep a singleton family.
+    # With min_family_size=1 a kept family of size 1 forces n_splits = 1 (< 2),
+    # so stratified CV cannot run.
     centers = [[c, 0, 0, 0, 0] for c in range(20)]
-    # 20 families x 2 members = 40 genes; all kept (min size 2), smallest size 2.
+    # 19 families x 2 members + 1 family x 1 member = 39 genes, all kept,
+    # smallest kept family size = 1.
     gene_emb, gene_families = _clustered_points(
-        centers, per_cluster=2, dim=10, jitter=0.05, seed=5
+        centers[:19], per_cluster=2, dim=10, jitter=0.05, seed=5
     )
+    singleton, _ = _clustered_points(
+        centers[19:20], per_cluster=1, dim=10, jitter=0.05, seed=6
+    )
+    gene_emb = np.vstack([gene_emb, singleton])
+    # Distinct label so it is its own family (the helper re-indexes from fam0).
+    gene_families = gene_families + ["fam_singleton"]
 
-    result = family_probe(gene_emb, gene_families, seed=42, min_family_size=2)
+    result = family_probe(gene_emb, gene_families, seed=42, min_family_size=1)
 
     assert result == {"note": "smallest kept family too small for CV"}

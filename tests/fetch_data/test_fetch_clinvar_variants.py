@@ -142,8 +142,10 @@ class TestFetchClinvarVariantsCache:
         ]
         (tmp_path / "BRAF.json").write_text(json.dumps(cached))
 
-        result = fetch_clinvar_variants("BRAF")
+        # A cache hit is always complete by construction.
+        result, complete = fetch_clinvar_variants("BRAF")
         assert result == cached
+        assert complete is True
 
     def test_cache_hit_does_not_call_network(self, tmp_path, monkeypatch):
         monkeypatch.setattr(
