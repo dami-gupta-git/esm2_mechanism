@@ -197,10 +197,10 @@ def _fetch_clinvar(target_genes, max_per_gene_per_class, seed):
     return chosen
 
 
-def _attach_uniprot_ids(variants, gerasimavicius_variants):
+def _attach_uniprot_ids(variants, mechanism_variants):
     gene_to_uid = {
         v["gene"].upper(): v["uniprot_id"]
-        for v in gerasimavicius_variants
+        for v in mechanism_variants
         if v.get("gene") and v.get("uniprot_id")
     }
     out = []
@@ -238,12 +238,14 @@ def fetch_phase(max_per_gene_per_class=20, seed=42):
             except json.JSONDecodeError:
                 print("  WARNING: corrupt cache — re-fetching")
 
-    gerasimavicius = load_variants(VARIANTS_JSON)
-    target_genes = sorted({v["gene"].upper() for v in gerasimavicius if v.get("gene")})
+    # Merged mechanism variants (Gerasimavicius + G2P) — defines the target gene set
+    # and the gene→UniProt map for the ClinVar pathogenicity fetch.
+    mechanism_variants = load_variants(VARIANTS_JSON)
+    target_genes = sorted({v["gene"].upper() for v in mechanism_variants if v.get("gene")})
     print(f"  Target gene set: {len(target_genes)} genes")
 
     variants = _fetch_clinvar(target_genes, max_per_gene_per_class, seed)
-    variants = _attach_uniprot_ids(variants, gerasimavicius)
+    variants = _attach_uniprot_ids(variants, mechanism_variants)
     print(
         f"  Final set: {len(variants)} variants ({Counter(v['label'] for v in variants)}), "
         f"{len({v['gene'] for v in variants})} genes"
