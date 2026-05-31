@@ -4,7 +4,7 @@
 dataset, and why this question matters.*
 
 **Run 6 · 2026-05-30** · ESM-2 `esm2_t33_650M_UR50D` · 17,826 variants · 1,935 genes ·
-1,136 protein families · classes LOF 76% / GOF 15% / DN 9%. Results in
+1,134 protein families · classes LOF 76% / GOF 15% / DN 9%. Results in
 [`results/run6/`](../../results/run6/).
 
 ---

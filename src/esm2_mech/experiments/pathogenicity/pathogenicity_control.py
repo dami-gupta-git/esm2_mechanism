@@ -386,6 +386,8 @@ def probe_phase(variants, n_seeds):
 
     # per-(feature, probe, split) -> list of per-seed AUROC means
     per_seed = defaultdict(list)
+    n_cells = n_seeds * len(features) * len(probes) * 2  # 2 splits
+    done = 0
     for seed in range(n_seeds):
         gs = gene_split_cv(genes, seed=seed)
         fs = family_split_cv(genes, pfam_map, seed=seed)
@@ -393,8 +395,12 @@ def probe_phase(variants, n_seeds):
             for pname, probe_fn in probes.items():
                 for split_name, splits in [("gene", gs), ("family", fs)]:
                     res = probe_fn(X, y, splits, seed=seed)
-                    per_seed[(fname, pname, split_name)].append(
-                        res.get("auroc_mean", float("nan"))
+                    auroc = res.get("auroc_mean", float("nan"))
+                    per_seed[(fname, pname, split_name)].append(auroc)
+                    done += 1
+                    print(
+                        f"  [{done}/{n_cells}] seed {seed} {fname} {pname} "
+                        f"{split_name}-split: AUROC={auroc:.3f}"
                     )
 
     results = {

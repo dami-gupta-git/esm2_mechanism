@@ -5,15 +5,27 @@ from __future__ import annotations
 import numpy as np
 
 
-def gene_split_cv(genes: np.ndarray, n_folds: int = 5, seed: int = 42) -> list[tuple]:
-    """Gene-disjoint CV: each fold holds out a disjoint set of genes."""
+def gene_split_cv(
+    genes: np.ndarray,
+    n_folds: int = 5,
+    seed: int = 42,
+    min_train: int = 10,
+    min_test: int = 5,
+) -> list[tuple]:
+    """Gene-disjoint CV: each fold holds out a disjoint set of genes.
+
+    min_train/min_test are the minimum row counts a fold must have to be kept.
+    The defaults (10/5) suit the full dataset; within-family CV passes smaller
+    values because a single family has too few variants to clear the defaults
+    (which would otherwise drop every fold and return an empty split list).
+    """
     unique = np.array(sorted(set(genes)))
     np.random.RandomState(seed).shuffle(unique)
     splits = []
     for fold in np.array_split(unique, n_folds):
         tr = np.where(~np.isin(genes, fold))[0]
         te = np.where(np.isin(genes, fold))[0]
-        if len(tr) >= 10 and len(te) >= 5:
+        if len(tr) >= min_train and len(te) >= min_test:
             splits.append((tr, te))
     return splits
 

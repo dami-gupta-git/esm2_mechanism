@@ -172,7 +172,9 @@ def run(data: dict, out_dir: str, seed: int = 0, n_folds: int = 5) -> dict:
 
     print(f"Gene-split folds:   {len(gene_splits)}")
     print(f"Family-split folds: {len(family_splits)}")
-    n_families = len(set(v for v in pfam_map.values() if v is not None))
+    # Count families actually represented in the dataset genes, not every family
+    # in pfam_map (which includes families with no gene in this variant set).
+    n_families = len({pfam_map.get(g) for g in genes_arr} - {None})
     print(f"Unique Pfam families: {n_families}")
 
     # ------------------------------------------------------------------

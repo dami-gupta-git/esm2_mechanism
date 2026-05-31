@@ -30,7 +30,7 @@ We use a merged dataset combining two sources:
 
 **Gene2Phenotype (G2P)** — a database of gene-disease associations maintained by clinical genetics groups. We use the `molecular mechanism` field to assign mechanism labels to an additional set of genes not covered by Gerasimavicius.
 
-After merging and filtering to variants with available UniProt sequences, the working dataset contains **17,826 variants across 1,935 genes** spanning **1,136 Pfam protein families**.
+After merging and filtering to variants with available UniProt sequences, the working dataset contains **17,826 variants across 1,935 genes** spanning **1,134 Pfam protein families**.
 
 Class distribution: GOF = 2,682 / DN = 1,550 / LOF = 13,594. LOF is the dominant class (76%), reflecting the general prevalence of loss-of-function disease genetics.
 
