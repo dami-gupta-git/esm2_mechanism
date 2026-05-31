@@ -82,7 +82,7 @@ After completion, `scp` the `.npy` files and `embedded_variants.json` back to `d
 
 | Command | Description | Inputs | Outputs                                                 |
 |---|---|---|---------------------------------------------------------|
-| `python -m esm2_mech.experiments.classify_by_mechanism` | Gene-split vs family-split baseline comparison | `valid_variants.json`, `pfam_families.json`, `embeddings_*.npy`, `alphamissense_scores_full.json` | `results/<run_name>/family_split_baselines_seed{0..4}.json` |
+| `python -m esm2_mech.experiments.mechanism.classify_by_mechanism` | Gene-split vs family-split baseline comparison | `variants.json`, `cache/sequences.json`, `pfam_families.json`, `embeddings_*.npy`, `alphamissense_scores_full.json` | `results/<run_name>/family_split_baselines_seed{0..4}.json` |
 | `python -m esm2_mech.experiments.mechanism.mlp --seed 0` | Nonlinear classifiers (MLP, GBM, RF, kNN) on delta embeddings | `valid_variants.json`, `pfam_families.json`, `embeddings_*.npy` | `results/<run_name>/nonlinear_results_seed0.json`                 |
 
 Run inside a `tmux` session on RunPod. `scp` results back to `results/<run_name>/` locally.
