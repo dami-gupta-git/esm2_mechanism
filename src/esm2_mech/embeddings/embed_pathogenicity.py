@@ -33,7 +33,7 @@ import os
 
 import numpy as np
 
-from esm2_mech.embeddings.embed_variants import get_esm2_embeddings_for_pairs
+from esm2_mech.utils.embed import get_esm2_embeddings_for_pairs
 from esm2_mech.utils.io import atomic_write_json, save_npy
 from esm2_mech.utils.paths import (
     CLINVAR_PATHOGENICITY_VARIANTS_JSON,

@@ -34,7 +34,7 @@ from esm2_mech.utils.paths import (
     SEQUENCES_EXTENDED_JSON,
     SEQUENCES_JSON,
 )
-from esm2_mech.embeddings.embed_variants import get_esm2_embeddings_for_pairs
+from esm2_mech.utils.embed import get_esm2_embeddings_for_pairs
 from esm2_mech.utils.sequences import window_sequence, apply_missense
 from esm2_mech.utils.io import save_npy
 

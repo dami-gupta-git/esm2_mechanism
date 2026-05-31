@@ -48,156 +48,11 @@ from esm2_mech.utils.sequences import (
     window_sequence,
     apply_missense,
 )
-from esm2_mech.utils.io import save_npy
+from esm2_mech.utils.embed import get_esm2_embeddings_for_pairs
 from esm2_mech.utils.constants import ESM2_MODEL as ESM2_MODEL_650M, ESM2_MODEL_3B
 from esm2_mech.utils.paths import VALID_VARIANTS_JSON, EMB_DIR, SEQUENCES_JSON
 
 
-# ---------------------------------------------------------------------------
-# Embedding extraction
-# ---------------------------------------------------------------------------
-
-
-def _flush_checkpoint(
-    out_dir: str,
-    wt_mean_list: list,
-    mut_mean_list: list,
-    wt_pos_list: list,
-    mut_pos_list: list,
-    valid_slice: list,
-    n_done: int,
-) -> None:
-    """Atomically write accumulated embeddings and valid_variants.json to checkpoint files."""
-    arrays = {
-        "embeddings_wt_mean": wt_mean_list,
-        "embeddings_mut_mean": mut_mean_list,
-        "embeddings_wt_pos": wt_pos_list,
-        "embeddings_mut_pos": mut_pos_list,
-    }
-    for name, lst in arrays.items():
-        save_npy(os.path.join(out_dir, f"{name}.npy"), np.stack(lst))
-    valid_path = os.path.join(out_dir, "valid_variants.json")
-    tmp_valid = valid_path + ".tmp"
-    with open(tmp_valid, "w") as f:
-        json.dump(valid_slice, f)
-        f.flush()
-        os.fsync(f.fileno())
-    os.replace(tmp_valid, valid_path)
-    print(f"  Checkpoint: {n_done} variants flushed to {out_dir}", flush=True)
-
-
-def get_esm2_embeddings_for_pairs(
-    wt_seqs: list[str],
-    mut_seqs: list[str],
-    aa_positions: list[int],
-    valid_variants: list[dict] | None = None,
-    out_dir: str | None = None,
-    model_name: str = ESM2_MODEL_650M,
-    device: str = "cuda",
-    batch_size: int = 32,
-    checkpoint_every: int = 100,
-    resume_arrays: tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray] | None = None,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """
-    Extract ESM-2 embeddings for WT/mutant sequence pairs.
-
-    WT and mutant are interleaved in the same batch to halve forward passes.
-    If out_dir is provided, partial results are checkpointed every checkpoint_every variants.
-
-    Returns:
-        wt_mean:  (N, D) mean-pooled WT embeddings
-        mut_mean: (N, D) mean-pooled mutant embeddings
-        wt_pos:   (N, D) per-residue WT embedding at variant position
-        mut_pos:  (N, D) per-residue mutant embedding at variant position
-    """
-    import torch
-    import esm
-
-    print(f"Loading ESM-2 model {model_name}...", flush=True)
-    model, alphabet = esm.pretrained.load_model_and_alphabet(model_name)
-    model = model.to(device).eval()
-    print(f"Model loaded.", flush=True)
-    batch_converter = alphabet.get_batch_converter()
-    n_layers = model.num_layers
-
-    # Seed output lists from checkpoint if resuming, otherwise start empty.
-    if resume_arrays is not None:
-        wt_mean_r, mut_mean_r, wt_pos_r, mut_pos_r = resume_arrays
-        wt_mean_list = [wt_mean_r[i] for i in range(len(wt_mean_r))]
-        mut_mean_list = [mut_mean_r[i] for i in range(len(mut_mean_r))]
-        wt_pos_list = [wt_pos_r[i] for i in range(len(wt_pos_r))]
-        mut_pos_list = [mut_pos_r[i] for i in range(len(mut_pos_r))]
-    else:
-        wt_mean_list, mut_mean_list = [], []
-        wt_pos_list, mut_pos_list = [], []
-
-    total = len(wt_seqs)
-    n_done = len(wt_mean_list)
-    last_flush = n_done
-    for batch_start in range(0, total, batch_size):
-        pairs = list(
-            zip(
-                wt_seqs[batch_start : batch_start + batch_size],
-                mut_seqs[batch_start : batch_start + batch_size],
-                aa_positions[batch_start : batch_start + batch_size],
-            )
-        )
-        # Interleave WT and mutant in the same batch to halve forward passes.
-        interleaved = []
-        for j, (wt, mut, _) in enumerate(pairs):
-            interleaved.append((f"wt{j}", wt))
-            interleaved.append((f"mut{j}", mut))
-
-        _, _, tokens = batch_converter(interleaved)
-        tokens = tokens.to(device, non_blocking=True)
-        with torch.inference_mode():
-            out = model(tokens, repr_layers=[n_layers])
-        reps = out["representations"][n_layers].cpu().float()
-
-        for j, (wt, mut, var_pos) in enumerate(pairs):
-            wt_rep = reps[2 * j]
-            mut_rep = reps[2 * j + 1]
-
-            # Slice off BOS/EOS tokens (token 0 = BOS, tokens 1..len = residues).
-            wt_mean_list.append(wt_rep[1 : len(wt) + 1].mean(0).numpy())
-            mut_mean_list.append(mut_rep[1 : len(mut) + 1].mean(0).numpy())
-
-            # var_pos is 1-indexed; BOS occupies token 0, so sequence tokens are 1..len(wt)
-            if 0 < var_pos <= len(wt):
-                wt_pos_list.append(wt_rep[var_pos].numpy())
-                mut_pos_list.append(mut_rep[var_pos].numpy())
-            else:
-                raise ValueError(
-                    f"var_pos={var_pos} out of range for sequence length {len(wt)}"
-                    f" (batch item {j}) — this should have been caught by _build_valid_pairs"
-                )
-
-        n_done = len(wt_mean_list)
-        if n_done - last_flush >= checkpoint_every:
-            if out_dir is not None:
-                _flush_checkpoint(
-                    out_dir, wt_mean_list, mut_mean_list, wt_pos_list, mut_pos_list,
-                    (valid_variants or [])[:n_done], n_done,
-                )
-            else:
-                print(f"  Embedded {n_done}/{total} variant pairs", flush=True)
-            last_flush = n_done
-
-    if n_done > last_flush:
-        if out_dir is not None:
-            _flush_checkpoint(
-                out_dir, wt_mean_list, mut_mean_list, wt_pos_list, mut_pos_list,
-                (valid_variants or [])[:n_done], n_done,
-            )
-        else:
-            print(f"  Embedded {n_done}/{total} variant pairs", flush=True)
-
-    return (
-        np.stack(wt_mean_list),
-        np.stack(mut_mean_list),
-        np.stack(wt_pos_list),
-        np.stack(mut_pos_list),
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -324,11 +179,6 @@ def main() -> None:
         checkpoint_every=args.checkpoint_every,
         resume_arrays=resume_arrays,
     )
-
-    save_npy(ckpt_wt_mean, wt_mean)
-    save_npy(ckpt_mut_mean, mut_mean)
-    save_npy(ckpt_wt_pos, wt_pos)
-    save_npy(ckpt_mut_pos, mut_pos)
 
     print(f"\nSaved embeddings: {wt_mean.shape} -> {out_dir}")
     print("Done.")
