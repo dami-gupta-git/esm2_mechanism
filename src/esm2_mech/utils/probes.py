@@ -144,6 +144,7 @@ def run_mlp_cv(
     from sklearn.neural_network import MLPClassifier
 
     n_classes = len(classes)
+    cls_to_idx = {cls: idx for idx, cls in enumerate(classes)}
     fold_results, pg_f1s = [], []
 
     for fold_i, (tr, te) in enumerate(splits):
@@ -183,9 +184,15 @@ def run_mlp_cv(
             validation_fraction=0.15,
             random_state=seed,
         )
-        clf.fit(X_tr_s[os_idx], y_tr[os_idx])
+        # Fit on integer-encoded labels: sklearn's early_stopping scores an
+        # internal validation split with np.isnan(y_pred), which raises on string
+        # arrays. clf.classes_ are then mapped back to strings for align_proba so
+        # column ordering stays explicit (never positionally assumed).
+        y_tr_enc = np.array([cls_to_idx[lab] for lab in y_tr])
+        clf.fit(X_tr_s[os_idx], y_tr_enc[os_idx])
 
-        proba = align_proba(clf.predict_proba(X_te_s), clf.classes_, classes)
+        clf_str_classes = np.array([classes[idx] for idx in clf.classes_])
+        proba = align_proba(clf.predict_proba(X_te_s), clf_str_classes, classes)
         pred = np.array([classes[idx] for idx in proba.argmax(axis=1)])
         fm = compute_metrics(y_te, pred, proba, classes)
         fold_results.append(fm)

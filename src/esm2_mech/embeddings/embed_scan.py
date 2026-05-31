@@ -34,7 +34,7 @@ from esm2_mech.utils.paths import (
     SEQUENCES_EXTENDED_JSON,
     SEQUENCES_JSON,
 )
-from esm2_mech.utils.embed import get_esm2_embeddings_for_pairs
+from esm2_mech.utils.embed import get_esm2_embeddings_for_pairs, load_esm2_model
 from esm2_mech.utils.sequences import window_sequence, apply_missense
 from esm2_mech.utils.io import save_npy
 
@@ -129,6 +129,7 @@ def embed_scan(batch_size: int = 128) -> None:
     print(f"Extracting {len(wt_seqs)} remaining probe embeddings on {device}...")
 
     EMB_DIR.mkdir(parents=True, exist_ok=True)
+    loaded_model = load_esm2_model(ESM2_MODEL, device)
     chunk_size = CHECKPOINT_EVERY * batch_size
     for chunk_start in range(0, len(wt_seqs), chunk_size):
         chunk_end = min(chunk_start + chunk_size, len(wt_seqs))
@@ -139,6 +140,7 @@ def embed_scan(batch_size: int = 128) -> None:
             model_name=ESM2_MODEL,
             device=device,
             batch_size=batch_size,
+            loaded_model=loaded_model,
         )
         all_wt.append(wt_emb)
         all_mut.append(mut_emb)
@@ -154,7 +156,10 @@ def embed_scan(batch_size: int = 128) -> None:
         save_npy(SCAN_CKPT_WT, np.vstack(all_wt))
         save_npy(SCAN_CKPT_MUT, np.vstack(all_mut))
         ckpt_idx_tmp = str(CKPT_IDX) + ".tmp"
-        Path(ckpt_idx_tmp).write_text(str(n_done))
+        with open(ckpt_idx_tmp, "w") as f:
+            f.write(str(n_done))
+            f.flush()
+            os.fsync(f.fileno())
         os.replace(ckpt_idx_tmp, CKPT_IDX)
         try:
             mem_used = torch.cuda.memory_allocated() / 1e9

@@ -8,7 +8,7 @@ print = functools.partial(print, flush=True)
 PACKAGE_ROOT = Path(__file__).parent.parent.resolve()  # src/esm2_mech/
 PROJECT_ROOT = PACKAGE_ROOT.parent.parent              # esm2_mechanism/
 
-RUN_NAME="run2"
+RUN_NAME="run6"
 
 DATA_DIR = PROJECT_ROOT / "data"
 RESULTS_DIR = PROJECT_ROOT / "results" / RUN_NAME
@@ -32,6 +32,7 @@ VALID_VARIANTS_JSON = DATA_DIR / "valid_variants.json"
 # ── Cache ─────────────────────────────────────────────────────────────────────
 CACHE_DIR = DATA_DIR / "cache"
 SEQUENCES_JSON = CACHE_DIR / "sequences.json"
+SEQUENCES_NOT_FOUND_JSON = CACHE_DIR / "sequences_not_found.json"
 SEQUENCES_EXTENDED_JSON = CACHE_DIR / "uniprot_sequences_extended.json"
 AM_CACHE_FILE = CACHE_DIR / "AlphaMissense_aa_substitutions.tsv.gz"
 BADONYI_CACHE_DIR = CACHE_DIR / "badonyi"

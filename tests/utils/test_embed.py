@@ -10,6 +10,10 @@ Covers:
 - load_gene_delta: genes not in variants produce no entry
 - load_gene_delta: multiple variants for the same gene accumulate all deltas
 - load_gene_delta: delta vector equals mut - wt at that row index
+- _flush_checkpoint: writes all four .npy arrays plus valid_variants.json
+- _flush_checkpoint: atomic — no .tmp file left after success
+- _flush_checkpoint: written arrays round-trip with correct shape/values
+- _flush_checkpoint: valid_variants.json holds the provided slice
 """
 
 import json
@@ -17,7 +21,7 @@ import json
 import numpy as np
 import pytest
 
-from esm2_mech.utils.embed import load_gene_delta, unpack_run_data
+from esm2_mech.utils.embed import _flush_checkpoint, load_gene_delta, unpack_run_data
 
 
 # ---------------------------------------------------------------------------
@@ -156,3 +160,58 @@ class TestLoadGeneDelta:
         np.testing.assert_allclose(result["A"][0], mut[0] - wt[0])
         np.testing.assert_allclose(result["B"][0], mut[1] - wt[1])
         np.testing.assert_allclose(result["A"][1], mut[2] - wt[2])
+
+
+# ---------------------------------------------------------------------------
+# _flush_checkpoint
+# ---------------------------------------------------------------------------
+
+class TestFlushCheckpoint:
+
+    ARRAY_NAMES = [
+        "embeddings_wt_mean",
+        "embeddings_mut_mean",
+        "embeddings_wt_pos",
+        "embeddings_mut_pos",
+    ]
+
+    def _flush(self, tmp_path, n=3, d=4, seed=0):
+        rng = np.random.default_rng(seed)
+        wt_mean = [rng.random(d).astype(np.float32) for _ in range(n)]
+        mut_mean = [rng.random(d).astype(np.float32) for _ in range(n)]
+        wt_pos = [rng.random(d).astype(np.float32) for _ in range(n)]
+        mut_pos = [rng.random(d).astype(np.float32) for _ in range(n)]
+        valid = [{"gene": f"G{i}"} for i in range(n)]
+        _flush_checkpoint(
+            str(tmp_path), wt_mean, mut_mean, wt_pos, mut_pos, valid, n
+        )
+        return wt_mean, mut_mean, wt_pos, mut_pos, valid
+
+    def test_all_arrays_written(self, tmp_path):
+        self._flush(tmp_path)
+        for name in self.ARRAY_NAMES:
+            assert (tmp_path / f"{name}.npy").exists()
+
+    def test_valid_variants_json_written(self, tmp_path):
+        self._flush(tmp_path)
+        assert (tmp_path / "valid_variants.json").exists()
+
+    def test_no_tmp_file_left(self, tmp_path):
+        self._flush(tmp_path)
+        assert not (tmp_path / "valid_variants.json.tmp").exists()
+        for name in self.ARRAY_NAMES:
+            assert not (tmp_path / f"{name}.npy.tmp").exists()
+
+    def test_array_shape_and_values(self, tmp_path):
+        wt_mean, mut_mean, wt_pos, mut_pos, _ = self._flush(tmp_path, n=3, d=4)
+        loaded = np.load(tmp_path / "embeddings_wt_mean.npy")
+        assert loaded.shape == (3, 4)
+        np.testing.assert_allclose(loaded, np.stack(wt_mean))
+        np.testing.assert_allclose(
+            np.load(tmp_path / "embeddings_mut_pos.npy"), np.stack(mut_pos)
+        )
+
+    def test_valid_variants_content(self, tmp_path):
+        _, _, _, _, valid = self._flush(tmp_path, n=3)
+        written = json.loads((tmp_path / "valid_variants.json").read_text())
+        assert written == valid

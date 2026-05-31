@@ -43,6 +43,19 @@ def _flush_checkpoint(
     print(f"  Checkpoint: {n_done} variants flushed to {out_dir}", flush=True)
 
 
+def load_esm2_model(model_name: str, device: str = "cuda"):
+    """Load an ESM-2 model and return (model, alphabet). Callers that run multiple
+    embedding passes should call this once and pass the result to
+    get_esm2_embeddings_for_pairs to avoid reloading the model on each call."""
+    import esm
+
+    print(f"Loading ESM-2 model {model_name}...", flush=True)
+    model, alphabet = esm.pretrained.load_model_and_alphabet(model_name)
+    model = model.to(device).eval()
+    print(f"Model loaded.", flush=True)
+    return model, alphabet
+
+
 def get_esm2_embeddings_for_pairs(
     wt_seqs: list[str],
     mut_seqs: list[str],
@@ -54,11 +67,13 @@ def get_esm2_embeddings_for_pairs(
     batch_size: int = 32,
     checkpoint_every: int = 100,
     resume_arrays: tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray] | None = None,
+    loaded_model=None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Extract ESM-2 embeddings for WT/mutant sequence pairs.
 
     WT and mutant are interleaved in the same batch to halve forward passes.
     If out_dir is provided, partial results are checkpointed every checkpoint_every variants.
+    Pass loaded_model=(model, alphabet) to reuse an already-loaded model across calls.
 
     Returns:
         wt_mean:  (N, D) mean-pooled WT embeddings
@@ -67,12 +82,11 @@ def get_esm2_embeddings_for_pairs(
         mut_pos:  (N, D) per-residue mutant embedding at variant position
     """
     import torch
-    import esm
 
-    print(f"Loading ESM-2 model {model_name}...", flush=True)
-    model, alphabet = esm.pretrained.load_model_and_alphabet(model_name)
-    model = model.to(device).eval()
-    print(f"Model loaded.", flush=True)
+    if loaded_model is not None:
+        model, alphabet = loaded_model
+    else:
+        model, alphabet = load_esm2_model(model_name, device)
     batch_converter = alphabet.get_batch_converter()
     n_layers = model.num_layers
 

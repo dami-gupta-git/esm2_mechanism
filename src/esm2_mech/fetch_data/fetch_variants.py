@@ -44,6 +44,7 @@ from typing import Optional
 import openpyxl
 import requests
 
+from esm2_mech.utils.io import atomic_write_json
 from esm2_mech.utils.paths import CACHE_DIR, DATA_DIR, GENE_LIST_TSV, VARIANTS_JSON
 
 print = functools.partial(print, flush=True)
@@ -295,7 +296,7 @@ def fetch_uniprot_id(gene: str, prefilled: Optional[str]) -> Optional[str]:
             cache_file.unlink()
 
     if prefilled:
-        cache_file.write_text(json.dumps({"uniprot_id": prefilled}))
+        atomic_write_json(cache_file, {"uniprot_id": prefilled})
         return prefilled
 
     params = {
@@ -313,7 +314,7 @@ def fetch_uniprot_id(gene: str, prefilled: Optional[str]) -> Optional[str]:
 
     results = data.get("results", [])
     if not results:
-        cache_file.write_text(json.dumps({"uniprot_id": None}))
+        atomic_write_json(cache_file, {"uniprot_id": None})
         return None
 
     acc = None
@@ -329,10 +330,10 @@ def fetch_uniprot_id(gene: str, prefilled: Optional[str]) -> Optional[str]:
         print(
             f"  WARNING: {gene}: no exact gene name match in UniProt results — skipping"
         )
-        cache_file.write_text(json.dumps({"uniprot_id": None}))
+        atomic_write_json(cache_file, {"uniprot_id": None})
         return None
 
-    cache_file.write_text(json.dumps({"uniprot_id": acc}))
+    atomic_write_json(cache_file, {"uniprot_id": acc})
     return acc
 
 
@@ -360,11 +361,17 @@ def fetch_protein_sequence(uniprot_id: str) -> Optional[str]:
     return seq
 
 
-def fetch_clinvar_variants(gene: str) -> list:
+def fetch_clinvar_variants(gene: str) -> tuple[list, bool]:
+    """Return (variants, complete).
+
+    ``complete`` is False when any esearch/esummary step failed, so the caller
+    must NOT persist the partial result (neither cache nor output) and should
+    retry on the next run.  A cached result is always complete by construction.
+    """
     cache_file = CLINVAR_CACHE / f"{gene}.json"
     if cache_file.exists():
         try:
-            return json.loads(cache_file.read_text())
+            return json.loads(cache_file.read_text()), True
         except json.JSONDecodeError:
             print(f"  WARNING: corrupt ClinVar cache for {gene} — re-fetching")
             cache_file.unlink()
@@ -388,12 +395,12 @@ def fetch_clinvar_variants(gene: str) -> list:
         print(
             f"  WARNING: {gene}: NCBI esearch failed — not caching, will retry next run"
         )
-        return []
+        return [], False
 
     ids = result.get("esearchresult", {}).get("idlist", [])
     if not ids:
-        cache_file.write_text(json.dumps([]))
-        return []
+        atomic_write_json(cache_file, [])
+        return [], True
 
     print(f"  {gene}: {len(ids)} ClinVar IDs found")
 
@@ -457,9 +464,9 @@ def fetch_clinvar_variants(gene: str) -> list:
         print(
             f"  WARNING: {gene}: result is incomplete due to batch failure — not caching, will retry next run"
         )
-        return deduped
-    cache_file.write_text(json.dumps(deduped))
-    return deduped
+        return deduped, False
+    atomic_write_json(cache_file, deduped)
+    return deduped, True
 
 
 def validate_wt(variant: dict, sequence: str) -> bool:
@@ -497,7 +504,13 @@ def main_clinvar() -> None:
     genes = _load_gene_list(GENE_LIST_TSV)
     print(f"Loaded {len(genes)} genes from {GENE_LIST_TSV}")
 
+    legacy_header = ["gene", "uniprot_id", "aa_pos", "aa_wt", "aa_mut", "clinsig"]
+    # New files carry wt_validated; legacy files (pre-flag) are appended to as-is.
+    # The merge step reads a missing wt_validated column as None ("never recorded").
+    full_header = legacy_header + ["wt_validated"]
+
     done_genes: set = set()
+    write_wt_validated = True  # new files get the column
     if CLINVAR_OUT.exists() and CLINVAR_OUT.stat().st_size > 0:
         raw = CLINVAR_OUT.read_bytes()
         if not raw.endswith(b"\n"):
@@ -509,7 +522,20 @@ def main_clinvar() -> None:
                 with open(CLINVAR_OUT, "r+b") as fh:
                     fh.truncate(truncate_at)
         with open(CLINVAR_OUT, newline="") as fh:
-            for row in csv.DictReader(fh, delimiter="\t"):
+            reader = csv.DictReader(fh, delimiter="\t")
+            if reader.fieldnames == legacy_header:
+                write_wt_validated = False
+                print(
+                    "Existing output uses legacy 6-column schema (no wt_validated); "
+                    "appending in legacy format to avoid corrupting it."
+                )
+            elif reader.fieldnames is not None and reader.fieldnames != full_header:
+                raise ValueError(
+                    f"{CLINVAR_OUT} has unrecognized header {reader.fieldnames}; "
+                    f"expected {legacy_header} or {full_header}. Appending would "
+                    "corrupt the file. Delete it to regenerate."
+                )
+            for row in reader:
                 done_genes.add(row.get("gene", ""))
 
     write_header = not CLINVAR_OUT.exists() or CLINVAR_OUT.stat().st_size == 0
@@ -518,9 +544,7 @@ def main_clinvar() -> None:
     with open(CLINVAR_OUT, "a", newline="") as out_fh:
         writer = csv.writer(out_fh, delimiter="\t")
         if write_header:
-            writer.writerow(
-                ["gene", "uniprot_id", "aa_pos", "aa_wt", "aa_mut", "clinsig"]
-            )
+            writer.writerow(full_header if write_wt_validated else legacy_header)
 
         for idx, gdata in enumerate(genes, 1):
             gene = gdata["gene"]
@@ -537,20 +561,39 @@ def main_clinvar() -> None:
             sequence = fetch_protein_sequence(uniprot_id)
             if sequence is None:
                 print(
-                    f"WARNING: {gene}: sequence unavailable, writing variants without WT validation"
+                    f"WARNING: {gene}: sequence unavailable, writing variants with "
+                    "wt_validated=false (consumers must decide whether to trust aa_wt)"
                 )
 
-            variants = fetch_clinvar_variants(gene)
+            variants, complete = fetch_clinvar_variants(gene)
+            if not complete:
+                print(
+                    f"WARNING: {gene}: ClinVar fetch incomplete — not writing rows, "
+                    "will retry next run"
+                )
+                continue
             print(f"  {gene}: {len(variants)} missense P/LP variants")
 
             gene_written = 0
             for v in variants:
-                if sequence and not validate_wt(v, sequence):
+                if sequence is None:
+                    wt_validated = ""
+                elif not validate_wt(v, sequence):
                     print(f"  WT mismatch {gene} pos {v['pos']}: expected {v['wt_aa']}")
                     continue
-                writer.writerow(
-                    [gene, uniprot_id, v["pos"], v["wt_aa"], v["mut_aa"], v["clinsig"]]
-                )
+                else:
+                    wt_validated = "true"
+                row = [
+                    gene,
+                    uniprot_id,
+                    v["pos"],
+                    v["wt_aa"],
+                    v["mut_aa"],
+                    v["clinsig"],
+                ]
+                if write_wt_validated:
+                    row.append(wt_validated)
+                writer.writerow(row)
                 gene_written += 1
 
             total_variants += gene_written
@@ -615,6 +658,14 @@ def main_merge(pathogenic_only: bool = False) -> None:
         if not uniprot_id:
             skipped_no_uniprot += 1
             continue
+        # wt_validated: "true" if aa_wt matched the reference sequence, "" if the
+        # sequence was unavailable at fetch time (aa_wt unverified). Absent column
+        # (older TSVs) -> None so consumers can tell it was never recorded.
+        wt_validated_raw = r.get("wt_validated")
+        if wt_validated_raw is None:
+            wt_validated: Optional[bool] = None
+        else:
+            wt_validated = wt_validated_raw.strip().lower() == "true"
         new_variants.append(
             {
                 "gene": gene,
@@ -626,6 +677,7 @@ def main_merge(pathogenic_only: bool = False) -> None:
                 "foldx_ddg": None,
                 "clinvar_id": "",
                 "source": "clinvar_g2p",
+                "wt_validated": wt_validated,
             }
         )
 
@@ -637,6 +689,10 @@ def main_merge(pathogenic_only: bool = False) -> None:
 
     for v in geras:
         v["source"] = "gerasimavicius"
+        # Gerasimavicius aa_wt comes from the curated Uniprot_variant string, not
+        # validated against a fetched reference sequence here. Mark unverified
+        # rather than asserting True so the flag means exactly "checked vs sequence".
+        v.setdefault("wt_validated", None)
 
     merged = geras + new_variants
     for v in merged:

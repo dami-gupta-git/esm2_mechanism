@@ -102,3 +102,22 @@ Uses `esm2_mech` package (RUNBOOK_3). All commands use `python -m esm2_mech.<mod
 | 6 | Exp1 Step 1 | `python -m esm2_mech.fetch_data.fetch_annotations --step pfam` | `variants.json` | `data/pfam_families.json` | ✅ 2026-05-30 | 1908/1941 genes annotated, 33 unannotated |
 | 7 | Exp1 Step 2 | `python -m esm2_mech.embeddings.embed_variants --model esm2_t33_650M_UR50D --batch_size 32` | `variants.json`, `cache/sequences.json` | `embeddings_wt_mean.npy`, `embeddings_mut_mean.npy`, `embeddings_wt_pos.npy`, `embeddings_mut_pos.npy`, `valid_variants.json` | ✅ 2026-05-30 | 17,826 valid variants; shape (17826, 1280); run on RunPod H100 |
 | 8 | Exp1 Step 3 | `python -m esm2_mech.experiments.classify_by_mechanism` | `variants.json`, `cache/sequences.json`, `pfam_families.json`, `embeddings_*.npy`, `alphamissense_scores_full.json` | `results/run1/family_split_baselines_seed{0..4}.json` | ✅ 2026-05-30 | 17,826 variants, 1,935 genes, 1,136 families; 5 seeds; PCA 256 components (98.0% variance); AlphaMissense missing for seed 0; run on RunPod |
+
+---
+
+## Run 6 — started 2026-05-30 (RUNBOOK_4, fresh from scratch)
+
+| # | RUNBOOK_4 step | Command | Inputs | Outputs | Status | Notes |
+|---|---|---|---|---|---|---|
+| 1 | Stage 0 | `python3 -m venv .venv && source .venv/bin/activate && pip install -e .` | — | `.venv/` | ✅ 2026-05-30 | Environment setup; all deps already satisfied |
+| 2 | Stage 1 | `python -m esm2_mech.fetch_data.build_gene_list` | `downloads/DiseaseMech_Stability_VEPS.xlsx`, `downloads/AllG2P.csv` | `gene_list.tsv` | ✅ 2026-05-30 | 2376 genes (gerasimavicius=950, g2p=1426); AR=727, DN=108, GOF=148, HI=82, LOF=1311; 475 g2p_disagrees; 61 excluded |
+| 3 | Exp1 Step 1 (step 2) | `python -m esm2_mech.fetch_data.fetch_variants --step gerasimavicius` | `downloads/DiseaseMech_Stability_VEPS.xlsx` | `gerasimavicius_variants.json` | ✅ 2026-05-30 | 10,233 variants, 948 genes; AR=5678, GOF=1983, HI=1678, DN=894 |
+| 4 | Exp1 Step 1 (step 3) | `python -m esm2_mech.fetch_data.fetch_variants --step clinvar` | `gene_list.tsv` | `clinvar_variants.tsv` | ✅ prior run | 47,752 variants across 2376 genes — file verified on disk |
+| 5 | Exp1 Step 1 (step 4) | `python -m esm2_mech.fetch_data.fetch_variants --step merge --pathogenic_only` | `gerasimavicius_variants.json`, `gene_list.tsv`, `clinvar_variants.tsv` | `variants.json` | ✅ 2026-05-30 | 17,921 variants, 1941 genes; gerasimavicius=10233, clinvar_g2p=7688; --pathogenic_only drops likely pathogenic |
+| 6 | Exp1 Step 1 (step 5) | `python -m esm2_mech.fetch_data.fetch_sequences` | `variants.json` | `cache/sequences.json` | ✅ 2026-05-30 | 1939 unique UniProt IDs; cache already complete |
+| 7 | Exp1 Step 1 (step 6) | `python -m esm2_mech.fetch_data.fetch_annotations --step pfam` | `variants.json` | `pfam_families.json` | ✅ 2026-05-30 | 1908/1941 genes annotated, 33 unannotated; cache already complete |
+| 8 | Exp1 Step 1 (step 7) | `python -m esm2_mech.fetch_data.fetch_alphamissense_mechanism` | `variants.json` | `alphamissense_scores_full.json` | ✅ 2026-05-30 | matched 17,820/17,895 (99.6%); 24 variants dropped (dup uniprot+variant key); streamed 1.1GB AlphaMissense_aa_substitutions.tsv.gz (~215M rows, no cache) |
+| 9 | Exp1 Step 1 (step 8) | `python -m esm2_mech.fetch_data.build_valid_variants` | `variants.json`, `cache/sequences.json` | `valid_variants.json` | 🔲 | |
+| 10 | Exp1 Step 2 (GPU) | `python -m esm2_mech.embeddings.embed_variants --model esm2_t33_650M_UR50D --batch_size 32` | `variants.json`, `cache/sequences.json` | `embeddings_wt_mean.npy`, `embeddings_mut_mean.npy`, `embeddings_wt_pos.npy`, `embeddings_mut_pos.npy`, `valid_variants.json` | 🔲 | RunPod |
+| 11 | Exp1 Step 3 | `python -m esm2_mech.experiments.classify_by_mechanism` | `valid_variants.json`, `pfam_families.json`, `embeddings_*.npy`, `alphamissense_scores_full.json` | `results/<run_name>/family_split_baselines_seed{0..4}.json` | 🔲 | RunPod |
+| 12 | Exp1 Step 3 | `python -m esm2_mech.experiments.mechanism.mlp --seed 0` | `valid_variants.json`, `pfam_families.json`, `embeddings_*.npy` | `results/<run_name>/nonlinear_results_seed0.json` | 🔲 | RunPod |

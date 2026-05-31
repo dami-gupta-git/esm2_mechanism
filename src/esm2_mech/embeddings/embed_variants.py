@@ -50,7 +50,7 @@ from esm2_mech.utils.sequences import (
 )
 from esm2_mech.utils.embed import get_esm2_embeddings_for_pairs
 from esm2_mech.utils.constants import ESM2_MODEL as ESM2_MODEL_650M, ESM2_MODEL_3B
-from esm2_mech.utils.paths import VALID_VARIANTS_JSON, EMB_DIR, SEQUENCES_JSON
+from esm2_mech.utils.paths import VALID_VARIANTS_JSON, SEQUENCES_JSON, DATA_DIR
 
 
 
@@ -129,7 +129,7 @@ def main() -> None:
 
     print(f"3-class distribution: {dict(Counter(v['label_3class'] for v in valid))}")
 
-    out_dir = str(EMB_DIR)
+    out_dir = str(DATA_DIR / "embeddings" / args.model)
     os.makedirs(out_dir, exist_ok=True)
 
     ckpt_wt_mean = os.path.join(out_dir, "embeddings_wt_mean.npy")
@@ -142,24 +142,31 @@ def main() -> None:
     resume_start = 0
     if all(os.path.exists(p) for p in all_ckpts):
         try:
-            n_on_disk = np.load(ckpt_wt_mean, mmap_mode="r").shape[0]
-            if n_on_disk == len(valid):
-                print("Embeddings already complete — nothing to do.")
-                return
-            if n_on_disk < len(valid):
-                print(f"Partial checkpoint: {n_on_disk}/{len(valid)} rows — resuming")
-                resume_arrays = (
-                    np.load(ckpt_wt_mean),
-                    np.load(ckpt_mut_mean),
-                    np.load(ckpt_wt_pos),
-                    np.load(ckpt_mut_pos),
-                )
-                resume_start = n_on_disk
-            else:
-                print(f"WARNING: checkpoint row count mismatch (arrays={n_on_disk}, expected={len(valid)}) — re-extracting")
+            row_counts = [np.load(p, mmap_mode="r").shape[0] for p in all_ckpts]
+            if len(set(row_counts)) > 1:
+                print(f"WARNING: checkpoint row counts inconsistent {row_counts} — re-extracting")
                 for ckpt in all_ckpts:
                     if os.path.exists(ckpt):
                         os.remove(ckpt)
+            else:
+                n_on_disk = row_counts[0]
+                if n_on_disk == len(valid):
+                    print("Embeddings already complete — nothing to do.")
+                    return
+                if n_on_disk < len(valid):
+                    print(f"Partial checkpoint: {n_on_disk}/{len(valid)} rows — resuming")
+                    resume_arrays = (
+                        np.load(ckpt_wt_mean),
+                        np.load(ckpt_mut_mean),
+                        np.load(ckpt_wt_pos),
+                        np.load(ckpt_mut_pos),
+                    )
+                    resume_start = n_on_disk
+                else:
+                    print(f"WARNING: checkpoint row count mismatch (arrays={n_on_disk}, expected={len(valid)}) — re-extracting")
+                    for ckpt in all_ckpts:
+                        if os.path.exists(ckpt):
+                            os.remove(ckpt)
         except ValueError:
             print("WARNING: corrupt checkpoint — re-extracting")
             for ckpt in all_ckpts:
