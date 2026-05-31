@@ -15,7 +15,7 @@ Features:
   Input : data/valid_variants.json
           data/embeddings/esm2_t33_650M_UR50D/embeddings_*.npy
           data/pfam_families.json
-  Output: results/run1/nonlinear_results_seed{seed}.json
+  Output: results/<run_name>/nonlinear_results_seed{seed}.json
 """
 
 import argparse
@@ -33,6 +33,8 @@ from esm2_mech.utils.probes import run_mlp_probe_cv, run_sklearn_probe_pca, run_
 from esm2_mech.utils.splits import gene_split_cv, family_split_cv
 
 print = functools.partial(print, flush=True)
+
+OUT_DIR = RESULTS_DIR
 
 
 def load_data():
@@ -73,8 +75,7 @@ def main():
     parser.add_argument("--patience", type=int, default=10)
     args = parser.parse_args()
 
-    out_dir = str(RESULTS_DIR / "run1")
-    os.makedirs(out_dir, exist_ok=True)
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
     np.random.seed(args.seed)
 
     labels, genes, delta_mean, delta_pos, pfam_map = load_data()
@@ -127,7 +128,7 @@ def main():
         auroc_gof = res.get("auroc_GOF_mean", float("nan"))
         print(f"  {feat}: macro_f1={mf1:.3f}  auroc_GOF={auroc_gof:.3f}")
 
-    out_path = os.path.join(out_dir, f"nonlinear_results_seed{args.seed}.json")
+    out_path = OUT_DIR / f"nonlinear_results_seed{args.seed}.json"
     with open(out_path, "w") as f:
         json.dump(results, f, indent=2)
     print(f"\nResults written to {out_path}")

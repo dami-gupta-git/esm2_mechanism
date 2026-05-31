@@ -21,7 +21,7 @@ Usage:
     python scripts/proteome_mechanism.py                    # all 5 seeds
     python scripts/proteome_mechanism.py --seed 0           # single seed
     python scripts/proteome_mechanism.py --variants-only    # skip V4
-    python scripts/proteome_mechanism.py --out-dir results/my_run
+    python scripts/proteome_mechanism.py
 """
 
 from __future__ import annotations
@@ -45,7 +45,6 @@ from esm2_mech.utils.probes import run_mlp_cv, run_logreg_cv
 from esm2_mech.utils.paths import (
     DATA_DIR,
     RESULTS_DIR,
-    PROJECT_ROOT,
     VALID_VARIANTS_JSON,
     EMB_WT_MEAN,
     EMB_MUT_MEAN,
@@ -54,6 +53,8 @@ from esm2_mech.utils.paths import (
 import functools
 
 print = functools.partial(print, flush=True)
+
+OUT_DIR = RESULTS_DIR
 
 warnings.filterwarnings("ignore")
 
@@ -992,19 +993,12 @@ def main():
     parser.add_argument(
         "--variants-only", action="store_true", help="Skip V4 contrastive head (faster)"
     )
-    parser.add_argument(
-        "--out-dir",
-        type=str,
-        default=None,
-        help="Output directory (default: results/proteome_mechanism/)",
-    )
     parser.add_argument("--n-folds", type=int, default=5)
     args = parser.parse_args()
 
     seeds = [args.seed] if args.seed is not None else list(range(5))
 
-    out_dir = Path(args.out_dir) if args.out_dir else RESULTS_DIR / "proteome_mechanism"
-    out_dir.mkdir(parents=True, exist_ok=True)
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
 
     # ------------------------------------------------------------------
     # Load shared data once
@@ -1045,7 +1039,7 @@ def main():
         )
         all_seed_results.append(seed_results)
 
-        out_path = out_dir / f"proteome_mechanism_seed{seed}.json"
+        out_path = OUT_DIR / f"proteome_mechanism_seed{seed}.json"
         out_path.write_text(json.dumps(seed_results, indent=2))
         print(f"\n  Saved: {out_path}")
 
@@ -1054,7 +1048,7 @@ def main():
     # ------------------------------------------------------------------
     summary = aggregate_seeds(all_seed_results)
 
-    summary_path = out_dir / "proteome_mechanism_summary.json"
+    summary_path = OUT_DIR / "proteome_mechanism_summary.json"
     summary_path.write_text(json.dumps(summary, indent=2))
     print(f"\nSaved summary: {summary_path}")
 
@@ -1146,7 +1140,7 @@ def main():
         )
 
     print("=" * 70)
-    print(f"Results directory: {out_dir}")
+    print(f"Results directory: {OUT_DIR}")
 
 
 if __name__ == "__main__":

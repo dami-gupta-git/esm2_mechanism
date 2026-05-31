@@ -17,7 +17,6 @@ Probes run:
 
 Usage:
     python enzyme_classification.py [--data_dir ../data] [--emb_dir ../data/embeddings]
-                                    [--out_dir ../results/enzyme_classification]
                                     [--seeds 0 1 2 3 4]
 
 Output: results/enzyme_classification/enzyme_classification_summary.json
@@ -42,6 +41,8 @@ from esm2_mech.utils.splits import gene_split_cv, family_split_cv
 from esm2_mech.utils.paths import DATA_DIR, EMB_WT_MEAN, GENE_LIST_TSV, RESULTS_DIR, VALID_VARIANTS_JSON
 
 print = functools.partial(print, flush=True)
+
+OUT_DIR = RESULTS_DIR
 warnings.filterwarnings("ignore")
 
 ENZYME_CLASSES = ["kinase", "protease", "oxidoreductase", "non-enzyme"]
@@ -371,13 +372,11 @@ def run_multiseed(
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--out_dir", default=str(RESULTS_DIR / "enzyme_classification"))
     parser.add_argument("--seeds", type=int, nargs="+", default=[0, 1, 2, 3, 4])
     parser.add_argument("--n_folds", type=int, default=5)
     args = parser.parse_args()
 
-    out_dir = Path(args.out_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
 
     print("=== Enzyme Classification from ESM-2 WT Embeddings ===")
     print(f"Seeds: {args.seeds}  Folds: {args.n_folds}")
@@ -519,7 +518,7 @@ def main():
         },
     }
 
-    out_path = out_dir / "enzyme_classification_summary.json"
+    out_path = OUT_DIR / "enzyme_classification_summary.json"
     with open(out_path, "w") as f:
         json.dump(output, f, indent=2)
     print(f"\nResults written to {out_path}")

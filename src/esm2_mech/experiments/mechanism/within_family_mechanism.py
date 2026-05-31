@@ -24,7 +24,7 @@ Also runs:
 Usage:
     python scripts/within_family_mechanism.py
     python scripts/within_family_mechanism.py --min-genes 6 --min-classes 2
-    python scripts/within_family_mechanism.py --out-dir results/within_family/
+    python scripts/within_family_mechanism.py
 """
 
 from __future__ import annotations
@@ -46,6 +46,8 @@ from esm2_mech.utils.paths import DATA_DIR, RESULTS_DIR, GENE_LIST_TSV
 import functools
 
 print = functools.partial(print, flush=True)
+
+OUT_DIR = RESULTS_DIR
 
 warnings.filterwarnings("ignore")
 
@@ -432,11 +434,9 @@ def main():
     parser.add_argument("--min-genes", type=int, default=6)
     parser.add_argument("--min-classes", type=int, default=2)
     parser.add_argument("--seeds", type=int, nargs="+", default=list(range(5)))
-    parser.add_argument("--out-dir", type=str, default=None)
     args = parser.parse_args()
 
-    out_dir = Path(args.out_dir) if args.out_dir else RESULTS_DIR / "within_family"
-    out_dir.mkdir(parents=True, exist_ok=True)
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
 
     print("=== Loading gene list ===")
     genes, mechs = load_gene_list()
@@ -475,12 +475,12 @@ def main():
     for seed in args.seeds:
         res = run_seed(seed, qualifying, gene_to_row, prot_matrix, bad_matrix)
         all_results.append(res)
-        path = out_dir / f"within_family_seed{seed}.json"
+        path = OUT_DIR / f"within_family_seed{seed}.json"
         path.write_text(json.dumps(res, indent=2, default=str))
         print(f"\n  Saved: {path}")
 
     summary = aggregate_seeds(all_results)
-    summary_path = out_dir / "within_family_summary.json"
+    summary_path = OUT_DIR / "within_family_summary.json"
     summary_path.write_text(json.dumps(summary, indent=2))
     print(f"\nSaved summary: {summary_path}")
 
@@ -522,7 +522,7 @@ def main():
         print(f"{label:<22} {f1:<16} {gof:<12} {dn:<12} {lof:<12}")
 
     print("=" * 72)
-    print(f"Results: {out_dir}")
+    print(f"Results: {OUT_DIR}")
 
 
 if __name__ == "__main__":

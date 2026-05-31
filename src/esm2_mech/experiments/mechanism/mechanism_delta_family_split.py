@@ -22,7 +22,10 @@ from esm2_mech.utils.paths import (
     EMB_WT_MEAN, EMB_MUT_MEAN, EMB_WT_POS, EMB_MUT_POS,
     SEQUENCES_JSON, VARIANTS_JSON, RESULTS_DIR, PFAM_JSON,
 )
+
+OUT_DIR = RESULTS_DIR
 from esm2_mech.utils.sequences import window_sequence, apply_missense
+from esm2_mech.utils.constants import seed_result_filename
 from esm2_mech.utils.splits import gene_split_cv, family_split_cv
 from esm2_mech.utils.embed import unpack_run_data
 
@@ -230,7 +233,7 @@ def run(data: dict, out_dir: str, seed: int = 0, n_folds: int = 5) -> dict:
     # ------------------------------------------------------------------
     # 7. Write results
     # ------------------------------------------------------------------
-    out_path = os.path.join(out_dir, f"family_split_baselines_seed{seed}.json")
+    out_path = os.path.join(out_dir, seed_result_filename(seed))
     with open(out_path, "w") as f:
         json.dump(results, f, indent=2)
     print(f"\nResults written to {out_path}")
@@ -360,12 +363,11 @@ def _load_data_inline() -> dict:
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--out_dir", type=str, default=str(RESULTS_DIR))
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--n_folds", type=int, default=5)
     args = parser.parse_args()
     data = _load_data_inline()
-    run(data=data, out_dir=args.out_dir, seed=args.seed, n_folds=args.n_folds)
+    run(data=data, out_dir=str(OUT_DIR), seed=args.seed, n_folds=args.n_folds)
 
 
 if __name__ == "__main__":

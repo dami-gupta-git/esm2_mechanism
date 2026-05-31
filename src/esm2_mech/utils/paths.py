@@ -8,8 +8,10 @@ print = functools.partial(print, flush=True)
 PACKAGE_ROOT = Path(__file__).parent.parent.resolve()  # src/esm2_mech/
 PROJECT_ROOT = PACKAGE_ROOT.parent.parent              # esm2_mechanism/
 
+RUN_NAME="run2"
+
 DATA_DIR = PROJECT_ROOT / "data"
-RESULTS_DIR = PROJECT_ROOT / "results"
+RESULTS_DIR = PROJECT_ROOT / "results" / RUN_NAME
 REPORTS_DIR = PROJECT_ROOT / "reports"
 PAPERS_DIR = PROJECT_ROOT / "papers"
 DOCS_DIR = PROJECT_ROOT / "docs"

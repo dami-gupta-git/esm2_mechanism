@@ -24,7 +24,7 @@ Key design choices vs naive version:
 Usage
 -----
     python scripts/clinical_utility.py
-    python scripts/clinical_utility.py --out-dir results/my_run
+    python scripts/clinical_utility.py
 """
 
 from __future__ import annotations
@@ -56,12 +56,14 @@ import functools
 
 print = functools.partial(print, flush=True)
 
+OUT_DIR = RESULTS_DIR
+
 warnings.filterwarnings("ignore")
 
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
-from esm2_mech.utils.paths import DATA_DIR, RESULTS_DIR, PROJECT_ROOT, GENE_LIST_TSV
+from esm2_mech.utils.paths import DATA_DIR, RESULTS_DIR, GENE_LIST_TSV
 
 MERGED_GENE_LIST = GENE_LIST_TSV
 PROTEOME_FEATURES = DATA_DIR / "proteome_features_aligned.npy"
@@ -1100,14 +1102,12 @@ def run_seed(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--out-dir", default="results/clinical_utility")
     parser.add_argument(
         "--seed", type=int, default=None, help="Single seed (default: all 5 seeds 0-4)"
     )
     args = parser.parse_args()
 
-    out_dir = PROJECT_ROOT / args.out_dir
-    out_dir.mkdir(parents=True, exist_ok=True)
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
 
     # Load shared data once
     print("Loading data...")
@@ -1129,15 +1129,15 @@ if __name__ == "__main__":
 
     if len(seeds) == 1:
         # Single-seed path: run full analysis with plots
-        main(out_dir)
+        main(OUT_DIR)
     else:
         # Multi-seed path: run HI=3 metrics per seed, save per-seed JSONs, aggregate
         seed_results = []
         for seed in seeds:
             print(f"\n{'='*50}\nSEED {seed}\n{'='*50}")
-            sr = run_seed(seed, df, X_all, feature_names, le, out_dir)
+            sr = run_seed(seed, df, X_all, feature_names, le, OUT_DIR)
             seed_results.append(sr)
-            sr_path = out_dir / f"hi3_family_split_seed{seed}.json"
+            sr_path = OUT_DIR / f"hi3_family_split_seed{seed}.json"
             with open(sr_path, "w") as f:
                 json.dump(sr, f, indent=2, default=str)
             print(f"  Saved {sr_path.name}")
@@ -1180,7 +1180,7 @@ if __name__ == "__main__":
             "per_seed": seed_results,
         }
 
-        summary_path = out_dir / "hi3_family_split_summary.json"
+        summary_path = OUT_DIR / "hi3_family_split_summary.json"
         with open(summary_path, "w") as f:
             json.dump(summary, f, indent=2, default=str)
 

@@ -74,11 +74,12 @@ After completion, `scp` the `.npy` files and `valid_variants.json` back to `data
 
 ### Step 3 — run analysis (RunPod)
 
-| Command | Description | Inputs | Outputs |
-|---|---|---|---|
-| `python -m esm2_mech.experiments.classify_by_mechanism` | Gene-split vs family-split baseline comparison (result 2) | `variants.json`, `cache/sequences.json`, `pfam_families.json`, `embeddings_*.npy`, `alphamissense_scores_full.json` | `results/run1/family_split_baselines_seed{0..4}.json` |
+| Command | Description | Inputs | Outputs                                                 |
+|---|---|---|---------------------------------------------------------|
+| `python -m esm2_mech.experiments.classify_by_mechanism` | Gene-split vs family-split baseline comparison | `valid_variants.json`, `pfam_families.json`, `embeddings_*.npy`, `alphamissense_scores_full.json` | `results/<run_name>/family_split_baselines_seed{0..4}.json` |
+| `python -m esm2_mech.experiments.mechanism.mlp --seed 0` | Nonlinear classifiers (MLP, GBM, RF, kNN) on delta embeddings | `valid_variants.json`, `pfam_families.json`, `embeddings_*.npy` | `results/<run_name>/nonlinear_results_seed0.json`                 |
 
-Run inside a `tmux` session on RunPod. `scp` results back to `results/run1/` locally.
+Run inside a `tmux` session on RunPod. `scp` results back to `results/<run_name>/` locally.
 
 ---
 

@@ -60,7 +60,6 @@ from esm2_mech.utils.metrics import compute_metrics, aggregate_folds, align_prob
 from esm2_mech.utils.paths import (
     DATA_DIR,
     RESULTS_DIR,
-    PROJECT_ROOT,
     VALID_VARIANTS_JSON,
     EMB_WT_MEAN,
     EMB_MUT_MEAN,
@@ -69,6 +68,8 @@ from esm2_mech.utils.paths import (
 import functools
 
 print = functools.partial(print, flush=True)
+
+OUT_DIR = RESULTS_DIR
 
 warnings.filterwarnings("ignore")
 
@@ -431,11 +432,9 @@ def main():
     parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--skip-t2", action="store_true")
     parser.add_argument("--skip-t4", action="store_true")
-    parser.add_argument("--out-dir", default="results/proteome_mechanism")
     args = parser.parse_args()
 
-    out_dir = PROJECT_ROOT / args.out_dir
-    out_dir.mkdir(parents=True, exist_ok=True)
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
 
     print("Loading data...")
     (
@@ -486,7 +485,7 @@ def main():
             )
             res["seed"] = seed
             t2_seed_results.append(res)
-            out_path = out_dir / f"per_gene_seed{seed}.json"
+            out_path = OUT_DIR / f"per_gene_seed{seed}.json"
             with open(out_path, "w") as f:
                 json.dump(res, f, indent=2)
             print(f"  Saved {out_path.name}")
@@ -519,7 +518,7 @@ def main():
                     float(np.std(vals)) if vals else None
                 )
 
-        t2_sum_path = out_dir / "per_gene_summary.json"
+        t2_sum_path = OUT_DIR / "per_gene_summary.json"
         with open(t2_sum_path, "w") as f:
             json.dump(t2_summary, f, indent=2)
 
@@ -545,7 +544,7 @@ def main():
             res = run_v2_ablation(X_prot_g_f, y_g_f, groups_g, feature_names, seed, le)
             res["seed"] = seed
             t4_seed_results.append(res)
-            out_path = out_dir / f"v2_ablation_seed{seed}.json"
+            out_path = OUT_DIR / f"v2_ablation_seed{seed}.json"
             with open(out_path, "w") as f:
                 json.dump(res, f, indent=2)
             print(f"  Saved {out_path.name}")
@@ -589,7 +588,7 @@ def main():
                 "delta_auroc_DN_std": float(np.std(delta_dns)) if delta_dns else None,
             }
 
-        t4_sum_path = out_dir / "v2_ablation_summary.json"
+        t4_sum_path = OUT_DIR / "v2_ablation_summary.json"
         with open(t4_sum_path, "w") as f:
             json.dump(t4_summary, f, indent=2)
 

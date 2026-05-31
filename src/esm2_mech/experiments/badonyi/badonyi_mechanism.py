@@ -16,7 +16,7 @@ Model variants (all under 5-fold family-split CV, 5 seeds, per-gene T2 scoring):
 Usage:
     python scripts/badonyi_mechanism.py               # all 5 seeds
     python scripts/badonyi_mechanism.py --seed 0      # single seed
-    python scripts/badonyi_mechanism.py --out-dir results/badonyi_mechanism/
+    python scripts/badonyi_mechanism.py
 """
 
 from __future__ import annotations
@@ -42,6 +42,8 @@ from esm2_mech.utils.paths import (
 import functools
 
 print = functools.partial(print, flush=True)
+
+OUT_DIR = RESULTS_DIR
 
 warnings.filterwarnings("ignore")
 
@@ -278,13 +280,11 @@ def main():
         description="Result 15: Badonyi priors as a modality"
     )
     parser.add_argument("--seed", type=int, default=None)
-    parser.add_argument("--out-dir", type=str, default=None)
     parser.add_argument("--n-folds", type=int, default=5)
     args = parser.parse_args()
 
     seeds = [args.seed] if args.seed is not None else list(range(5))
-    out_dir = Path(args.out_dir) if args.out_dir else RESULTS_DIR / "badonyi_mechanism"
-    out_dir.mkdir(parents=True, exist_ok=True)
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
 
     print("=== Loading data ===")
     variants, labels, genes, delta = load_data()
@@ -311,12 +311,12 @@ def main():
             seed, args.n_folds, labels, genes, delta, X_prot, X_bad, pfam_map
         )
         all_results.append(res)
-        path = out_dir / f"badonyi_mechanism_seed{seed}.json"
+        path = OUT_DIR / f"badonyi_mechanism_seed{seed}.json"
         path.write_text(json.dumps(res, indent=2))
         print(f"\n  Saved: {path}")
 
     summary = aggregate_seeds(all_results)
-    summary_path = out_dir / "badonyi_mechanism_summary.json"
+    summary_path = OUT_DIR / "badonyi_mechanism_summary.json"
     summary_path.write_text(json.dumps(summary, indent=2))
     print(f"\nSaved summary: {summary_path}")
 
@@ -360,7 +360,7 @@ def main():
         print(f"{label:<12} {f1:<16} {pg:<16} {gof:<14} {dn:<14} {lof:<14}")
 
     print("=" * 72)
-    print(f"Results: {out_dir}")
+    print(f"Results: {OUT_DIR}")
 
 
 if __name__ == "__main__":

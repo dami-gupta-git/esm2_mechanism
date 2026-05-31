@@ -43,6 +43,8 @@ import functools
 
 print = functools.partial(print, flush=True)
 
+OUT_DIR = RESULTS_DIR
+
 warnings.filterwarnings("ignore")
 
 MERGED_VALID_VARIANTS = VALID_VARIANTS_JSON
@@ -256,14 +258,10 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--seed", type=int, default=None)
     ap.add_argument("--n-folds", type=int, default=5)
-    ap.add_argument("--out-dir", default=None)
     args = ap.parse_args()
 
     seeds = [args.seed] if args.seed is not None else list(range(5))
-    out_dir = (
-        Path(args.out_dir) if args.out_dir else RESULTS_DIR / "mmseqs_cluster_holdout"
-    )
-    out_dir.mkdir(parents=True, exist_ok=True)
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
 
     print("=== Loading data ===")
     labels, genes, delta = load_data()
@@ -287,12 +285,12 @@ def main():
             s, args.n_folds, labels, genes, delta, X_prot, X_bad, gene_to_cluster
         )
         all_res.append(res)
-        path = out_dir / f"cluster_seed{s}.json"
+        path = OUT_DIR / f"cluster_seed{s}.json"
         path.write_text(json.dumps(res, indent=2))
         print(f"  Saved: {path}")
 
     summary = aggregate_seeds(all_res)
-    spath = out_dir / "cluster_summary.json"
+    spath = OUT_DIR / "cluster_summary.json"
     spath.write_text(json.dumps(summary, indent=2))
     print(f"\nSaved summary: {spath}")
     print_table(summary)

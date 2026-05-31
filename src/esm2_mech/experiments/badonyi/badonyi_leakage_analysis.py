@@ -47,6 +47,8 @@ import functools
 
 print = functools.partial(print, flush=True)
 
+OUT_DIR = RESULTS_DIR
+
 warnings.filterwarnings("ignore")
 
 MERGED_VALID_VARIANTS = VALID_VARIANTS_JSON
@@ -349,12 +351,10 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--seed", type=int, default=None, help="Single seed; default: 0..4")
     ap.add_argument("--n-folds", type=int, default=5)
-    ap.add_argument("--out-dir", type=str, default=None)
     args = ap.parse_args()
 
     seeds = [args.seed] if args.seed is not None else list(range(5))
-    out_dir = Path(args.out_dir) if args.out_dir else RESULTS_DIR / "badonyi_leakage"
-    out_dir.mkdir(parents=True, exist_ok=True)
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
 
     print("=== Loading data ===")
     labels, genes = load_data()
@@ -401,12 +401,12 @@ def main():
             s, args.n_folds, labels, genes, pfam_map, X_prot, X_bad, train_any
         )
         all_seed_results.append(sr)
-        path = out_dir / f"leakage_seed{s}.json"
+        path = OUT_DIR / f"leakage_seed{s}.json"
         path.write_text(json.dumps(sr, indent=2))
         print(f"  Saved per-seed: {path}")
 
     summary = aggregate_seeds(all_seed_results)
-    summary_path = out_dir / "leakage_summary.json"
+    summary_path = OUT_DIR / "leakage_summary.json"
     summary_path.write_text(json.dumps(summary, indent=2))
     print(f"\nSaved summary: {summary_path}")
     print_table(summary)

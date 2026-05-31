@@ -5,7 +5,7 @@ Tests whether ESM-2 features (WT-only, delta, per-residue, onehot, FoldX, AlphaM
 carry mechanism signal beyond protein family identity. Runs each feature under gene-split
 and family-split CV across 5 seeds.
 
-Reads from paths.py constants. Writes results to RESULTS_DIR/run1/.
+Reads from paths.py constants. Writes results to RESULTS_DIR/<run_name>/.
 """
 
 import functools
@@ -16,13 +16,14 @@ import numpy as np
 
 from esm2_mech.experiments.mechanism.mechanism_delta_family_split import run as run_family_split
 from esm2_mech.experiments.mechanism.mechanism_delta_probe import _load_alphamissense_scores
-from esm2_mech.experiments.mechanism.aggregate_seeds import (
+from esm2_mech.utils.data import load_variants
+from esm2_mech.utils.io import atomic_write_json
+from esm2_mech.utils.seed_aggregation import (
     aggregate_across_seeds,
     load_seed_files,
     print_table,
 )
-from esm2_mech.utils.data import load_variants
-from esm2_mech.utils.io import atomic_write_json
+from esm2_mech.utils.constants import SEED_RESULT_GLOB
 from esm2_mech.utils.paths import (
     EMB_WT_MEAN,
     EMB_MUT_MEAN,
@@ -35,6 +36,8 @@ from esm2_mech.utils.paths import (
 from esm2_mech.utils.sequences import apply_missense, window_sequence
 
 print = functools.partial(print, flush=True)
+
+OUT_DIR = RESULTS_DIR
 
 
 def load_data() -> dict:
@@ -124,29 +127,28 @@ def load_data() -> dict:
 
 
 def main():
-    out_dir = str(RESULTS_DIR / "run1")
-    os.makedirs(out_dir, exist_ok=True)
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
 
     data = load_data()
 
     print("\n=== Result 2: Gene-split vs family-split baselines ===")
     for seed in [0, 1, 2, 3, 4]:
         print(f"\n--- Seed {seed} ---")
-        run_family_split(data=data, out_dir=out_dir, seed=seed)
+        run_family_split(data=data, out_dir=str(OUT_DIR), seed=seed)
 
     # Final step: pool the per-seed files into one honest headline figure
     # (mean ± std ACROSS seeds, not across folds within a seed).
     print("\n=== Aggregating across seeds ===")
-    seed_results = load_seed_files(out_dir)
+    seed_results = load_seed_files(str(OUT_DIR), SEED_RESULT_GLOB)
     if not seed_results:
-        print(f"WARNING: no seed files to aggregate in {out_dir}")
+        print(f"WARNING: no seed files to aggregate in {OUT_DIR}")
         return
     print(f"Loaded {len(seed_results)} seed files:")
     for filename, _result in seed_results:
         print(f"  {filename}")
 
     aggregated = aggregate_across_seeds(seed_results)
-    aggregate_path = os.path.join(out_dir, "aggregate.json")
+    aggregate_path = OUT_DIR / "aggregate.json"
     atomic_write_json(
         aggregate_path,
         {
