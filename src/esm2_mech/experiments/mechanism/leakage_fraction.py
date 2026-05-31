@@ -1,0 +1,155 @@
+"""
+Compute the leakage fraction for the run6 mechanism dataset.
+
+The leakage fraction (LF) measures what proportion of a feature's above-chance
+gene-split signal disappears under family-split CV — i.e. how much of the
+gene-split score is family recognition rather than transferable mechanism signal:
+
+    LF = (gene_split_macro_f1 - family_split_macro_f1) / (gene_split_macro_f1 - chance)
+
+A high LF means the gene-split number is mostly homology leakage; a low (or
+negative/undefined) LF means the feature carries little family-mediated signal
+to begin with. LF is only meaningful for features that score above chance on
+gene-split — for a feature already at the floor the denominator is ~0 and the
+ratio is noise, so it is reported as undefined.
+
+`chance` is the measured majority-class floor from naive_baseline.json (NOT a
+hardcoded 1/3), so the denominator matches the actual task floor.
+
+LF is computed from the across-seed mean gene/family macro-F1 (average the F1s,
+then take the ratio) — not by averaging per-seed ratios, which are unstable
+because each divides by the small, noisy (gene_f1 - chance). Per-seed F1 spread
+is reported separately. Structural quantities the LF derives from (within-family
+mechanism agreement, class balance) are recorded alongside for context.
+
+  Input : results/run6/family_split_baselines_seed{0..4}.json (gene/family macro-F1 per feature)
+          results/run6/naive_baseline.json                    (measured chance floor)
+          results/run6/family_clustering.json                 (within-family agreement; optional)
+  Output: results/run6/leakage_fraction.json + stdout table
+
+Usage:
+    python -m esm2_mech.experiments.mechanism.leakage_fraction
+"""
+
+from __future__ import annotations
+
+import functools
+import glob
+import json
+
+import numpy as np
+
+from esm2_mech.utils.paths import (
+    FAMILY_CLUSTERING_JSON,
+    LEAKAGE_FRACTION_JSON,
+    NAIVE_BASELINE_JSON,
+    RESULTS_DIR,
+)
+
+print = functools.partial(print, flush=True)
+
+BASELINES_GLOB = str(RESULTS_DIR / "family_split_baselines_seed*.json")
+
+# A feature must clear chance by at least this margin on gene-split for its LF to
+# be defined; below it the denominator is ~0 and the ratio is meaningless noise.
+MIN_ABOVE_CHANCE = 0.02
+
+
+def _load_seed_baselines():
+    """Per-seed gene/family macro-F1 for every feature, from the baseline files."""
+    files = sorted(glob.glob(BASELINES_GLOB))
+    if not files:
+        raise FileNotFoundError(BASELINES_GLOB)
+    seeds = []
+    for path in files:
+        with open(path) as fh:
+            seeds.append(json.load(fh))
+    return seeds
+
+
+def _measured_chance():
+    """Majority-class macro-F1 floor (gene-split) from the naive baseline."""
+    with open(NAIVE_BASELINE_JSON) as fh:
+        nb = json.load(fh)
+    return float(nb["by_strategy"]["most_frequent"]["gene"]["macro_f1_mean"])
+
+
+def leakage_fraction_per_feature(seeds, feature, chance):
+    """Leakage fraction for one feature, from seed-averaged macro-F1.
+
+    LF is computed from the across-seed mean gene/family macro-F1, not by
+    averaging per-seed ratios. Per-seed ratios are unstable: each divides by
+    (gene_f1 - chance), a small noisy quantity, so a single lucky-high gene seed
+    inflates that seed's ratio. Averaging the F1s first removes that artefact.
+    Per-seed F1 spread is reported separately for context.
+    """
+    gene_f1 = [s["gene_split"][feature]["macro_f1_mean"] for s in seeds]
+    family_f1 = [s["family_split"][feature]["macro_f1_mean"] for s in seeds]
+    gene_mean = float(np.mean(gene_f1))
+    family_mean = float(np.mean(family_f1))
+
+    result = {
+        "gene_macro_f1_mean": gene_mean,
+        "gene_macro_f1_std": float(np.std(gene_f1)),
+        "family_macro_f1_mean": family_mean,
+        "family_macro_f1_std": float(np.std(family_f1)),
+        "drop_mean": gene_mean - family_mean,
+    }
+    denom = gene_mean - chance
+    if denom > MIN_ABOVE_CHANCE:
+        result["leakage_fraction"] = (gene_mean - family_mean) / denom
+    else:
+        # Feature is at/near the chance floor on gene-split; LF undefined
+        # (no above-chance signal to attribute to leakage).
+        result["leakage_fraction"] = None
+        result["note"] = "gene-split score not meaningfully above chance; LF undefined"
+    return result
+
+
+def main() -> None:
+    seeds = _load_seed_baselines()
+    chance = _measured_chance()
+    features = list(seeds[0]["gene_split"].keys())
+
+    meta = seeds[0]
+    results = {
+        "n_variants": int(meta["n_variants"]),
+        "n_genes": int(meta["n_genes"]),
+        "n_families": int(meta["n_families"]),
+        "n_seeds": len(seeds),
+        "chance_macro_f1": chance,
+        "class_distribution": meta.get("class_distribution"),
+        "by_feature": {},
+    }
+
+    # Structural context (optional — present once family_clustering has run).
+    if FAMILY_CLUSTERING_JSON.exists():
+        with open(FAMILY_CLUSTERING_JSON) as fh:
+            fc = json.load(fh)
+        results["within_family_mechanism_agreement"] = (
+            fc["by_view"]["wt_mean"].get("frac_gene_mech_matches_family_majority")
+        )
+
+    print(f"n={results['n_variants']} variants, {results['n_genes']} genes, "
+          f"{results['n_families']} families, {results['n_seeds']} seeds")
+    print(f"chance macro-F1 (measured majority-class floor) = {chance:.3f}\n")
+    print(f"{'feature':18} {'gene':>6} {'family':>7} {'drop':>6} {'leakage_fraction':>20}")
+
+    for feature in features:
+        cell = leakage_fraction_per_feature(seeds, feature, chance)
+        results["by_feature"][feature] = cell
+        lf = cell["leakage_fraction"]
+        lf_str = f"{lf:.1%}" if lf is not None else "undefined (at floor)"
+        print(
+            f"{feature:18} {cell['gene_macro_f1_mean']:6.3f} "
+            f"{cell['family_macro_f1_mean']:7.3f} {cell['drop_mean']:6.3f} {lf_str:>20}"
+        )
+
+    LEAKAGE_FRACTION_JSON.parent.mkdir(parents=True, exist_ok=True)
+    with open(LEAKAGE_FRACTION_JSON, "w") as fh:
+        json.dump(results, fh, indent=2)
+    print(f"\nResults written to {LEAKAGE_FRACTION_JSON}")
+
+
+if __name__ == "__main__":
+    main()

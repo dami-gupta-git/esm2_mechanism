@@ -26,8 +26,7 @@ that seed's folds), matching how the experiment aggregates seeds.
           plus a summary table to stdout
 
 Usage:
-    python -m scripts.naive_baseline
-    python scripts/naive_baseline.py
+    python -m esm2_mech.experiments.mechanism.naive_baseline
 """
 
 from __future__ import annotations
