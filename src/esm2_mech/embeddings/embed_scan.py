@@ -79,7 +79,7 @@ def embed_scan(batch_size: int = 128) -> None:
     skipped_mismatch = 0
     for p in probes:
         seq = seqs[p["uniprot_id"]]
-        wt_win, new_pos = window_sequence(seq, p["aa_pos"])
+        wt_win, new_pos, _ = window_sequence(seq, p["aa_pos"])
         mut_win = apply_missense(wt_win, new_pos, p["aa_wt"], p["aa_mut"])
         if mut_win is None:
             skipped_mismatch += 1

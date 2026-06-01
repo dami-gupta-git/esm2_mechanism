@@ -71,7 +71,7 @@ def load_data() -> dict:
             skipped_no_seq += 1
             continue
         # Window the sequence around the mutation site (ESM-2 has a 1022-token limit).
-        wt_win, new_pos = window_sequence(seq_cache[uid], v["aa_pos"])
+        wt_win, new_pos, _ = window_sequence(seq_cache[uid], v["aa_pos"])
         mut_win = apply_missense(wt_win, new_pos, v["aa_wt"], v["aa_mut"])
         if mut_win is None:
             continue

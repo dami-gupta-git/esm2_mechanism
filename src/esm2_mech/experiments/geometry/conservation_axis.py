@@ -107,7 +107,7 @@ def extract_conservation(variants, seqs, batch_size=64, ckpt_every=2000):
         if not seq or not (1 <= v["aa_pos"] <= len(seq)):
             skipped += 1
             continue
-        win, new_pos = window_sequence(seq, v["aa_pos"])
+        win, new_pos, _ = window_sequence(seq, v["aa_pos"])
         if win[new_pos - 1] != v["aa_wt"]:  # alignment / sequence mismatch
             skipped += 1
             continue

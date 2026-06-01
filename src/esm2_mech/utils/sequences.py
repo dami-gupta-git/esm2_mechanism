@@ -22,14 +22,17 @@ def window_sequence(
     aa_pos: int,
     window_half: int = WINDOW_HALF,
     max_len: int = MAX_SEQ_LEN,
-) -> tuple[str, int]:
+) -> tuple[str, int, int]:
     """Extract a window of at most max_len residues centred on aa_pos.
 
-    Returns (windowed_seq, new_aa_pos) where new_aa_pos is 1-indexed in the
-    windowed sequence. Sequences already within max_len are returned unchanged.
+    Returns (windowed_seq, new_aa_pos, start) where new_aa_pos is 1-indexed in
+    the windowed sequence and start is the 0-indexed offset of the window in the
+    full sequence (0 when the sequence is returned unchanged). Callers that need
+    to slice a parallel per-residue array (e.g. structure coordinates) to the
+    same window MUST use this start rather than re-deriving it.
     """
     if len(sequence) <= max_len:
-        return sequence, aa_pos
+        return sequence, aa_pos, 0
 
     idx = aa_pos - 1  # 0-indexed
     start = max(0, idx - window_half)
@@ -41,4 +44,4 @@ def window_sequence(
 
     windowed = sequence[start:end]
     new_pos = idx - start + 1  # back to 1-indexed
-    return windowed, new_pos
+    return windowed, new_pos, start

@@ -97,7 +97,7 @@ def score_variants_single_model(
             batch_meta = []
 
             for pos in batch_pos:
-                win_seq, new_pos = window_sequence(seq, pos)
+                win_seq, new_pos, _ = window_sequence(seq, pos)
                 masked = list(win_seq)
                 masked[new_pos - 1] = "<mask>"
                 batch_data.append((f"{gene}_{pos}", "".join(masked)))

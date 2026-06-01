@@ -54,7 +54,7 @@ from esm2_mech.utils.paths import (
     RESULTS_DIR as _RESULTS_DIR,
     SEQUENCES_JSON,
 )
-from esm2_mech.utils.io import save_npy
+from esm2_mech.utils.io import atomic_write_json, save_npy
 
 AF2_DIR = CACHE_DIR / "af2_structures"
 OUT = _RESULTS_DIR / "esm3_mechanism"
@@ -138,7 +138,14 @@ def phase1_structure_tokens() -> None:
     print(f"Unique UniProt IDs: {len(uniprot_ids)}")
 
     if STRUCT_TOKENS.exists():
-        cached = json.loads(STRUCT_TOKENS.read_text())
+        try:
+            cached = json.loads(STRUCT_TOKENS.read_text())
+        except json.JSONDecodeError:
+            print(
+                f"WARNING: {STRUCT_TOKENS} is corrupt (partial write?); deleting and re-fetching"
+            )
+            STRUCT_TOKENS.unlink()
+            cached = {}
         already = set(cached.keys())
         print(f"Resuming: {len(already)} already tokenised")
     else:
@@ -192,14 +199,14 @@ def phase1_structure_tokens() -> None:
             fallback += 1
 
         if (i + 1) % 50 == 0:
-            STRUCT_TOKENS.write_text(json.dumps(cached))
+            atomic_write_json(STRUCT_TOKENS, cached)
             print(
                 f"  Checkpoint: {i+1}/{len(uniprot_ids)}, {fallback} fallbacks so far"
             )
 
         print(f"  [{i+1}/{len(uniprot_ids)}] {uid}: OK")
 
-    STRUCT_TOKENS.write_text(json.dumps(cached))
+    atomic_write_json(STRUCT_TOKENS, cached)
     n_ok = sum(1 for v in cached.values() if v is not None)
     print(
         f"\nStructure tokens cached: {n_ok}/{len(uniprot_ids)} OK, {fallback} seq-only fallbacks"
@@ -283,6 +290,18 @@ def phase2_extract_embeddings(batch_size: int = 4) -> None:
             wt_embs[cond] = []
             mut_embs[cond] = []
     if resume_from > 0:
+        # The three checkpoint files (valid_idx, wt, mut) are written separately and
+        # are not atomic as a group: an interrupt between writes can leave them out of
+        # sync, which would silently misalign valid_idx against the embedding rows in
+        # phase 3. Fail loudly rather than continue from a corrupted checkpoint.
+        for cond in remaining_conds:
+            if not (len(wt_embs[cond]) == len(mut_embs[cond]) == len(valid_indices)):
+                raise RuntimeError(
+                    f"Checkpoint length mismatch for {cond}: "
+                    f"wt={len(wt_embs[cond])} mut={len(mut_embs[cond])} "
+                    f"valid_idx={len(valid_indices)} — checkpoint corrupted by a "
+                    f"mid-write interrupt; delete the *_ckpt*.npy files and restart phase 2"
+                )
         print(
             f"Resuming from checkpoint: {len(valid_indices)} variants done, next variant index {resume_from}"
         )
@@ -348,7 +367,7 @@ def phase2_extract_embeddings(batch_size: int = 4) -> None:
         wt_seq = v["wt_seq"]
         pos = v["aa_pos"]
 
-        wt_win, new_pos = window_sequence(wt_seq, pos)
+        wt_win, new_pos, win_start = window_sequence(wt_seq, pos)
         if new_pos < 1 or new_pos > len(wt_win):
             print(
                 f"  SKIP variant {i}: pos={pos} new_pos={new_pos} out of range for seq len {len(wt_win)}"
@@ -358,22 +377,9 @@ def phase2_extract_embeddings(batch_size: int = 4) -> None:
         mut_win[new_pos - 1] = v["aa_mut"]
         mut_win = "".join(mut_win)
 
-        # Derive win_start from window_sequence's own logic so coordinate slicing
-        # uses exactly the same offsets as the sequence window (bug fix: previously
-        # a separate formula diverged from window_sequence in edge cases).
-        L = len(wt_seq)
-        if L <= 1022:
-            win_start = 0
-        else:
-            idx0 = pos - 1  # 0-indexed variant position
-            start = max(0, idx0 - 500)  # WINDOW_HALF = 500
-            end = min(L, idx0 + 500)
-            if end - start > 1022:
-                half = 511
-                start = max(0, idx0 - half)
-                end = min(L, start + 1022)
-            win_start = start
-
+        # win_start is the window offset returned by window_sequence itself, so the
+        # coordinate slice below uses exactly the same offset as the sequence window
+        # (previously a duplicated formula diverged by 11 residues for long proteins).
         struct_toks = get_struct_tokens(uid, wt_seq, win_start, len(wt_win))
         if struct_toks is not None:
             n_struct_applied += 1
@@ -571,7 +577,7 @@ def phase3_probes() -> None:
     variants, genes, pfam_map = load_geras()
     y_labels = np.array([v["mech3"] for v in variants])
     label_set = ["GOF", "DN", "LOF"]
-    y_all = np.array([label_set.index(l) for l in y_labels])
+    y_all = np.array([label_set.index(label) for label in y_labels])
     n_classes = len(label_set)
 
     # Load valid indices saved by phase 2 for exact label alignment

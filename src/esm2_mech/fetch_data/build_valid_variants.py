@@ -61,7 +61,7 @@ def build_valid_variants() -> list[dict]:
         if aa_pos is None or not aa_wt or not aa_mut:
             skipped_no_fields += 1
             continue
-        wt_win, new_pos = window_sequence(seq_cache[uid], aa_pos)
+        wt_win, new_pos, _ = window_sequence(seq_cache[uid], aa_pos)
         mut_win = apply_missense(wt_win, new_pos, aa_wt, aa_mut)
         if mut_win is None:
             skipped_invalid += 1

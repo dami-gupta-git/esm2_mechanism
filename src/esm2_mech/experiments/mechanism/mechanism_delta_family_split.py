@@ -319,7 +319,7 @@ def _load_data_inline() -> dict:
         uid = v["uniprot_id"]
         if uid not in seq_cache:
             continue
-        wt_win, new_pos = window_sequence(seq_cache[uid], v["aa_pos"])
+        wt_win, new_pos, _ = window_sequence(seq_cache[uid], v["aa_pos"])
         mut_win = apply_missense(wt_win, new_pos, v["aa_wt"], v["aa_mut"])
         if mut_win is None:
             continue

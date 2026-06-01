@@ -152,7 +152,7 @@ def extract_ll_scores(covered_genes, gene_positions, seqs, batch_size=32):
             batch_data = []
 
             for pos in batch_pos:
-                wt_win, new_pos = window_sequence(seq, pos)
+                wt_win, new_pos, _ = window_sequence(seq, pos)
                 # Build masked sequence: replace new_pos (1-indexed) with mask token
                 masked = list(wt_win)
                 masked[new_pos - 1] = "<mask>"
@@ -167,7 +167,7 @@ def extract_ll_scores(covered_genes, gene_positions, seqs, batch_size=32):
             logits = out["logits"].cpu().float()  # (B, L+2, vocab)
 
             for i, pos in enumerate(batch_pos):
-                wt_win, new_pos = window_sequence(seq, pos)
+                wt_win, new_pos, _ = window_sequence(seq, pos)
                 wt_aa = positions[pos]["wt_aa"]
 
                 # Token index for the masked position (BOS at 0, so token i = seq position i)
