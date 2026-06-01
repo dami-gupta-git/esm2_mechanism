@@ -1,27 +1,42 @@
-# Results: Does ESM-3 — Scale or Structure — Rescue the Mechanism Null?
+# Results: ESM-3 Scale and Structure on Mechanism (Gerasimavicius-only — superseded)
+
+> **⚠️ Known data defect — do not cite these numbers as clean.** This run embedded **93 of
+> 10,231 variants on a wrong wildtype/mutant pair**: phase 2 overwrote the windowed reference
+> residue without checking it matched the variant's `aa_wt`, a check ESM-2's pipeline applies
+> via `apply_missense`. Those 93 deltas are meaningless, and the row set therefore differs from
+> the ESM-2 comparison set. The bug is fixed in `esm3_mechanism.py`; this run predates the fix.
+> The **absolute family-split numbers below are contaminated** and must not be quoted as ESM-3's
+> score or compared against the ESM-2 floor. The **direction** (structure tokens add nothing;
+> seq ≈ seq_struct) is robust to 93/10,231 rows and remains informative.
+>
+> This run is also **Gerasimavicius-only**, which is not the matched ESM-2 comparison set (ESM-2's
+> numbers are the merged 17,826-variant set), so the scale comparison here is cross-dataset.
+> The clean, apples-to-apples result is the merged run — see
+> [`report_esm3_mechanism.md`](report_esm3_mechanism.md). Defect details:
+> [`results/run6/esm3_mechanism/geras/KNOWN_ISSUES.md`](../../results/run6/esm3_mechanism/geras/KNOWN_ISSUES.md).
 
 *Companion to [`report_classifier.md`](report_classifier.md) and
 [`report_protein_family.md`](report_protein_family.md). The classifier report found that
 ESM-2 delta embeddings classify mechanism (GOF/DN/LOF) near the chance floor under family-split
 CV. This report asks whether a larger, structure-aware model closes that gap. It runs ESM-3 on
-the same Gerasimavicius task, under two conditions — sequence only, and sequence plus AlphaFold2
+the Gerasimavicius-only task, under two conditions — sequence only, and sequence plus AlphaFold2
 structure tokens — to separate the effect of model scale from the effect of explicit structure.*
 
-**Run 6 · 2026-06-01** · ESM-3 `esm3-sm-open-v1` (1.4B, open weights) · 10,231 variants ·
-948 genes · 5 seeds · phase 2 on an H100 80GB, phase 3 on CPU. Results in
-[`results/run6/esm3_mechanism/summary.json`](../../results/run6/esm3_mechanism/summary.json).
+**Run 6 · 2026-06-01** · ESM-3 `esm3-sm-open-v1` (1.4B, open weights) · 10,231 variants
+(incl. 93 contaminated) · 948 genes · 5 seeds · phase 2 on an H100 80GB, phase 3 on CPU.
+Results in [`results/run6/esm3_mechanism/geras/summary.json`](../../results/run6/esm3_mechanism/geras/summary.json).
 
 ---
 
 ## Summary
 
-ESM-3 was run on the same three-class mechanism task as the ESM-2 classifier report, in two
-forms: sequence tokens alone, and sequence tokens together with AlphaFold2 structure tokens.
-Both forms clear the pre-registered threshold — family-split macro-F1 rises from the ESM-2 delta
-baseline of 0.29 to 0.421 — so scaling the sequence model does lift the mechanism floor. Adding structure tokens
-changes nothing: sequence-plus-structure scores 0.421 as well, an identical number to three
-decimal places. The two conditions track each other across every split and metric. So the lift
-over ESM-2 comes from model scale, not from the structure tokens, and the question of how a
+ESM-3 was run on the Gerasimavicius-only mechanism task in two forms: sequence tokens alone, and
+sequence tokens together with AlphaFold2 structure tokens. The clean, within-run finding is that
+**adding structure tokens changes nothing**: sequence-only and sequence-plus-structure both score
+family-split macro-F1 = 0.421, identical to three decimal places, and track each other across
+every split and metric. Whether scale lifts the mechanism floor relative to ESM-2 is **not**
+answerable here — the ESM-2 baseline is on a different (merged) dataset, and 93 of these rows are
+contaminated; the merged ESM-3 run settles that comparison. Either way the question of how a
 mutation acts remains far from solved — 0.421 is still well below what practical mechanism
 prediction would need. Function tokens, the third ESM-3 modality, are not exposed by the open
 API and were not tested.
@@ -58,7 +73,7 @@ forward passes so the delta cancels everything except the substitution.
 |---|---|---|
 | Gene-split | 5-fold CV holding out whole genes; related genes may sit in train and test | — |
 | Family-split | 5-fold CV holding out whole Pfam families; the leakage-free measure | three-class chance ≈ 0.33 accuracy, lower in macro-F1 |
-| Macro_f1 | mean per-class F1 over GOF/DN/LOF, so rare classes count equally | the ESM-2 delta family-split baseline, 0.288 |
+| Macro_f1 | mean per-class F1 over GOF/DN/LOF, so rare classes count equally | three-class chance floor (well below 0.33) |
 | GOF AUROC | one-vs-rest ranking of gain-of-function variants | 0.5 |
 | Leakage Δ | family-split minus gene-split macro-F1; how much of the gene-split score is family recognition | 0 (no leakage) |
 
@@ -95,23 +110,30 @@ the embedding model.
 
 ## Table 3 — Decision rules
 
-| Gate | Criterion | Value | Verdict |
-|---|---|---|---|
-| M1 | `seq_struct` family-split F1 > 0.349 | 0.421 | pass |
-| M2 | `seq` family-split F1 > 0.349 | 0.421 | pass |
-| M3 | `seq_struct` − `seq` > 0.030 | −0.000 | fail |
+The M1/M2 verdicts shown here used the stale 0.349 threshold (ESM-2 floor 0.299 + 0.05).
+That floor is wrong: the matched ESM-2 MLP delta_mean family-split floor is **0.380**, so the
+real threshold is **0.430**, against which `seq` = 0.421 does **not** clear M1/M2. Combined with
+the 93 contaminated rows and the cross-dataset confound, no M1/M2 verdict from this run should be
+quoted — see the merged report for the judged result. Only M3 (within-run, structure vs sequence)
+is meaningful here.
+
+| Gate | Criterion (as run) | Value | Verdict (as run) | Status |
+|---|---|---|---|---|
+| M1 | `seq_struct` family-split F1 > 0.349 | 0.421 | pass | invalid — stale floor; real threshold 0.430 |
+| M2 | `seq` family-split F1 > 0.349 | 0.421 | pass | invalid — stale floor; real threshold 0.430 |
+| M3 | `seq_struct` − `seq` > 0.030 | −0.000 | fail | informative (within-run) |
 
 ---
 
 ## Reading the tables
 
-**1. Scale lifts the family-split floor.**
-ESM-3 sequence-only reaches a family-split macro-F1 of 0.421, up from the ESM-2 delta baseline of
-0.288 — a gain of 0.133. This is the largest single improvement over the ESM-2 baseline in the
-mechanism arc, and it clears the M1/M2 threshold (0.349) comfortably. (The threshold was
-pre-registered against 0.299, an earlier multi-seed ESM-2 estimate; the run6 classifier report's
-matched delta_mean baseline is 0.288. Either way ESM-3 clears it by a wide margin.) The gain comes
-purely from changing the model: the task, labels, splits, probe, and seeds are unchanged. So a
+**1. Apparent scale lift — but the comparison is cross-dataset and not valid here.**
+ESM-3 sequence-only reaches a family-split macro-F1 of 0.421 on Gerasimavicius. It is tempting to
+compare this to the ESM-2 delta baseline, but that baseline (0.288) is on the *merged* 17,826-variant
+set, not Gerasimavicius — different data, so the gap conflates scale and dataset. The matched ESM-2
+floor on the comparison set is 0.380 (threshold 0.430), which 0.421 does not clear. Any scale claim
+must come from the merged ESM-3 run, where both models score the same variants; it is not
+established by this report. The gain comes
 larger sequence model does carry more of whatever weakly tracks mechanism.
 
 **2. Structure tokens add nothing.**
@@ -176,4 +198,4 @@ deltas, dimension 1536, in
 class-weighted CE, early stopping) and balanced logistic regression (C=0.1), under 5-fold
 gene-split and family-split CV, seeds 0–4. The ESM-2 baseline figures are from the classifier
 report. Coverage stats in `struct_meta.json`; full results and decision rules in
-[`results/run6/esm3_mechanism/summary.json`](../../results/run6/esm3_mechanism/summary.json).
+[`results/run6/esm3_mechanism/geras/summary.json`](../../results/run6/esm3_mechanism/geras/summary.json).
