@@ -41,7 +41,7 @@ from esm2_mech.utils.paths import (
     MEGASCALE_EMB_WT_MEAN,
     MEGASCALE_EMB_MUT_MEAN,
 )
-from esm2_mech.experiments.mechanism.loaders import load_geras
+from esm2_mech.experiments.mechanism.loaders import load_mechanism_variants
 from esm2_mech.utils.constants import GOF
 from esm2_mech.utils.metrics import mean_std_n
 from esm2_mech.utils.probes import auroc_for_clf
@@ -171,7 +171,7 @@ def load_stability():
 def load_mechanism_gof():
     with open(PFAM_JSON) as _f:
         pfam = json.load(_f)
-    dm, _dp, labels, genes = load_geras(pfam)
+    dm, _dp, labels, genes = load_mechanism_variants(pfam)
     groups = np.array([(pfam.get(g) or "NA") for g in genes])
     y = (np.asarray(labels) == GOF).astype(int)
     m = groups != "NA"

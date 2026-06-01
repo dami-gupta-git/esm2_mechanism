@@ -111,7 +111,7 @@ def run_mlp_binary(X, y, splits, seed=42):
     }
 
 
-from esm2_mech.experiments.mechanism.loaders import load_geras, load_merged
+from esm2_mech.experiments.mechanism.loaders import load_mechanism_variants, load_merged
 
 
 def load_pathogenicity(pfam_map):
@@ -164,7 +164,7 @@ def run_seed(seed, pfam_map, out_dir):
             geras_results = json.load(_f)
     else:
         print("\n--- Gerasimavicius mechanism ---")
-        dm, dp, labels, genes = load_geras(pfam_map)
+        dm, dp, labels, genes = load_mechanism_variants(pfam_map)
         gs = gene_split_cv(genes, seed=seed)
         fs = family_split_cv(genes, pfam_map, seed=seed)
         geras_results = {}

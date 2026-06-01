@@ -47,7 +47,6 @@ GENE_UNIVERSE = DATA_DIR / GENE_UNIVERSE_FILENAME
 VARIANTS_JSON = DATA_DIR / "variants.json"
 GENE_LIST_TSV = DATA_DIR / "gene_list.tsv"
 PFAM_JSON = DATA_DIR / "pfam_families.json"
-GERAS_VALID_VARIANTS_JSON = DATA_DIR / "geras_valid_variants.json"
 ALPHAMISSENSE_SCORES_JSON = DATA_DIR / "alphamissense_scores_full.json"
 VALID_VARIANTS_JSON = DATA_DIR / "valid_variants.json"
 

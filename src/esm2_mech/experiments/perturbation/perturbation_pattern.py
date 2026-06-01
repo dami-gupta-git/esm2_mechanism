@@ -31,6 +31,7 @@ from collections import Counter, defaultdict
 from esm2_mech.utils.paths import (
     DATA_DIR as _DATA_DIR,
     RESULTS_DIR as _RESULTS_DIR,
+    VALID_VARIANTS_JSON,
     EMB_WT_MEAN,
     EMB_MUT_MEAN,
     EMB_WT_POS,
@@ -47,7 +48,7 @@ os.makedirs(OUT, exist_ok=True)
 
 
 def load_data():
-    with open(os.path.join(DATA, "geras_valid_variants.json")) as f:
+    with open(VALID_VARIANTS_JSON) as f:
         variants = json.load(f)
     for v in variants:
         if "label_3class" not in v:
