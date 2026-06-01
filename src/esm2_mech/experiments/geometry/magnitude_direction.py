@@ -496,7 +496,7 @@ def _run_seeds(seeds):
     )
 
     result = {
-        "seeds": args.seeds,
+        "seeds": list(seeds),
         "pathogenicity": path_res,
         "mechanism": mech_res,
         "biophysical_direction": bio_res,
