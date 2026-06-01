@@ -266,7 +266,8 @@ The seed-to-seed spread reflects fold reshuffling on fixed data, not sampling un
 Planned before preprint submission, not yet in the result files:
 
 - **Confidence intervals** from a cluster bootstrap over genes (labels are gene-level, so the
-  effective N is ≈ 1,935 genes, not 17,826 variants), replacing the seed-std bars.
+  effective N is ≈ 1,935 genes, not 17,826 variants — and far smaller for the rare classes,
+  DN ≈ 9% and GOF ≈ 15%), replacing the seed-std bars.
 - **Permutation test** against the 0.288 floor for a p-value on "above chance" and on the
   gene-vs-family gap.
 - **Imbalanced-class metrics:** AUPRC and PPV/NPV at prevalence alongside AUROC.

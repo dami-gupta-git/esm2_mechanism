@@ -1,0 +1,83 @@
+{
+  "esm2_baseline_family_split_f1": 0.3803514474237963,
+  "esm2_baseline_source": "nonlinear_results (mlp_delta_mean_family, 5-seed mean)",
+  "m1_threshold": 0.4303514474237963,
+  "conditions": "seq, seq_struct (function tokens not implemented)",
+  "structure_coverage": {
+    "n_variants_total": 17826,
+    "n_variants_embedded": 17826,
+    "n_variants_skipped": 0,
+    "n_structure_applied": 16852,
+    "structure_applied_frac": 0.9453607090766296,
+    "n_struct_coord_fallback": 400
+  },
+  "results": {
+    "seq": {
+      "gene_split": {
+        "mlp_f1_mean": 0.4447101645946655,
+        "mlp_f1_std": 0.02333393858338561,
+        "mlp_gof_auroc_mean": 0.7045250629994804,
+        "mlp_dn_auroc_mean": 0.6493933081759012,
+        "lr_f1_mean": 0.4593675016944168,
+        "lr_f1_std": 0.005326596813856749,
+        "n_seeds": 5
+      },
+      "family_split": {
+        "mlp_f1_mean": 0.43841528738742974,
+        "mlp_f1_std": 0.008546693847818629,
+        "mlp_gof_auroc_mean": 0.688516151752597,
+        "mlp_dn_auroc_mean": 0.6472951835214505,
+        "lr_f1_mean": 0.4288402664615093,
+        "lr_f1_std": 0.003417063584055345,
+        "n_seeds": 5
+      }
+    },
+    "seq_struct": {
+      "gene_split": {
+        "mlp_f1_mean": 0.44841157095585216,
+        "mlp_f1_std": 0.01520486997597253,
+        "mlp_gof_auroc_mean": 0.7142272636578972,
+        "mlp_dn_auroc_mean": 0.6271603469188752,
+        "lr_f1_mean": 0.4618420096025556,
+        "lr_f1_std": 0.006702381102603585,
+        "n_seeds": 5
+      },
+      "family_split": {
+        "mlp_f1_mean": 0.4527592205650352,
+        "mlp_f1_std": 0.012371550459520245,
+        "mlp_gof_auroc_mean": 0.699419935853986,
+        "mlp_dn_auroc_mean": 0.6282030230346387,
+        "lr_f1_mean": 0.43899994663326536,
+        "lr_f1_std": 0.004563699191817754,
+        "n_seeds": 5
+      }
+    }
+  },
+  "decision_rules": {
+    "M1": {
+      "criterion": "seq_struct family-split F1 > 0.430",
+      "value": 0.4527592205650352,
+      "passed": true
+    },
+    "M2": {
+      "criterion": "seq family-split F1 > 0.430",
+      "value": 0.43841528738742974,
+      "passed": true
+    },
+    "M3": {
+      "criterion": "seq_struct \u2212 seq > 0.030",
+      "value": 0.014343933177605461,
+      "passed": false
+    }
+  },
+  "model": "esm3-sm-open-v1",
+  "dataset": "merged",
+  "n_folds": 5,
+  "seeds": [
+    0,
+    1,
+    2,
+    3,
+    4
+  ]
+}
