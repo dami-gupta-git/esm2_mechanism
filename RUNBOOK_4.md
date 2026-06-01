@@ -130,6 +130,40 @@ fits small per-family probes. Runs locally; no GPU or RunPod needed.
 
 ---
 
+## Experiment 4 — ESM-3 mechanism: scale and structure (report_esm3_mechanism)
+
+Runs ESM-3 (`esm3-sm-open-v1`, 1.4B) on the same GOF/DN/LOF task in two conditions —
+sequence-only (`seq`) and sequence + AlphaFold2 structure tokens (`seq_struct`) — to separate
+the effect of model scale from explicit structure (the M3 test). Three phases, each takes
+`--dataset {geras,merged}`; outputs go to per-dataset subdirectories so the two runs never
+collide.
+
+- **`geras`** — Gerasimavicius only (948 genes). The within-run M3 (seq vs seq_struct) result.
+- **`merged`** — Gerasimavicius + G2P (1,935 genes). Matches the Experiment 1 ESM-2 classifier
+  set exactly (same `valid_variants.json`, identical `label_3class`), so it is the
+  apples-to-apples comparison for any scale claim against ESM-2. **Use merged for the headline.**
+
+Phase 1 (CPU, network) and 3 (CPU) run locally or on the pod; phase 2 (GPU) runs on RunPod in a
+`tmux` session. The phase-1 structure cache (`data/cache/esm3_struct_tokens.json`) is keyed by
+UniProt ID and shared across datasets, so the merged run only fetches the proteins geras did not
+already cover. Requires the ESM-3 SDK (`pip install esm==3.2.1.post1` — distinct from `fair-esm`)
+and a HuggingFace token with the `esm3-sm-open-v1` licence accepted (`export HF_TOKEN=...`).
+
+| Command | Description | Inputs | Outputs |
+|---|---|---|---|
+| `python -m esm2_mech.experiments.esm3.esm3_mechanism --phase 1 --dataset merged` | CPU: download AF2 structures from EBI, cache per-residue coordinates | `valid_variants.json` (merged) or `gerasimavicius_variants.json` (geras) | `data/cache/esm3_struct_tokens.json`, `data/cache/af2_structures/*.pdb` |
+| `python -m esm2_mech.experiments.esm3.esm3_mechanism --phase 2 --dataset merged` | GPU: extract ESM-3 wt+mut mean-pooled embeddings for both conditions, save deltas + raw wt/mut arrays | `esm3_struct_tokens.json`, `cache/sequences.json`, variants | `data/embeddings/esm3-sm-open-v1/<dataset>/{seq,seq_struct}_mean.npy` (+ `_wt`/`_mut`), `valid_idx.npy`, `struct_meta.json` |
+| `python -m esm2_mech.experiments.esm3.esm3_mechanism --phase 3 --dataset merged` | CPU: MLP + logistic probes, gene/family-split, 5 seeds; evaluate M1/M2/M3 | `{seq,seq_struct}_mean.npy`, `valid_idx.npy`, `pfam_families.json` | `results/<run_name>/esm3_mechanism/<dataset>/summary.json` |
+
+Run phase 2 inside a `tmux` session on RunPod; `scp` the `<dataset>/` embedding and result
+subdirectories back locally. Report written as `reports/<run_name>/report_esm3_mechanism.md`.
+
+> **Comparison caveat:** the ESM-2 numbers in Experiment 1 are the merged set (17,826 variants).
+> Compare ESM-3 against ESM-2 only on `--dataset merged`; the geras run is not a matched baseline
+> for the ESM-2 classifier and must not be used for the scale claim.
+
+---
+
 ## Verification checklist
 
 - [ ] `data/embeddings/esm2_t33_650M_UR50D/embedded_variants.json` row count matches all four `.npy` arrays. (This file is a write-only provenance artifact — no code reads it; it is the row-aligned variant index for the `.npy` arrays and should equal `data/valid_variants.json`. See `utils/embed.py` `_flush_checkpoint`.)
@@ -137,5 +171,5 @@ fits small per-family probes. Runs locally; no GPU or RunPod needed.
 - [ ] `data/enzyme_labels.tsv` spot-checked against UniProt EC numbers for a handful of kinases and proteases.
 - [ ] `data/alphamissense_scores_full.json` non-empty and covers > 90% of `valid_variants.json`.
 - [ ] result 6 (pathogenicity AUROC ~0.88) and result 7 (mechanism family-split floor ~0.35–0.39) reproduce their headline numbers — these are the pipeline spine and should not move.
-- [ ] result 26: ESM-2 and ESM-3 scored under identical fold rule before reporting M1/M2 gap (see Stage E caveat).
+- [ ] report_esm3_mechanism: ESM-3 compared against ESM-2 only on `--dataset merged` (matched 17,826-variant set), not geras (see Experiment 4 comparison caveat). Both scored under the identical fold rule.
 - [ ] `git status` clean; results committed.

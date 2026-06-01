@@ -8,23 +8,28 @@ Two embedding conditions (function tokens not implemented — dropped):
   seq_struct — sequence + AlphaFold2 structure tokens
 
 For each condition: delta = mean_pool(ESM-3(mut)) - mean_pool(ESM-3(wt))
-Same probe/CV/seeds as result_7: PyTorch MLP + logistic, 5-fold gene-split +
-family-split, seeds 0-4 on Gerasimavicius (948 genes, 3-class GOF/LOF/DN).
+PyTorch MLP + logistic probe, 5-fold gene-split + family-split, seeds 0-4,
+3-class GOF/LOF/DN, on one of two datasets (--dataset):
+  geras  — Gerasimavicius only (948 genes)
+  merged — Gerasimavicius + G2P (1935 genes); matches the ESM-2 classifier report,
+           the apples-to-apples comparison for the scale claim.
 
 Decision rules (pre-registered in plan_esm3_mechanism.md):
-  M1: ESM-3 seq_struct family-split macro-F1 > ESM2_FAMILY_F1 + 0.05 = 0.349
-  M2: ESM-3 seq-only   family-split F1       > 0.349  (scale alone rescues)
+  M1: ESM-3 seq_struct family-split macro-F1 > ESM-2 floor + 0.05
+  M2: ESM-3 seq-only   family-split F1       > ESM-2 floor + 0.05  (scale alone rescues)
   M3: seq_struct − seq > 0.03  (structure adds signal beyond scale)
+The ESM-2 floor is read at runtime from the matched MLP delta_mean family-split result
+(nonlinear_results_seed*.json), not hardcoded — see esm2_family_floor().
 
-Phases:
+Phases (each takes --dataset; outputs go to per-dataset subdirectories):
   --phase 1   CPU: download AF2 structures, cache coordinates
   --phase 2   GPU: extract ESM-3 embeddings for both conditions
   --phase 3   CPU: run probes, evaluate decision rules, write results
 
 Usage:
-  python3 scripts/esm3_mechanism.py --phase 1        # local, CPU
-  python3 scripts/esm3_mechanism.py --phase 2        # RunPod A100
-  python3 scripts/esm3_mechanism.py --phase 3        # local, CPU
+  python3 -m esm2_mech.experiments.esm3.esm3_mechanism --phase 1 --dataset merged
+  python3 -m esm2_mech.experiments.esm3.esm3_mechanism --phase 2 --dataset merged
+  python3 -m esm2_mech.experiments.esm3.esm3_mechanism --phase 3 --dataset merged
 """
 
 from __future__ import annotations
@@ -32,7 +37,6 @@ from __future__ import annotations
 import argparse
 import functools
 import json
-import os
 import sys
 import urllib.request
 from pathlib import Path
@@ -45,74 +49,138 @@ from esm2_mech.utils.paths import (
     CACHE_DIR,
     DATA_DIR as DATA,
     ESM3_EMB_DIR,
-    ESM3_EMB_SEQ,
-    ESM3_EMB_SEQ_STRUCT,
     ESM3_MODEL,
-    ESM3_STRUCT_META,
     ESM3_STRUCT_TOKENS_JSON,
-    ESM3_VALID_IDX,
+    NONLINEAR_RESULTS_SEED_JSON,
     RESULTS_DIR as _RESULTS_DIR,
     SEQUENCES_JSON,
+    VALID_VARIANTS_JSON,
 )
 from esm2_mech.utils.io import atomic_write_json, save_npy
-from esm2_mech.utils.sequences import window_sequence
+from esm2_mech.utils.sequences import apply_missense, window_sequence
 
 AF2_DIR = CACHE_DIR / "af2_structures"
-OUT = _RESULTS_DIR / "esm3_mechanism"
 
 GERAS_VARIANTS = DATA / "gerasimavicius_variants.json"
 PFAM_JSON = DATA / "pfam_families.json"
 
-# ESM-3 embedding cache files (phase 2 output)
-EMB_SEQ = ESM3_EMB_SEQ
-EMB_SEQ_STRUCT = ESM3_EMB_SEQ_STRUCT
-EMB_VALID_IDX = ESM3_VALID_IDX
-STRUCT_META = ESM3_STRUCT_META
-
-# AF2 structure token cache (phase 1 output)
+# The structure-token cache (phase 1) is dataset-independent: it is keyed by UniProt
+# ID, so geras and merged share it and the merged run only fetches the extra proteins.
 STRUCT_TOKENS = ESM3_STRUCT_TOKENS_JSON
 AF2_API_URL = "https://alphafold.ebi.ac.uk/api/prediction/{uniprot_id}"
 
-# Match result_7 exactly
+# Per-dataset output paths. Resolved by configure_dataset() from --dataset before any
+# phase runs, so geras and merged write to separate directories and never collide.
+DATASET = None
+OUT = None
+EMB_DIR = None
+EMB_SEQ = None
+EMB_SEQ_STRUCT = None
+EMB_VALID_IDX = None
+STRUCT_META = None
+
+
+def configure_dataset(dataset: str) -> None:
+    """Set the module-level output paths for the chosen dataset (geras | merged).
+
+    Embeddings go to data/embeddings/<model>/<dataset>/, results to
+    results/<run>/esm3_mechanism/<dataset>/. Derived from the base path constants
+    so both datasets stay under the canonical locations without colliding.
+    """
+    global DATASET, OUT, EMB_DIR, EMB_SEQ, EMB_SEQ_STRUCT, EMB_VALID_IDX, STRUCT_META
+    DATASET = dataset
+    EMB_DIR = ESM3_EMB_DIR / dataset
+    EMB_SEQ = EMB_DIR / "seq_mean.npy"
+    EMB_SEQ_STRUCT = EMB_DIR / "seq_struct_mean.npy"
+    EMB_VALID_IDX = EMB_DIR / "valid_idx.npy"
+    STRUCT_META = EMB_DIR / "struct_meta.json"
+    OUT = _RESULTS_DIR / "esm3_mechanism" / dataset
+
+
+# Probe config (matches the ESM-2 mechanism classifier exactly)
 N_FOLDS = 5
 SEEDS = [0, 1, 2, 3, 4]
 
-# Decision rule thresholds (pre-registered)
-# ESM-2 5-seed family-split baseline = 0.299 ± 0.034 (result_7 multi-seed correction)
-ESM2_FAMILY_F1 = 0.299
-M1_THRESHOLD = ESM2_FAMILY_F1 + 0.05  # 0.349
-M3_THRESHOLD = 0.03  # full - seq-only gap
+# Decision rule margins (pre-registered in plan_esm3_mechanism.md)
+M1_MARGIN = 0.05  # ESM-3 must beat the ESM-2 family-split floor by this much
+M3_THRESHOLD = 0.03  # seq_struct − seq gap that counts as "structure adds signal"
+
+# Fallback ESM-2 family-split floor, used only if the matched result file is absent.
+# The live floor is read from NONLINEAR_RESULTS_SEED_JSON at runtime (esm2_family_floor).
+ESM2_FLOOR_FALLBACK = 0.299
+
+
+def esm2_family_floor() -> tuple[float, str]:
+    """Return (floor, source) for the ESM-2 family-split macro-F1 baseline.
+
+    Reads the 5-seed mean of mlp_delta_mean_family from the run's nonlinear-probe
+    result files — the matched ESM-2 probe (MLP, delta_mean, family-split) on the
+    merged set, the like-for-like comparison to ESM-3 seq. Falls back to the
+    pre-registered constant if no seed files are present (e.g. a geras-only checkout).
+    """
+    values = []
+    for seed in SEEDS:
+        path = Path(NONLINEAR_RESULTS_SEED_JSON.format(seed=seed))
+        if not path.exists():
+            continue
+        data = json.loads(path.read_text())
+        entry = data.get("mlp_delta_mean_family")
+        if entry and "macro_f1_mean" in entry:
+            values.append(entry["macro_f1_mean"])
+    if values:
+        return float(np.mean(values)), f"nonlinear_results (mlp_delta_mean_family, {len(values)}-seed mean)"
+    return ESM2_FLOOR_FALLBACK, "fallback constant (no nonlinear_results files found)"
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
 
-def load_geras() -> tuple[list[dict], np.ndarray, dict]:
-    """Load Gerasimavicius variants, collapse HI+AR → LOF, attach wt_seq, return (variants, genes, pfam_map)."""
-    variants = json.loads(GERAS_VARIANTS.read_text())
+MECH_MAP = {"GOF": "GOF", "DN": "DN", "HI": "LOF", "AR": "LOF", "LOF": "LOF"}
+
+
+def _mech3(variant: dict) -> str | None:
+    """Collapse a variant's mechanism to GOF/DN/LOF, preferring a precomputed
+    label_3class field (matches the ESM-2 classifier's _label_3class) and falling
+    back to the HI/AR→LOF map. Returns None for any mechanism outside the 3 classes."""
+    if "label_3class" in variant and variant["label_3class"] in ("GOF", "DN", "LOF"):
+        return variant["label_3class"]
+    return MECH_MAP.get(variant.get("mechanism"))
+
+
+def _load_variants(variants_path: Path) -> tuple[list[dict], np.ndarray, dict]:
+    """Load variants from a JSON file, attach mech3 label + wt_seq, drop variants
+    with no cached sequence or no 3-class label. Returns (variants, genes, pfam_map)."""
+    variants = json.loads(variants_path.read_text())
     pfam_map = json.loads(PFAM_JSON.read_text()) if PFAM_JSON.exists() else {}
     sequences = (
         json.loads(SEQUENCES_JSON.read_text()) if SEQUENCES_JSON.exists() else {}
     )
-    mech_map = {"GOF": "GOF", "DN": "DN", "HI": "LOF", "AR": "LOF", "LOF": "LOF"}
     kept = []
     skipped = 0
-    for v in variants:
-        if v.get("mechanism") not in mech_map:
+    for variant in variants:
+        mech3 = _mech3(variant)
+        if mech3 is None:
             continue
-        uid = v.get("uniprot_id", "")
+        uid = variant.get("uniprot_id", "")
         seq = sequences.get(uid)
         if not seq:
             skipped += 1
             continue
-        v = dict(v)
-        v["mech3"] = mech_map[v["mechanism"]]
-        v["wt_seq"] = seq
-        kept.append(v)
+        variant = dict(variant)
+        variant["mech3"] = mech3
+        variant["wt_seq"] = seq
+        kept.append(variant)
     if skipped:
-        print(f"  load_geras: {skipped} variants skipped (no sequence in cache)")
-    genes = np.array([v["gene"] for v in kept])
+        print(f"  {variants_path.name}: {skipped} variants skipped (no sequence in cache)")
+    genes = np.array([variant["gene"] for variant in kept])
     return kept, genes, pfam_map
+
+
+def load_dataset() -> tuple[list[dict], np.ndarray, dict]:
+    """Load the dataset selected by configure_dataset() (geras | merged)."""
+    if DATASET == "merged":
+        return _load_variants(VALID_VARIANTS_JSON)
+    return _load_variants(GERAS_VARIANTS)
 
 
 # ── Phase 1: download AF2 structures and tokenise ────────────────────────────
@@ -120,9 +188,10 @@ def load_geras() -> tuple[list[dict], np.ndarray, dict]:
 
 def phase1_structure_tokens() -> None:
     """
-    For each unique UniProt ID in Gerasimavicius, fetch AF2 structure from EBI,
-    tokenise with ESM3StructureTokenizer, cache tokens.
-    Genes without AF2 structures fall back to seq-only in phase 2.
+    For each unique UniProt ID in the selected dataset, fetch its AF2 structure from
+    EBI, tokenise with ESM3StructureTokenizer, cache tokens. The cache is keyed by
+    UniProt ID and shared across datasets, so the merged run only fetches the proteins
+    geras did not already cover. Genes without AF2 structures fall back to seq-only.
     """
     try:
         from esm.sdk.api import ESMProtein
@@ -134,7 +203,7 @@ def phase1_structure_tokens() -> None:
     AF2_DIR.mkdir(parents=True, exist_ok=True)
     OUT.mkdir(parents=True, exist_ok=True)
 
-    variants, _, _ = load_geras()
+    variants, _, _ = load_dataset()
     uniprot_ids = sorted({v["uniprot_id"] for v in variants if v.get("uniprot_id")})
     print(f"Unique UniProt IDs: {len(uniprot_ids)}")
 
@@ -240,7 +309,7 @@ def phase2_extract_embeddings(batch_size: int = 4) -> None:
     model = ESM3_sm_open_v0(device=device)
     model.eval()
 
-    variants, _, _ = load_geras()
+    variants, _, _ = load_dataset()
     n = len(variants)
     print(f"Variants to embed: {n}")
 
@@ -268,7 +337,7 @@ def phase2_extract_embeddings(batch_size: int = 4) -> None:
         print("All conditions already cached.")
         return
 
-    ESM3_EMB_DIR.mkdir(parents=True, exist_ok=True)
+    EMB_DIR.mkdir(parents=True, exist_ok=True)
 
     # Resume from checkpoints if available
     wt_embs: dict[str, list] = {}
@@ -374,9 +443,18 @@ def phase2_extract_embeddings(batch_size: int = 4) -> None:
                 f"  SKIP variant {i}: pos={pos} new_pos={new_pos} out of range for seq len {len(wt_win)}"
             )
             continue
-        mut_win = list(wt_win)
-        mut_win[new_pos - 1] = v["aa_mut"]
-        mut_win = "".join(mut_win)
+        # Apply the substitution through the shared helper so ESM-3 drops the exact
+        # same variants ESM-2 does: apply_missense returns None on a WT-reference
+        # mismatch (wrong isoform / off-by-one), preventing a delta computed on a
+        # wrong wt/mut pair. Building the mutant by blind overwrite would silently
+        # embed a corrupt pair and diverge from ESM-2's row set.
+        mut_win = apply_missense(wt_win, new_pos, v["aa_wt"], v["aa_mut"])
+        if mut_win is None:
+            print(
+                f"  SKIP variant {i}: WT mismatch at pos={pos} "
+                f"(expected {v['aa_wt']}, window has {wt_win[new_pos - 1]})"
+            )
+            continue
 
         # win_start is the window offset returned by window_sequence itself, so the
         # coordinate slice below uses exactly the same offset as the sequence window
@@ -583,7 +661,7 @@ def phase3_probes() -> None:
 
     OUT.mkdir(parents=True, exist_ok=True)
 
-    variants, genes, pfam_map = load_geras()
+    variants, genes, pfam_map = load_dataset()
     y_labels = np.array([v["mech3"] for v in variants])
     label_set = ["GOF", "DN", "LOF"]
     y_all = np.array([label_set.index(label) for label in y_labels])
@@ -711,11 +789,11 @@ def phase3_probes() -> None:
         results[cond] = cond_results
 
     # ── decision rules ─────────────────────────────────────────────────────
+    esm2_floor, floor_source = esm2_family_floor()
+    m1_threshold = esm2_floor + M1_MARGIN
     print(f"\n=== DECISION RULES ===")
-    print(
-        f"  ESM-2 baseline (result_7, 5-seed): family-split MLP F1 = {ESM2_FAMILY_F1:.3f}"
-    )
-    print(f"  M1 threshold = {M1_THRESHOLD:.3f}  (ESM2 + 0.05)")
+    print(f"  ESM-2 family-split floor = {esm2_floor:.3f}  [{floor_source}]")
+    print(f"  M1/M2 threshold = {m1_threshold:.3f}  (floor + {M1_MARGIN})")
 
     def get_f1(cond: str, cv: str) -> float:
         return results.get(cond, {}).get(cv, {}).get("mlp_f1_mean", float("nan"))
@@ -723,8 +801,8 @@ def phase3_probes() -> None:
     ss_f1 = get_f1("seq_struct", "family_split")
     seq_f1 = get_f1("seq", "family_split")
 
-    m1 = ss_f1 > M1_THRESHOLD if not np.isnan(ss_f1) else None
-    m2 = seq_f1 > M1_THRESHOLD if not np.isnan(seq_f1) else None
+    m1 = ss_f1 > m1_threshold if not np.isnan(ss_f1) else None
+    m2 = seq_f1 > m1_threshold if not np.isnan(seq_f1) else None
     m3 = (
         (ss_f1 - seq_f1) > M3_THRESHOLD
         if not np.isnan(ss_f1) and not np.isnan(seq_f1)
@@ -738,10 +816,10 @@ def phase3_probes() -> None:
         )
 
     print(
-        f"  M1: ESM-3 seq_struct family-split F1 > {M1_THRESHOLD:.3f} → {fmt(ss_f1, m1)}"
+        f"  M1: ESM-3 seq_struct family-split F1 > {m1_threshold:.3f} → {fmt(ss_f1, m1)}"
     )
     print(
-        f"  M2: ESM-3 seq        family-split F1 > {M1_THRESHOLD:.3f} → {fmt(seq_f1, m2)}"
+        f"  M2: ESM-3 seq        family-split F1 > {m1_threshold:.3f} → {fmt(seq_f1, m2)}"
     )
     gap = (
         ss_f1 - seq_f1 if not np.isnan(ss_f1) and not np.isnan(seq_f1) else float("nan")
@@ -771,19 +849,20 @@ def phase3_probes() -> None:
     struct_meta = json.loads(STRUCT_META.read_text()) if STRUCT_META.exists() else None
 
     summary = {
-        "esm2_baseline_family_split_f1": ESM2_FAMILY_F1,
-        "m1_threshold": M1_THRESHOLD,
+        "esm2_baseline_family_split_f1": esm2_floor,
+        "esm2_baseline_source": floor_source,
+        "m1_threshold": m1_threshold,
         "conditions": "seq, seq_struct (function tokens not implemented)",
         "structure_coverage": struct_meta,
         "results": results,
         "decision_rules": {
             "M1": {
-                "criterion": f"seq_struct family-split F1 > {M1_THRESHOLD:.3f}",
+                "criterion": f"seq_struct family-split F1 > {m1_threshold:.3f}",
                 "value": ss_f1,
                 "passed": m1,
             },
             "M2": {
-                "criterion": f"seq family-split F1 > {M1_THRESHOLD:.3f}",
+                "criterion": f"seq family-split F1 > {m1_threshold:.3f}",
                 "value": seq_f1,
                 "passed": m2,
             },
@@ -794,7 +873,7 @@ def phase3_probes() -> None:
             },
         },
         "model": ESM3_MODEL,
-        "dataset": "gerasimavicius",
+        "dataset": DATASET,
         "n_folds": N_FOLDS,
         "seeds": SEEDS,
     }
@@ -816,7 +895,16 @@ def main() -> None:
         help="1=structure tokens (CPU), 2=embeddings (GPU), 3=probes (CPU)",
     )
     ap.add_argument("--batch_size", type=int, default=4)
+    ap.add_argument(
+        "--dataset",
+        choices=["geras", "merged"],
+        default="geras",
+        help="geras=Gerasimavicius only (948 genes); merged=Gerasimavicius+G2P (matches ESM-2 classifier)",
+    )
     args = ap.parse_args()
+
+    configure_dataset(args.dataset)
+    print(f"Dataset: {args.dataset}  →  embeddings {EMB_DIR}, results {OUT}")
 
     if args.phase == "1":
         print("=== Phase 1: AF2 structure download + ESM-3 tokenisation ===")

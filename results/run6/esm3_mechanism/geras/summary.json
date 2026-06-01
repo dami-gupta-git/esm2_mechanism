@@ -78,5 +78,12 @@
     2,
     3,
     4
-  ]
+  ],
+  "known_issues": {
+    "status": "CONTAMINATED \u2014 do not cite as clean",
+    "detail": "93 variants embedded on a wrong wt/mut pair: phase 2 overwrote the windowed residue without a WT-reference check (apply_missense). Fixed in esm3_mechanism.py; re-run --dataset geras to regenerate cleanly.",
+    "n_contaminated_rows": 93,
+    "use_instead": "results/run6/esm3_mechanism/merged/summary.json",
+    "see": "KNOWN_ISSUES.md"
+  }
 }
