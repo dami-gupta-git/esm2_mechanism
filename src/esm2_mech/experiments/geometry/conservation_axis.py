@@ -45,7 +45,11 @@ from esm2_mech.utils.paths import (
     PFAM_JSON,
     SEQUENCES_JSON,
 )
+from joblib import Parallel, delayed
+
 from esm2_mech.embeddings.embed_variants import ESM2_MODEL_650M
+from esm2_mech.utils.metrics import mean_std_n
+from esm2_mech.utils.probes import auroc_for_clf
 from esm2_mech.utils.sequences import window_sequence
 from esm2_mech.utils.splits import family_split_cv
 
@@ -168,21 +172,32 @@ def _pathogenicity_label(label):
     raise ValueError(f"unexpected pathogenicity label {label!r} (expected 'pathogenic'/'benign')")
 
 
-def auroc_family_split(X, y, genes, pfam, seeds=range(5)):
+def _auroc_one_seed(X, y, genes, pfam, seed):
+    """Family-split AUROCs for one seed (all folds). Used by auroc_family_split."""
     from sklearn.preprocessing import StandardScaler
     from sklearn.linear_model import LogisticRegression
 
     vals = []
-    for seed in seeds:
-        for tr, te in family_split_cv(genes, pfam, seed=seed):
-            if len(set(y[tr])) < 2 or len(set(y[te])) < 2:
-                continue
-            sc = StandardScaler().fit(X[tr])
-            clf = LogisticRegression(max_iter=2000, C=1.0, random_state=seed).fit(
-                sc.transform(X[tr]), y[tr]
-            )
-            vals.append(auroc_for_clf(clf, sc.transform(X[te]), y[te]))
-    return (float(np.mean(vals)), float(np.std(vals))) if vals else (float("nan"), 0.0)
+    for tr, te in family_split_cv(genes, pfam, seed=seed):
+        if len(set(y[tr])) < 2 or len(set(y[te])) < 2:
+            continue
+        sc = StandardScaler().fit(X[tr])
+        clf = LogisticRegression(max_iter=2000, C=1.0, random_state=seed).fit(
+            sc.transform(X[tr]), y[tr]
+        )
+        vals.append(auroc_for_clf(clf, sc.transform(X[te]), y[te]))
+    return vals
+
+
+def auroc_family_split(X, y, genes, pfam, seeds=range(5), n_jobs=-1):
+    """Mean ± std family-split AUROC over seeds. Seeds run in parallel (each is
+    an independent fold set), since this is the CPU cost of Phase 2."""
+    per_seed = Parallel(n_jobs=n_jobs)(
+        delayed(_auroc_one_seed)(X, y, genes, pfam, seed) for seed in seeds
+    )
+    vals = [v for seed_vals in per_seed for v in seed_vals]
+    mean, std, _ = mean_std_n(vals)
+    return (mean, std if vals else 0.0)
 
 
 def analyse():
@@ -223,18 +238,19 @@ def analyse():
         "logP_wt": float(spearmanr(s, logP_wt).correlation),
     }
 
-    # AUROCs (family-split, 5 seeds)
+    # AUROCs (family-split, 5 seeds). Each feature set printed as it completes.
     print("\nRunning family-split AUROCs (5 seeds)...")
-    auroc = {
-        "conservation": auroc_family_split(cons_feats, y, genes, pfam),
-        "delta": auroc_family_split(delta, y, genes, pfam),
-        "conservation_plus_delta": auroc_family_split(
-            np.hstack([cons_feats, delta]), y, genes, pfam
-        ),
-        "masked_marginal_only": auroc_family_split(
-            masked_marginal.reshape(-1, 1), y, genes, pfam
-        ),
+    feature_sets = {
+        "conservation": cons_feats,
+        "delta": delta,
+        "conservation_plus_delta": np.hstack([cons_feats, delta]),
+        "masked_marginal_only": masked_marginal.reshape(-1, 1),
     }
+    auroc = {}
+    for name, feat in feature_sets.items():
+        mean, std = auroc_family_split(feat, y, genes, pfam)
+        auroc[name] = (mean, std)
+        print(f"  {name:26s} AUROC = {mean:.3f} ± {std:.3f}", flush=True)
 
     cons_a = auroc["conservation"][0]
     both_a = auroc["conservation_plus_delta"][0]
@@ -295,7 +311,7 @@ def main():
         action="store_true",
         help="Phase 1 masked-LL extraction (needs GPU)",
     )
-    ap.add_argument("--batch_size", type=int, default=64)
+    ap.add_argument("--batch_size", type=int, default=128)
     args = ap.parse_args()
 
     if args.extract:
