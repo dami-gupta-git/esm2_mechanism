@@ -141,6 +141,14 @@ majority-class value is reported here as the stricter reference.)
 
 *Gene-split (blue) versus family-split (orange) macro-F1 per feature. The annotated drop on the three absolute-embedding features is the part of the gene-split score attributable to family recognition; the floor-level features have no above-chance signal to lose.*
 
+![Per-class one-vs-rest AUROC for wt_only and delta_mean, gene-split versus family-split. The wildtype embedding scores well above chance on every class and loses some of that under family-split; the delta sits near chance on both splits.](figures/fig6_auroc_split_bars.png)
+
+*One-vs-rest AUROC per mechanism class (5-seed mean ± std). Left: `wt_only` is above the 0.50 chance line for GOF, DN, and LOF, and every class falls under family-split. Right: `delta_mean` sits near chance on both splits. This is the per-class view behind the macro-F1 figures above.*
+
+![Mechanism AUROC slopegraph from gene-split to family-split for each class, wt_only (solid) and delta_mean (dashed). The wildtype lines start high and drop; the delta lines sit near chance and barely move.](figures/fig7_auroc_split_slope.png)
+
+*The same per-class AUROC as a slopegraph: each line connects a class's gene-split score (left) to its family-split score (right). For `wt_only` (solid) every class falls when whole families are held out — the size of the drop is the family-recognition component. For `delta_mean` (dashed) the lines sit just above the 0.50 chance reference and barely move.*
+
 ---
 
 ## Reading the tables

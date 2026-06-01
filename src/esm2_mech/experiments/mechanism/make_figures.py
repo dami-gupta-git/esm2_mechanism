@@ -56,6 +56,25 @@ FAMILY_COLOR = "#DD8452"  # family-split
 # Per-class colours for the one-vs-rest AUROC figures.
 CLASS_COLORS = {"GOF": "#4C72B0", "DN": "#55A868", "LOF": "#C44E52"}
 
+# Feature groups and their colours, so bars are coloured by what kind of feature
+# they are (protein embedding / mutation-delta / non-ESM-2 baseline) rather than
+# all one colour.
+FEATURE_GROUPS = {
+    "wt_only_mean": "ESM-2 protein embedding",
+    "mut_only_mean": "ESM-2 protein embedding",
+    "wt_concat_mut": "ESM-2 protein embedding",
+    "delta_mean": "ESM-2 delta (mutation)",
+    "delta_per_residue": "ESM-2 delta (mutation)",
+    "onehot_aa": "non-ESM-2 baseline",
+    "foldx_ddg": "non-ESM-2 baseline",
+    "alphamissense": "non-ESM-2 baseline",
+}
+GROUP_COLORS = {
+    "ESM-2 protein embedding": "#4C72B0",  # blue
+    "ESM-2 delta (mutation)": "#55A868",   # green
+    "non-ESM-2 baseline": "#8172B3",       # purple
+}
+
 # Mechanism features in the order they should appear, with display labels.
 MECH_FEATURES = [
     ("wt_concat_mut", "wt_concat_mut"),
@@ -140,7 +159,9 @@ def fig_dissociation():
     ]
     fig.legend(handles, ["Gene-split", "Family-split"], loc="upper center",
                ncol=2, frameon=False, bbox_to_anchor=(0.5, 1.02))
-    fig.suptitle("Same ESM-2 delta: predicts whether, not how", y=1.08, fontsize=12)
+    fig.suptitle("Same ESM-2 delta embedding: predicts whether a mutation is harmful "
+                 "(AUROC ~0.90), not how it acts (macro-F1 at chance)",
+                 y=1.08, fontsize=11)
     fig.tight_layout()
     _save(fig, "fig1_dissociation.png")
 
@@ -179,7 +200,8 @@ def fig_family_split():
 
     ax.set_ylim(0.0, 0.75)
     ax.set_ylabel("Mechanism macro-F1")
-    ax.set_title("Gene-split vs family-split: the drop is family recognition")
+    ax.set_title("Holding out whole families removes ~0.10 macro-F1 from the protein\n"
+                 "embeddings — that drop is family recognition, not mechanism")
     # Legend from the two bar series only (labels set in _grouped_split_bars);
     # the chance line is left unlabelled so it never enters the legend.
     ax.legend(frameon=False)
@@ -193,24 +215,32 @@ def fig_probe_ranking():
     mech = _load_json(MECHANISM_AGGREGATE_JSON)["across_seed"]["gene_split"]
     mech_chance = _mechanism_chance()
 
-    rows = [(lab, mech[key]["macro_f1_seed_mean"], mech[key]["macro_f1_seed_std"])
+    rows = [(key, lab, mech[key]["macro_f1_seed_mean"], mech[key]["macro_f1_seed_std"])
             for key, lab in MECH_FEATURES]
-    rows.sort(key=lambda r: r[1])  # ascending so the best is at the top
-    labels = [r[0] for r in rows]
-    vals = [r[1] for r in rows]
-    errs = [r[2] for r in rows]
+    rows.sort(key=lambda r: r[2])  # ascending so the best is at the top
+    keys = [r[0] for r in rows]
+    labels = [r[1] for r in rows]
+    vals = [r[2] for r in rows]
+    errs = [r[3] for r in rows]
+    colors = [GROUP_COLORS[FEATURE_GROUPS[key]] for key in keys]
 
     fig, ax = plt.subplots(figsize=(9, 5))
     y = np.arange(len(labels))
-    ax.barh(y, vals, xerr=errs, color=GENE_COLOR, capsize=3)
+    ax.barh(y, vals, xerr=errs, color=colors, capsize=3)
     ax.axvline(mech_chance, ls="--", c="grey", lw=1)
-    ax.text(mech_chance + 0.005, -0.45, f"chance {mech_chance:.2f}",
+    ax.text(mech_chance + 0.005, -0.45, f"chance floor {mech_chance:.2f}",
             ha="left", va="center", fontsize=8, color="grey")
     ax.set_yticks(y)
     ax.set_yticklabels(labels)
     ax.set_xlim(0.0, 0.75)
     ax.set_xlabel("Gene-split mechanism macro-F1 (5-seed mean ± std)")
-    ax.set_title("Most features sit on the chance floor")
+    ax.set_title("Only the ESM-2 protein embeddings beat the chance floor;\n"
+                 "the mutation delta and external baselines sit on it")
+    # Legend for the feature-group colours.
+    handles = [plt.Rectangle((0, 0), 1, 1, color=color)
+               for color in GROUP_COLORS.values()]
+    ax.legend(handles, list(GROUP_COLORS.keys()), frameon=False, loc="lower right",
+              fontsize=8)
     fig.tight_layout()
     _save(fig, "fig3_probe_ranking.png")
 
@@ -257,7 +287,8 @@ def fig_within_family():
     ax.set_yticks(y)
     ax.set_yticklabels(labels, fontsize=8)
     ax.set_xlabel("delta macro-F1 − family majority baseline (5-seed mean ± std)")
-    ax.set_title("Within-family delta vs each family's own majority baseline")
+    ax.set_title("Within each family, the delta does not reliably beat the family's\n"
+                 "own majority baseline (small, noisy families)")
     # Legend marker for the degenerate (singleton-class) families.
     hatched = plt.Rectangle((0, 0), 1, 1, facecolor="lightgrey",
                             hatch="////", edgecolor="white")
@@ -316,8 +347,9 @@ def fig_family_clustering():
     ax_probe.set_ylabel("Family-probe accuracy")
     ax_probe.set_title("Can a probe name the family from the embedding?")
 
-    fig.suptitle("ESM-2 clusters by family; subtracting the wildtype removes it",
-                 y=1.02, fontsize=12)
+    fig.suptitle("ESM-2 embeddings cluster strongly by protein family; subtracting the\n"
+                 "wildtype (the delta) drops both metrics to their chance reference",
+                 y=1.05, fontsize=11)
     fig.tight_layout()
     _save(fig, "fig5_family_clustering.png")
 
@@ -356,8 +388,8 @@ def fig_auroc_split_bars():
         ax.set_title(title)
     axes[0].set_ylabel("One-vs-rest AUROC")
     axes[0].legend(frameon=False)
-    fig.suptitle("Per-class AUROC drops when whole families are held out", y=1.02,
-                 fontsize=12)
+    fig.suptitle("wt_only AUROC falls on every class under family-split; the delta\n"
+                 "stays near chance (0.50) on both splits", y=1.05, fontsize=11)
     fig.tight_layout()
     _save(fig, "fig6_auroc_split_bars.png")
 
@@ -410,7 +442,8 @@ def fig_auroc_split_slope():
     ax.set_xlim(-0.45, 1.55)
     ax.set_ylim(0.45, 0.9)
     ax.set_ylabel("One-vs-rest AUROC")
-    ax.set_title("The clean change: gene-split → family-split")
+    ax.set_title("Mechanism AUROC, gene-split → family-split:\n"
+                 "wt_only is high and drops; the delta sits near chance")
     fig.tight_layout()
     _save(fig, "fig7_auroc_split_slope.png")
 

@@ -26,3 +26,5 @@ xgboost
 
 biopython
 pytest
+sklearn
+joblib
