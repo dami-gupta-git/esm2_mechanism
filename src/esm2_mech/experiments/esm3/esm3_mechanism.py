@@ -55,6 +55,7 @@ from esm2_mech.utils.paths import (
     SEQUENCES_JSON,
 )
 from esm2_mech.utils.io import atomic_write_json, save_npy
+from esm2_mech.utils.sequences import window_sequence
 
 AF2_DIR = CACHE_DIR / "af2_structures"
 OUT = _RESULTS_DIR / "esm3_mechanism"
@@ -567,7 +568,6 @@ def _run_mlp(
 
 def phase3_probes() -> None:
     from esm2_mech.utils.splits import gene_split_cv, family_split_cv
-    from esm2_mech.utils.sequences import window_sequence
     from sklearn.linear_model import LogisticRegression
     from sklearn.preprocessing import StandardScaler
     from sklearn.metrics import f1_score, roc_auc_score

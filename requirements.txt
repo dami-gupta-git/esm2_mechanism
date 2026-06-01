@@ -17,6 +17,8 @@ tiktoken
 wandb
 tqdm
 fair-esm
+# ESM-3 SDK (EvolutionaryScale) — distinct from fair-esm; required by experiments/esm3
+esm==3.2.1.post1
 scikit-learn
 scipy
 # Evo2 (requires CUDA; install flash-attn with: pip install flash-attn --no-build-isolation)
