@@ -444,7 +444,16 @@ def phase2_extract_embeddings(batch_size: int = 4) -> None:
         mut_arr = np.array(mut_embs[cond])
         delta = mut_arr - wt_arr
         save_npy(str(conditions[cond]), delta)
-        print(f"  {cond}: delta saved → {conditions[cond]}  shape={delta.shape}")
+        # Persist the raw wt and mut arrays alongside the delta so downstream
+        # reports (mut-only probes, wt/mut geometry) can reuse them without re-embedding.
+        wt_path = str(conditions[cond]).replace(".npy", "_wt.npy")
+        mut_path = str(conditions[cond]).replace(".npy", "_mut.npy")
+        save_npy(wt_path, wt_arr)
+        save_npy(mut_path, mut_arr)
+        print(
+            f"  {cond}: delta {delta.shape} → {conditions[cond]}; "
+            f"wt → {wt_path}; mut → {mut_path}"
+        )
         for suffix in ("_ckpt_wt.npy", "_ckpt_mut.npy"):
             p = Path(str(conditions[cond]).replace(".npy", suffix))
             if p.exists():
