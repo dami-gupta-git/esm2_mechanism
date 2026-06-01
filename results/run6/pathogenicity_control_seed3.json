@@ -1,0 +1,10 @@
+{
+  "delta_mean_logreg_gene": 0.8616698742729352,
+  "delta_mean_logreg_family": 0.8575555686945758,
+  "delta_mean_mlp_gene": 0.8962523408033143,
+  "delta_mean_mlp_family": 0.8937481780071096,
+  "wt_only_logreg_gene": 0.5775426076793427,
+  "wt_only_logreg_family": 0.5490048992326899,
+  "wt_only_mlp_gene": 0.6197569814825877,
+  "wt_only_mlp_family": 0.6072896156517558
+}

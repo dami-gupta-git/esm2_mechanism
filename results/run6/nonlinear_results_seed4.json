@@ -1,0 +1,110 @@
+{
+  "mlp_delta_mean_gene": {
+    "auroc_GOF_mean": 0.6579160301389286,
+    "auroc_GOF_std": 0.051765346232832486,
+    "auroc_LOF_mean": 0.6775373352872833,
+    "auroc_LOF_std": 0.04621097071934922,
+    "auroc_DN_mean": 0.5947515140873737,
+    "auroc_DN_std": 0.06297378041401071,
+    "macro_f1_mean": 0.4087904476089788,
+    "macro_f1_std": 0.030063700335419368,
+    "per_gene_f1_mean": 0.4157775518981552,
+    "per_gene_f1_std": 0.05592048424331875
+  },
+  "mlp_delta_mean_family": {
+    "auroc_GOF_mean": 0.6358790679010481,
+    "auroc_GOF_std": 0.05006460212975968,
+    "auroc_LOF_mean": 0.6508101130762272,
+    "auroc_LOF_std": 0.046247605532685476,
+    "auroc_DN_mean": 0.5727907425625804,
+    "auroc_DN_std": 0.09850707874950251,
+    "macro_f1_mean": 0.38292338740960163,
+    "macro_f1_std": 0.02129569428065578,
+    "per_gene_f1_mean": 0.35530385239508677,
+    "per_gene_f1_std": 0.03882702284180889
+  },
+  "gbm_delta_mean": {
+    "macro_f1_mean": 0.31015449721240296,
+    "macro_f1_std": 0.021866267715674202,
+    "auroc_DN_mean": 0.5705970279025715,
+    "auroc_DN_std": 0.09376882003671443,
+    "auroc_GOF_mean": 0.6640911035819279,
+    "auroc_GOF_std": 0.07399369304555602,
+    "auroc_LOF_mean": 0.6492823928328331,
+    "auroc_LOF_std": 0.051857879608865544
+  },
+  "rf_delta_mean": {
+    "macro_f1_mean": 0.29500068156734655,
+    "macro_f1_std": 0.014021761161280758,
+    "auroc_DN_mean": 0.577598610448004,
+    "auroc_DN_std": 0.051475005127971964,
+    "auroc_GOF_mean": 0.6515713761388484,
+    "auroc_GOF_std": 0.07483900814197088,
+    "auroc_LOF_mean": 0.631627200830674,
+    "auroc_LOF_std": 0.04857064586780991
+  },
+  "knn_delta_mean": {
+    "macro_f1_mean": 0.40447387575154686,
+    "macro_f1_std": 0.021016143010589298,
+    "auroc_DN_mean": 0.5990851477274908,
+    "auroc_DN_std": 0.07667067847313629,
+    "auroc_GOF_mean": 0.6397950132521734,
+    "auroc_GOF_std": 0.05873718935024275,
+    "auroc_LOF_mean": 0.6422034004291144,
+    "auroc_LOF_std": 0.028714425402426923
+  },
+  "mlp_delta_pos_gene": {
+    "auroc_GOF_mean": 0.5683316821167068,
+    "auroc_GOF_std": 0.043869537356049565,
+    "auroc_LOF_mean": 0.6035456158547713,
+    "auroc_LOF_std": 0.02724431149159229,
+    "auroc_DN_mean": 0.603109006599138,
+    "auroc_DN_std": 0.06917909104793314,
+    "macro_f1_mean": 0.36473009316487837,
+    "macro_f1_std": 0.044764103411064245,
+    "per_gene_f1_mean": 0.37905748357917757,
+    "per_gene_f1_std": 0.033368190712388446
+  },
+  "mlp_delta_pos_family": {
+    "auroc_GOF_mean": 0.5571005227583467,
+    "auroc_GOF_std": 0.01194345495826471,
+    "auroc_LOF_mean": 0.5698469741424002,
+    "auroc_LOF_std": 0.01985980897083932,
+    "auroc_DN_mean": 0.5810757475086532,
+    "auroc_DN_std": 0.10137198458565187,
+    "macro_f1_mean": 0.3594628970842497,
+    "macro_f1_std": 0.040003076334305075,
+    "per_gene_f1_mean": 0.36303119800341516,
+    "per_gene_f1_std": 0.030709261008678688
+  },
+  "gbm_delta_pos": {
+    "macro_f1_mean": 0.3133820802626455,
+    "macro_f1_std": 0.02458641548597658,
+    "auroc_DN_mean": 0.5863843263011003,
+    "auroc_DN_std": 0.059619184219551084,
+    "auroc_GOF_mean": 0.5946291204498637,
+    "auroc_GOF_std": 0.05284821197698965,
+    "auroc_LOF_mean": 0.5934257112883021,
+    "auroc_LOF_std": 0.018362420550750574
+  },
+  "rf_delta_pos": {
+    "macro_f1_mean": 0.3017585469383254,
+    "macro_f1_std": 0.019429700984084503,
+    "auroc_DN_mean": 0.5747397577362989,
+    "auroc_DN_std": 0.06357455533349647,
+    "auroc_GOF_mean": 0.5943274795737759,
+    "auroc_GOF_std": 0.044821225274274464,
+    "auroc_LOF_mean": 0.5823944136768963,
+    "auroc_LOF_std": 0.02951161942145718
+  },
+  "knn_delta_pos": {
+    "macro_f1_mean": 0.36066309300945393,
+    "macro_f1_std": 0.02877435652458259,
+    "auroc_DN_mean": 0.5916351615567198,
+    "auroc_DN_std": 0.05367810039969848,
+    "auroc_GOF_mean": 0.5859761302874071,
+    "auroc_GOF_std": 0.03247896117072911,
+    "auroc_LOF_mean": 0.6044299299083867,
+    "auroc_LOF_std": 0.025800130018420908
+  }
+}

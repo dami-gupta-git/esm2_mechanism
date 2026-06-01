@@ -231,7 +231,6 @@ docs/interview.md
 docs/explain.txt
 docs/plans/INTERVIEW.md
 data/
-results/
 scripts_bak/
 
 # Track reports/ and scripts/ in this repo (override global gitignore)

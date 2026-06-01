@@ -1,0 +1,84 @@
+{
+  "n_variants": 17826,
+  "class_distribution": {
+    "LOF": 13594,
+    "GOF": 2682,
+    "DN": 1550
+  },
+  "n_seeds": 5,
+  "n_folds": 5,
+  "by_strategy": {
+    "most_frequent": {
+      "gene": {
+        "macro_f1_mean": 0.2882203438333615,
+        "macro_f1_std": 0.0007545889697525766,
+        "n_seeds": 5,
+        "auroc_GOF_mean": 0.5,
+        "auroc_GOF_std": 0.0,
+        "auroc_DN_mean": 0.5,
+        "auroc_DN_std": 0.0,
+        "auroc_LOF_mean": 0.5,
+        "auroc_LOF_std": 0.0
+      },
+      "family": {
+        "macro_f1_mean": 0.28841651184228245,
+        "macro_f1_std": 0.0015416935517529376,
+        "n_seeds": 5,
+        "auroc_GOF_mean": 0.5,
+        "auroc_GOF_std": 0.0,
+        "auroc_DN_mean": 0.5,
+        "auroc_DN_std": 0.0,
+        "auroc_LOF_mean": 0.5,
+        "auroc_LOF_std": 0.0
+      }
+    },
+    "prior": {
+      "gene": {
+        "macro_f1_mean": 0.2882203438333615,
+        "macro_f1_std": 0.0007545889697525766,
+        "n_seeds": 5,
+        "auroc_GOF_mean": 0.5,
+        "auroc_GOF_std": 0.0,
+        "auroc_DN_mean": 0.5,
+        "auroc_DN_std": 0.0,
+        "auroc_LOF_mean": 0.5,
+        "auroc_LOF_std": 0.0
+      },
+      "family": {
+        "macro_f1_mean": 0.28841651184228245,
+        "macro_f1_std": 0.0015416935517529376,
+        "n_seeds": 5,
+        "auroc_GOF_mean": 0.5,
+        "auroc_GOF_std": 0.0,
+        "auroc_DN_mean": 0.5,
+        "auroc_DN_std": 0.0,
+        "auroc_LOF_mean": 0.5,
+        "auroc_LOF_std": 0.0
+      }
+    },
+    "stratified": {
+      "gene": {
+        "macro_f1_mean": 0.32882929000092465,
+        "macro_f1_std": 0.0056694890716177,
+        "n_seeds": 5,
+        "auroc_GOF_mean": 0.50015630436728,
+        "auroc_GOF_std": 0.005361585620079688,
+        "auroc_DN_mean": 0.500592790628692,
+        "auroc_DN_std": 0.004070643745178746,
+        "auroc_LOF_mean": 0.5019218458957887,
+        "auroc_LOF_std": 0.005189767271291494
+      },
+      "family": {
+        "macro_f1_mean": 0.32792852513520926,
+        "macro_f1_std": 0.0013914644854067083,
+        "n_seeds": 5,
+        "auroc_GOF_mean": 0.5012431646881644,
+        "auroc_GOF_std": 0.001607345898347047,
+        "auroc_DN_mean": 0.49823513446138745,
+        "auroc_DN_std": 0.0027603229984104116,
+        "auroc_LOF_mean": 0.500107362728663,
+        "auroc_LOF_std": 0.0012702996740765467
+      }
+    }
+  }
+}

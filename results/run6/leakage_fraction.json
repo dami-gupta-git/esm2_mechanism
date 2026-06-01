@@ -1,0 +1,83 @@
+{
+  "n_variants": 17826,
+  "n_genes": 1935,
+  "n_families": 1134,
+  "n_seeds": 5,
+  "chance_macro_f1": 0.2882203438333615,
+  "class_distribution": {
+    "LOF": 13594,
+    "GOF": 2682,
+    "DN": 1550
+  },
+  "by_feature": {
+    "wt_only_mean": {
+      "gene_macro_f1_mean": 0.5450161224230408,
+      "gene_macro_f1_std": 0.024478740099025648,
+      "family_macro_f1_mean": 0.4421467990734752,
+      "family_macro_f1_std": 0.017576500853715996,
+      "drop_mean": 0.10286932334956556,
+      "leakage_fraction": 0.4005880622902884
+    },
+    "mut_only_mean": {
+      "gene_macro_f1_mean": 0.5469687383223095,
+      "gene_macro_f1_std": 0.024526129273954825,
+      "family_macro_f1_mean": 0.44260648892979476,
+      "family_macro_f1_std": 0.017059286832357006,
+      "drop_mean": 0.10436224939251476,
+      "leakage_fraction": 0.40333486744387276
+    },
+    "delta_mean": {
+      "gene_macro_f1_mean": 0.2882203438333615,
+      "gene_macro_f1_std": 0.0007545889697525766,
+      "family_macro_f1_mean": 0.28841651184228245,
+      "family_macro_f1_std": 0.0015416935517529376,
+      "drop_mean": -0.00019616800892097164,
+      "leakage_fraction": null,
+      "note": "gene-split score not meaningfully above chance; LF undefined"
+    },
+    "delta_per_residue": {
+      "gene_macro_f1_mean": 0.3155069102108933,
+      "gene_macro_f1_std": 0.005270746806459936,
+      "family_macro_f1_mean": 0.30508603881975277,
+      "family_macro_f1_std": 0.001265705563957916,
+      "drop_mean": 0.010420871391140507,
+      "leakage_fraction": 0.3819048262415759
+    },
+    "wt_concat_mut": {
+      "gene_macro_f1_mean": 0.5562429635990828,
+      "gene_macro_f1_std": 0.03095944227134096,
+      "family_macro_f1_mean": 0.45058955002567835,
+      "family_macro_f1_std": 0.024703040928607183,
+      "drop_mean": 0.10565341357340441,
+      "leakage_fraction": 0.394195884159912
+    },
+    "onehot_aa": {
+      "gene_macro_f1_mean": 0.2882203438333615,
+      "gene_macro_f1_std": 0.0007545889697525766,
+      "family_macro_f1_mean": 0.28841651184228245,
+      "family_macro_f1_std": 0.0015416935517529376,
+      "drop_mean": -0.00019616800892097164,
+      "leakage_fraction": null,
+      "note": "gene-split score not meaningfully above chance; LF undefined"
+    },
+    "foldx_ddg": {
+      "gene_macro_f1_mean": 0.2792698985802503,
+      "gene_macro_f1_std": 0.0005778596561086239,
+      "family_macro_f1_mean": 0.27878396045842097,
+      "family_macro_f1_std": 0.0008234606609672217,
+      "drop_mean": 0.0004859381218293435,
+      "leakage_fraction": null,
+      "note": "gene-split score not meaningfully above chance; LF undefined"
+    },
+    "alphamissense": {
+      "gene_macro_f1_mean": 0.2882803886919648,
+      "gene_macro_f1_std": 0.0007952769371268731,
+      "family_macro_f1_mean": 0.2895075696265067,
+      "family_macro_f1_std": 0.0013934673911652916,
+      "drop_mean": -0.0012271809345418827,
+      "leakage_fraction": null,
+      "note": "gene-split score not meaningfully above chance; LF undefined"
+    }
+  },
+  "within_family_mechanism_agreement": 0.8325537885874649
+}

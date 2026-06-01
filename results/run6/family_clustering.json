@@ -1,0 +1,84 @@
+{
+  "n_variants": 17826,
+  "n_genes": 1935,
+  "n_annotated_genes": 1902,
+  "n_unique_families": 1134,
+  "n_singleton_families": 833,
+  "by_view": {
+    "wt_mean": {
+      "silhouette_family": -0.16100309789180756,
+      "knn5_purity": 0.2538821328344247,
+      "knn5_purity_null": 0.005107577174929842,
+      "knn5_purity_z": 248.5963205798417,
+      "knn10_purity": 0.1688493919550982,
+      "knn10_purity_null": 0.004934518241347054,
+      "knn10_purity_z": 155.4334938351015,
+      "within_between_ratio": 0.5141499206634602,
+      "within_between_ratio_null": 1.0024738886741873,
+      "within_between_ratio_z": -14.984632800007228,
+      "family_probe": {
+        "accuracy": 0.6116443942530899,
+        "accuracy_std": 0.010469740909719895,
+        "macro_f1": 0.4764829945009936,
+        "majority_baseline_acc": 0.04359328272371751,
+        "n_folds": 3,
+        "n_genes": 757,
+        "n_families": 145
+      },
+      "mean_per_gene_within_between_ratio": 0.5501333415356763,
+      "frac_gene_mech_matches_family_majority": 0.8325537885874649,
+      "family_tightness_vs_mech_agreement_r": 0.000637488415208172,
+      "family_tightness_vs_mech_agreement_p": 0.983390311586021
+    },
+    "mut_mean": {
+      "silhouette_family": -0.15973134338855743,
+      "knn5_purity": 0.2548175865294668,
+      "knn5_purity_null": 0.004911131898971002,
+      "knn5_purity_z": 244.33199767848942,
+      "knn10_purity": 0.16838166510757718,
+      "knn10_purity_null": 0.004831618334892424,
+      "knn10_purity_z": 155.9240822267898,
+      "within_between_ratio": 0.5134632045883308,
+      "within_between_ratio_null": 1.0022652125281648,
+      "within_between_ratio_z": -15.071733229953397,
+      "family_probe": {
+        "accuracy": 0.6116339377208942,
+        "accuracy_std": 0.005851492607535381,
+        "macro_f1": 0.4767258166825487,
+        "majority_baseline_acc": 0.04359328272371751,
+        "n_folds": 3,
+        "n_genes": 757,
+        "n_families": 145
+      },
+      "mean_per_gene_within_between_ratio": 0.5488818093254051,
+      "frac_gene_mech_matches_family_majority": 0.8325537885874649,
+      "family_tightness_vs_mech_agreement_r": 0.0006607173873414626,
+      "family_tightness_vs_mech_agreement_p": 0.9827851754898784
+    },
+    "delta_mean": {
+      "silhouette_family": -0.38981378078460693,
+      "knn5_purity": 0.05144995322731525,
+      "knn5_purity_null": 0.005126286248830683,
+      "knn5_purity_z": 33.31376932032937,
+      "knn10_purity": 0.03479887745556595,
+      "knn10_purity_null": 0.005116931711880262,
+      "knn10_purity_z": 31.665149458948896,
+      "within_between_ratio": 0.9734111695667902,
+      "within_between_ratio_null": 0.9974736252930823,
+      "within_between_ratio_z": -1.1660302171559511,
+      "family_probe": {
+        "accuracy": 0.04359328272371751,
+        "accuracy_std": 8.133273305573299e-05,
+        "macro_f1": 0.0005761694564631499,
+        "majority_baseline_acc": 0.04359328272371751,
+        "n_folds": 3,
+        "n_genes": 757,
+        "n_families": 145
+      },
+      "mean_per_gene_within_between_ratio": 0.9181079121820167,
+      "frac_gene_mech_matches_family_majority": 0.8325537885874649,
+      "family_tightness_vs_mech_agreement_r": 0.0695406289637463,
+      "family_tightness_vs_mech_agreement_p": 0.022980231727199454
+    }
+  }
+}
