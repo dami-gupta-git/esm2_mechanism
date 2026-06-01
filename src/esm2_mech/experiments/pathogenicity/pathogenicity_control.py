@@ -41,7 +41,6 @@ from __future__ import annotations
 import argparse
 import functools
 import gzip
-import hashlib
 import io
 import json
 import re
@@ -53,7 +52,7 @@ from pathlib import Path
 import numpy as np
 from joblib import Parallel, delayed
 
-from esm2_mech.utils.data import load_variants
+from esm2_mech.utils.data import load_variants, variants_fingerprint
 from esm2_mech.utils.embed import get_esm2_embeddings_for_pairs
 from esm2_mech.utils.io import atomic_write_json, save_npy
 from esm2_mech.utils.paths import (
@@ -99,22 +98,6 @@ AA3 = {
     "Ser": "S", "Thr": "T", "Trp": "W", "Tyr": "Y", "Val": "V",
 }
 HGVSP_PAT = re.compile(r"p\.([A-Z][a-z]{2})(\d+)([A-Z][a-z]{2})(?=[^a-zA-Z]|$)")
-
-
-def _variants_fingerprint(variants):
-    """Order-sensitive content hash of the variant identities.
-
-    Pins which variants (and in which row order) a downstream artifact was built
-    from, so a count-collision after a seed/cap change is detected rather than
-    silently reusing stale embeddings. The fields chosen uniquely identify a
-    variant and its embedding inputs.
-    """
-    digest = hashlib.sha256()
-    for v in variants:
-        key = f"{v['gene']}|{v['uniprot_id']}|{v['aa_pos']}|{v['aa_wt']}|{v['aa_mut']}|{v['label']}"
-        digest.update(key.encode())
-        digest.update(b"\x00")
-    return digest.hexdigest()
 
 
 # ===========================================================================
@@ -317,7 +300,7 @@ def embed_phase(variants, model, batch_size):
     valid_indices, valid, wt_seqs, mut_seqs, positions = _build_valid_pairs_indexed(
         variants, seq_cache
     )
-    valid_fingerprint = _variants_fingerprint(valid)
+    valid_fingerprint = variants_fingerprint(valid)
 
     if _embeddings_complete(valid_fingerprint, len(valid)):
         print("  Embeddings already complete — skipping extraction.")
@@ -371,7 +354,7 @@ def probe_phase(variants, n_seeds, n_jobs=-1):
     # Verify by content, not count: the embeddings must have been built from
     # exactly these variants in this order. A seed/cap change that yields a
     # colliding count would otherwise misalign labels/genes to embedding rows.
-    if _variants_fingerprint(valid) != meta.get("fingerprint"):
+    if variants_fingerprint(valid) != meta.get("fingerprint"):
         raise ValueError(
             "Embedding fingerprint does not match the current variant set — the "
             f"embedding cache is stale. Delete {PATH_EMB_META.name} and the "

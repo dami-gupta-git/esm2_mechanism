@@ -8,6 +8,19 @@ from sklearn.metrics import f1_score, roc_auc_score
 from esm2_mech.utils.constants import MECHANISM_CLASSES
 
 
+def mean_std_n(values) -> tuple[float, float, int]:
+    """NaN/None-safe (mean, std, n) of a list of scalars.
+
+    Filters out None and NaN, then returns the mean, population std, and count of
+    the surviving values. Empty -> (nan, nan, 0). Shared by the geometry probes,
+    which each previously inlined this reducer.
+    """
+    clean = [v for v in values if v is not None and not np.isnan(v)]
+    if not clean:
+        return float("nan"), float("nan"), 0
+    return float(np.mean(clean)), float(np.std(clean)), len(clean)
+
+
 def compute_metrics(
     y_true: np.ndarray,
     y_pred: np.ndarray,

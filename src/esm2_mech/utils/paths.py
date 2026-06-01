@@ -13,8 +13,11 @@ RUN_NAME="run6"
 DATA_DIR = PROJECT_ROOT / "data"
 RESULTS_DIR = PROJECT_ROOT / "results" / RUN_NAME
 REPORTS_DIR = PROJECT_ROOT / "reports"
+RUN_REPORTS_DIR = REPORTS_DIR / RUN_NAME
+FIGURES_DIR = RUN_REPORTS_DIR / "figures"
 
 # ── Result files written under RESULTS_DIR ───────────────────────────────────
+MECHANISM_AGGREGATE_JSON = RESULTS_DIR / "aggregate.json"
 FAMILY_CLUSTERING_JSON = RESULTS_DIR / "family_clustering.json"
 NAIVE_BASELINE_JSON = RESULTS_DIR / "naive_baseline.json"
 PATHOGENICITY_CONTROL_JSON = RESULTS_DIR / "pathogenicity_control.json"
@@ -23,6 +26,15 @@ LEAKAGE_FRACTION_JSON = RESULTS_DIR / "leakage_fraction.json"
 # Format with .format(seed=N).
 PATHOGENICITY_CONTROL_SEED_JSON = str(RESULTS_DIR / "pathogenicity_control_seed{seed}.json")
 WITHIN_FAMILY_MECHANISM_JSON = RESULTS_DIR / "within_family_mechanism.json"
+
+# ── Geometry experiments (magnitude/direction, result_23) ────────────────────
+GEOMETRY_RESULTS_DIR = RESULTS_DIR / "magnitude_direction"
+MAGNITUDE_DIRECTION_JSON = GEOMETRY_RESULTS_DIR / "probe_results.json"
+DIRECTION_GEOMETRY_JSON = GEOMETRY_RESULTS_DIR / "geometry_results.json"
+TRANSFER_CONTRAST_JSON = GEOMETRY_RESULTS_DIR / "transfer_contrast.json"
+CONSERVATION_AXIS_JSON = GEOMETRY_RESULTS_DIR / "conservation_axis.json"
+PROBE4_AXIS_IDENTITY_JSON = GEOMETRY_RESULTS_DIR / "probe4_axis_identity.json"
+
 PAPERS_DIR = PROJECT_ROOT / "papers"
 DOCS_DIR = PROJECT_ROOT / "docs"
 
@@ -74,6 +86,16 @@ EMB_MUT_POS = EMB_DIR / "embeddings_mut_pos.npy"
 PATH_EMB_WT_MEAN = EMB_DIR / "pathogenicity_wt_mean.npy"
 PATH_EMB_MUT_MEAN = EMB_DIR / "pathogenicity_mut_mean.npy"
 PATH_EMB_META = EMB_DIR / "pathogenicity_meta.json"
+
+# ── Canonical pathogenicity set + masked-LL conservation (geometry experiments) ─
+# The n=16,576 canonical pathogenicity variant set whose embeddings are PATH_EMB_*.
+# Row-aligned to PATH_EMB_WT_MEAN / PATH_EMB_MUT_MEAN.
+PATHOGENICITY_CANONICAL_VARIANTS_JSON = DATA_DIR / "pathogenicity_valid_variants_canonical.json"
+# Masked-LM conservation readouts per canonical variant: [logP_wt, logP_mut, entropy].
+CONSERVATION_PATHOGENICITY_NPY = DATA_DIR / "conservation_pathogenicity.npy"
+CONSERVATION_PATHOGENICITY_META_JSON = DATA_DIR / "conservation_pathogenicity_meta.json"
+# Megascale S1724 stability variants (Probe C / stability transfer).
+MEGASCALE_VARIANTS_JSON = DATA_DIR / "megascale_variants.json"
 
 # ── Megascale S1724 embeddings (megascale_stability.py) ──────────────────────
 MEGASCALE_EMB_WT_MEAN = EMB_DIR / "megascale_wt_mean.npy"

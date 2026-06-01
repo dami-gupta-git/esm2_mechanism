@@ -133,6 +133,14 @@ performing at the majority-class baseline. (A frequency-weighted random classifi
 slightly higher 0.329, as occasional correct GOF/DN predictions raise their per-class F1; the
 majority-class value is reported here as the stricter reference.)
 
+![Per-feature gene-split mechanism macro-F1 against the chance floor. The three absolute-embedding features clear the floor; the delta, one-hot, FoldX, and AlphaMissense features sit on it.](figures/fig3_probe_ranking.png)
+
+*Gene-split mechanism macro-F1 by feature (5-seed mean ± std). The dashed line is the measured majority-class floor (0.288). Only the wildtype, mutant, and concatenated embeddings clear it; the mutation-only features sit on the floor.*
+
+![Per-feature gene-split versus family-split mechanism macro-F1, with the drop annotated. The absolute-embedding features lose about 0.10 when whole families are held out; the floor-level features do not move.](figures/fig2_family_split.png)
+
+*Gene-split (blue) versus family-split (orange) macro-F1 per feature. The annotated drop on the three absolute-embedding features is the part of the gene-split score attributable to family recognition; the floor-level features have no above-chance signal to lose.*
+
 ---
 
 ## Reading the tables

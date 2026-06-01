@@ -28,33 +28,35 @@ Usage:
 import argparse
 import json
 import os
-import sys
 import numpy as np
 import functools
 
 print = functools.partial(print, flush=True)
 
+from esm2_mech.utils.io import atomic_write_json, save_npy
 from esm2_mech.utils.paths import (
-    DATA_DIR as _DATA_DIR,
-    RESULTS_DIR as _RESULTS_DIR,
+    GEOMETRY_RESULTS_DIR,
+    CONSERVATION_AXIS_JSON,
+    CONSERVATION_PATHOGENICITY_NPY,
+    CONSERVATION_PATHOGENICITY_META_JSON,
     PATH_EMB_WT_MEAN,
     PATH_EMB_MUT_MEAN,
+    PATHOGENICITY_CANONICAL_VARIANTS_JSON,
+    PFAM_JSON,
+    SEQUENCES_JSON,
 )
 from esm2_mech.embeddings.embed_variants import ESM2_MODEL_650M
 from esm2_mech.utils.sequences import window_sequence
+from esm2_mech.utils.splits import family_split_cv
 
-DATA = str(_DATA_DIR)
-OUT = str(_RESULTS_DIR / "magnitude_direction")
-os.makedirs(OUT, exist_ok=True)
-# multiseed_v1 is imported lazily inside Phase-2 analysis (Phase-1 extraction does
-# not need it, so the pod only needs experiment.py + fair-esm to run --extract).
+GEOMETRY_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
-VARIANTS = os.path.join(DATA, "pathogenicity_valid_variants_canonical.json")
+VARIANTS = PATHOGENICITY_CANONICAL_VARIANTS_JSON
 WT_EMB = PATH_EMB_WT_MEAN
 MUT_EMB = PATH_EMB_MUT_MEAN
-SEQS = os.path.join(DATA, "sequences.json")
-CONS_CACHE = os.path.join(DATA, "conservation_pathogenicity.npy")
-CONS_META = os.path.join(DATA, "conservation_pathogenicity_meta.json")
+SEQS = SEQUENCES_JSON
+CONS_CACHE = CONSERVATION_PATHOGENICITY_NPY
+CONS_META = CONSERVATION_PATHOGENICITY_META_JSON
 
 AA_ORDER = "ACDEFGHIKLMNPQRSTVWY"
 
@@ -83,7 +85,7 @@ def extract_conservation(variants, seqs, batch_size=64, ckpt_every=2000):
     N = len(variants)
     out = np.full((N, 3), np.nan, dtype=np.float32)
     done = 0
-    if os.path.exists(CONS_CACHE):
+    if CONS_CACHE.exists():
         cached = np.load(CONS_CACHE)
         if len(cached) == N:
             out = cached
@@ -137,20 +139,19 @@ def extract_conservation(variants, seqs, batch_size=64, ckpt_every=2000):
             out[idx, 2] = entropy
         done = int(np.isfinite(out[:, 0]).sum())
         if (bs // batch_size) % max(1, (ckpt_every // batch_size)) == 0:
-            np.save(CONS_CACHE, out)
+            save_npy(CONS_CACHE, out)
             print(f"  {done}/{N} done (checkpointed)")
 
-    np.save(CONS_CACHE, out)
-    with open(CONS_META, "w") as _f:
-        json.dump(
-            {
-                "n": N,
-                "coverage": done,
-                "features": ["logP_wt", "logP_mut", "entropy"],
-                "model": ESM2_MODEL_650M,
-            },
-            _f,
-        )
+    save_npy(CONS_CACHE, out)
+    atomic_write_json(
+        CONS_META,
+        {
+            "n": N,
+            "coverage": done,
+            "features": ["logP_wt", "logP_mut", "entropy"],
+            "model": ESM2_MODEL_650M,
+        },
+    )
     print(f"Saved {CONS_CACHE}: {done}/{N} variants with conservation scores")
     return out
 
@@ -158,23 +159,29 @@ def extract_conservation(variants, seqs, batch_size=64, ckpt_every=2000):
 # ── Phase 2: analysis (CPU) ──────────────────────────────────────────────────
 
 
+def _pathogenicity_label(label):
+    """Map a canonical-set label to 1 (pathogenic) / 0 (benign); never a catch-all."""
+    if label == "pathogenic":
+        return 1
+    if label == "benign":
+        return 0
+    raise ValueError(f"unexpected pathogenicity label {label!r} (expected 'pathogenic'/'benign')")
+
+
 def auroc_family_split(X, y, genes, pfam, seeds=range(5)):
-    import mechanism.multiseed_v1 as ms
     from sklearn.preprocessing import StandardScaler
     from sklearn.linear_model import LogisticRegression
-    from sklearn.metrics import roc_auc_score
 
     vals = []
     for seed in seeds:
-        for tr, te in ms.family_split_cv(genes, pfam, seed=seed):
+        for tr, te in family_split_cv(genes, pfam, seed=seed):
             if len(set(y[tr])) < 2 or len(set(y[te])) < 2:
                 continue
             sc = StandardScaler().fit(X[tr])
             clf = LogisticRegression(max_iter=2000, C=1.0, random_state=seed).fit(
                 sc.transform(X[tr]), y[tr]
             )
-            p = clf.predict_proba(sc.transform(X[te]))[:, list(clf.classes_).index(1)]
-            vals.append(roc_auc_score(y[te], p))
+            vals.append(auroc_for_clf(clf, sc.transform(X[te]), y[te]))
     return (float(np.mean(vals)), float(np.std(vals))) if vals else (float("nan"), 0.0)
 
 
@@ -183,22 +190,17 @@ def analyse():
     from sklearn.linear_model import LogisticRegression
     from scipy.stats import spearmanr
 
-    if not os.path.exists(CONS_CACHE):
-        raise FileNotFoundError(
-            f"{CONS_CACHE} missing — run Phase 1 first: "
-            f"python3 scripts/conservation_axis.py --extract (needs GPU)"
-        )
-
-    import mechanism.multiseed_v1 as ms
+    if not CONS_CACHE.exists():
+        raise FileNotFoundError(CONS_CACHE)
 
     with open(VARIANTS) as _f:
         variants = json.load(_f)
     delta = np.load(MUT_EMB) - np.load(WT_EMB)
     cons = np.load(CONS_CACHE)
-    with open(ms.PFAM_JSON) as _f:
+    with open(PFAM_JSON) as _f:
         pfam = json.load(_f)
     genes_all = np.array([v["gene"] for v in variants])
-    y_all = np.array([1 if v["label"] == "pathogenic" else 0 for v in variants])
+    y_all = np.array([_pathogenicity_label(v["label"]) for v in variants])
 
     valid = np.isfinite(cons).all(axis=1)
     print(f"Conservation coverage: {valid.sum()}/{len(valid)} variants")
@@ -264,8 +266,7 @@ def analyse():
         "gates": gates,
         "thresholds": {"K1": K1_CONS_MIN, "K2": K2_ADD_MIN},
     }
-    with open(os.path.join(OUT, "conservation_axis.json"), "w") as _f:
-        json.dump(result, _f, indent=2)
+    atomic_write_json(CONSERVATION_AXIS_JSON, result)
 
     print("\n" + "=" * 60)
     print("CONSERVATION DECIDER")
@@ -284,7 +285,7 @@ def analyse():
         f"  K2 delta adds over conservation >= {K2_ADD_MIN}: {both_a - cons_a:+.3f} -> "
         f"{'PASS (NOVEL: embedding beyond conservation)' if gates['K2_delta_beyond_conservation']['passed'] else 'FAIL (axis ~ conservation)'}"
     )
-    print(f"\nResults -> {os.path.join(OUT, 'conservation_axis.json')}")
+    print(f"\nResults -> {CONSERVATION_AXIS_JSON}")
 
 
 def main():
@@ -307,12 +308,12 @@ def main():
 
     # Phase 2 needs the cached embeddings; skip cleanly if they aren't here
     # (e.g. running --extract on a GPU pod that doesn't have the embeddings).
-    if os.path.exists(MUT_EMB) and os.path.exists(CONS_CACHE):
+    if MUT_EMB.exists() and CONS_CACHE.exists():
         analyse()
     else:
         print(
             "Skipping Phase 2 analysis: "
-            f"{'embeddings' if not os.path.exists(MUT_EMB) else 'conservation cache'} not present here. "
+            f"{'embeddings' if not MUT_EMB.exists() else 'conservation cache'} not present here. "
             "Run Phase 2 where the embeddings live."
         )
 

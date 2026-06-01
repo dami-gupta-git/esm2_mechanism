@@ -86,6 +86,10 @@ and has std < 0.10 (the bar for "stable, real-looking signal").
 Eight further families (PF00096, PF00250, PF00041, PF00008, PF00106, PF07714, PF00076, PF12662)
 produced no scorable fold across all seeds and are omitted — see "Why some cells are blank."
 
+![Per-family within-family delta macro-F1 minus each family's own majority baseline. Most families straddle zero; the few clear positives are small or single-gene-class families.](figures/fig4_within_family.png)
+
+*Per-family delta (MLP) macro-F1 minus that family's own majority baseline, ordered by the gap (5-seed mean ± std). Bars to the right of zero exceed the family's baseline. The families are small (6–33 genes), so per-family scores are dominated by fold assignment; hatched families contain a mechanism class held by a single gene and have a degenerate score.*
+
 ---
 
 ## Reading the table

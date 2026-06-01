@@ -21,41 +21,55 @@ Pure CPU analysis of the canonical pathogenicity embeddings (n=16,576). No GPU.
 
 Usage:
   cd esm2_mechanism
-  python3 scripts/direction_geometry.py
+  python -m esm2_mech.experiments.geometry.direction_geometry
 """
 
 import json
-import os
-import sys
 import numpy as np
 import functools
 
 print = functools.partial(print, flush=True)
 
+from esm2_mech.utils.io import atomic_write_json
 from esm2_mech.utils.paths import (
-    DATA_DIR as _DATA_DIR,
-    RESULTS_DIR as _RESULTS_DIR,
+    GEOMETRY_RESULTS_DIR,
+    DIRECTION_GEOMETRY_JSON,
     PATH_EMB_WT_MEAN,
     PATH_EMB_MUT_MEAN,
+    PATHOGENICITY_CANONICAL_VARIANTS_JSON,
+    PFAM_JSON,
 )
-from esm2_mech.utils.paths import PFAM_JSON
+from esm2_mech.utils.metrics import mean_std_n
+from esm2_mech.utils.probes import auroc_for_clf
 from esm2_mech.utils.splits import family_split_cv
 
-DATA = str(_DATA_DIR)
-OUT = str(_RESULTS_DIR / "magnitude_direction")
-os.makedirs(OUT, exist_ok=True)
+GEOMETRY_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
-PATH_VARIANTS = os.path.join(DATA, "pathogenicity_valid_variants_canonical.json")
+PATH_VARIANTS = PATHOGENICITY_CANONICAL_VARIANTS_JSON
 PATH_WT = PATH_EMB_WT_MEAN
 PATH_MUT = PATH_EMB_MUT_MEAN
+
+
+def _pathogenicity_label(label):
+    """Map a canonical-set label to 1 (pathogenic) / 0 (benign); never a catch-all."""
+    if label == "pathogenic":
+        return 1
+    if label == "benign":
+        return 0
+    raise ValueError(f"unexpected pathogenicity label {label!r} (expected 'pathogenic'/'benign')")
 
 
 def load():
     with open(PATH_VARIANTS) as _f:
         variants = json.load(_f)
     delta = np.load(PATH_MUT) - np.load(PATH_WT)
+    if len(variants) != delta.shape[0]:
+        raise ValueError(
+            f"variant/embedding row mismatch: {len(variants)} variants vs "
+            f"{delta.shape[0]} embedding rows — canonical file is not row-aligned."
+        )
     genes = np.array([v["gene"] for v in variants])
-    y = np.array([1 if v["label"] == "pathogenic" else 0 for v in variants])
+    y = np.array([_pathogenicity_label(v["label"]) for v in variants])
     with open(PFAM_JSON) as _f:
         pfam = json.load(_f)
     fam = np.array([(pfam.get(g) or "NA") for g in genes])  # coerce missing/None
@@ -77,15 +91,6 @@ def fit_direction(X, y, seed=0):
     w = clf.coef_.ravel()
     w_unit = w / (np.linalg.norm(w) + 1e-12)
     return w_unit, clf
-
-
-def auroc(clf, X, y):
-    from sklearn.metrics import roc_auc_score
-
-    if len(set(y)) < 2:
-        return np.nan
-    p = clf.predict_proba(X)[:, list(clf.classes_).index(1)]
-    return float(roc_auc_score(y, p))
 
 
 # ── Probe 1: rank-1 / low-rank test ──────────────────────────────────────────
@@ -120,7 +125,7 @@ def probe1_rank(delta, y, genes, pfam_map, k_max=5, seeds=(0, 1, 2, 3, 4)):
             clf = LogisticRegression(max_iter=2000, C=1.0, random_state=seed).fit(
                 Xtr, ytr
             )
-            decay[0].append(auroc(clf, Xte, yte))
+            decay[0].append(auroc_for_clf(clf, Xte, yte))
 
             # 1-D projection onto first fitted direction
             w1 = clf.coef_.ravel()
@@ -130,7 +135,7 @@ def probe1_rank(delta, y, genes, pfam_map, k_max=5, seeds=(0, 1, 2, 3, 4)):
             clf1 = LogisticRegression(max_iter=2000, C=1.0, random_state=seed).fit(
                 s_tr, ytr
             )
-            proj1.append(auroc(clf1, s_te, yte))
+            proj1.append(auroc_for_clf(clf1, s_te, yte))
 
             # iteratively remove directions, refit on the residual
             Rtr, Rte = Xtr.copy(), Xte.copy()
@@ -145,11 +150,11 @@ def probe1_rank(delta, y, genes, pfam_map, k_max=5, seeds=(0, 1, 2, 3, 4)):
                 ck2 = LogisticRegression(max_iter=2000, C=1.0, random_state=seed).fit(
                     Rtr, ytr
                 )
-                decay[k].append(auroc(ck2, Rte, yte))
+                decay[k].append(auroc_for_clf(ck2, Rte, yte))
 
     def agg(v):
-        v = [x for x in v if x is not None and not np.isnan(x)]
-        return (float(np.mean(v)), float(np.std(v))) if v else (float("nan"), 0.0)
+        mean, std, n = mean_std_n(v)
+        return (mean, std if n else 0.0)
 
     out = {
         "full_auroc": agg(decay[0]),
@@ -207,7 +212,7 @@ def probe2_universal(delta, y, genes, fam, n_partitions=10, seeds=(0,)):
             wA, clfA = fit_direction(Xs[a], yy[a], seed=seed)
             wB, clfB = fit_direction(Xs[b], yy[b], seed=seed)
             cos_obs.append(float(np.dot(wA, wB)))
-            transfer.append(auroc(clfA, Xs[b], yy[b]))  # A's direction on B
+            transfer.append(auroc_for_clf(clfA, Xs[b], yy[b]))  # A's direction on B
 
             # label-shuffled null (shuffle y within each half)
             yA_s = yy[a].copy()
@@ -220,8 +225,8 @@ def probe2_universal(delta, y, genes, fam, n_partitions=10, seeds=(0,)):
             part += 1
 
     def agg(v):
-        v = [x for x in v if x is not None and not np.isnan(x)]
-        return (float(np.mean(v)), float(np.std(v))) if v else (float("nan"), 0.0)
+        mean, std, n = mean_std_n(v)
+        return (mean, std if n else 0.0)
 
     out = {
         "n_partitions": part,
@@ -247,10 +252,8 @@ def main():
     r2 = probe2_universal(delta, y, genes, fam)
 
     result = {"probe1_rank": r1, "probe2_universal": r2, "n_variants": int(len(y))}
-    out_path = os.path.join(OUT, "geometry_results.json")
-    with open(out_path, "w") as _f:
-        json.dump(result, _f, indent=2)
-    print(f"\nResults -> {out_path}")
+    atomic_write_json(DIRECTION_GEOMETRY_JSON, result)
+    print(f"\nResults -> {DIRECTION_GEOMETRY_JSON}")
 
     print("\n" + "=" * 60)
     print("READ")

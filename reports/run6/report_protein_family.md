@@ -90,6 +90,10 @@ embedding, so it is identical across all three views. The value is partly inflat
 imbalance — LOF is 76% of variants, so families skew LOF and "matching the majority" is easier
 than it would be for balanced classes.
 
+![Family clustering by embedding view: the wildtype and mutant embeddings cluster strongly by family, while the delta collapses to the chance reference on both metrics.](figures/fig5_family_clustering.png)
+
+*Two label-free family-recognition metrics across the three views. Left: k=5 family purity against the shuffled-label null (0.005). Right: linear family-probe accuracy against the majority-family baseline (0.044). The wildtype and mutant embeddings cluster strongly by family; the delta falls to the reference value in both panels, so subtracting the wildtype removes the family signal.*
+
 ---
 
 ## Reading the tables

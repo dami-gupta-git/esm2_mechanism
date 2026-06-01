@@ -26,38 +26,37 @@ Decision rules (pre-registered, family-split):
 All embeddings are cached locally — no GPU required.
 
 Usage:
-  cd esm2_mechanism
-  python3 scripts/magnitude_direction.py
-  python3 scripts/magnitude_direction.py --seeds 0 1 2   # fewer seeds, faster
+  python -m esm2_mech.experiments.geometry.magnitude_direction
+  python -m esm2_mech.experiments.geometry.magnitude_direction --seeds 0 1 2  # fewer seeds, faster
 """
 
 import argparse
 import json
-import os
-import sys
 import numpy as np
 from collections import defaultdict
 import functools
 
 print = functools.partial(print, flush=True)
 
+from esm2_mech.utils.io import atomic_write_json
 from esm2_mech.utils.paths import (
-    DATA_DIR as _DATA_DIR,
-    RESULTS_DIR as _RESULTS_DIR,
+    GEOMETRY_RESULTS_DIR,
+    MAGNITUDE_DIRECTION_JSON,
+    MEGASCALE_VARIANTS_JSON,
     PATH_EMB_WT_MEAN,
     PATH_EMB_MUT_MEAN,
+    PATHOGENICITY_CANONICAL_VARIANTS_JSON,
+    PFAM_JSON,
     MEGASCALE_EMB_WT_MEAN,
     MEGASCALE_EMB_MUT_MEAN,
 )
-
-from esm2_mech.utils.paths import PFAM_JSON
+from esm2_mech.experiments.mechanism.loaders import load_geras
+from esm2_mech.utils.metrics import mean_std_n
 from esm2_mech.utils.splits import gene_split_cv, family_split_cv
 from esm2_mech.utils.probes import run_mlp_binary_cv, run_mlp_probe_cv, run_logreg_cv
 from esm2_mech.utils.probes import run_logreg_binary_cv
 
-DATA = str(_DATA_DIR)
-OUT = str(_RESULTS_DIR / "magnitude_direction")
-os.makedirs(OUT, exist_ok=True)
+GEOMETRY_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
 # ── Pre-registered thresholds ────────────────────────────────────────────────
 P1_PATH_MAG_MIN = 0.85  # magnitude-only pathogenicity AUROC, family-split
@@ -69,25 +68,45 @@ P4_MAG_SPEARMAN_MIN = 0.30  # S1724 Spearman(||d||, |ddG|)
 # S1724 caches produced by megascale_stability.py (result_21)
 S1724_WT_EMB = MEGASCALE_EMB_WT_MEAN
 S1724_MUT_EMB = MEGASCALE_EMB_MUT_MEAN
-S1724_VARIANTS = os.path.join(DATA, "megascale_variants.json")
+S1724_VARIANTS = MEGASCALE_VARIANTS_JSON
 
 # Canonical pathogenicity set (the one result_6's 0.884 family-split AUROC was
-# computed on — n=16,576). NOT the older n17259 extraction in multiseed_v1.
-PATH_CANON_VARIANTS = os.path.join(DATA, "pathogenicity_valid_variants_canonical.json")
+# computed on — n=16,576).
+PATH_CANON_VARIANTS = PATHOGENICITY_CANONICAL_VARIANTS_JSON
 PATH_CANON_WT_EMB = PATH_EMB_WT_MEAN
 PATH_CANON_MUT_EMB = PATH_EMB_MUT_MEAN
 
 
+def _pathogenicity_label(label):
+    """Map a canonical-set label to 1 (pathogenic) / 0 (benign).
+
+    Explicit lookup — never a catch-all `else 0` that could silently absorb a
+    missing or unexpected label as benign.
+    """
+    if label == "pathogenic":
+        return 1
+    if label == "benign":
+        return 0
+    raise ValueError(f"unexpected pathogenicity label {label!r} (expected 'pathogenic'/'benign')")
+
+
 def load_pathogenicity_canonical():
-    """Load the canonical n=16,576 pathogenicity set (matches result_6)."""
+    """Load the canonical pathogenicity set (row-aligned to PATH_EMB_*; matches result_6)."""
     with open(PATH_CANON_VARIANTS) as _f:
         variants = json.load(_f)
     wt = np.load(PATH_CANON_WT_EMB)
     mut = np.load(PATH_CANON_MUT_EMB)
     delta = mut - wt
+    # The canonical variant list is guaranteed row-aligned to the embeddings by
+    # build_canonical_pathogenicity (fingerprint-checked). Assert it anyway so a
+    # stale/mismatched file fails loudly rather than misaligning labels.
+    if not (len(variants) == delta.shape[0]):
+        raise ValueError(
+            f"variant/embedding row mismatch: {len(variants)} variants vs "
+            f"{delta.shape[0]} embedding rows — canonical file is not row-aligned."
+        )
     genes = np.array([v["gene"] for v in variants])
-    y = np.array([1 if v["label"] == "pathogenic" else 0 for v in variants])
-    assert len(delta) == len(y), f"path emb/variant mismatch: {len(delta)} vs {len(y)}"
+    y = np.array([_pathogenicity_label(v["label"]) for v in variants])
     print(
         f"  Pathogenicity (canonical): {len(variants)} variants, "
         f"{len(set(genes))} genes, {int(y.sum())} path / {int((1-y).sum())} benign"
@@ -108,13 +127,25 @@ def decompose(delta):
 
 # ── Multiclass logreg probe (macro-F1 + per-class AUROC) ─────────────────────
 
+# Minimum distinct classes a fold's train split must have to be scored. A
+# classifier only needs two classes to fit, so a fold where a rare class (e.g.
+# DN) falls entirely in test is still valid. This single constant is shared by
+# the logreg probe (via run_logreg_cv), the MLP probe (already skips at < 2), and
+# the chance floor below — so the probe and its baseline are averaged over the
+# SAME folds (CLAUDE.md: flags and computed values must use the same condition).
+MIN_TRAIN_CLASSES = 2
+
 
 def run_logreg_multi(X, labels, splits, seed=42):
-    return run_logreg_cv(X, labels, splits, seed=seed)
+    return run_logreg_cv(X, labels, splits, seed=seed, min_train_classes=MIN_TRAIN_CLASSES)
 
 
 def chance_floor_multi(labels, splits):
-    """Stratified-random macro-F1 baseline (DummyClassifier) for the same splits."""
+    """Stratified-random macro-F1 baseline (DummyClassifier) for the same splits.
+
+    Skips a fold on the same MIN_TRAIN_CLASSES condition the probes use, so the
+    floor and the probe are averaged over an identical fold set.
+    """
     from sklearn.dummy import DummyClassifier
     from sklearn.preprocessing import LabelEncoder
     from sklearn.metrics import f1_score
@@ -123,7 +154,7 @@ def chance_floor_multi(labels, splits):
     y = le.fit_transform(labels)
     f1s = []
     for tr, te in splits:
-        if len(set(y[tr])) < 2:
+        if len(set(y[tr])) < MIN_TRAIN_CLASSES:
             continue
         d = DummyClassifier(strategy="stratified", random_state=0)
         d.fit(np.zeros((len(tr), 1)), y[tr])
@@ -136,10 +167,8 @@ def chance_floor_multi(labels, splits):
 
 
 def agg_seeds(per_seed_vals):
-    vals = [v for v in per_seed_vals if v is not None and not np.isnan(v)]
-    if not vals:
-        return {"mean": float("nan"), "std": float("nan"), "n": 0}
-    return {"mean": float(np.mean(vals)), "std": float(np.std(vals)), "n": len(vals)}
+    mean, std, n = mean_std_n(per_seed_vals)
+    return {"mean": mean, "std": std, "n": n}
 
 
 # ── Probe A + B: pathogenicity (binary) ──────────────────────────────────────
@@ -231,9 +260,9 @@ def run_mechanism(pfam_map, seeds):
 
 def run_biophysical_direction(seeds):
     if not (
-        os.path.exists(S1724_WT_EMB)
-        and os.path.exists(S1724_MUT_EMB)
-        and os.path.exists(S1724_VARIANTS)
+        S1724_WT_EMB.exists()
+        and S1724_MUT_EMB.exists()
+        and S1724_VARIANTS.exists()
     ):
         print(
             "\n[Probe C] S1724 embeddings not cached yet "
@@ -427,10 +456,8 @@ def main():
             "P4_mag_spearman_min": P4_MAG_SPEARMAN_MIN,
         },
     }
-    out_path = os.path.join(OUT, "probe_results.json")
-    with open(out_path, "w") as f:
-        json.dump(result, f, indent=2)
-    print(f"\nResults -> {out_path}")
+    atomic_write_json(MAGNITUDE_DIRECTION_JSON, result)
+    print(f"\nResults -> {MAGNITUDE_DIRECTION_JSON}")
 
 
 if __name__ == "__main__":

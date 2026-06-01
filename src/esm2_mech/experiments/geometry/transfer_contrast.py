@@ -24,37 +24,29 @@ Pure CPU. Usage:
 """
 
 import json
-import os
-import sys
 import numpy as np
 import functools
 
 print = functools.partial(print, flush=True)
 
+from esm2_mech.utils.io import atomic_write_json
 from esm2_mech.utils.paths import (
-    DATA_DIR as _DATA_DIR,
-    RESULTS_DIR as _RESULTS_DIR,
+    GEOMETRY_RESULTS_DIR,
+    TRANSFER_CONTRAST_JSON,
+    MEGASCALE_VARIANTS_JSON,
     PATH_EMB_WT_MEAN,
     PATH_EMB_MUT_MEAN,
+    PATHOGENICITY_CANONICAL_VARIANTS_JSON,
+    PFAM_JSON,
     MEGASCALE_EMB_WT_MEAN,
     MEGASCALE_EMB_MUT_MEAN,
 )
+from esm2_mech.experiments.mechanism.loaders import load_geras
+from esm2_mech.utils.constants import GOF
+from esm2_mech.utils.metrics import mean_std_n
+from esm2_mech.utils.probes import auroc_for_clf
 
-from esm2_mech.utils.paths import PFAM_JSON
-from esm2_mech.utils.splits import family_split_cv
-
-DATA = str(_DATA_DIR)
-OUT = str(_RESULTS_DIR / "magnitude_direction")
-os.makedirs(OUT, exist_ok=True)
-
-
-def _auroc(clf, X, y):
-    from sklearn.metrics import roc_auc_score
-
-    if len(set(y)) < 2:
-        return np.nan
-    p = clf.predict_proba(X)[:, list(clf.classes_).index(1)]
-    return float(roc_auc_score(y, p))
+GEOMETRY_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def _make_clf(kind, seed):
@@ -79,6 +71,12 @@ def transfer_test(delta, y, groups, kind="linear", n_partitions=10, seed=0, min_
     from sklearn.model_selection import StratifiedKFold
 
     y = np.asarray(y).astype(int)
+    # Deliberate: fit the scaler ONCE on all rows so every group-half is scored in
+    # one shared coordinate frame (matches direction_geometry Probe 2). The probe
+    # tests whether a learned DIRECTION transfers across groups, which requires a
+    # common frame — not a per-fold refit. Standardization leakage is negligible
+    # here and is the intended design, not a train/test bug. Do not "fix" to
+    # train-only without changing the experiment's meaning.
     Xs = StandardScaler().fit_transform(delta)
     groups = np.asarray(groups)
     uniq = np.array(sorted(set(groups.tolist())))
@@ -92,26 +90,34 @@ def transfer_test(delta, y, groups, kind="linear", n_partitions=10, seed=0, min_
         a = np.array([g in half for g in groups])
         b = ~a
         for tr, te in [(a, b), (b, a)]:
+            # min_pos in BOTH train and test guarantees both classes are present
+            # on each side. This guard is load-bearing: auroc_for_clf ->
+            # _pos_class_col raises if the fitted clf never saw the positive class
+            # (a single-class GBM/logreg fit sets classes_=[0]). Keep min_pos >= 1.
             if y[tr].sum() < min_pos or (1 - y[tr]).sum() < min_pos:
                 continue
             if y[te].sum() < min_pos or (1 - y[te]).sum() < min_pos:
                 continue
             clf = _make_clf(kind, seed).fit(Xs[tr], y[tr])
-            transfer.append(_auroc(clf, Xs[te], y[te]))
+            transfer.append(auroc_for_clf(clf, Xs[te], y[te]))
 
+    # Pooled (random-split) reference. StratifiedKFold(n_splits=k) raises if the
+    # minority class has fewer than k members task-wide (e.g. rare GOF in the
+    # mechanism task), so cap n_splits at the minority-class count and skip
+    # entirely if even a 2-fold split is impossible — degrade gracefully like the
+    # transfer block rather than crashing the whole task.
     pooled = []
-    skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=seed)
-    for tr, te in skf.split(Xs, y):
-        clf = _make_clf(kind, seed).fit(Xs[tr], y[tr])
-        pooled.append(_auroc(clf, Xs[te], y[te]))
+    minority = int(min(y.sum(), (1 - y).sum()))
+    n_splits = min(5, minority)
+    if n_splits >= 2:
+        skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=seed)
+        for tr, te in skf.split(Xs, y):
+            clf = _make_clf(kind, seed).fit(Xs[tr], y[tr])
+            pooled.append(auroc_for_clf(clf, Xs[te], y[te]))
 
     def agg(v):
-        v = [x for x in v if x is not None and not np.isnan(x)]
-        return (
-            (float(np.mean(v)), float(np.std(v)), len(v))
-            if v
-            else (float("nan"), 0.0, 0)
-        )
+        mean, std, n = mean_std_n(v)
+        return (mean, std if n else 0.0, n)
 
     return {"transfer_auroc": agg(transfer), "pooled_auroc": agg(pooled)}
 
@@ -119,26 +125,37 @@ def transfer_test(delta, y, groups, kind="linear", n_partitions=10, seed=0, min_
 # ── Task loaders ─────────────────────────────────────────────────────────────
 
 
+def _pathogenicity_label(label):
+    """Map a canonical-set label to 1 (pathogenic) / 0 (benign); never a catch-all."""
+    if label == "pathogenic":
+        return 1
+    if label == "benign":
+        return 0
+    raise ValueError(f"unexpected pathogenicity label {label!r} (expected 'pathogenic'/'benign')")
+
+
 def load_pathogenicity():
-    with open(os.path.join(DATA, "pathogenicity_valid_variants_canonical.json")) as _f:
+    with open(PATHOGENICITY_CANONICAL_VARIANTS_JSON) as _f:
         v = json.load(_f)
-    delta = np.load(
-        PATH_EMB_MUT_MEAN
-    ) - np.load(PATH_EMB_WT_MEAN)
+    delta = np.load(PATH_EMB_MUT_MEAN) - np.load(PATH_EMB_WT_MEAN)
+    if len(v) != delta.shape[0]:
+        raise ValueError(
+            f"variant/embedding row mismatch: {len(v)} variants vs "
+            f"{delta.shape[0]} embedding rows — canonical file is not row-aligned."
+        )
     with open(PFAM_JSON) as _f:
         pfam = json.load(_f)
     genes = [x["gene"] for x in v]
     groups = np.array([(pfam.get(g) or "NA") for g in genes])
-    y = np.array([1 if x["label"] == "pathogenic" else 0 for x in v])
+    y = np.array([_pathogenicity_label(x["label"]) for x in v])
     m = groups != "NA"
     return delta[m], y[m], groups[m]
 
 
 def load_stability():
-    vpath = os.path.join(DATA, "megascale_variants.json")
-    if not os.path.exists(vpath):
+    if not MEGASCALE_VARIANTS_JSON.exists():
         return None
-    with open(vpath) as _f:
+    with open(MEGASCALE_VARIANTS_JSON) as _f:
         v = json.load(_f)
     delta = np.load(MEGASCALE_EMB_MUT_MEAN) - np.load(
         MEGASCALE_EMB_WT_MEAN
@@ -156,7 +173,7 @@ def load_mechanism_gof():
         pfam = json.load(_f)
     dm, _dp, labels, genes = load_geras(pfam)
     groups = np.array([(pfam.get(g) or "NA") for g in genes])
-    y = (np.asarray(labels) == "GOF").astype(int)
+    y = (np.asarray(labels) == GOF).astype(int)
     m = groups != "NA"
     return dm[m], y[m], groups[m]
 
@@ -189,9 +206,8 @@ def main():
                 f"{name:42s} {kind:7s} {pm:.3f}±{ps:.3f}  {tm:.3f}±{ts:.3f}  (n={tn})"
             )
 
-    with open(os.path.join(OUT, "transfer_contrast.json"), "w") as _f:
-        json.dump(results, _f, indent=2)
-    print(f"\nResults -> {os.path.join(OUT, 'transfer_contrast.json')}")
+    atomic_write_json(TRANSFER_CONTRAST_JSON, results)
+    print(f"\nResults -> {TRANSFER_CONTRAST_JSON}")
     print("\nRead: 'pooled' = random-split (easy). 'transfer' = probe fit on one")
     print("group-half, scored on the disjoint half. linear vs gbm shows whether")
     print("nonlinearity recovers cross-group signal (result_21: it does for stability,")

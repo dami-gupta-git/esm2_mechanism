@@ -22,24 +22,25 @@ Pure CPU. Usage:
 """
 
 import json
-import os
-import sys
 import numpy as np
 import functools
 
 print = functools.partial(print, flush=True)
 
+from esm2_mech.utils.io import atomic_write_json
 from esm2_mech.utils.paths import (
-    DATA_DIR as _DATA_DIR,
-    RESULTS_DIR as _RESULTS_DIR,
+    GEOMETRY_RESULTS_DIR,
+    PROBE4_AXIS_IDENTITY_JSON,
     PATH_EMB_WT_MEAN,
     PATH_EMB_MUT_MEAN,
+    PATHOGENICITY_CANONICAL_VARIANTS_JSON,
+    PFAM_JSON,
 )
-from esm2_mech.utils.paths import PFAM_JSON
+from esm2_mech.utils.metrics import mean_std_n
+from esm2_mech.utils.probes import auroc_for_clf
 from esm2_mech.utils.splits import family_split_cv
 
-DATA = str(_DATA_DIR)
-OUT = str(_RESULTS_DIR / "magnitude_direction")
+GEOMETRY_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
 AA = "ARNDCQEGHILKMFPSTWYV"
 
@@ -129,6 +130,15 @@ VOLUME = dict(
 )
 
 
+def _pathogenicity_label(label):
+    """Map a canonical-set label to 1 (pathogenic) / 0 (benign); never a catch-all."""
+    if label == "pathogenic":
+        return 1
+    if label == "benign":
+        return 0
+    raise ValueError(f"unexpected pathogenicity label {label!r} (expected 'pathogenic'/'benign')")
+
+
 def biochem_features(wt, mut):
     if wt not in AA or mut not in AA:
         return None
@@ -156,14 +166,17 @@ def main():
     from sklearn.preprocessing import StandardScaler
     from sklearn.linear_model import LogisticRegression, Ridge
     from sklearn.model_selection import KFold
-    from sklearn.metrics import roc_auc_score, r2_score
+    from sklearn.metrics import r2_score
     from scipy.stats import spearmanr
 
-    with open(os.path.join(DATA, "pathogenicity_valid_variants_canonical.json")) as _f:
+    with open(PATHOGENICITY_CANONICAL_VARIANTS_JSON) as _f:
         v = json.load(_f)
-    delta = np.load(
-        PATH_EMB_MUT_MEAN
-    ) - np.load(PATH_EMB_WT_MEAN)
+    delta = np.load(PATH_EMB_MUT_MEAN) - np.load(PATH_EMB_WT_MEAN)
+    if len(v) != delta.shape[0]:
+        raise ValueError(
+            f"variant/embedding row mismatch: {len(v)} variants vs "
+            f"{delta.shape[0]} embedding rows — canonical file is not row-aligned."
+        )
     with open(PFAM_JSON) as _f:
         pfam = json.load(_f)
 
@@ -176,7 +189,7 @@ def main():
     keep = np.array(keep)
     bio = np.array(bio, dtype=float)
     delta = delta[keep]
-    y = np.array([1 if v[i]["label"] == "pathogenic" else 0 for i in keep])
+    y = np.array([_pathogenicity_label(v[i]["label"]) for i in keep])
     genes = np.array([v[i]["gene"] for i in keep])
     mag = np.linalg.norm(delta, axis=1)
     print(f"Variants with biochem features: {len(keep)} / {len(v)}")
@@ -224,8 +237,7 @@ def main():
             clf = LogisticRegression(max_iter=2000, C=1.0, random_state=seed).fit(
                 sc.transform(X[tr]), y[tr]
             )
-            p = clf.predict_proba(sc.transform(X[te]))[:, list(clf.classes_).index(1)]
-            out.append(roc_auc_score(y[te], p))
+            out.append(auroc_for_clf(clf, sc.transform(X[te]), y[te]))
         return out
 
     cf, esm, both = [], [], []
@@ -236,7 +248,8 @@ def main():
         both += auroc_cv(np.hstack([delta, bio]), fs, seed)
 
     def agg(a):
-        return (float(np.mean(a)), float(np.std(a)))
+        mean, std, _ = mean_std_n(a)
+        return (mean, std)
 
     cm, cstd = agg(cf)
     em, estd = agg(esm)
@@ -256,9 +269,8 @@ def main():
             "esm2_plus_biochem": [bm, bstd],
         },
     }
-    with open(os.path.join(OUT, "probe4_axis_identity.json"), "w") as _f:
-        json.dump(result, _f, indent=2)
-    print(f"\nResults -> {os.path.join(OUT, 'probe4_axis_identity.json')}")
+    atomic_write_json(PROBE4_AXIS_IDENTITY_JSON, result)
+    print(f"\nResults -> {PROBE4_AXIS_IDENTITY_JSON}")
 
     print("\n=== READ ===")
     print(

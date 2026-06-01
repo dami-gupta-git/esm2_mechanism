@@ -4,10 +4,27 @@ from __future__ import annotations
 
 import csv
 import functools
+import hashlib
 import json
 from pathlib import Path
 
 print = functools.partial(print, flush=True)
+
+
+def variants_fingerprint(variants: list[dict]) -> str:
+    """Order-sensitive content hash of a variant list's identities.
+
+    Pins which variants (and in which row order) a downstream artifact was built
+    from, so a count-collision or reordering after a seed/cap change is detected
+    rather than silently reusing a stale, misaligned artifact. The fields chosen
+    uniquely identify a variant and its embedding inputs.
+    """
+    digest = hashlib.sha256()
+    for v in variants:
+        key = f"{v['gene']}|{v['uniprot_id']}|{v['aa_pos']}|{v['aa_wt']}|{v['aa_mut']}|{v['label']}"
+        digest.update(key.encode())
+        digest.update(b"\x00")
+    return digest.hexdigest()
 
 
 def load_variants(path: Path) -> list[dict]:

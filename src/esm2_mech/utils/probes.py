@@ -38,19 +38,27 @@ def run_logreg_cv(
     seed: int = 42,
     genes: np.ndarray | None = None,
     label: str = "",
+    min_train_classes: int | None = None,
 ) -> dict:
     """Run LogReg + StandardScaler over pre-computed splits, return aggregated metrics.
 
     genes : if provided, also computes per_gene_f1 per fold
     label : prefix for per-fold log lines
+    min_train_classes : minimum distinct classes a fold's train split must have to
+        be kept. Defaults to n_classes (the historical behaviour — every class must
+        be present). Pass 2 to keep folds where a rare class falls entirely in test
+        (a classifier only needs two classes to fit); this also lets a caller make
+        the probe's fold set match a separately-computed chance floor that skips on
+        the same condition.
     """
     n_classes = len(classes)
+    min_train_classes = n_classes if min_train_classes is None else min_train_classes
     fold_results, pg_f1s = [], []
     for fold_i, (tr, te) in enumerate(splits):
         X_tr, X_te = X[tr], X[te]
         y_tr, y_te = y[tr], y[te]
-        if len(set(y_tr.tolist())) < n_classes:
-            print(f"    [{label}] Fold {fold_i+1}: skipped (missing class in train)")
+        if len(set(y_tr.tolist())) < min_train_classes:
+            print(f"    [{label}] Fold {fold_i+1}: skipped (< {min_train_classes} classes in train)")
             continue
         if len(set(y_te.tolist())) < 2:
             print(f"    [{label}] Fold {fold_i+1}: skipped (< 2 classes in test)")
@@ -99,6 +107,19 @@ def _pos_class_col(clf_classes: np.ndarray, pos_label) -> int:
             "Ensure the fold contains both classes before fitting."
         )
     return int(cols[0])
+
+
+def auroc_for_clf(clf, X: np.ndarray, y: np.ndarray, pos_label=1) -> float:
+    """AUROC of a fitted binary classifier scored on (X, y).
+
+    Returns NaN if y has fewer than two classes (AUROC undefined). Uses
+    _pos_class_col so a pos_label absent from clf.classes_ raises clearly rather
+    than failing with a bare list.index ValueError.
+    """
+    if len(set(np.asarray(y).tolist())) < 2:
+        return float("nan")
+    proba = clf.predict_proba(X)[:, _pos_class_col(clf.classes_, pos_label)]
+    return float(roc_auc_score(y, proba))
 
 
 def run_logreg_binary_cv(

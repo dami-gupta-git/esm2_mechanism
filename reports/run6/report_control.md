@@ -79,6 +79,10 @@ Seed-to-seed standard deviation is ≤0.003 throughout, so the values are stable
 baseline for AUROC is 0.50 by definition (a classifier with no signal ranks pathogenic and
 benign variants at chance); unlike macro-F1 it does not depend on class balance.
 
+![The same ESM-2 delta on two tasks: it predicts pathogenicity at AUROC ~0.90 (family-stable) but classifies mechanism at the chance floor.](figures/fig1_dissociation.png)
+
+*The same `delta_mean` feature on both tasks. Left: pathogenicity AUROC, where the delta reaches ~0.90 and barely moves under family-split. Right: mechanism macro-F1, where the delta sits on the measured chance floor (0.29). The wildtype embedding is shown alongside for contrast. The mechanism panel uses results from [`report_classifier.md`](report_classifier.md).*
+
 ---
 
 ## Reading the tables
