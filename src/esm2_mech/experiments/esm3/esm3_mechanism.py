@@ -126,7 +126,7 @@ def phase1_structure_tokens() -> None:
     """
     try:
         from esm.sdk.api import ESMProtein
-        from esm2_mech.utils.structure.protein_chain import ProteinChain
+        from esm.utils.structure.protein_chain import ProteinChain
     except ImportError:
         print("ERROR: esm package not found. Install: pip install esm")
         sys.exit(1)
