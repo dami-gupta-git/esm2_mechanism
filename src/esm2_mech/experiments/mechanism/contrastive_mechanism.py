@@ -33,29 +33,36 @@ from sklearn.metrics import roc_auc_score, f1_score
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.preprocessing import LabelEncoder
 from esm2_mech.utils.splits import gene_split_cv, family_split_cv
-from esm2_mech.utils.paths import DATA_DIR, EMB_MUT_MEAN, EMB_WT_MEAN, RESULTS_DIR, VALID_VARIANTS_JSON
+from esm2_mech.utils.paths import (
+    EMB_MUT_MEAN,
+    EMB_WT_MEAN,
+    MECHANISM_AGGREGATE_JSON,
+    PFAM_JSON,
+    RESULTS_DIR,
+    VALID_VARIANTS_JSON,
+)
+from esm2_mech.utils.constants import GOF, DN, MECHANISM_CLASSES
+from esm2_mech.utils.seed_aggregation import FAMILY_SPLIT, read_across_seed_metric
 import functools
 
 print = functools.partial(print, flush=True)
 
 warnings.filterwarnings("ignore")
 
+# Feature key for the mean-pooled delta baseline in the aggregate result file.
+# Must match the name written by mechanism_delta_family_split.run.
+DELTA_MEAN_FEATURE = "delta_mean"
+
 # ---------------------------------------------------------------------------
 # Data loading
 # ---------------------------------------------------------------------------
 
 
-def load_data(data_dir, emb_dir, merged=False):
-    """Load variants and embeddings. Use merged=True for the full 19100-variant dataset."""
+def load_data():
+    """Load the merged Gerasimavicius + G2P variants and their delta embeddings."""
     with open(VALID_VARIANTS_JSON) as f:
-        mv = json.load(f)
-
-    if merged:
-        variants = mv  # all 19100
-        print(f"Loaded {len(variants)} merged variants (Gerasimavicius + G2P)")
-    else:
-        variants = [v for v in mv if v.get("source") == "gerasimavicius"]
-        print(f"Loaded {len(variants)} Gerasimavicius variants")
+        variants = json.load(f)
+    print(f"Loaded {len(variants)} merged variants (Gerasimavicius + G2P)")
 
     labels = np.array([v["label_3class"] for v in variants])
     genes = np.array([v["gene"] for v in variants])
@@ -73,7 +80,7 @@ def load_data(data_dir, emb_dir, merged=False):
 
 
 def load_pfam(genes):
-    with open(DATA_DIR / "pfam_families.json") as f:
+    with open(PFAM_JSON) as f:
         pfam_map = json.load(f)
     gene_pfam = np.array([pfam_map.get(g) for g in genes])
     n_annotated = sum(1 for p in gene_pfam if p is not None)
@@ -210,28 +217,12 @@ def train_projection_head(
     )
 
     if len(anchors) < 50:
-        print(
-            "  WARNING: too few cross-family triplets, falling back to all-family positives"
-        )
-        # Fallback: positives = same mechanism regardless of family
-        y = le.transform(labels_train)
-        by_mech = {c: np.where(y == c)[0] for c in range(len(le.classes_))}
-        rng = np.random.RandomState(seed)
-        anchors_fb, pos_fb, neg_fb = [], [], []
-        for i in range(len(X_norm)):
-            c = y[i]
-            pool_pos = [j for j in by_mech[c] if j != i]
-            pool_neg = [j for j in range(len(X_norm)) if y[j] != c]
-            if not pool_pos or not pool_neg:
-                continue
-            for _ in range(4):
-                anchors_fb.append(i)
-                pos_fb.append(rng.choice(pool_pos))
-                neg_fb.append(rng.choice(pool_neg))
-        anchors, positives, negatives = (
-            np.array(anchors_fb),
-            np.array(pos_fb),
-            np.array(neg_fb),
+        # The experiment is defined by cross-family-only positives (see module
+        # docstring). Silently substituting all-family positives would change
+        # what is being measured, so refuse rather than degrade quietly.
+        raise ValueError(
+            f"Only {len(anchors)} cross-family triplets available (need >= 50); "
+            "cannot train the family-invariant projection head on this fold."
         )
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -398,8 +389,8 @@ def run_cv(
         fold_results_raw_knn.append(raw_fm)
         print(
             f"    raw k-NN:      macro_f1={raw_fm['macro_f1']:.3f}  "
-            f"GOF={raw_fm.get('auroc_GOF', float('nan')):.3f}  "
-            f"DN={raw_fm.get('auroc_DN', float('nan')):.3f}"
+            f"{GOF}={raw_fm.get(f'auroc_{GOF}', float('nan')):.3f}  "
+            f"{DN}={raw_fm.get(f'auroc_{DN}', float('nan')):.3f}"
         )
 
         # --- Contrastive projection head ---
@@ -418,8 +409,8 @@ def run_cv(
         fold_results_contrastive.append(cont_fm)
         print(
             f"    contrastive:   macro_f1={cont_fm['macro_f1']:.3f}  "
-            f"GOF={cont_fm.get('auroc_GOF', float('nan')):.3f}  "
-            f"DN={cont_fm.get('auroc_DN', float('nan')):.3f}  "
+            f"{GOF}={cont_fm.get(f'auroc_{GOF}', float('nan')):.3f}  "
+            f"{DN}={cont_fm.get(f'auroc_{DN}', float('nan')):.3f}  "
             f"(epochs={epochs})"
         )
 
@@ -461,17 +452,12 @@ def main():
         default=512,
         help="Batch size for triplet training (default 512, use 4096+ on GPU)",
     )
-    parser.add_argument(
-        "--merged",
-        action="store_true",
-        help="Use full merged dataset (19100 variants, 1985 genes) instead of Gerasimavicius only",
-    )
     args = parser.parse_args()
 
     np.random.seed(args.seed)
 
     print("=== Loading data ===")
-    geras, labels, genes, delta_mean = load_data(None, None, merged=args.merged)
+    variants, labels, genes, delta_mean = load_data()
 
     print("\n=== Loading Pfam map ===")
     gene_pfam, pfam_map = load_pfam(genes)
@@ -529,7 +515,7 @@ def main():
             "Positives: same mechanism, different Pfam family. "
             "Negatives: different mechanism. "
             "Within-family pairs excluded from positives. "
-            "Evaluated by k-NN (k=10, cosine) in projected 64-d space."
+            f"Evaluated by k-NN (k=10, cosine) in projected {args.proj_dim}-d space."
         ),
         "architecture": f"1280 -> 256 -> {args.proj_dim} (TripletMarginLoss)",
         "seed": args.seed,
@@ -554,18 +540,21 @@ def main():
     ]:
         cont = results[split_key]["contrastive_knn"]
         raw = results[split_key]["raw_knn_baseline"]
+
+        def auroc_str(metrics):
+            return "".join(
+                f"  {cls}={metrics.get(f'auroc_{cls}_mean', float('nan')):.3f}"
+                for cls in MECHANISM_CLASSES
+            )
+
         print(f"\n{split_name}:")
         print(
             f"  Contrastive k-NN:  macro_f1={cont.get('macro_f1_mean', float('nan')):.3f} ± {cont.get('macro_f1_std', float('nan')):.3f}"
-            f"  GOF={cont.get('auroc_GOF_mean', float('nan')):.3f}"
-            f"  DN={cont.get('auroc_DN_mean', float('nan')):.3f}"
-            f"  LOF={cont.get('auroc_LOF_mean', float('nan')):.3f}"
+            + auroc_str(cont)
         )
         print(
             f"  Raw k-NN baseline: macro_f1={raw.get('macro_f1_mean', float('nan')):.3f} ± {raw.get('macro_f1_std', float('nan')):.3f}"
-            f"  GOF={raw.get('auroc_GOF_mean', float('nan')):.3f}"
-            f"  DN={raw.get('auroc_DN_mean', float('nan')):.3f}"
-            f"  LOF={raw.get('auroc_LOF_mean', float('nan')):.3f}"
+            + auroc_str(raw)
         )
         delta_f1 = cont.get("macro_f1_mean", float("nan")) - raw.get(
             "macro_f1_mean", float("nan")
@@ -575,7 +564,9 @@ def main():
     print("\nInterpretation:")
     fam_cont_f1 = fam_cont.get("macro_f1_mean", float("nan"))
     raw_fam_f1 = fam_raw.get("macro_f1_mean", float("nan"))
-    floor = 0.364  # known MLP family-split F1 from result_7
+    floor = read_across_seed_metric(
+        MECHANISM_AGGREGATE_JSON, FAMILY_SPLIT, DELTA_MEAN_FEATURE
+    )
     if fam_cont_f1 > floor + 0.03:
         print(
             f"  ✓ Contrastive family-split F1 ({fam_cont_f1:.3f}) > MLP floor ({floor:.3f}) + 0.03"
@@ -604,9 +595,8 @@ def main():
         print("      cannot separate mechanism across families.")
 
     os.makedirs(args.out_dir, exist_ok=True)
-    tag = "merged" if args.merged else "geras"
     out_path = os.path.join(
-        args.out_dir, f"contrastive_results_{tag}_seed{args.seed}.json"
+        args.out_dir, f"contrastive_results_seed{args.seed}.json"
     )
     with open(out_path, "w") as f:
         json.dump(results, f, indent=2)

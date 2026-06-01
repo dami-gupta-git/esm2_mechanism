@@ -30,8 +30,17 @@ import numpy as np
 
 print = functools.partial(print, flush=True)
 
-SPLITS = ["gene_split", "family_split"]
+GENE_SPLIT = "gene_split"
+FAMILY_SPLIT = "family_split"
+SPLITS = [GENE_SPLIT, FAMILY_SPLIT]
 HEADLINE_METRIC = "macro_f1"
+
+# Per-feature mean computed across seeds is stored under "<metric>_seed_mean".
+SEED_MEAN_SUFFIX = "_seed_mean"
+
+# Top-level key under which the across-seed aggregate is nested in the run's
+# aggregate result file (written by classify_by_mechanism).
+ACROSS_SEED_KEY = "across_seed"
 
 
 def load_seed_files(run_dir: str, seed_glob: str) -> list[tuple[str, dict]]:
@@ -83,12 +92,32 @@ def aggregate_across_seeds(
         for feature, metric_values in collected.items():
             feature_out: dict[str, float] = {}
             for base_metric, values in metric_values.items():
-                feature_out[f"{base_metric}_seed_mean"] = float(np.mean(values))
+                feature_out[f"{base_metric}{SEED_MEAN_SUFFIX}"] = float(np.mean(values))
                 feature_out[f"{base_metric}_seed_std"] = float(np.std(values))
                 feature_out[f"{base_metric}_n_seeds"] = len(values)
             split_out[feature] = feature_out
         aggregated[split] = split_out
     return aggregated
+
+
+def read_across_seed_metric(
+    aggregate_path: str,
+    split: str,
+    feature: str,
+    metric: str = HEADLINE_METRIC,
+) -> float:
+    """Read one across-seed metric mean from a run's aggregate result file.
+
+    Returns the `<metric>_seed_mean` value for the given split and feature
+    (e.g. family_split / delta_mean / macro_f1). The caller supplies the path so
+    this helper stays generic. No fallback: if the file or the requested
+    split/feature/metric is absent, the underlying KeyError/FileNotFoundError
+    propagates so the caller knows that baseline has not been produced.
+    """
+    with open(aggregate_path) as handle:
+        aggregate = json.load(handle)
+    block = aggregate[ACROSS_SEED_KEY][split][feature]
+    return float(block[f"{metric}{SEED_MEAN_SUFFIX}"])
 
 
 def print_table(aggregated: dict[str, dict[str, dict[str, float]]]) -> None:
