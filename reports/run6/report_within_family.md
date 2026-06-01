@@ -149,6 +149,19 @@ genes. Even if a faint within-family signal existed, these sample sizes could no
 
 ---
 
+## Statistical limitations and planned analyses (pre-preprint)
+
+Per-family sizes are 6–33 genes, so this table is descriptive, not inferential. Planned before
+preprint submission, not yet in the result files:
+
+- **Multiple-comparison control:** 28 families are tested; the "beats baseline, std < 0.10"
+  highlight is an uncorrected screen. Add Benjamini-Hochberg FDR, or restate as exploratory.
+- **Power:** at 6–33 genes the test can only fail to detect signal, not rule it out — add a
+  minimal-detectable-effect per family so nulls read as underpowered.
+- **Confidence intervals** from a cluster bootstrap over genes within each family.
+
+---
+
 ## Provenance
 
 Computed by `experiments/mechanism/mechanism_within_family.py` on the run6 embeddings

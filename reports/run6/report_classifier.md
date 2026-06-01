@@ -260,6 +260,18 @@ delta.
 - A single ESM-2 size (650M) was tested; a larger model or a site-restricted delta might
   carry more signal.
 
+## Statistical limitations and planned analyses (pre-preprint)
+
+The seed-to-seed spread reflects fold reshuffling on fixed data, not sampling uncertainty.
+Planned before preprint submission, not yet in the result files:
+
+- **Confidence intervals** from a cluster bootstrap over genes (labels are gene-level, so the
+  effective N is ≈ 1,935 genes, not 17,826 variants), replacing the seed-std bars.
+- **Permutation test** against the 0.288 floor for a p-value on "above chance" and on the
+  gene-vs-family gap.
+- **Imbalanced-class metrics:** AUPRC and PPV/NPV at prevalence alongside AUROC.
+- **Calibration:** the probes are uncalibrated; scores are discrimination only, not risks.
+
 ## Provenance
 
 Embeddings verified before analysis (clean exit; all four arrays `(17826, 1280)`;

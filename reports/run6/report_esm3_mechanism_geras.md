@@ -186,6 +186,18 @@ mechanisms. Scale moved the floor; it did not solve the task.
 
 ---
 
+## Statistical limitations and planned analyses (pre-preprint)
+
+The ESM-3 lift over ESM-2 is read from non-overlapping seed spreads, which is not a significance
+test. Planned before preprint submission, not yet in the result files:
+
+- **Significance of the lift:** a paired cluster bootstrap over genes on the shared variant set,
+  giving a 95% CI on the ESM-3 (≈0.42) minus ESM-2 (≈0.38) gap.
+- **Permutation test** against chance for the family-split scores of both conditions.
+- **Effective N:** labels are gene-level, so all CIs and tests resample genes, not variants.
+
+---
+
 ## Provenance
 
 Computed by `experiments/esm3/esm3_mechanism.py` (phases 1–3) on 10,231 of 10,233

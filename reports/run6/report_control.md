@@ -142,6 +142,17 @@ context — but not the functional axis that separates gain-of-function from los
 
 ---
 
+## Statistical limitations and planned analyses (pre-preprint)
+
+The seed spread reflects fold reshuffling, not sampling uncertainty. Planned before preprint
+submission, not yet in the result files:
+
+- **Confidence intervals** from a cluster bootstrap over genes on each AUROC (classes are
+  balanced here, but the dependency structure still applies).
+- **Calibration:** the probes are discrimination only, not calibrated risk estimates.
+
+---
+
 ## Provenance
 
 Computed by `experiments/pathogenicity/pathogenicity_control.py` (consolidated fetch → embed →

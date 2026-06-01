@@ -169,6 +169,17 @@ its own.
 
 ---
 
+## Statistical limitations and planned analyses (pre-preprint)
+
+This report is single-seed (seed 0); its shuffled-label nulls are the permutation framework the
+other reports will adopt. Planned before preprint submission, not yet in the result files:
+
+- **Multi-seed** the family-probe accuracy (≥5 seeds with a spread), matching the other reports.
+- **Confidence intervals** from a cluster bootstrap over families, for the probe accuracy and
+  the k-NN purity metrics.
+
+---
+
 ## Provenance
 
 Computed by `experiments/mechanism/family_clustering.py` on the run6 embeddings
