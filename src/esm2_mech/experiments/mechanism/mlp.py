@@ -38,10 +38,6 @@ OUT_DIR = RESULTS_DIR
 
 
 def load_data():
-    if not VALID_VARIANTS_JSON.exists():
-        raise FileNotFoundError(
-            f"{VALID_VARIANTS_JSON} not found — run fetch_data/build_valid_variants first"
-        )
     with open(VALID_VARIANTS_JSON) as f:
         variants = json.load(f)
     labels = np.array([v["label_3class"] for v in variants])
@@ -56,12 +52,9 @@ def load_data():
     print(f"delta_mean: {delta_mean.shape}  delta_pos: {delta_pos.shape}")
     if delta_mean.shape[0] != len(variants):
         raise ValueError(
-            f"Embedding row count {delta_mean.shape[0]} != variant count {len(variants)}. "
-            "Re-run embed_variants after build_valid_variants to realign."
+            f"Embedding row count {delta_mean.shape[0]} != variant count {len(variants)}."
         )
 
-    if not PFAM_JSON.exists():
-        raise FileNotFoundError(f"{PFAM_JSON} not found — run fetch_data/fetch_annotations --step pfam first")
     with open(PFAM_JSON) as f:
         pfam_map = json.load(f)
 
