@@ -38,6 +38,8 @@ import functools
 
 print = functools.partial(print, flush=True)
 
+from joblib import Parallel, delayed
+
 from esm2_mech.utils.io import atomic_write_json
 from esm2_mech.utils.paths import (
     GEOMETRY_RESULTS_DIR,
@@ -50,7 +52,7 @@ from esm2_mech.utils.paths import (
     MEGASCALE_EMB_WT_MEAN,
     MEGASCALE_EMB_MUT_MEAN,
 )
-from esm2_mech.experiments.mechanism.loaders import load_geras
+from esm2_mech.experiments.mechanism.loaders import load_mechanism_variants
 from esm2_mech.utils.metrics import mean_std_n
 from esm2_mech.utils.splits import gene_split_cv, family_split_cv
 from esm2_mech.utils.probes import run_mlp_binary_cv, run_mlp_probe_cv, run_logreg_cv
@@ -174,28 +176,48 @@ def agg_seeds(per_seed_vals):
 # ── Probe A + B: pathogenicity (binary) ──────────────────────────────────────
 
 
-def run_pathogenicity(pfam_map, seeds):
+def _pathogenicity_one_seed(seed, feats, y, genes, pfam_map):
+    """All feature × split × probe AUROCs for one seed. Independent across seeds,
+    so seeds are dispatched in parallel. Returns {(fname, split, probe): auroc}."""
+    print(f"  [pathogenicity] seed {seed} started", flush=True)
+    gs = gene_split_cv(genes, seed=seed)
+    fs = family_split_cv(genes, pfam_map, seed=seed)
+    res = {}
+    for fname, X in feats.items():
+        for split_name, splits in [("gene_split", gs), ("family_split", fs)]:
+            lr = run_logreg_binary_cv(X, y, splits, seed=seed).get("auroc_mean")
+            res[(fname, split_name, "logreg")] = lr
+            mlp = run_mlp_binary_cv(X, y, splits, seed=seed).get("auroc_mean")
+            res[(fname, split_name, "mlp")] = mlp
+            print(
+                f"    [pathogenicity seed {seed}] {fname:4s} {split_name:12s} "
+                f"logreg={_f(lr)} mlp={_f(mlp)}",
+                flush=True,
+            )
+    print(f"  [pathogenicity] seed {seed} done", flush=True)
+    return res
+
+
+def run_pathogenicity(pfam_map, seeds, n_jobs=-1):
     print("\n" + "=" * 60)
     print("PATHOGENICITY  (binary, variant-level, delta_mean)")
     print("=" * 60)
     delta, y, genes = load_pathogenicity_canonical()
     feats = decompose(delta)
 
-    # collect[feature][split][probe] = list of per-seed AUROC
+    # Seeds are independent — dispatch them across cores (the per-seed MLP fits
+    # are the cost). Each seed re-derives its own splits from its seed, so results
+    # are deterministic regardless of worker scheduling.
+    per_seed = Parallel(n_jobs=n_jobs, verbose=10)(
+        delayed(_pathogenicity_one_seed)(seed, feats, y, genes, pfam_map)
+        for seed in seeds
+    )
+
     collect = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
-    for seed in seeds:
-        gs = gene_split_cv(genes, seed=seed)
-        fs = family_split_cv(genes, pfam_map, seed=seed)
-        for fname, X in feats.items():
-            for split_name, splits in [("gene_split", gs), ("family_split", fs)]:
-                lr = run_logreg_binary_cv(X, y, splits, seed=seed).get("auroc_mean")
-                mlp = run_mlp_binary_cv(X, y, splits, seed=seed).get("auroc_mean")
-                collect[fname][split_name]["logreg"].append(lr)
-                collect[fname][split_name]["mlp"].append(mlp)
-                print(
-                    f"  seed{seed} {fname:4s} {split_name:12s} "
-                    f"logreg={_f(lr)} mlp={_f(mlp)}"
-                )
+    for seed, res in zip(seeds, per_seed):
+        for (fname, split_name, probe), auroc in res.items():
+            collect[fname][split_name][probe].append(auroc)
+            print(f"  seed{seed} {fname:4s} {split_name:12s} {probe}={_f(auroc)}")
 
     out = {}
     for fname in feats:
@@ -211,35 +233,58 @@ def run_pathogenicity(pfam_map, seeds):
 # ── Probe A + B: mechanism (3-class) ─────────────────────────────────────────
 
 
-def run_mechanism(pfam_map, seeds):
+def _mechanism_one_seed(seed, feats, labels, genes, pfam_map):
+    """All feature × split probe results + chance floor for one seed (parallel)."""
+    print(f"  [mechanism] seed {seed} started", flush=True)
+    gs = gene_split_cv(genes, seed=seed)
+    fs = family_split_cv(genes, pfam_map, seed=seed)
+    floor = {}
+    for split_name, splits in [("gene_split", gs), ("family_split", fs)]:
+        floor[split_name] = chance_floor_multi(labels, splits)
+    res = {}
+    for fname, X in feats.items():
+        for split_name, splits in [("gene_split", gs), ("family_split", fs)]:
+            lr = run_logreg_multi(X, labels, splits, seed=seed)
+            mlp = run_mlp_probe_cv(X, labels, splits, seed=seed)
+            res[(fname, split_name)] = {
+                "logreg_f1": lr.get("macro_f1_mean"),
+                "mlp_f1": mlp.get("macro_f1_mean"),
+                "logreg_gof": lr.get("auroc_GOF_mean"),
+                "mlp_gof": mlp.get("auroc_GOF_mean"),
+            }
+            print(
+                f"    [mechanism seed {seed}] {fname:4s} {split_name:12s} "
+                f"F1(lr={_f(lr.get('macro_f1_mean'))} mlp={_f(mlp.get('macro_f1_mean'))})",
+                flush=True,
+            )
+    print(f"  [mechanism] seed {seed} done", flush=True)
+    return floor, res
+
+
+def run_mechanism(pfam_map, seeds, n_jobs=-1):
     print("\n" + "=" * 60)
     print("MECHANISM  (3-class GOF/LOF/DN, variant-level Gerasimavicius, delta_mean)")
     print("=" * 60)
-    dm, _dp, labels, genes = load_geras(pfam_map)
+    dm, _dp, labels, genes = load_mechanism_variants(pfam_map)
     feats = decompose(dm)
+
+    per_seed = Parallel(n_jobs=n_jobs, verbose=10)(
+        delayed(_mechanism_one_seed)(seed, feats, labels, genes, pfam_map)
+        for seed in seeds
+    )
 
     collect = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
     floor = defaultdict(list)
-    for seed in seeds:
-        gs = gene_split_cv(genes, seed=seed)
-        fs = family_split_cv(genes, pfam_map, seed=seed)
-        for split_name, splits in [("gene_split", gs), ("family_split", fs)]:
-            floor[split_name].append(chance_floor_multi(labels, splits))
-        for fname, X in feats.items():
-            for split_name, splits in [("gene_split", gs), ("family_split", fs)]:
-                lr = run_logreg_multi(X, labels, splits, seed=seed)
-                mlp = run_mlp_probe_cv(X, labels, splits, seed=seed)
-                collect[fname][split_name]["logreg_f1"].append(lr.get("macro_f1_mean"))
-                collect[fname][split_name]["mlp_f1"].append(mlp.get("macro_f1_mean"))
-                collect[fname][split_name]["logreg_gof"].append(
-                    lr.get("auroc_GOF_mean")
-                )
-                collect[fname][split_name]["mlp_gof"].append(mlp.get("auroc_GOF_mean"))
-                print(
-                    f"  seed{seed} {fname:4s} {split_name:12s} "
-                    f"F1(lr={_f(lr.get('macro_f1_mean'))} "
-                    f"mlp={_f(mlp.get('macro_f1_mean'))})"
-                )
+    for seed, (seed_floor, res) in zip(seeds, per_seed):
+        for split_name, val in seed_floor.items():
+            floor[split_name].append(val)
+        for (fname, split_name), cell in res.items():
+            for key, val in cell.items():
+                collect[fname][split_name][key].append(val)
+            print(
+                f"  seed{seed} {fname:4s} {split_name:12s} "
+                f"F1(lr={_f(cell['logreg_f1'])} mlp={_f(cell['mlp_f1'])})"
+            )
 
     out = {"chance_floor": {k: agg_seeds(v) for k, v in floor.items()}}
     for fname in feats:
