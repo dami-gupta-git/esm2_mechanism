@@ -143,13 +143,15 @@ def run_logreg_multi(X, labels, splits, seed=42):
     return run_logreg_cv(X, labels, splits, seed=seed, min_train_classes=MIN_TRAIN_CLASSES)
 
 
-def _read_chance_floor(strategy="stratified"):
+def _read_chance_floor(strategy="most_frequent"):
     """Read the measured mechanism chance floor from naive_baseline.json.
 
-    Returns {gene_split: {mean,std}, family_split: {mean,std}}. The 'stratified'
-    (prior-weighted random) DummyClassifier is the apt comparator for a
-    probabilistic classifier's macro-F1. Reading the committed result avoids a
-    parallel recomputation that could silently diverge from the project's floor.
+    Returns {gene_split: {mean,std}, family_split: {mean,std}}. Uses the
+    'most_frequent' (majority-class) floor — macro-F1 ≈ 0.288 — to match the
+    single chance value the run6 reports cite (report_classifier / report_control);
+    a frequency-weighted floor would be ~0.33 and put two "chance" numbers in the
+    same document. Reading the committed result avoids a parallel recomputation
+    that could silently diverge.
     """
     with open(NAIVE_BASELINE_JSON) as handle:
         nb = json.load(handle)
