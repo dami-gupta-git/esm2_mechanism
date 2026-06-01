@@ -162,7 +162,7 @@ FEAT_NAMES = [
 ]
 
 
-def main():
+def run(n_seeds=5):
     from sklearn.preprocessing import StandardScaler
     from sklearn.linear_model import LogisticRegression, Ridge
     from sklearn.model_selection import KFold
@@ -241,7 +241,7 @@ def main():
         return out
 
     cf, esm, both = [], [], []
-    for seed in range(5):
+    for seed in range(n_seeds):
         fs = family_split_cv(genes, pfam, seed=seed)
         cf += auroc_cv(bio, fs, seed)
         esm += auroc_cv(delta, fs, seed)
@@ -281,6 +281,16 @@ def main():
         f"  Context-free biochem reaches {cm:.3f} AUROC vs ESM-2's {em:.3f}: "
         f"ESM-2 adds {em - cm:+.3f} of context-dependent signal."
     )
+    return result
+
+
+def main():
+    import argparse
+
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--seeds", type=int, default=5, help="number of seeds (>=1)")
+    args = ap.parse_args()
+    run(n_seeds=args.seeds)
 
 
 if __name__ == "__main__":

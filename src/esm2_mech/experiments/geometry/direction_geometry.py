@@ -243,17 +243,34 @@ def probe2_universal(delta, y, genes, fam, n_partitions=10, seeds=(0,)):
     return out
 
 
-def main():
+def run(n_seeds=5):
+    """Run both geometry probes over n_seeds and write the result JSON.
+
+    Probe 1 (rank) uses the seeds directly; Probe 2 (family transfer) averages
+    over random partitions and is seeded over the same range for consistency.
+    """
+    seeds = tuple(range(n_seeds))
     delta, y, genes, fam = load()
     with open(PFAM_JSON) as _f:
         pfam_map = json.load(_f)
 
-    r1 = probe1_rank(delta, y, genes, pfam_map)
-    r2 = probe2_universal(delta, y, genes, fam)
+    r1 = probe1_rank(delta, y, genes, pfam_map, seeds=seeds)
+    r2 = probe2_universal(delta, y, genes, fam, seeds=seeds)
 
     result = {"probe1_rank": r1, "probe2_universal": r2, "n_variants": int(len(y))}
     atomic_write_json(DIRECTION_GEOMETRY_JSON, result)
     print(f"\nResults -> {DIRECTION_GEOMETRY_JSON}")
+    return result
+
+
+def main():
+    import argparse
+
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--seeds", type=int, default=5, help="number of seeds (>=1)")
+    args = ap.parse_args()
+    result = run(n_seeds=args.seeds)
+    r1, r2 = result["probe1_rank"], result["probe2_universal"]
 
     print("\n" + "=" * 60)
     print("READ")

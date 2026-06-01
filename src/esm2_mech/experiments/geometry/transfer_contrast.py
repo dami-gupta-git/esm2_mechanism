@@ -178,7 +178,9 @@ def load_mechanism_gof():
     return dm[m], y[m], groups[m]
 
 
-def main():
+def run(n_seeds=5):
+    """Run the transfer contrast across tasks. Each seed reshuffles the group
+    half-splits; results are pooled over all n_seeds × partitions."""
     tasks = {}
     print("Loading tasks...")
     tasks["pathogenicity (path vs benign, family-split)"] = load_pathogenicity()
@@ -195,19 +197,35 @@ def main():
     print("=" * 86)
     for name, (delta, y, groups) in tasks.items():
         results[name] = {}
-        # GBM on the big tasks is heavy; fewer partitions there
+        # GBM on the big tasks is heavy; fewer partitions there.
         npart = 5 if len(y) > 5000 else 10
         for kind in ("linear", "gbm"):
-            r = transfer_test(delta, y, groups, kind=kind, n_partitions=npart)
-            results[name][kind] = r
-            pm, ps, _ = r["pooled_auroc"]
-            tm, ts, tn = r["transfer_auroc"]
-            print(
-                f"{name:42s} {kind:7s} {pm:.3f}±{ps:.3f}  {tm:.3f}±{ts:.3f}  (n={tn})"
-            )
+            # Pool transfer + pooled AUROCs across seeds (each seed = fresh splits).
+            transfer_vals, pooled_vals = [], []
+            for seed in range(n_seeds):
+                r = transfer_test(delta, y, groups, kind=kind, n_partitions=npart, seed=seed)
+                transfer_vals.append(r["transfer_auroc"][0])
+                pooled_vals.append(r["pooled_auroc"][0])
+            tm, ts, tn = mean_std_n(transfer_vals)
+            pm, ps, _ = mean_std_n(pooled_vals)
+            results[name][kind] = {
+                "transfer_auroc": (tm, ts, tn),
+                "pooled_auroc": (pm, ps, len(pooled_vals)),
+            }
+            print(f"{name:42s} {kind:7s} {pm:.3f}±{ps:.3f}  {tm:.3f}±{ts:.3f}  (seeds={n_seeds})")
 
     atomic_write_json(TRANSFER_CONTRAST_JSON, results)
     print(f"\nResults -> {TRANSFER_CONTRAST_JSON}")
+    return results
+
+
+def main():
+    import argparse
+
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--seeds", type=int, default=5, help="number of seeds (>=1)")
+    args = ap.parse_args()
+    run(n_seeds=args.seeds)
     print("\nRead: 'pooled' = random-split (easy). 'transfer' = probe fit on one")
     print("group-half, scored on the disjoint half. linear vs gbm shows whether")
     print("nonlinearity recovers cross-group signal (result_21: it does for stability,")

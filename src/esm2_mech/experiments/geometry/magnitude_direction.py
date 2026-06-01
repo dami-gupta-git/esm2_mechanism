@@ -428,17 +428,25 @@ def evaluate_gates(path_res, mech_res, bio_res):
     return gates
 
 
+def run(n_seeds=5):
+    """Run the magnitude/direction decomposition over range(n_seeds)."""
+    return _run_seeds(list(range(n_seeds)))
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--seeds", type=int, nargs="+", default=[0, 1, 2, 3, 4])
     args = ap.parse_args()
+    _run_seeds(args.seeds)
 
+
+def _run_seeds(seeds):
     with open(PFAM_JSON) as _f:
         pfam_map = json.load(_f)
 
-    path_res = run_pathogenicity(pfam_map, args.seeds)
-    mech_res = run_mechanism(pfam_map, args.seeds)
-    bio_res = run_biophysical_direction(args.seeds)
+    path_res = run_pathogenicity(pfam_map, seeds)
+    mech_res = run_mechanism(pfam_map, seeds)
+    bio_res = run_biophysical_direction(seeds)
 
     gates = evaluate_gates(path_res, mech_res, bio_res)
 
@@ -503,6 +511,7 @@ def main():
     }
     atomic_write_json(MAGNITUDE_DIRECTION_JSON, result)
     print(f"\nResults -> {MAGNITUDE_DIRECTION_JSON}")
+    return result
 
 
 if __name__ == "__main__":
