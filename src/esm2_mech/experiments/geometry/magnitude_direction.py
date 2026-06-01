@@ -44,6 +44,7 @@ from esm2_mech.utils.io import atomic_write_json
 from esm2_mech.utils.paths import (
     GEOMETRY_RESULTS_DIR,
     MAGNITUDE_DIRECTION_JSON,
+    NAIVE_BASELINE_JSON,
     MEGASCALE_VARIANTS_JSON,
     PATH_EMB_WT_MEAN,
     PATH_EMB_MUT_MEAN,
@@ -142,27 +143,27 @@ def run_logreg_multi(X, labels, splits, seed=42):
     return run_logreg_cv(X, labels, splits, seed=seed, min_train_classes=MIN_TRAIN_CLASSES)
 
 
-def chance_floor_multi(labels, splits):
-    """Stratified-random macro-F1 baseline (DummyClassifier) for the same splits.
+def _read_chance_floor(strategy="stratified"):
+    """Read the measured mechanism chance floor from naive_baseline.json.
 
-    Skips a fold on the same MIN_TRAIN_CLASSES condition the probes use, so the
-    floor and the probe are averaged over an identical fold set.
+    Returns {gene_split: {mean,std}, family_split: {mean,std}}. The 'stratified'
+    (prior-weighted random) DummyClassifier is the apt comparator for a
+    probabilistic classifier's macro-F1. Reading the committed result avoids a
+    parallel recomputation that could silently diverge from the project's floor.
     """
-    from sklearn.dummy import DummyClassifier
-    from sklearn.preprocessing import LabelEncoder
-    from sklearn.metrics import f1_score
-
-    le = LabelEncoder()
-    y = le.fit_transform(labels)
-    f1s = []
-    for tr, te in splits:
-        if len(set(y[tr])) < MIN_TRAIN_CLASSES:
-            continue
-        d = DummyClassifier(strategy="stratified", random_state=0)
-        d.fit(np.zeros((len(tr), 1)), y[tr])
-        pred = d.predict(np.zeros((len(te), 1)))
-        f1s.append(f1_score(y[te], pred, average="macro", zero_division=0))
-    return float(np.mean(f1s)) if f1s else float("nan")
+    with open(NAIVE_BASELINE_JSON) as handle:
+        nb = json.load(handle)
+    strat = nb["by_strategy"][strategy]
+    return {
+        "gene_split": {
+            "mean": strat["gene"]["macro_f1_mean"],
+            "std": strat["gene"]["macro_f1_std"],
+        },
+        "family_split": {
+            "mean": strat["family"]["macro_f1_mean"],
+            "std": strat["family"]["macro_f1_std"],
+        },
+    }
 
 
 # ── Aggregation across seeds ─────────────────────────────────────────────────
@@ -234,13 +235,10 @@ def run_pathogenicity(pfam_map, seeds, n_jobs=-1):
 
 
 def _mechanism_one_seed(seed, feats, labels, genes, pfam_map):
-    """All feature × split probe results + chance floor for one seed (parallel)."""
+    """All feature × split probe results for one seed (parallel)."""
     print(f"  [mechanism] seed {seed} started", flush=True)
     gs = gene_split_cv(genes, seed=seed)
     fs = family_split_cv(genes, pfam_map, seed=seed)
-    floor = {}
-    for split_name, splits in [("gene_split", gs), ("family_split", fs)]:
-        floor[split_name] = chance_floor_multi(labels, splits)
     res = {}
     for fname, X in feats.items():
         for split_name, splits in [("gene_split", gs), ("family_split", fs)]:
@@ -258,7 +256,7 @@ def _mechanism_one_seed(seed, feats, labels, genes, pfam_map):
                 flush=True,
             )
     print(f"  [mechanism] seed {seed} done", flush=True)
-    return floor, res
+    return res
 
 
 def run_mechanism(pfam_map, seeds, n_jobs=-1):
@@ -274,10 +272,7 @@ def run_mechanism(pfam_map, seeds, n_jobs=-1):
     )
 
     collect = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
-    floor = defaultdict(list)
-    for seed, (seed_floor, res) in zip(seeds, per_seed):
-        for split_name, val in seed_floor.items():
-            floor[split_name].append(val)
+    for seed, res in zip(seeds, per_seed):
         for (fname, split_name), cell in res.items():
             for key, val in cell.items():
                 collect[fname][split_name][key].append(val)
@@ -286,7 +281,12 @@ def run_mechanism(pfam_map, seeds, n_jobs=-1):
                 f"F1(lr={_f(cell['logreg_f1'])} mlp={_f(cell['mlp_f1'])})"
             )
 
-    out = {"chance_floor": {k: agg_seeds(v) for k, v in floor.items()}}
+    # Chance floor is read from the measured naive baseline (results/<run>/
+    # naive_baseline.json), NOT recomputed here — so the gate compares against the
+    # same floor the rest of the project cites, with no parallel computation that
+    # could silently diverge. The stratified (prior-weighted random) strategy is
+    # the apt comparator for a probabilistic classifier.
+    out = {"chance_floor": _read_chance_floor()}
     for fname in feats:
         out[fname] = {}
         for split_name in ("gene_split", "family_split"):
