@@ -78,16 +78,43 @@ def run_hmmscan(wt_seqs, hmm_db=None, cpu=4):
             check=True,
         )
 
-        # tblout columns: target(pfam_name) accession(pfam_acc) query(domain) ...
-        #                 ... full_evalue(col 5) full_score(col 6) ...
+        # tblout columns (1-based): target_name(1) accession(2) query/domain(3)
+        #                           query_acc(4) full_evalue(5) full_score(6) ...
+        # Family id = the Pfam accession (col 2, e.g. PF00018.24 -> PF00018). HMMER
+        # writes "-" in the accession column for any model without an ACC field; in
+        # that case fall back to the target NAME (col 1, always present and unique
+        # per model) so unrelated domains are NOT all merged into one bogus "-"
+        # family — which would force them into the same family-split fold.
         hits = defaultdict(list)
+        n_malformed = 0
+        n_acc_fallback = 0
         with open(tblout) as handle:
             for line in handle:
                 if line.startswith("#") or not line.strip():
                     continue
                 parts = line.split()
-                pfam_acc, domain, evalue = parts[1], parts[2], float(parts[4])
-                hits[domain].append((evalue, pfam_acc.split(".")[0]))
+                if len(parts) < 5:
+                    n_malformed += 1
+                    continue
+                target_name, pfam_acc, domain = parts[0], parts[1], parts[2]
+                evalue = float(parts[4])
+                if pfam_acc == "-":
+                    family_id = target_name
+                    n_acc_fallback += 1
+                else:
+                    family_id = pfam_acc.split(".")[0]
+                hits[domain].append((evalue, family_id))
+
+        if n_malformed:
+            print(
+                f"WARNING: skipped {n_malformed} tblout line(s) with < 5 columns "
+                f"(malformed/truncated)"
+            )
+        if n_acc_fallback:
+            print(
+                f"WARNING: {n_acc_fallback} hit(s) had no Pfam accession ('-'); "
+                f"used the target name as the family id instead"
+            )
 
     return {d: min(hit_list)[1] for d, hit_list in hits.items()}
 

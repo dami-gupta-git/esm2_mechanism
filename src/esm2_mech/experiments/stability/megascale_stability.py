@@ -56,8 +56,8 @@ from sklearn.linear_model import Ridge
 from sklearn.preprocessing import StandardScaler
 
 from esm2_mech.experiments.mechanism.loaders import load_merged
-from esm2_mech.experiments.stability.tsuboyama_loader import load_tsuboyama_variants
-from esm2_mech.experiments.stability.build_domain_families import build_family_map
+from esm2_mech.experiments.stability.stability_data import load_stability_inputs
+from esm2_mech.utils.io import atomic_write_json
 from esm2_mech.utils.metrics import auroc_at_median, mean_std_n
 from esm2_mech.utils.splits import random_split_cv, gene_split_cv, family_split_cv
 from esm2_mech.utils.paths import (
@@ -66,22 +66,11 @@ from esm2_mech.utils.paths import (
     VALID_VARIANTS_JSON,
     EMB_WT_MEAN,
     EMB_MUT_MEAN,
-    MEGASCALE_EMB_WT_MEAN,
-    MEGASCALE_EMB_MUT_MEAN,
-    MEGASCALE_EMB_WT_POS,
-    MEGASCALE_EMB_MUT_POS,
-    MEGASCALE_TSUBOYAMA_VARIANTS_JSON,
-    MEGASCALE_DOMAIN_FAMILIES_JSON,
     PFAM_JSON,
     ESM2_MODEL,
 )
 
 OUT = str(_RESULTS_DIR / "megascale_stability")
-
-WT_MEAN_EMB = MEGASCALE_EMB_WT_MEAN
-MUT_MEAN_EMB = MEGASCALE_EMB_MUT_MEAN
-WT_POS_EMB = MEGASCALE_EMB_WT_POS
-MUT_POS_EMB = MEGASCALE_EMB_MUT_POS
 
 N_SEEDS = 5
 N_FOLDS = 5
@@ -95,35 +84,49 @@ os.makedirs(str(_DATA_DIR / "embeddings" / ESM2_MODEL), exist_ok=True)
 # ---------------------------------------------------------------------------
 
 
-def run_ridge_with_auroc(X, y, splits):
-    rhos, rs, aurocs = [], [], []
+def run_regression_cv(X, y, splits, clf_fn, with_pearson=True):
+    """Standardise-fit-predict a regressor over CV folds; return ρ/AUROC (+Pearson).
+
+    Generic over the estimator (clf_fn returns a fresh estimator per fold) so the
+    Ridge linear probe here and the RF/GBM/XGBoost probes in megascale_mlp.py share
+    one implementation. Pearson r is only meaningful for the linear probe, so the
+    nonlinear callers pass with_pearson=False.
+    """
+    rhos, pearsons, aurocs = [], [], []
     for tr, te in splits:
-        sc = StandardScaler()
-        Xtr = sc.fit_transform(X[tr])
-        Xte = sc.transform(X[te])
-        clf = Ridge(alpha=1.0)
+        scaler = StandardScaler()
+        Xtr = scaler.fit_transform(X[tr])
+        Xte = scaler.transform(X[te])
+        clf = clf_fn()
         clf.fit(Xtr, y[tr])
         pred = clf.predict(Xte)
         rho, _ = spearmanr(y[te], pred)
-        r, _ = pearsonr(y[te], pred)
-        au = auroc_at_median(y[te], pred)
         rhos.append(float(rho))
-        rs.append(float(r))
-        aurocs.append(au)
+        aurocs.append(auroc_at_median(y[te], pred))
+        if with_pearson:
+            pearson, _ = pearsonr(y[te], pred)
+            pearsons.append(float(pearson))
     if not rhos:
         return {}
     rho_mean, rho_std, n_rho = mean_std_n(rhos)
-    r_mean, r_std, _ = mean_std_n(rs)
     au_mean, au_std, _ = mean_std_n(aurocs)
-    return {
+    out = {
         "spearman_mean": rho_mean,
         "spearman_std": rho_std,
-        "pearson_mean": r_mean,
-        "pearson_std": r_std,
         "auroc_mean": au_mean,
         "auroc_std": au_std,
         "n_folds": n_rho,
     }
+    if with_pearson:
+        pearson_mean, pearson_std, _ = mean_std_n(pearsons)
+        out["pearson_mean"] = pearson_mean
+        out["pearson_std"] = pearson_std
+    return out
+
+
+def run_ridge_with_auroc(X, y, splits):
+    """Linear (Ridge, alpha=1.0) stability probe — thin wrapper over run_regression_cv."""
+    return run_regression_cv(X, y, splits, lambda: Ridge(alpha=1.0), with_pearson=True)
 
 
 # ---------------------------------------------------------------------------
@@ -190,10 +193,9 @@ def run_h3_stability_projection(
 
     Returns dict with baseline_f1, projected_f1, delta_f1, and per-seed values.
     """
-    from sklearn.linear_model import LogisticRegression, Ridge
-    from sklearn.preprocessing import StandardScaler, LabelEncoder
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.preprocessing import LabelEncoder
     from sklearn.metrics import f1_score
-    from esm2_mech.utils.splits import family_split_cv
 
     # Fit stability Ridge on S1724
     sc_s = StandardScaler()
@@ -202,20 +204,35 @@ def run_h3_stability_projection(
     ridge.fit(X_s, s1724_ddg)
 
     # Stability projection vector: unit-normalised Ridge weights (in sc_s feature space)
-    w = ridge.coef_  # shape (D,)
-    v = w / (np.linalg.norm(w) + 1e-12)  # unit vector in sc_s-scaled feature space
+    stability_weights = ridge.coef_  # shape (D,)
+    stability_dir = stability_weights / (
+        np.linalg.norm(stability_weights) + 1e-12
+    )  # unit vector in sc_s-scaled feature space
 
     # Project stability out of merged delta_mean — must scale first to match sc_s space.
     # Both arms live in this single sc_s-standardised space and are NOT re-standardised
     # per fold: a per-fold StandardScaler rescales each column by its own std, which —
-    # because `residuals` is rank-deficient along the dense vector v — reintroduces
-    # variance along v (the very direction we removed), silently defeating the test.
-    # The projection must therefore be the LAST transform the classifier sees.
+    # because `residuals` is rank-deficient along the dense vector stability_dir —
+    # reintroduces variance along that direction (the very one we removed), silently
+    # defeating the test. The projection must be the LAST transform the classifier sees.
     merged_scaled = sc_s.transform(merged_delta_mean.astype(np.float64)).astype(
         np.float32
     )
-    proj = merged_scaled @ v  # (N,) scalar stability score per variant
-    residuals = merged_scaled - np.outer(proj, v)
+    proj = merged_scaled @ stability_dir  # (N,) scalar stability score per variant
+    residuals = merged_scaled - np.outer(proj, stability_dir)
+
+    # Verify the projection actually removed the stability direction: the residuals
+    # must have ~zero variance along stability_dir (CLAUDE.md: verify
+    # var(X_final @ v) ≈ 0 after projecting a direction out). The whole H3 test
+    # hinges on this, so assert it rather than trusting the algebra.
+    var_before = float(np.var(merged_scaled.astype(np.float64) @ stability_dir))
+    var_after = float(np.var(residuals.astype(np.float64) @ stability_dir))
+    if var_after > 1e-6 * var_before + 1e-8:
+        raise AssertionError(
+            f"stability projection failed: var along stability_dir was {var_before:.3e} "
+            f"before and {var_after:.3e} after projecting out — the removed direction "
+            "leaked back in, so the projected arm still contains stability signal."
+        )
 
     le = LabelEncoder()
     y = le.fit_transform(merged_labels)
@@ -287,46 +304,17 @@ def apply_decision_rule(random_rho, protein_rho, per_prot_std):
 
 
 def main():
-    # ── 1. Load variants ──────────────────────────────────────────────────────
-    variants = load_tsuboyama_variants()
-    proteins = np.array([v["protein"] for v in variants])
-    ddg = np.array([v["ddg"] for v in variants])
-    print(
-        f"Loaded {len(variants)} Tsuboyama variants across "
-        f"{len(set(proteins))} natural domains"
-    )
-
-    # ── 2. Domain → Pfam family map (for the family-holdout split) ─────────────
-    # build_family_map caches to MEGASCALE_DOMAIN_FAMILIES_JSON; orphan domains
-    # (no Pfam hit) are absent from the map and so excluded from family-split only.
-    if os.path.exists(MEGASCALE_DOMAIN_FAMILIES_JSON):
-        with open(MEGASCALE_DOMAIN_FAMILIES_JSON) as handle:
-            family_map = json.load(handle)
-    else:
-        family_map = build_family_map(variants=variants)
-    n_families = len(set(family_map.values()))
-    n_orphans = len(set(proteins)) - len(set(p for p in proteins if p in family_map))
-    print(
-        f"Pfam families: {len(set(proteins))} domains → {n_families} families "
-        f"({n_orphans} orphans excluded from family-split)"
-    )
-
-    # ── 3. Embeddings ─────────────────────────────────────────────────────────
-    print("Loading embeddings...")
-    wt_mean = np.load(WT_MEAN_EMB)
-    mut_mean = np.load(MUT_MEAN_EMB)
-    wt_pos = np.load(WT_POS_EMB)
-    mut_pos = np.load(MUT_POS_EMB)
-
-    delta_mean = mut_mean - wt_mean
-    delta_pos = mut_pos - wt_pos
-
-    if len(delta_mean) != len(variants):
-        raise ValueError(
-            f"embedding/variant row mismatch: {len(delta_mean)} embedding rows vs "
-            f"{len(variants)} variants — {WT_MEAN_EMB} is not row-aligned to "
-            f"{MEGASCALE_TSUBOYAMA_VARIANTS_JSON}."
-        )
+    # ── 1. Shared inputs: variants, ΔΔG, Pfam family map, embedding deltas ─────
+    # The linear probe needs the per-residue delta too (include_pos=True). Orphan
+    # domains (no Pfam hit) are absent from family_map → excluded from family-split.
+    inputs = load_stability_inputs(include_pos=True)
+    variants = inputs.variants
+    proteins = inputs.proteins
+    ddg = inputs.ddg
+    family_map = inputs.family_map
+    delta_mean = inputs.delta_mean
+    delta_pos = inputs.delta_pos
+    n_families = inputs.n_families
 
     print(f"Embeddings: delta_mean {delta_mean.shape}, delta_pos {delta_pos.shape}")
 
@@ -363,30 +351,31 @@ def main():
     # ── 5. Per-protein Spearman distribution ──────────────────────────────────
     print("\nPer-protein Spearman (leave-one-protein-out)...")
     per_prot = per_protein_spearman(delta_mean, ddg, proteins)
-    prot_rhos = [v["spearman"] for v in per_prot.values()]
-    if prot_rhos:
-        per_prot_std = float(np.std(prot_rhos))
-        per_prot_mean = float(np.mean(prot_rhos))
+    prot_rhos = [entry["spearman"] for entry in per_prot.values()]
+    # spearmanr returns NaN for a protein whose held-out ΔΔG or predictions are
+    # constant. Aggregate with mean_std_n (NaN-filtering) and guard min/max on the
+    # finite subset — a single NaN must not poison per_prot_std, which feeds the
+    # HETEROGENEOUS branch of the verdict (CLAUDE.md: NaN-guard every reducer).
+    per_prot_mean, per_prot_std, n_finite_prot = mean_std_n(prot_rhos)
+    finite_rhos = [rho for rho in prot_rhos if np.isfinite(rho)]
+    if finite_rhos:
         print(
             f"  Per-protein ρ: mean={per_prot_mean:.3f}  std={per_prot_std:.3f}  "
-            f"min={min(prot_rhos):.3f}  max={max(prot_rhos):.3f}  "
-            f"n={len(prot_rhos)}"
+            f"min={min(finite_rhos):.3f}  max={max(finite_rhos):.3f}  "
+            f"n={n_finite_prot} (of {len(prot_rhos)} proteins with ≥5 variants)"
         )
     else:
-        per_prot_std = float("nan")
-        per_prot_mean = float("nan")
-        print("  Per-protein ρ: no protein had enough variants (>=5) — skipped")
+        print("  Per-protein ρ: no protein yielded a finite ρ — skipped")
 
-    with open(os.path.join(OUT, "per_protein_spearman.json"), "w") as f:
-        json.dump(per_prot, f, indent=2)
+    atomic_write_json(os.path.join(OUT, "per_protein_spearman.json"), per_prot)
 
     # ── 6. Aggregate across seeds ─────────────────────────────────────────────
     summary = {}
     all_keys = set()
-    for sr in results_by_seed:
-        for k, v in sr.items():
-            if isinstance(v, dict):
-                all_keys.add(k)
+    for seed_result in results_by_seed:
+        for key_name, value in seed_result.items():
+            if isinstance(value, dict):
+                all_keys.add(key_name)
 
     for key in sorted(all_keys):
         vals_rho = [
@@ -411,6 +400,7 @@ def main():
         "spearman_mean": per_prot_mean,
         "spearman_std": per_prot_std,
         "n_proteins": len(prot_rhos),
+        "n_proteins_finite": n_finite_prot,
     }
 
     # ── 7. H3 — stability projection out of mechanism ─────────────────────────
@@ -420,12 +410,12 @@ def main():
     # labels, no blind length truncation.
     h3_result = None
     if all(
-        os.path.exists(p)
-        for p in [VALID_VARIANTS_JSON, EMB_WT_MEAN, EMB_MUT_MEAN, PFAM_JSON]
+        os.path.exists(path)
+        for path in [VALID_VARIANTS_JSON, EMB_WT_MEAN, EMB_MUT_MEAN, PFAM_JSON]
     ):
         print("\nRunning H3 stability projection test...")
-        with open(PFAM_JSON) as f:
-            pfam_map = json.load(f)
+        with open(PFAM_JSON) as handle:
+            pfam_map = json.load(handle)
 
         merged_delta, merged_labels, merged_proteins = load_merged()
 
@@ -446,8 +436,9 @@ def main():
             f"Δ={h3_result['delta_f1']:+.3f}  "
             f"passes={'YES' if h3_result['h3_passes'] else 'NO (stability direction is informative)'}"
         )
-        with open(os.path.join(OUT, "h3_stability_projection.json"), "w") as f:
-            json.dump(h3_result, f, indent=2)
+        atomic_write_json(
+            os.path.join(OUT, "h3_stability_projection.json"), h3_result
+        )
     else:
         print("\nSkipping H3 (merged embeddings not found — run on pod with full data)")
 
@@ -479,8 +470,7 @@ def main():
         )
     print(f"{'='*60}")
 
-    with open(os.path.join(OUT, "summary.json"), "w") as f:
-        json.dump(summary, f, indent=2)
+    atomic_write_json(os.path.join(OUT, "summary.json"), summary)
     print(f"\nResults written to {OUT}/")
 
 

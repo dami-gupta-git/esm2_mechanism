@@ -29,24 +29,15 @@ import numpy as np
 from scipy.stats import spearmanr, pearsonr
 
 print = functools.partial(print, flush=True)
-from sklearn.preprocessing import StandardScaler
 from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
 
-from esm2_mech.experiments.stability.tsuboyama_loader import load_tsuboyama_variants
-from esm2_mech.experiments.stability.build_domain_families import build_family_map
+from esm2_mech.experiments.stability.stability_data import load_stability_inputs
+from esm2_mech.experiments.stability.megascale_stability import run_regression_cv
 from esm2_mech.utils.metrics import auroc_at_median, mean_std_n
 from esm2_mech.utils.splits import random_split_cv, gene_split_cv, family_split_cv
-from esm2_mech.utils.paths import (
-    RESULTS_DIR as _RESULTS_DIR,
-    MEGASCALE_EMB_WT_MEAN,
-    MEGASCALE_EMB_MUT_MEAN,
-    MEGASCALE_DOMAIN_FAMILIES_JSON,
-)
+from esm2_mech.utils.paths import RESULTS_DIR as _RESULTS_DIR
 
 OUT = str(_RESULTS_DIR / "megascale_stability")
-
-WT_MEAN_EMB = MEGASCALE_EMB_WT_MEAN
-MUT_MEAN_EMB = MEGASCALE_EMB_MUT_MEAN
 
 N_SEEDS = 5
 N_FOLDS = 5
@@ -55,38 +46,12 @@ os.makedirs(OUT, exist_ok=True)
 
 
 # ---------------------------------------------------------------------------
-# Generic sklearn regression probe (Ridge, RF, GBM)
-# ---------------------------------------------------------------------------
-
-
-def run_sklearn_probe(X, y, splits, clf_fn):
-    rhos, aurocs = [], []
-    for tr, te in splits:
-        sc = StandardScaler()
-        Xtr = sc.fit_transform(X[tr])
-        Xte = sc.transform(X[te])
-        clf = clf_fn()
-        clf.fit(Xtr, y[tr])
-        pred = clf.predict(Xte)
-        rho, _ = spearmanr(y[te], pred)
-        rhos.append(float(rho))
-        aurocs.append(auroc_at_median(y[te], pred))
-    if not rhos:
-        return {}
-    rho_mean, rho_std, n_rho = mean_std_n(rhos)
-    au_mean, au_std, _ = mean_std_n(aurocs)
-    return {
-        "spearman_mean": rho_mean,
-        "spearman_std": rho_std,
-        "auroc_mean": au_mean,
-        "auroc_std": au_std,
-        "n_folds": n_rho,
-    }
-
-
-# ---------------------------------------------------------------------------
 # MLP regression probe
 # ---------------------------------------------------------------------------
+# The generic sklearn probe (Ridge/RF/GBM/XGBoost) lives in megascale_stability
+# as run_regression_cv — imported above so the linear and nonlinear probes share
+# one CV loop. The MLP needs its own torch runner (early stopping, on-device
+# minibatching) and is defined below.
 
 
 def run_mlp_regression(
@@ -202,26 +167,12 @@ def run_mlp_regression(
 
 
 def main(use_xgboost=False):
-    variants = load_tsuboyama_variants()
-    proteins = np.array([v["protein"] for v in variants])
-    ddg = np.array([v["ddg"] for v in variants])
-    print(f"Loaded {len(variants)} variants across {len(set(proteins))} natural domains")
-
-    # Domain → Pfam family map (cached); orphans absent → excluded from family-split.
-    if os.path.exists(MEGASCALE_DOMAIN_FAMILIES_JSON):
-        with open(MEGASCALE_DOMAIN_FAMILIES_JSON) as handle:
-            family_map = json.load(handle)
-    else:
-        family_map = build_family_map(variants=variants)
-
-    wt_mean = np.load(WT_MEAN_EMB)
-    mut_mean = np.load(MUT_MEAN_EMB)
-    if len(wt_mean) != len(variants):
-        raise ValueError(
-            f"embedding/variant row mismatch: {len(wt_mean)} rows vs "
-            f"{len(variants)} variants — {WT_MEAN_EMB} is not row-aligned."
-        )
-    X = mut_mean - wt_mean
+    inputs = load_stability_inputs()
+    variants = inputs.variants
+    proteins = inputs.proteins
+    ddg = inputs.ddg
+    family_map = inputs.family_map
+    X = inputs.delta_mean
     print(f"Embeddings: {X.shape}")
 
     # The three CV schemes, built per-seed. Shared by every probe.
@@ -232,7 +183,7 @@ def main(use_xgboost=False):
     ]
 
     # Each probe maps (X, y, splits, seed) -> per-fold-aggregated dict. The MLP
-    # uses its own torch runner; RF/GBM use run_sklearn_probe with a fresh
+    # uses its own torch runner; RF/GBM use run_regression_cv with a fresh
     # estimator per seed. The Ridge linear baseline is NOT recomputed here — it is
     # produced (identically) by megascale_stability.py; running it again was the
     # slow stage (ill-conditioned at alpha=1.0, ~75 fits) and added nothing. Read
@@ -266,13 +217,13 @@ def main(use_xgboost=False):
             )
 
         probe_runners = [
-            ("xgb", lambda X, y, splits, seed: run_sklearn_probe(X, y, splits, lambda: _xgb(seed))),
+            ("xgb", lambda X, y, splits, seed: run_regression_cv(X, y, splits, lambda: _xgb(seed), with_pearson=False)),
         ]
     else:
         probe_runners = [
             ("mlp", lambda X, y, splits, seed: run_mlp_regression(X, y, splits, seed=seed)),
-            ("rf", lambda X, y, splits, seed: run_sklearn_probe(X, y, splits, lambda: _rf(seed))),
-            ("gbm", lambda X, y, splits, seed: run_sklearn_probe(X, y, splits, lambda: _gbm(seed))),
+            ("rf", lambda X, y, splits, seed: run_regression_cv(X, y, splits, lambda: _rf(seed), with_pearson=False)),
+            ("gbm", lambda X, y, splits, seed: run_regression_cv(X, y, splits, lambda: _gbm(seed), with_pearson=False)),
         ]
 
     summary = {}
