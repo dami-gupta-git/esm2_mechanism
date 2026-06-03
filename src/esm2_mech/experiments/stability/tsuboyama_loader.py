@@ -135,6 +135,7 @@ def load_tsuboyama_variants(csv_path=None, cache_path=None):
         "not_substitution": 0,
         "ddg_missing": 0,
         "ddg_unparseable": 0,
+        "length_mismatch": 0,
         "pos_out_of_range": 0,
         "wt_residue_mismatch": 0,
         "mut_residue_mismatch": 0,
@@ -180,7 +181,14 @@ def load_tsuboyama_variants(csv_path=None, cache_path=None):
                 continue
 
             mut_seq = row["aa_seq"].strip()
-            if var_pos < 1 or var_pos > len(wt_seq) or var_pos > len(mut_seq):
+            # A true single substitution preserves length. A WT/mut length
+            # disagreement means aa_seq is not the matching point-mutant (an indel
+            # or wrong row) — surface it under its own bucket rather than hiding it
+            # in pos_out_of_range or letting a longer mutant slip past the bound.
+            if len(mut_seq) != len(wt_seq):
+                skipped["length_mismatch"] += 1
+                continue
+            if var_pos < 1 or var_pos > len(wt_seq):
                 skipped["pos_out_of_range"] += 1
                 continue
             # Sanity: WT residue at var_pos matches the mutation code's source aa,

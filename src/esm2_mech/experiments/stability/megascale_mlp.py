@@ -1,19 +1,25 @@
 """
-Nonlinear (MLP) stability probe on S1724 — companion to megascale_stability.py.
+Nonlinear stability probe — companion to megascale_stability.py.
 
-Runs MLP regression (1280→256→64→1) under the same three CV schemes
-(random / protein-holdout / cluster-holdout) and 5 seeds as the Ridge probe,
-then compares to check whether nonlinearity adds signal beyond Ridge.
+Dataset: full Tsuboyama 2023 point-mutant set, natural domains only (see
+tsuboyama_loader.py). Runs Ridge, MLP (1280→256→64→1), RF and GBM under the
+same three CV schemes (random / domain-holdout / family-holdout) and 5 seeds,
+then compares to check whether nonlinearity adds signal beyond the linear probe.
+Family-holdout uses real Pfam families (build_domain_families.py).
 
-Same question as result_3/5/7 for mechanism: does the MLP lift survive
+NOTE on pre-registration: only Ridge and MLP are pre-registered (see the plan in
+docs/plans/plan_megascale_stability.md). RF and GBM are EXPLORATORY / post-hoc —
+report them as such, never as confirmed hypotheses.
+
+Same question as result_3/5/7 for mechanism: does the nonlinear lift survive
 family-holdout, or does it evaporate (leakage)?
 
-Usage:
+Usage (embeddings must already be extracted on GPU):
   cd esm2_mechanism
   python -m esm2_mech.experiments.stability.megascale_mlp
 
 Outputs:
-  results/megascale_stability/mlp_summary.json
+  results/<run>/megascale_stability/mlp_summary.json
 """
 
 import functools
@@ -27,48 +33,17 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import Ridge
 from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
 
-from esm2_mech.experiments.stability.megascale_stability import load_s1724_variants
+from esm2_mech.experiments.stability.tsuboyama_loader import load_tsuboyama_variants
+from esm2_mech.experiments.stability.build_domain_families import build_family_map
 from esm2_mech.utils.metrics import auroc_at_median, mean_std_n
 from esm2_mech.utils.splits import random_split_cv, gene_split_cv, family_split_cv
-
-PFAM = {
-    "1AJ3": "PF13499",
-    "1BNI": "PF00545",
-    "1CEY": "PF00072",
-    "1CUN": "PF00545",
-    "1DIV": "PF04563",
-    "1EKG": "PF02234",
-    "1FKJ": "PF00254",
-    "1FT8": "PF00062",
-    "1FTG": "PF00062",
-    "1GUA": "PF00244",
-    "1H7M": "PF00084",
-    "1IOB": "PF00545",
-    "1LVE": "PF00089",
-    "1O6X": "PF02885",
-    "1RIS": "PF00042",
-    "1RX4": "PF00042",
-    "1SHF": "PF00130",
-    "1STN": "PF00565",
-    "1TEN": "PF07679",
-    "1TTG": "PF09289",
-    "1UBQ": "NO_PFAM",
-    "2CI2": "PF00280",
-    "2IFB": "PF14651",
-    "2PTL": "PF00020",
-    "3BDC": "PF00565",
-    "3HHR": "PF00103",
-    "4HXJ": "PF00870",
-}
-
 from esm2_mech.utils.paths import (
-    DATA_DIR as _DATA_DIR,
     RESULTS_DIR as _RESULTS_DIR,
     MEGASCALE_EMB_WT_MEAN,
     MEGASCALE_EMB_MUT_MEAN,
+    MEGASCALE_DOMAIN_FAMILIES_JSON,
 )
 
-DATA = str(_DATA_DIR)
 OUT = str(_RESULTS_DIR / "megascale_stability")
 
 WT_MEAN_EMB = MEGASCALE_EMB_WT_MEAN
@@ -78,17 +53,6 @@ N_SEEDS = 5
 N_FOLDS = 5
 
 os.makedirs(OUT, exist_ok=True)
-
-
-# ---------------------------------------------------------------------------
-# Pfam family-split CV — defers to the shared family_split_cv helper.
-# PFAM (above) is the {PDB_id: Pfam} map; every S1724 protein has an entry
-# (ubiquitin = "NO_PFAM", a truthy singleton family), so no protein is dropped.
-# ---------------------------------------------------------------------------
-
-
-def pfam_split_cv(proteins, n_folds=5, seed=42):
-    return family_split_cv(proteins, PFAM, n_folds=n_folds, seed=seed)
 
 
 # ---------------------------------------------------------------------------
@@ -232,22 +196,33 @@ def run_mlp_regression(
 
 
 def main():
-    variants = load_s1724_variants()
+    variants = load_tsuboyama_variants()
     proteins = np.array([v["protein"] for v in variants])
     ddg = np.array([v["ddg"] for v in variants])
+    print(f"Loaded {len(variants)} variants across {len(set(proteins))} natural domains")
 
-    print(f"Loaded {len(variants)} variants across {len(set(proteins))} proteins")
+    # Domain → Pfam family map (cached); orphans absent → excluded from family-split.
+    if os.path.exists(MEGASCALE_DOMAIN_FAMILIES_JSON):
+        with open(MEGASCALE_DOMAIN_FAMILIES_JSON) as handle:
+            family_map = json.load(handle)
+    else:
+        family_map = build_family_map(variants=variants)
 
     wt_mean = np.load(WT_MEAN_EMB)
     mut_mean = np.load(MUT_MEAN_EMB)
+    if len(wt_mean) != len(variants):
+        raise ValueError(
+            f"embedding/variant row mismatch: {len(wt_mean)} rows vs "
+            f"{len(variants)} variants — {WT_MEAN_EMB} is not row-aligned."
+        )
     X = mut_mean - wt_mean
     print(f"Embeddings: {X.shape}")
 
     # The three CV schemes, built per-seed. Shared by every probe.
     split_builders = [
         ("random", lambda seed: random_split_cv(len(variants), N_FOLDS, seed)),
-        ("protein", lambda seed: gene_split_cv(proteins, n_folds=N_FOLDS, seed=seed)),
-        ("pfam", lambda seed: pfam_split_cv(proteins, N_FOLDS, seed)),
+        ("domain", lambda seed: gene_split_cv(proteins, n_folds=N_FOLDS, seed=seed)),
+        ("family", lambda seed: family_split_cv(proteins, family_map, n_folds=N_FOLDS, seed=seed)),
     ]
 
     # Each probe maps (X, y, splits, seed) -> per-fold-aggregated dict. The MLP
@@ -301,19 +276,21 @@ def main():
             )
 
     # Final comparison table
-    print(f"\n{'='*70}")
+    print(f"\n{'='*72}")
     print(
-        f"{'Probe':6s}  {'Random ρ':>9}  {'Protein ρ':>10}  {'Pfam ρ':>7}  {'Δ rnd→pfam':>10}  {'Pfam AUROC':>11}"
+        f"{'Probe':6s}  {'Random ρ':>9}  {'Domain ρ':>9}  {'Family ρ':>9}  "
+        f"{'Δ rnd→fam':>10}  {'Family AUROC':>13}"
     )
     for probe in ["ridge", "mlp", "rf", "gbm"]:
         rnd = summary.get(f"{probe}_random", {}).get("spearman_mean", float("nan"))
-        prt = summary.get(f"{probe}_protein", {}).get("spearman_mean", float("nan"))
-        pfm = summary.get(f"{probe}_pfam", {}).get("spearman_mean", float("nan"))
-        pau = summary.get(f"{probe}_pfam", {}).get("auroc_mean", float("nan"))
+        dom = summary.get(f"{probe}_domain", {}).get("spearman_mean", float("nan"))
+        fam = summary.get(f"{probe}_family", {}).get("spearman_mean", float("nan"))
+        fau = summary.get(f"{probe}_family", {}).get("auroc_mean", float("nan"))
         print(
-            f"  {probe.upper():6s}  {rnd:>9.3f}  {prt:>10.3f}  {pfm:>7.3f}  {rnd-pfm:>10.3f}  {pau:>11.3f}"
+            f"  {probe.upper():6s}  {rnd:>9.3f}  {dom:>9.3f}  {fam:>9.3f}  "
+            f"{rnd-fam:>10.3f}  {fau:>13.3f}"
         )
-    print(f"{'='*70}")
+    print(f"{'='*72}")
 
     with open(os.path.join(OUT, "mlp_summary.json"), "w") as f:
         json.dump(summary, f, indent=2)

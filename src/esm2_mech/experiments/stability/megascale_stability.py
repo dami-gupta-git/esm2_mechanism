@@ -1,48 +1,53 @@
 """
-Megascale stability as a second ESM-2 positive control (result_21).
+Megascale stability as a second ESM-2 positive control (linear/Ridge probe).
 
-Dataset: S1724 benchmark (ThermoMutDB curated, 1,277 single-point missense
-across 27 real PDB proteins). Physical ΔΔG labels — no curation circularity.
-NOT the synthetic mini-protein portion of Megascale; all 27 proteins are
-natural domains with Pfam coverage.
+Dataset: full Tsuboyama 2023 point-mutant set, natural domains only
+(Tsuboyama2023_Dataset2_Dataset3_20230416.csv). ~177k single-point missense
+variants across ~181 natural domains with physical ΔΔG labels — no curation
+circularity. De novo designs are excluded (no Pfam family); parsing/scope is in
+tsuboyama_loader.py. Family-split uses real Pfam families assigned by HMMER
+(build_domain_families.py); domains with no Pfam hit are excluded from
+family-split only. See for_me/explain_stability.md for the full rationale.
 
-Pre-registered hypotheses (plan_megascale_stability.md):
+Pre-registered hypotheses (docs/plans/plan_megascale_stability.md):
   H1: Spearman ρ ≥ 0.5 under random split (stability encoded)
-  H2: ρ drops ≤ 0.05 under protein-holdout CV (family-robust)
+  H2: ρ drops ≤ 0.05 under family-split CV (family-robust)
   H3: Stability projected out of mechanism delta_mean does not lift
-      family-split mechanism F1 on merged Gerasimavicius dataset.
-      Protocol: train Ridge on S1724 → predict stability score for merged
+      family-split mechanism F1 on the merged mechanism dataset.
+      Protocol: train Ridge on stability → predict stability score for merged
       variants → compute residuals of delta_mean ⊥ predicted stability
       (OLS projection-out, one component) → re-run family-split logreg.
-  H4: Per-protein ρ std ≤ 0.10 (tight per-stratum distribution)
+  H4: Per-domain ρ std ≤ 0.10 (tight per-stratum distribution)
 
 Decision table — ordered by informativeness, not by prior probability.
 LEAKY and HETEROGENEOUS are the high-value outcomes; ROBUST is expected:
 
-  LEAKY:         random ρ ≥ 0.5, protein-split Δ ≥ 0.10  → stability signal partly family-memorisation;
+  LEAKY:         random ρ ≥ 0.5, family-split Δ ≥ 0.10  → stability signal partly family-memorisation;
                  analogous to mechanism leakage; would reshape central claim
-  HETEROGENEOUS: random ρ ≥ 0.5, Δ ≤ 0.05, per-prot std ≥ 0.15  → works on average, fails on some proteins;
+  HETEROGENEOUS: random ρ ≥ 0.5, Δ ≤ 0.05, per-domain std ≥ 0.15  → works on average, fails on some domains;
                  matches result_18 AM/ProteinGym pattern; curation vs physical label distinction is real
-  ROBUST:        random ρ ≥ 0.5, Δ ≤ 0.05, per-prot std ≤ 0.10  → expected; strengthens positive-control claim
+  ROBUST:        random ρ ≥ 0.5, Δ ≤ 0.05, per-domain std ≤ 0.10  → expected; strengthens positive-control claim
   WEAK:          random ρ 0.3–0.5  → partial signal
   NULL:          random ρ < 0.3  → very unexpected; would undermine central framing
 
-Usage (GPU required for embedding extraction):
+Companion nonlinear probe (Ridge/MLP/RF/GBM): megascale_mlp.py.
+
+Usage (embeddings must already be extracted on GPU):
   cd esm2_mechanism
   python -m esm2_mech.experiments.stability.megascale_stability
 
 Outputs:
-  data/megascale_variants.json
-  data/embeddings/megascale_{wt,mut}_{mean,pos}.npy
-  results/megascale_stability/summary.json
-  results/megascale_stability/per_protein_spearman.json
-  results/megascale_stability/h3_stability_projection.json
+  data/megascale_tsuboyama_variants.json
+  data/megascale_domain_families.json
+  data/embeddings/<model>/megascale_{wt,mut}_{mean,pos}.npy
+  results/<run>/megascale_stability/summary.json
+  results/<run>/megascale_stability/per_protein_spearman.json
+  results/<run>/megascale_stability/h3_stability_projection.json
 """
 
 import functools
 import json
 import os
-import zipfile
 import numpy as np
 from scipy.stats import spearmanr, pearsonr
 
@@ -65,9 +70,7 @@ from esm2_mech.utils.paths import (
     MEGASCALE_EMB_MUT_MEAN,
     MEGASCALE_EMB_WT_POS,
     MEGASCALE_EMB_MUT_POS,
-    MEGASCALE_VARIANTS_JSON,
-    MEGASCALE_BENCHMARKS_ZIP,
-    MEGASCALE_PROTEIN_CLUSTERS_JSON,
+    MEGASCALE_TSUBOYAMA_VARIANTS_JSON,
     MEGASCALE_DOMAIN_FAMILIES_JSON,
     PFAM_JSON,
     ESM2_MODEL,
@@ -75,8 +78,6 @@ from esm2_mech.utils.paths import (
 
 OUT = str(_RESULTS_DIR / "megascale_stability")
 
-VARIANTS_CACHE = str(MEGASCALE_VARIANTS_JSON)
-BM_ZIP = str(MEGASCALE_BENCHMARKS_ZIP)
 WT_MEAN_EMB = MEGASCALE_EMB_WT_MEAN
 MUT_MEAN_EMB = MEGASCALE_EMB_MUT_MEAN
 WT_POS_EMB = MEGASCALE_EMB_WT_POS
@@ -87,200 +88,6 @@ N_FOLDS = 5
 
 os.makedirs(OUT, exist_ok=True)
 os.makedirs(str(_DATA_DIR / "embeddings" / ESM2_MODEL), exist_ok=True)
-
-
-# ---------------------------------------------------------------------------
-# Data loading
-# ---------------------------------------------------------------------------
-
-
-def load_s1724_variants():
-    """
-    Parse S1724 benchmark (ThermoMutDB curated, single-point missense).
-
-    WT sequence: S1724_PDB_sequences.csv gabetrimmed column (keyed by PDB_chain e.g. '1AJ3_A').
-    Mutation position: paper_seq_muts column, 1-indexed within gabetrimmed.
-    Returns list of dicts: {protein, mutation_code, wt_seq, mut_seq, var_pos, ddg}
-    """
-    if os.path.exists(VARIANTS_CACHE):
-        print("Loading cached S1724 variants...")
-        with open(VARIANTS_CACHE) as f:
-            return json.load(f)
-
-    import re
-    import pandas as pd
-
-    mut_pat = re.compile(r"^([A-Z])(\d+)([A-Z])$")
-
-    with zipfile.ZipFile(BM_ZIP) as z:
-        with z.open("benchmarks/S1724_thermomutdb_cleaned_withseq.csv") as f:
-            df = pd.read_csv(f)
-
-    # Single-point missense with ΔΔG and parseable mutation
-    # paper_seq stores the MUTANT sequence; paper_seq_muts gives the 1-indexed position
-    # within paper_seq where the mutation was applied (paper_seq[var_pos-1] == aa_mut).
-    # WT is reconstructed by reversing the mutation: replace aa_mut -> aa_wt at var_pos.
-    df = df[
-        (df["mutation_type"] == "Single")
-        & df["ddg"].notna()
-        & df["paper_seq"].notna()
-        & df["paper_seq_muts"].notna()
-    ].copy()
-
-    variants = []
-    skipped = {"bad_mut_pat": 0, "pos_out_of_range": 0, "mut_not_in_paper_seq": 0}
-    for _, row in df.iterrows():
-        protein = str(row["PDB_wild"]).strip()
-        mut_str = str(row["paper_seq_muts"]).strip()
-        m = mut_pat.match(mut_str)
-        if not m:
-            skipped["bad_mut_pat"] += 1
-            continue
-        aa_wt, pos_str, aa_mut = m.groups()
-        var_pos = int(pos_str)  # 1-indexed in paper_seq
-
-        paper_seq = str(row["paper_seq"]).strip()
-        if var_pos < 1 or var_pos > len(paper_seq):
-            skipped["pos_out_of_range"] += 1
-            continue
-        if paper_seq[var_pos - 1] != aa_mut:
-            # paper_seq should have the mutant residue at var_pos
-            skipped["mut_not_in_paper_seq"] += 1
-            continue
-
-        # Reconstruct WT by reversing the mutation
-        wt_seq = paper_seq[: var_pos - 1] + aa_wt + paper_seq[var_pos:]
-        mut_seq = paper_seq  # already the mutant
-
-        variants.append(
-            {
-                "protein": protein,
-                "mutation_code": mut_str,
-                "wt_seq": wt_seq,
-                "mut_seq": mut_seq,
-                "var_pos": var_pos,
-                "ddg": float(row["ddg"]),
-            }
-        )
-
-    print(f"S1724: {len(variants)} single-point variants, skipped={skipped}")
-
-    with open(VARIANTS_CACHE, "w") as f:
-        json.dump(variants, f)
-    print(f"Cached to {VARIANTS_CACHE}")
-    return variants
-
-
-# ---------------------------------------------------------------------------
-# Protein-level clustering for family-split (MMseqs2 or sequence-identity)
-# ---------------------------------------------------------------------------
-
-
-def assign_protein_clusters(variants):
-    """
-    Group proteins into clusters for the family-split analogue.
-    Uses MMseqs2 to cluster the unique WT sequences; if MMseqs2 is unavailable or
-    fails, falls back to identity clustering (each protein its own cluster).
-
-    Only an MMseqs2 success is cached. A fallback is not written — an MMseqs2
-    failure is treated as transient (binary missing on this host, OOM, etc.), so
-    the next run re-attempts rather than serving a stale degenerate identity map.
-    Returns: dict protein_id -> cluster_id.
-    """
-    mmseqs_cache = str(MEGASCALE_PROTEIN_CLUSTERS_JSON)
-    if os.path.exists(mmseqs_cache):
-        with open(mmseqs_cache) as f:
-            return json.load(f)
-
-    # Build unique WT sequences
-    proteins = {}
-    for v in variants:
-        pid = v["protein"]
-        if pid not in proteins:
-            proteins[pid] = v["wt_seq"]
-
-    try:
-        cluster_map = _run_mmseqs2(proteins)
-    except Exception as e:
-        # Transient/host failure — return the identity fallback WITHOUT caching so
-        # a later run on a host with MMseqs2 re-clusters instead of reading stale.
-        print(f"MMseqs2 failed ({e}); using identity clustering for this run (not cached)")
-        return {pid: pid for pid in proteins}
-
-    with open(mmseqs_cache, "w") as f:
-        json.dump(cluster_map, f)
-    return cluster_map
-
-
-def _run_mmseqs2(proteins, min_seq_id=0.20, coverage=0.20):
-    """
-    Run MMseqs2 easy-cluster on the 33 S1724 proteins.
-    Returns dict: protein_id -> cluster_representative_id
-    """
-    import subprocess, tempfile, shutil
-
-    if not shutil.which("mmseqs"):
-        raise RuntimeError("mmseqs not found in PATH")
-
-    with tempfile.TemporaryDirectory() as tmp:
-        fasta = os.path.join(tmp, "seqs.fasta")
-        with open(fasta, "w") as f:
-            for pid, seq in proteins.items():
-                f.write(f">{pid}\n{seq}\n")
-
-        subprocess.run(
-            [
-                "mmseqs",
-                "easy-cluster",
-                fasta,
-                os.path.join(tmp, "clust"),
-                os.path.join(tmp, "mmseqs_tmp"),
-                "--min-seq-id",
-                str(min_seq_id),
-                "-c",
-                str(coverage),
-                "--cov-mode",
-                "0",
-                "-v",
-                "0",
-            ],
-            check=True,
-            capture_output=True,
-        )
-
-        tsv = os.path.join(tmp, "clust_cluster.tsv")
-        cluster_map = {}
-        with open(tsv) as f:
-            for line in f:
-                rep, member = line.strip().split("\t")
-                cluster_map[member] = rep
-
-    return cluster_map
-
-
-# ---------------------------------------------------------------------------
-# Embedding extraction
-# ---------------------------------------------------------------------------
-
-
-
-# ---------------------------------------------------------------------------
-# CV splits
-# ---------------------------------------------------------------------------
-#
-# Random split and protein-holdout reuse the shared helpers in utils.splits
-# (protein-holdout IS gene-split with proteins as the grouping key). The
-# cluster-holdout analogue is gene-split over the cluster-mapped protein ids.
-
-
-def cluster_split_cv(proteins, cluster_map, n_folds=5, seed=42):
-    """Hold out whole MMseqs2/identity clusters (analogous to family-split).
-
-    Maps each protein to its cluster representative, then defers to gene_split_cv
-    on the cluster ids so the fold-building and min-size guards stay in one place.
-    """
-    prot_clusters = np.array([cluster_map.get(p, p) for p in proteins])
-    return gene_split_cv(prot_clusters, n_folds=n_folds, seed=seed)
 
 
 # ---------------------------------------------------------------------------
@@ -324,7 +131,7 @@ def run_ridge_with_auroc(X, y, splits):
 # ---------------------------------------------------------------------------
 
 
-def per_protein_spearman(X, y, proteins, use_delta_mean=True):
+def per_protein_spearman(X, y, proteins):
     """
     For each protein with ≥5 variants, fit Ridge on all others, predict on that protein.
     Analogous to result_17/18 per-stratum AUROC distributions.
@@ -398,7 +205,12 @@ def run_h3_stability_projection(
     w = ridge.coef_  # shape (D,)
     v = w / (np.linalg.norm(w) + 1e-12)  # unit vector in sc_s-scaled feature space
 
-    # Project stability out of merged delta_mean — must scale first to match sc_s space
+    # Project stability out of merged delta_mean — must scale first to match sc_s space.
+    # Both arms live in this single sc_s-standardised space and are NOT re-standardised
+    # per fold: a per-fold StandardScaler rescales each column by its own std, which —
+    # because `residuals` is rank-deficient along the dense vector v — reintroduces
+    # variance along v (the very direction we removed), silently defeating the test.
+    # The projection must therefore be the LAST transform the classifier sees.
     merged_scaled = sc_s.transform(merged_delta_mean.astype(np.float64)).astype(
         np.float32
     )
@@ -414,17 +226,17 @@ def run_h3_stability_projection(
         for X, tag in [(merged_scaled, "baseline"), (residuals, "projected")]:
             fold_f1s = []
             for tr, te in splits:
-                sc = StandardScaler()
-                Xtr = sc.fit_transform(X[tr].astype(np.float32))
-                Xte = sc.transform(X[te].astype(np.float32))
+                # No per-fold StandardScaler: X is already sc_s-standardised, and
+                # re-standardising would undo the projection (see note above). Both
+                # arms get identical handling so the only difference is the projection.
                 clf = LogisticRegression(
                     max_iter=1000,
                     C=1.0,
                     class_weight="balanced",
                     random_state=seed,
                 )
-                clf.fit(Xtr, y[tr])
-                pred = clf.predict(Xte)
+                clf.fit(X[tr], y[tr])
+                pred = clf.predict(X[te])
                 fold_f1s.append(
                     float(f1_score(y[te], pred, average="macro", zero_division=0))
                 )
@@ -476,19 +288,28 @@ def apply_decision_rule(random_rho, protein_rho, per_prot_std):
 
 def main():
     # ── 1. Load variants ──────────────────────────────────────────────────────
-    variants = load_s1724_variants()
-    print(
-        f"Loaded {len(variants)} S1724 variants across "
-        f"{len(set(v['protein'] for v in variants))} proteins"
-    )
-
+    variants = load_tsuboyama_variants()
     proteins = np.array([v["protein"] for v in variants])
     ddg = np.array([v["ddg"] for v in variants])
+    print(
+        f"Loaded {len(variants)} Tsuboyama variants across "
+        f"{len(set(proteins))} natural domains"
+    )
 
-    # ── 2. Cluster assignment for family-split analogue ───────────────────────
-    cluster_map = assign_protein_clusters(variants)
-    n_clusters = len(set(cluster_map.values()))
-    print(f"Protein clusters: {len(set(proteins))} proteins → {n_clusters} clusters")
+    # ── 2. Domain → Pfam family map (for the family-holdout split) ─────────────
+    # build_family_map caches to MEGASCALE_DOMAIN_FAMILIES_JSON; orphan domains
+    # (no Pfam hit) are absent from the map and so excluded from family-split only.
+    if os.path.exists(MEGASCALE_DOMAIN_FAMILIES_JSON):
+        with open(MEGASCALE_DOMAIN_FAMILIES_JSON) as handle:
+            family_map = json.load(handle)
+    else:
+        family_map = build_family_map(variants=variants)
+    n_families = len(set(family_map.values()))
+    n_orphans = len(set(proteins)) - len(set(p for p in proteins if p in family_map))
+    print(
+        f"Pfam families: {len(set(proteins))} domains → {n_families} families "
+        f"({n_orphans} orphans excluded from family-split)"
+    )
 
     # ── 3. Embeddings ─────────────────────────────────────────────────────────
     print("Loading embeddings...")
@@ -504,27 +325,29 @@ def main():
         raise ValueError(
             f"embedding/variant row mismatch: {len(delta_mean)} embedding rows vs "
             f"{len(variants)} variants — {WT_MEAN_EMB} is not row-aligned to "
-            f"{VARIANTS_CACHE}."
+            f"{MEGASCALE_TSUBOYAMA_VARIANTS_JSON}."
         )
 
     print(f"Embeddings: delta_mean {delta_mean.shape}, delta_pos {delta_pos.shape}")
 
     # ── 4. Multi-seed CV ──────────────────────────────────────────────────────
+    # Three schemes: random (in-distribution), domain-holdout (never train+test on
+    # the same domain), family-holdout (never train+test on related Pfam families).
     results_by_seed = []
     for seed in range(N_SEEDS):
         print(f"\n── Seed {seed} ──")
 
         splits_random = random_split_cv(len(variants), N_FOLDS, seed)
-        splits_protein = gene_split_cv(proteins, n_folds=N_FOLDS, seed=seed)
-        splits_cluster = cluster_split_cv(proteins, cluster_map, N_FOLDS, seed)
+        splits_domain = gene_split_cv(proteins, n_folds=N_FOLDS, seed=seed)
+        splits_family = family_split_cv(proteins, family_map, n_folds=N_FOLDS, seed=seed)
 
         seed_result = {"seed": seed}
 
         for feat_name, X in [("delta_mean", delta_mean), ("delta_pos", delta_pos)]:
             for split_name, splits in [
                 ("random", splits_random),
-                ("protein", splits_protein),
-                ("cluster", splits_cluster),
+                ("domain", splits_domain),
+                ("family", splits_family),
             ]:
                 key = f"{feat_name}_{split_name}"
                 res = run_ridge_with_auroc(X, ddg, splits)
@@ -629,16 +452,15 @@ def main():
         print("\nSkipping H3 (merged embeddings not found — run on pod with full data)")
 
     # ── 8. Decision rule ──────────────────────────────────────────────────────
+    # Pre-registered H2 tests robustness under FAMILY-holdout (random − family Δ).
     dm_random = summary.get("delta_mean_random", {}).get("spearman_mean", float("nan"))
-    dm_protein = summary.get("delta_mean_protein", {}).get(
-        "spearman_mean", float("nan")
-    )
+    dm_family = summary.get("delta_mean_family", {}).get("spearman_mean", float("nan"))
 
-    verdict = apply_decision_rule(dm_random, dm_protein, per_prot_std)
+    verdict = apply_decision_rule(dm_random, dm_family, per_prot_std)
     summary["verdict"] = verdict
     summary["n_variants"] = len(variants)
     summary["n_proteins"] = len(set(proteins))
-    summary["n_clusters"] = n_clusters
+    summary["n_families"] = n_families
     summary["n_seeds"] = N_SEEDS
     summary["h3"] = h3_result
 
@@ -647,9 +469,9 @@ def main():
         f"VERDICT: {verdict}  (ordered by informativeness: LEAKY > HETEROGENEOUS > ROBUST > WEAK > NULL)"
     )
     print(f"  delta_mean random ρ  : {dm_random:.3f}  (H1 threshold ≥ 0.5)")
-    print(f"  delta_mean protein ρ : {dm_protein:.3f}")
-    print(f"  Δ (random − protein) : {dm_random - dm_protein:.3f}  (LEAKY if Δ ≥ 0.10)")
-    print(f"  per-protein ρ std    : {per_prot_std:.3f}  (HETEROGENEOUS if ≥ 0.15)")
+    print(f"  delta_mean family ρ  : {dm_family:.3f}")
+    print(f"  Δ (random − family)  : {dm_random - dm_family:.3f}  (LEAKY if Δ ≥ 0.10)")
+    print(f"  per-domain ρ std     : {per_prot_std:.3f}  (HETEROGENEOUS if ≥ 0.15)")
     if h3_result:
         print(
             f"  H3 Δ mechanism F1    : {h3_result['delta_f1']:+.3f}  "

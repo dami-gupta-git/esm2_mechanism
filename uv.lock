@@ -1046,15 +1046,6 @@ wheels = [
 ]
 
 [[package]]
-name = "einops"
-version = "0.8.1"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/e5/81/df4fbe24dff8ba3934af99044188e20a98ed441ad17a274539b74e82e126/einops-0.8.1.tar.gz", hash = "sha256:de5d960a7a761225532e0f1959e5315ebeafc0cd43394732f103ca44b9837e84", size = 54805, upload-time = "2025-02-09T03:17:00.434Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/87/62/9773de14fe6c45c23649e98b83231fffd7b9892b6cf863251dc2afa73643/einops-0.8.1-py3-none-any.whl", hash = "sha256:919387eb55330f5757c6bea9165c5ff5cfe63a642682ea788a6d472576d81737", size = 64359, upload-time = "2025-02-09T03:17:01.998Z" },
-]
-
-[[package]]
 name = "esm2-mech"
 version = "0.1.0"
 source = { editable = "." }
@@ -1064,8 +1055,6 @@ dependencies = [
     { name = "backoff" },
     { name = "biopython" },
     { name = "datasets" },
-    { name = "evo2", version = "0.3.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "evo2", version = "0.5.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "fair-esm" },
     { name = "google-generativeai" },
     { name = "matplotlib" },
@@ -1107,7 +1096,6 @@ requires-dist = [
     { name = "biopython" },
     { name = "black", marker = "extra == 'dev'" },
     { name = "datasets" },
-    { name = "evo2" },
     { name = "fair-esm" },
     { name = "google-generativeai" },
     { name = "matplotlib" },
@@ -1140,51 +1128,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/d3/38/af70d7ab1ae9d4da450eeec1fa3918940a5fafb9055e934af8d6eb0c2313/et_xmlfile-2.0.0.tar.gz", hash = "sha256:dab3f4764309081ce75662649be815c4c9081e88f0837825f90fd28317d4da54", size = 17234, upload-time = "2024-10-25T17:25:40.039Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/c1/8b/5fe2cc11fee489817272089c4203e679c63b570a5aaeb18d852ae3cbba6a/et_xmlfile-2.0.0-py3-none-any.whl", hash = "sha256:7a91720bc756843502c3b7504c77b8fe44217c85c537d85037f0f536151b2caa", size = 18059, upload-time = "2024-10-25T17:25:39.051Z" },
-]
-
-[[package]]
-name = "evo2"
-version = "0.3.0"
-source = { registry = "https://pypi.org/simple" }
-resolution-markers = [
-    "python_full_version < '3.11'",
-]
-dependencies = [
-    { name = "biopython", marker = "python_full_version < '3.11'" },
-    { name = "huggingface-hub", marker = "python_full_version < '3.11'" },
-    { name = "torch", marker = "python_full_version < '3.11'" },
-    { name = "transformer-engine", marker = "python_full_version < '3.11'" },
-    { name = "vtx", marker = "python_full_version < '3.11'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/d3/98/779587dc6a144a07415a832944bf99a09f1303ccb5e35f5bcf8d5feec694/evo2-0.3.0.tar.gz", hash = "sha256:2f64dcd1a9c2ddccf3148ab9ccf9f861cf1a5c620498819b0f1cd206c928f48e", size = 34890, upload-time = "2025-07-19T23:14:41.55Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/d3/87/911fa249445f36cb827cdf18bb5f051e2bfcc52d4b266586535d9c327191/evo2-0.3.0-py3-none-any.whl", hash = "sha256:6ea5487590c9d01f1a19ef124c086161d03ed38666e7f885971e7cd2d72d6cec", size = 36218, upload-time = "2025-07-19T23:14:40.417Z" },
-]
-
-[[package]]
-name = "evo2"
-version = "0.5.5"
-source = { registry = "https://pypi.org/simple" }
-resolution-markers = [
-    "python_full_version >= '3.14' and sys_platform == 'win32'",
-    "python_full_version >= '3.14' and sys_platform == 'emscripten'",
-    "python_full_version >= '3.14' and sys_platform != 'emscripten' and sys_platform != 'win32'",
-    "python_full_version == '3.13.*' and sys_platform == 'win32'",
-    "python_full_version == '3.13.*' and sys_platform == 'emscripten'",
-    "python_full_version == '3.13.*' and sys_platform != 'emscripten' and sys_platform != 'win32'",
-    "python_full_version >= '3.11' and python_full_version < '3.13' and sys_platform == 'win32'",
-    "python_full_version >= '3.11' and python_full_version < '3.13' and sys_platform == 'emscripten'",
-    "python_full_version >= '3.11' and python_full_version < '3.13' and sys_platform != 'emscripten' and sys_platform != 'win32'",
-]
-dependencies = [
-    { name = "biopython", marker = "python_full_version >= '3.11'" },
-    { name = "huggingface-hub", marker = "python_full_version >= '3.11'" },
-    { name = "torch", marker = "python_full_version >= '3.11'" },
-    { name = "vtx", marker = "python_full_version >= '3.11'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/05/7b/0a5dbf9abfa8b067fd0a3ce63cc1cd161de7226f3f12c78cce7be5051fbf/evo2-0.5.5.tar.gz", hash = "sha256:54c3ce2cfcc03b80ce50fc99c4ae788d897f0863717bc11d1353ede322c64ecc", size = 45439, upload-time = "2026-03-13T19:31:49.16Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/28/53/c06bb22f78388e547169be8d0abf5768ba7316decbbb6e520ed1cce57a07/evo2-0.5.5-py3-none-any.whl", hash = "sha256:162e87a97b9e0cfdc3966e4032541ca7ddf3e3d14efea06ee41ac3bf57528c13", size = 44881, upload-time = "2026-03-13T19:31:47.91Z" },
 ]
 
 [[package]]
@@ -4808,14 +4751,6 @@ wheels = [
 ]
 
 [[package]]
-name = "transformer-engine"
-version = "2.15.0"
-source = { registry = "https://pypi.org/simple" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/ce/cd/9febfe6ea848541ffede5b8bc87aa8900e6cc8182eb847ca636bb5001ded/transformer_engine-2.15.0-py3-none-any.whl", hash = "sha256:4015c5b9a7aa420f4f123e49ea795de31ae6f781fa1180c118d0ee40525eed8d", size = 875175, upload-time = "2026-05-11T17:58:23.756Z" },
-]
-
-[[package]]
 name = "transformers"
 version = "5.3.0"
 source = { registry = "https://pypi.org/simple" }
@@ -5047,21 +4982,6 @@ sdist = { url = "https://files.pythonhosted.org/packages/c7/24/5f1b3bdffd70275f6
 wheels = [
     { url = "https://files.pythonhosted.org/packages/39/08/aaaad47bc4e9dc8c725e68f9d04865dbcb2052843ff09c97b08904852d84/urllib3-2.6.3-py3-none-any.whl", hash = "sha256:bf272323e553dfb2e87d9bfd225ca7b0f467b919d7bbd355436d3fd37cb0acd4", size = 131584, upload-time = "2026-01-07T16:24:42.685Z" },
 ]
-
-[[package]]
-name = "vtx"
-version = "1.0.8"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "einops" },
-    { name = "numpy" },
-    { name = "packaging" },
-    { name = "pyyaml" },
-    { name = "rich" },
-    { name = "torch" },
-    { name = "tqdm" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/91/20/4af95a064a75bf62fcc8128a06100a91928e473e649bd8d283f3e10b626d/vtx-1.0.8.tar.gz", hash = "sha256:cce1f595e391819702219c924e76c99c3facb661730cb5c33dea6dc1ffbffe16", size = 26363808, upload-time = "2026-03-03T22:43:41.658Z" }
 
 [[package]]
 name = "wandb"

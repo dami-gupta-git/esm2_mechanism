@@ -121,13 +121,18 @@ MEGASCALE_DOMAIN_FAMILIES_JSON = DATA_DIR / "megascale_domain_families.json"
 # Pfam-A profile database (hmmpress-ed) used by the domain-family mapping step.
 PFAM_A_HMM = MEGASCALE_DOWNLOAD_DIR / "Pfam-A.hmm"
 
-# ── Megascale S1724 embeddings (megascale_stability.py) ──────────────────────
+# ── Megascale stability embeddings (megascale_stability.py) ──────────────────
 MEGASCALE_EMB_WT_MEAN = EMB_DIR / "megascale_wt_mean.npy"
 MEGASCALE_EMB_MUT_MEAN = EMB_DIR / "megascale_mut_mean.npy"
 MEGASCALE_EMB_WT_POS = EMB_DIR / "megascale_wt_pos.npy"
 MEGASCALE_EMB_MUT_POS = EMB_DIR / "megascale_mut_pos.npy"
 MEGASCALE_DELTAS = EMB_DIR / "megascale_deltas.npy"
 MEGASCALE_DDG = EMB_DIR / "megascale_ddg.npy"
+# Checkpoint subdir for the megascale embedding job. The shared embed helper
+# writes fixed names (embeddings_{wt,mut}_{mean,pos}.npy); isolating them here
+# avoids colliding with the mechanism embeddings in EMB_DIR. On completion the
+# driver promotes them to the MEGASCALE_EMB_* names above.
+MEGASCALE_EMB_CKPT_DIR = EMB_DIR / "megascale_ckpt"
 
 # ── Stability subspace (esm2_mechanism.py) ───────────────────────────────────
 STABILITY_SUBSPACE = EMB_DIR / "stability_subspace.npy"
