@@ -1,0 +1,62 @@
+{
+  "delta_mean_domain": {
+    "spearman_mean": 0.6008693957602084,
+    "spearman_std": 0.00185931810448753,
+    "auroc_mean": 0.7965174596026584,
+    "auroc_std": 0.001122906082992845,
+    "n_seeds": 5
+  },
+  "delta_mean_family": {
+    "spearman_mean": 0.5536576354047819,
+    "spearman_std": 0.005728870561812503,
+    "auroc_mean": 0.7716203141099239,
+    "auroc_std": 0.002696949325993201,
+    "n_seeds": 5
+  },
+  "delta_mean_random": {
+    "spearman_mean": 0.6929801042180255,
+    "spearman_std": 0.00011838048934871945,
+    "auroc_mean": 0.842709197314154,
+    "auroc_std": 0.00012930331631459276,
+    "n_seeds": 5
+  },
+  "delta_pos_domain": {
+    "spearman_mean": 0.6341962141210985,
+    "spearman_std": 0.0019864316774822937,
+    "auroc_mean": 0.8126929186089388,
+    "auroc_std": 0.0010540765139141904,
+    "n_seeds": 5
+  },
+  "delta_pos_family": {
+    "spearman_mean": 0.5916995020059262,
+    "spearman_std": 0.0025822928503660093,
+    "auroc_mean": 0.7895636468096321,
+    "auroc_std": 0.0017197349360270448,
+    "n_seeds": 5
+  },
+  "delta_pos_random": {
+    "spearman_mean": 0.6790262612183788,
+    "spearman_std": 0.00020323511373065593,
+    "auroc_mean": 0.8356852517348804,
+    "auroc_std": 0.00010334205631247861,
+    "n_seeds": 5
+  },
+  "per_protein": {
+    "spearman_mean": 0.636438653461221,
+    "spearman_std": 0.15953968203236496,
+    "n_proteins": 181
+  },
+  "verdict": "LEAKY",
+  "n_variants": 177315,
+  "n_proteins": 181,
+  "n_families": 77,
+  "n_seeds": 5,
+  "h3": {
+    "baseline_f1_mean": 0.39469436399913743,
+    "baseline_f1_std": 0.002779009599425697,
+    "projected_f1_mean": 0.39416466266847855,
+    "projected_f1_std": 0.003328736337343373,
+    "delta_f1": -0.0005297013306588827,
+    "h3_passes": true
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "xgb_random": {
+    "spearman_mean": 0.7669753927448435,
+    "spearman_std": 0.00021056210609180938,
+    "auroc_mean": 0.8861627134756663,
+    "auroc_std": 0.00011112996061356408,
+    "n_seeds": 5
+  },
+  "xgb_domain": {
+    "spearman_mean": 0.6764076266683945,
+    "spearman_std": 0.002516617219916234,
+    "auroc_mean": 0.8406806308794208,
+    "auroc_std": 0.001449644615486474,
+    "n_seeds": 5
+  },
+  "xgb_family": {
+    "spearman_mean": 0.6309351154859304,
+    "spearman_std": 0.004503122034954046,
+    "auroc_mean": 0.8168353699228547,
+    "auroc_std": 0.003068877415495774,
+    "n_seeds": 5
+  }
+}
