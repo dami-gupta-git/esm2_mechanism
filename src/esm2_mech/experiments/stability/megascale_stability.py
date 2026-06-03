@@ -42,16 +42,16 @@ Outputs:
 import functools
 import json
 import os
-import sys
 import zipfile
 import numpy as np
 from scipy.stats import spearmanr, pearsonr
 
 print = functools.partial(print, flush=True)
 from sklearn.linear_model import Ridge
-from sklearn.metrics import roc_auc_score
 from sklearn.preprocessing import StandardScaler
 
+from esm2_mech.utils.metrics import auroc_at_median
+from esm2_mech.utils.splits import random_split_cv, gene_split_cv
 from esm2_mech.utils.paths import (
     DATA_DIR as _DATA_DIR,
     RESULTS_DIR as _RESULTS_DIR,
@@ -258,60 +258,25 @@ def _run_mmseqs2(proteins, min_seq_id=0.20, coverage=0.20):
 # ---------------------------------------------------------------------------
 # CV splits
 # ---------------------------------------------------------------------------
-
-
-def random_split_cv(n, n_folds=5, seed=42):
-    idx = np.arange(n)
-    np.random.RandomState(seed).shuffle(idx)
-    splits = []
-    for fold in np.array_split(idx, n_folds):
-        te = fold
-        tr = np.setdiff1d(idx, fold)
-        splits.append((tr, te))
-    return splits
-
-
-def protein_split_cv(proteins, n_folds=5, seed=42):
-    """Hold out whole proteins (analogous to gene-split)."""
-    unique = np.array(sorted(set(proteins)))
-    np.random.RandomState(seed).shuffle(unique)
-    splits = []
-    for fold_proteins in np.array_split(unique, n_folds):
-        mask_te = np.isin(proteins, fold_proteins)
-        tr = np.where(~mask_te)[0]
-        te = np.where(mask_te)[0]
-        if len(tr) >= 10 and len(te) >= 5:
-            splits.append((tr, te))
-    return splits
+#
+# Random split and protein-holdout reuse the shared helpers in utils.splits
+# (protein-holdout IS gene-split with proteins as the grouping key). The
+# cluster-holdout analogue is gene-split over the cluster-mapped protein ids.
 
 
 def cluster_split_cv(proteins, cluster_map, n_folds=5, seed=42):
-    """Hold out whole MMseqs2/identity clusters (analogous to family-split)."""
+    """Hold out whole MMseqs2/identity clusters (analogous to family-split).
+
+    Maps each protein to its cluster representative, then defers to gene_split_cv
+    on the cluster ids so the fold-building and min-size guards stay in one place.
+    """
     prot_clusters = np.array([cluster_map.get(p, p) for p in proteins])
-    unique_clusters = np.array(sorted(set(prot_clusters)))
-    np.random.RandomState(seed).shuffle(unique_clusters)
-    splits = []
-    for fold_clusters in np.array_split(unique_clusters, n_folds):
-        mask_te = np.isin(prot_clusters, fold_clusters)
-        tr = np.where(~mask_te)[0]
-        te = np.where(mask_te)[0]
-        if len(tr) >= 10 and len(te) >= 5:
-            splits.append((tr, te))
-    return splits
+    return gene_split_cv(prot_clusters, n_folds=n_folds, seed=seed)
 
 
 # ---------------------------------------------------------------------------
 # Ridge regression probe
 # ---------------------------------------------------------------------------
-
-
-def auroc_at_median(y_true, y_pred):
-    """Binary AUROC: above-median = positive."""
-    med = np.median(y_true)
-    binary = (y_true >= med).astype(int)
-    if binary.sum() == 0 or (1 - binary).sum() == 0:
-        return float("nan")
-    return float(roc_auc_score(binary, y_pred))
 
 
 def run_ridge_with_auroc(X, y, splits):
@@ -538,7 +503,7 @@ def main():
         print(f"\n── Seed {seed} ──")
 
         splits_random = random_split_cv(len(variants), N_FOLDS, seed)
-        splits_protein = protein_split_cv(proteins, N_FOLDS, seed)
+        splits_protein = gene_split_cv(proteins, n_folds=N_FOLDS, seed=seed)
         splits_cluster = cluster_split_cv(proteins, cluster_map, N_FOLDS, seed)
 
         seed_result = {"seed": seed}

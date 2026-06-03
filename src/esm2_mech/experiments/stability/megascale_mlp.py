@@ -32,11 +32,10 @@ from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
 from esm2_mech.experiments.stability.megascale_stability import (
     load_s1724_variants,
     assign_protein_clusters,
-    random_split_cv,
-    protein_split_cv,
     cluster_split_cv,
     per_protein_spearman,
 )
+from esm2_mech.utils.splits import random_split_cv, gene_split_cv
 
 PFAM = {
     "1AJ3": "PF13499",
@@ -321,7 +320,7 @@ def main():
         print(f"\n── {probe_name} ──")
         for split_name, splits_fn in [
             ("random", lambda s: random_split_cv(len(variants), N_FOLDS, s)),
-            ("protein", lambda s: protein_split_cv(proteins, N_FOLDS, s)),
+            ("protein", lambda s: gene_split_cv(proteins, n_folds=N_FOLDS, seed=s)),
             ("pfam", lambda s: pfam_split_cv(proteins, N_FOLDS, s)),
         ]:
             rhos, aurocs = [], []

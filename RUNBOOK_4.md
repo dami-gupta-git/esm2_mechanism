@@ -153,7 +153,7 @@ and a HuggingFace token with the `esm3-sm-open-v1` licence accepted (`export HF_
 |---|---|---|---|
 | `python -m esm2_mech.experiments.esm3.esm3_mechanism --phase 1 --dataset merged` | CPU: download AF2 structures from EBI, cache per-residue coordinates | `valid_variants.json` (merged) or `gerasimavicius_variants.json` (geras) | `data/cache/esm3_struct_tokens.json`, `data/cache/af2_structures/*.pdb` |
 | `python -m esm2_mech.experiments.esm3.esm3_mechanism --phase 2 --dataset merged` | GPU: extract ESM-3 wt+mut mean-pooled embeddings for both conditions, save deltas + raw wt/mut arrays | `esm3_struct_tokens.json`, `cache/sequences.json`, variants | `data/embeddings/esm3-sm-open-v1/<dataset>/{seq,seq_struct}_mean.npy` (+ `_wt`/`_mut`), `valid_idx.npy`, `struct_meta.json` |
-| `python -m esm2_mech.experiments.esm3.esm3_mechanism --phase 3 --dataset merged` | CPU: MLP + logistic probes, gene/family-split, 5 seeds; evaluate M1/M2/M3 | `{seq,seq_struct}_mean.npy`, `valid_idx.npy`, `pfam_families.json` | `results/<run_name>/esm3_mechanism/<dataset>/summary.json` |
+| `python -m esm2_mech.experiments.esm3.esm3_mechanism --phase 3 --dataset merged` | CPU: MLP + logistic probes, gene/family-split, 5 seeds; evaluate M1/M2/M3 | `{seq,seq_struct}_mean.npy`, `valid_idx.npy`, `pfam_families.json`, `results/<run_name>/nonlinear_results_seed{0..4}.json` (ESM-2 floor) | `results/<run_name>/esm3_mechanism/<dataset>/summary.json` |
 
 Run phase 2 inside a `tmux` session on RunPod; `scp` the `<dataset>/` embedding and result
 subdirectories back locally. Report written as `reports/<run_name>/report_esm3_mechanism.md`.
@@ -161,6 +161,23 @@ subdirectories back locally. Report written as `reports/<run_name>/report_esm3_m
 > **Comparison caveat:** the ESM-2 numbers in Experiment 1 are the merged set (17,826 variants).
 > Compare ESM-3 against ESM-2 only on `--dataset merged`; the geras run is not a matched baseline
 > for the ESM-2 classifier and must not be used for the scale claim.
+
+---
+
+## Experiment 5 — geometry of the pathogenicity direction
+
+Decomposes the ESM-2 delta into magnitude (‖d‖) and direction (d/‖d‖) and asks where the
+pathogenicity / mechanism signal lives. Run the steps in order: build the canonical variant list,
+run the four CPU probes via the orchestrator, then the conservation decider (GPU extract → CPU
+analysis). Run on RunPod (more cores; each seed dispatched in parallel), then `scp` the result
+JSONs back to `results/<run_name>/magnitude_direction/`.
+
+| Step | Command | Description | Inputs | Outputs |
+|---|---|---|---|---|
+| 1 build | `python -m esm2_mech.experiments.geometry.build_canonical_pathogenicity` | Materialise the row-aligned canonical pathogenicity variant set (fingerprint-checked against the embeddings); no GPU | `clinvar_pathogenicity_variants.json`, `pathogenicity_{wt,mut}_mean.npy`, `pathogenicity_meta.json` | `data/pathogenicity_valid_variants_canonical.json` |
+| 2 probes (CPU) | `python -m esm2_mech.experiments.geometry.run_geometry --seeds 5` | Four CPU probes from one orchestrator (single `--seeds`): magnitude-vs-direction, rank/family-transfer geometry, transfer contrast (path/stability/mechanism), biochemical axis identity. `--probe …` runs a subset; stability rows skip if megascale S1724 embeddings absent | `pathogenicity_valid_variants_canonical.json`, `pathogenicity_{wt,mut}_mean.npy`, `valid_variants.json` + main `embeddings_*.npy` (mechanism), `pfam_families.json` | `results/<run_name>/magnitude_direction/{probe_results,geometry_results,transfer_contrast,probe4_axis_identity}.json` |
+| 3 conservation extract (GPU) | `python -m esm2_mech.experiments.geometry.conservation_axis --extract` | Phase 1: mask each variant position, read masked-LM logP_wt/logP_mut/entropy | `pathogenicity_valid_variants_canonical.json`, `cache/sequences.json` | `data/conservation_pathogenicity.npy`, `..._meta.json` |
+| 4 conservation analysis (CPU) | `python -m esm2_mech.experiments.geometry.conservation_axis` | Phase 2: is the pathogenicity axis just conservation? | `conservation_pathogenicity.npy`, `pathogenicity_{wt,mut}_mean.npy`, `pathogenicity_valid_variants_canonical.json`, `pfam_families.json` | `results/<run_name>/magnitude_direction/conservation_axis.json` |
 
 ---
 

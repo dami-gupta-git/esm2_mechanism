@@ -1055,7 +1055,7 @@ wheels = [
 ]
 
 [[package]]
-name = "esm2-mechanism"
+name = "esm2-mech"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

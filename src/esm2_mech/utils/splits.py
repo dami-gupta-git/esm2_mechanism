@@ -1,8 +1,24 @@
-"""CV split generators: gene-disjoint and family-disjoint cross-validation."""
+"""CV split generators: random, gene-disjoint and family-disjoint cross-validation."""
 
 from __future__ import annotations
 
 import numpy as np
+
+
+def random_split_cv(n: int, n_folds: int = 5, seed: int = 42) -> list[tuple]:
+    """Random k-fold CV over n rows (no grouping).
+
+    Shuffles the row indices and splits them into n_folds disjoint test folds;
+    each fold's train set is the complement. Used as the in-distribution
+    reference against which grouped (gene/family) splits are compared.
+    """
+    idx = np.arange(n)
+    np.random.RandomState(seed).shuffle(idx)
+    splits = []
+    for fold in np.array_split(idx, n_folds):
+        tr = np.setdiff1d(idx, fold)
+        splits.append((tr, fold))
+    return splits
 
 
 def gene_split_cv(

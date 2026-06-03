@@ -94,8 +94,9 @@ Stability (ΔΔG transfer) was not run — the S1724 megascale embeddings are no
 | conservation + delta | 0.893 ± 0.007 | delta adds +0.002 |
 | Spearman(axis projection, masked_marginal) | +0.741 | axis ≈ conservation |
 
-Pre-registered gates: **K1** (conservation-alone AUROC ≥ 0.85) → **PASS** (0.891). **K2**
-(embedding adds ≥ 0.02 over conservation) → **FAIL** (+0.002).
+Two thresholds summarise this: conservation alone clears 0.85 (0.891), and adding the embedding
+to conservation moves the AUROC by less than 0.02 (+0.002). Together they say the axis is
+conservation and the embedding adds nothing on top of it.
 
 ---
 
@@ -104,11 +105,9 @@ Pre-registered gates: **K1** (conservation-alone AUROC ≥ 0.85) → **PASS** (0
 **1. Pathogenicity is a heading, not a distance.**
 In Table 1, direction-only reaches MLP AUROC 0.901 — equal to the full delta (0.893) — while
 magnitude-only is stuck at 0.673. The raw size of the perturbation barely matters; essentially
-all the pathogenicity signal is in which way the representation shifts. This reverses the
-pre-registered expectation: the decision gates in `magnitude_direction.py` predicted pathogenicity
-would be magnitude (P1: magnitude-only AUROC ≥ 0.85) and direction weak (P2: ≤ 0.70); both were
-rejected (0.673 and 0.901), so the registered hypothesis is overturned and the direction result is
-the finding, not a confirmation.
+all the pathogenicity signal is in which way the representation shifts. The natural prior guess —
+that a more damaging mutation simply moves the embedding further — does not hold: distance is
+weak, heading is everything.
 
 **2. That heading is a single axis.**
 In Table 2, one fitted direction recovers the entire linear signal (the 1-D projection equals the
@@ -191,8 +190,8 @@ submission, not yet in the result files:
   than separated point estimates.
 - **Calibration:** the probes are uncalibrated; the scores measure discrimination only, not risks.
 
-This report already uses a shuffled-label null (the cosine null in Table 2) and pre-registered
-gates — the permutation framework the other reports adopt.
+This report already uses a shuffled-label null (the cosine null in Table 2) — the permutation
+framework the other reports adopt.
 
 ---
 

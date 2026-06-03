@@ -2,6 +2,7 @@
 __pycache__/
 *.py[codz]
 *$py.class
+.DS_Store
 
 # C extensions
 *.so
@@ -238,3 +239,7 @@ scripts_bak/
 !reports/**
 !scripts
 !scripts/**
+
+# ...but never track .DS_Store, even under the un-ignored dirs above
+.DS_Store
+**/.DS_Store

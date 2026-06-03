@@ -21,6 +21,20 @@ def mean_std_n(values) -> tuple[float, float, int]:
     return float(np.mean(clean)), float(np.std(clean)), len(clean)
 
 
+def auroc_at_median(y_true: np.ndarray, y_pred: np.ndarray) -> float:
+    """Binary AUROC for a continuous target: above-median = positive class.
+
+    Binarises a continuous ground truth (e.g. ΔΔG) at its own median and scores
+    the continuous predictions against that. Returns NaN if the median split
+    leaves only one class. Shared by the megascale stability regression probes.
+    """
+    med = np.median(y_true)
+    binary = (y_true >= med).astype(int)
+    if binary.sum() == 0 or (1 - binary).sum() == 0:
+        return float("nan")
+    return float(roc_auc_score(binary, y_pred))
+
+
 def compute_metrics(
     y_true: np.ndarray,
     y_pred: np.ndarray,
