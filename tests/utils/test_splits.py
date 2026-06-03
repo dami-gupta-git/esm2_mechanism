@@ -2,6 +2,10 @@
 Tests for esm2_mech.utils.splits.
 
 Invariants:
+- random_split_cv: every row appears in exactly one test fold (full coverage)
+- random_split_cv: train is the exact complement of test in each fold
+- random_split_cv: n_folds folds returned (no min-size guard)
+- random_split_cv: indices in bounds; deterministic per seed; differs across seeds
 - gene_split_cv: no gene appears in both train and test of the same fold
 - gene_split_cv: each sample appears in at most one test fold
 - gene_split_cv: train >= 10 and test >= 5 for every returned fold
@@ -18,7 +22,12 @@ Invariants:
 import numpy as np
 import pytest
 
-from esm2_mech.utils.splits import gene_split_cv, family_split_cv, family_split_indices
+from esm2_mech.utils.splits import (
+    random_split_cv,
+    gene_split_cv,
+    family_split_cv,
+    family_split_indices,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -34,6 +43,54 @@ def make_genes(n_genes=20, variants_per_gene=10, seed=0):
 def make_pfam_map(genes, n_families=5):
     unique = sorted(set(genes))
     return {g: f"FAM{i % n_families:02d}" for i, g in enumerate(unique)}
+
+
+# ---------------------------------------------------------------------------
+# random_split_cv
+# ---------------------------------------------------------------------------
+
+class TestRandomSplitCv:
+
+    def test_full_test_coverage_exactly_once(self):
+        # Unlike grouped splits, random CV covers every row in exactly one test
+        # fold — nothing is dropped, nothing is double-counted.
+        n = 53
+        counts = np.zeros(n, dtype=int)
+        for _, te in random_split_cv(n, n_folds=5):
+            counts[te] += 1
+        assert np.all(counts == 1)
+
+    def test_train_is_complement_of_test(self):
+        n = 40
+        all_idx = set(range(n))
+        for tr, te in random_split_cv(n, n_folds=5):
+            assert set(tr) & set(te) == set()
+            assert set(tr) | set(te) == all_idx
+
+    def test_n_folds_returned(self):
+        # No min-size guard, so all requested folds are always returned.
+        assert len(random_split_cv(30, n_folds=5)) == 5
+
+    def test_indices_in_bounds(self):
+        n = 40
+        for tr, te in random_split_cv(n, n_folds=5):
+            assert tr.min() >= 0 and tr.max() < n
+            assert te.min() >= 0 and te.max() < n
+
+    def test_deterministic(self):
+        s1 = random_split_cv(40, n_folds=5, seed=7)
+        s2 = random_split_cv(40, n_folds=5, seed=7)
+        for (tr1, te1), (tr2, te2) in zip(s1, s2):
+            np.testing.assert_array_equal(tr1, tr2)
+            np.testing.assert_array_equal(te1, te2)
+
+    def test_different_seeds_differ(self):
+        s1 = random_split_cv(40, n_folds=5, seed=0)
+        s2 = random_split_cv(40, n_folds=5, seed=99)
+        assert any(
+            not np.array_equal(te1, te2)
+            for (_, te1), (_, te2) in zip(s1, s2)
+        )
 
 
 # ---------------------------------------------------------------------------

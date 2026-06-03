@@ -16,6 +16,10 @@ Invariants:
 - align_proba: missing classes filled with zero
 - per_gene_f1: aggregates variants to gene level before scoring
 - per_gene_f1: single gene with unanimous label scores correctly
+- auroc_at_median: perfectly-ordered predictions -> 1.0, reversed -> 0.0
+- auroc_at_median: median split leaving one class -> NaN
+- auroc_at_median: binarisation uses y_true's median, not y_pred's
+- auroc_at_median: median value (ties) lands in the positive class
 """
 
 import numpy as np
@@ -25,6 +29,7 @@ from esm2_mech.utils.metrics import (
     compute_metrics,
     aggregate_folds,
     align_proba,
+    auroc_at_median,
 )
 from esm2_mech.utils.probes import _per_gene_f1 as per_gene_f1
 from esm2_mech.utils.constants import MECHANISM_CLASSES, GOF, DN, LOF
@@ -193,3 +198,48 @@ class TestPerGeneF1:
         proba[:, MECHANISM_CLASSES.index(LOF)] = 1.0
         score = per_gene_f1(y_true, proba, genes)
         assert score == pytest.approx(1.0)
+
+
+# ---------------------------------------------------------------------------
+# auroc_at_median
+# ---------------------------------------------------------------------------
+
+class TestAurocAtMedian:
+
+    def test_perfect_ordering(self):
+        # Predictions rank-agree with the ground truth -> above-median rows all
+        # outscore below-median rows -> AUROC = 1.0.
+        y_true = np.arange(10, dtype=float)
+        y_pred = np.arange(10, dtype=float)
+        assert auroc_at_median(y_true, y_pred) == pytest.approx(1.0)
+
+    def test_reversed_ordering(self):
+        y_true = np.arange(10, dtype=float)
+        y_pred = np.arange(10, dtype=float)[::-1].copy()
+        assert auroc_at_median(y_true, y_pred) == pytest.approx(0.0)
+
+    def test_single_class_returns_nan(self):
+        # All-equal ground truth: median split leaves every row in the positive
+        # class, so there is no negative class to score against.
+        y_true = np.full(10, 3.0)
+        y_pred = np.arange(10, dtype=float)
+        assert np.isnan(auroc_at_median(y_true, y_pred))
+
+    def test_binarises_on_y_true_not_y_pred(self):
+        # y_true cleanly splits low/high; y_pred is ordered the OPPOSITE way and
+        # has a different median. If binarisation used y_pred the score would
+        # flip. Correct behaviour binarises y_true -> AUROC = 0.0.
+        y_true = np.array([0.0, 1.0, 2.0, 3.0])
+        y_pred = np.array([100.0, 90.0, 10.0, 0.0])
+        assert auroc_at_median(y_true, y_pred) == pytest.approx(0.0)
+
+    def test_median_tie_goes_to_positive_class(self):
+        # Odd length: the median value itself exists in y_true. The `>=` binarises
+        # it into the positive class, so 3 of 5 rows are positive. A monotone
+        # y_pred still cleanly separates them -> AUROC = 1.0.
+        y_true = np.array([0.0, 1.0, 2.0, 3.0, 4.0])  # median = 2.0
+        y_pred = np.array([0.0, 1.0, 2.0, 3.0, 4.0])
+        med = np.median(y_true)
+        n_positive = int((y_true >= med).sum())
+        assert n_positive == 3
+        assert auroc_at_median(y_true, y_pred) == pytest.approx(1.0)
