@@ -29,7 +29,7 @@ LEAKY and HETEROGENEOUS are the high-value outcomes; ROBUST is expected:
 
 Usage (GPU required for embedding extraction):
   cd esm2_mechanism
-  python scripts/megascale_stability.py
+  python -m esm2_mech.experiments.stability.megascale_stability
 
 Outputs:
   data/megascale_variants.json
@@ -50,8 +50,11 @@ print = functools.partial(print, flush=True)
 from sklearn.linear_model import Ridge
 from sklearn.preprocessing import StandardScaler
 
-from esm2_mech.utils.metrics import auroc_at_median
-from esm2_mech.utils.splits import random_split_cv, gene_split_cv
+from esm2_mech.experiments.mechanism.loaders import load_merged
+from esm2_mech.experiments.stability.tsuboyama_loader import load_tsuboyama_variants
+from esm2_mech.experiments.stability.build_domain_families import build_family_map
+from esm2_mech.utils.metrics import auroc_at_median, mean_std_n
+from esm2_mech.utils.splits import random_split_cv, gene_split_cv, family_split_cv
 from esm2_mech.utils.paths import (
     DATA_DIR as _DATA_DIR,
     RESULTS_DIR as _RESULTS_DIR,
@@ -62,15 +65,18 @@ from esm2_mech.utils.paths import (
     MEGASCALE_EMB_MUT_MEAN,
     MEGASCALE_EMB_WT_POS,
     MEGASCALE_EMB_MUT_POS,
+    MEGASCALE_VARIANTS_JSON,
+    MEGASCALE_BENCHMARKS_ZIP,
+    MEGASCALE_PROTEIN_CLUSTERS_JSON,
+    MEGASCALE_DOMAIN_FAMILIES_JSON,
+    PFAM_JSON,
     ESM2_MODEL,
 )
 
-DATA = str(_DATA_DIR)
-BM_ZIP = str(_DATA_DIR / "megascale" / "benchmarks.zip")
-PFAM_JSON = str(_DATA_DIR / "pfam_families.json")
 OUT = str(_RESULTS_DIR / "megascale_stability")
 
-VARIANTS_CACHE = os.path.join(DATA, "megascale_variants.json")
+VARIANTS_CACHE = str(MEGASCALE_VARIANTS_JSON)
+BM_ZIP = str(MEGASCALE_BENCHMARKS_ZIP)
 WT_MEAN_EMB = MEGASCALE_EMB_WT_MEAN
 MUT_MEAN_EMB = MEGASCALE_EMB_MUT_MEAN
 WT_POS_EMB = MEGASCALE_EMB_WT_POS
@@ -172,14 +178,16 @@ def load_s1724_variants():
 
 def assign_protein_clusters(variants):
     """
-    Group proteins by sequence identity for family-split CV.
-    Uses exact-match on WT sequence as cluster ID (each unique WT = one protein domain).
-    With only 33 proteins this is already a meaningful holdout.
-    Returns: dict protein_id -> cluster_id (here: just protein_id itself, 1 cluster per protein)
+    Group proteins into clusters for the family-split analogue.
+    Uses MMseqs2 to cluster the unique WT sequences; if MMseqs2 is unavailable or
+    fails, falls back to identity clustering (each protein its own cluster).
+
+    Only an MMseqs2 success is cached. A fallback is not written — an MMseqs2
+    failure is treated as transient (binary missing on this host, OOM, etc.), so
+    the next run re-attempts rather than serving a stale degenerate identity map.
+    Returns: dict protein_id -> cluster_id.
     """
-    # Each PDB_wild is one protein — cluster = protein identity.
-    # For the family-split analogue we use MMseqs2 if available, else identity clustering.
-    mmseqs_cache = os.path.join(DATA, "megascale_protein_clusters.json")
+    mmseqs_cache = str(MEGASCALE_PROTEIN_CLUSTERS_JSON)
     if os.path.exists(mmseqs_cache):
         with open(mmseqs_cache) as f:
             return json.load(f)
@@ -191,12 +199,13 @@ def assign_protein_clusters(variants):
         if pid not in proteins:
             proteins[pid] = v["wt_seq"]
 
-    # Try MMseqs2
     try:
         cluster_map = _run_mmseqs2(proteins)
     except Exception as e:
-        print(f"MMseqs2 failed ({e}), falling back to identity clustering")
-        cluster_map = {pid: pid for pid in proteins}
+        # Transient/host failure — return the identity fallback WITHOUT caching so
+        # a later run on a host with MMseqs2 re-clusters instead of reading stale.
+        print(f"MMseqs2 failed ({e}); using identity clustering for this run (not cached)")
+        return {pid: pid for pid in proteins}
 
     with open(mmseqs_cache, "w") as f:
         json.dump(cluster_map, f)
@@ -226,7 +235,7 @@ def _run_mmseqs2(proteins, min_seq_id=0.20, coverage=0.20):
                 fasta,
                 os.path.join(tmp, "clust"),
                 os.path.join(tmp, "mmseqs_tmp"),
-                f"--min-seq-id",
+                "--min-seq-id",
                 str(min_seq_id),
                 "-c",
                 str(coverage),
@@ -296,14 +305,17 @@ def run_ridge_with_auroc(X, y, splits):
         aurocs.append(au)
     if not rhos:
         return {}
+    rho_mean, rho_std, n_rho = mean_std_n(rhos)
+    r_mean, r_std, _ = mean_std_n(rs)
+    au_mean, au_std, _ = mean_std_n(aurocs)
     return {
-        "spearman_mean": float(np.mean(rhos)),
-        "spearman_std": float(np.std(rhos)),
-        "pearson_mean": float(np.mean(rs)),
-        "pearson_std": float(np.std(rs)),
-        "auroc_mean": float(np.nanmean(aurocs)),
-        "auroc_std": float(np.nanstd(aurocs)),
-        "n_folds": len(rhos),
+        "spearman_mean": rho_mean,
+        "spearman_std": rho_std,
+        "pearson_mean": r_mean,
+        "pearson_std": r_std,
+        "auroc_mean": au_mean,
+        "auroc_std": au_std,
+        "n_folds": n_rho,
     }
 
 
@@ -409,7 +421,6 @@ def run_h3_stability_projection(
                     max_iter=1000,
                     C=1.0,
                     class_weight="balanced",
-                    multi_class="multinomial",
                     random_state=seed,
                 )
                 clf.fit(Xtr, y[tr])
@@ -480,12 +491,6 @@ def main():
     print(f"Protein clusters: {len(set(proteins))} proteins → {n_clusters} clusters")
 
     # ── 3. Embeddings ─────────────────────────────────────────────────────────
-    for path in [WT_MEAN_EMB, MUT_MEAN_EMB, WT_POS_EMB, MUT_POS_EMB]:
-        if not os.path.exists(path):
-            raise FileNotFoundError(
-                f"Embedding file missing: {path}\n"
-                f"Run: python -m esm2_mech.embeddings.embed_variants --model {ESM2_MODEL}"
-            )
     print("Loading embeddings...")
     wt_mean = np.load(WT_MEAN_EMB)
     mut_mean = np.load(MUT_MEAN_EMB)
@@ -494,6 +499,13 @@ def main():
 
     delta_mean = mut_mean - wt_mean
     delta_pos = mut_pos - wt_pos
+
+    if len(delta_mean) != len(variants):
+        raise ValueError(
+            f"embedding/variant row mismatch: {len(delta_mean)} embedding rows vs "
+            f"{len(variants)} variants — {WT_MEAN_EMB} is not row-aligned to "
+            f"{VARIANTS_CACHE}."
+        )
 
     print(f"Embeddings: delta_mean {delta_mean.shape}, delta_pos {delta_pos.shape}")
 
@@ -529,14 +541,18 @@ def main():
     print("\nPer-protein Spearman (leave-one-protein-out)...")
     per_prot = per_protein_spearman(delta_mean, ddg, proteins)
     prot_rhos = [v["spearman"] for v in per_prot.values()]
-    per_prot_std = float(np.std(prot_rhos)) if prot_rhos else float("nan")
-    per_prot_mean = float(np.mean(prot_rhos)) if prot_rhos else float("nan")
-
-    print(
-        f"  Per-protein ρ: mean={per_prot_mean:.3f}  std={per_prot_std:.3f}  "
-        f"min={min(prot_rhos):.3f}  max={max(prot_rhos):.3f}  "
-        f"n={len(prot_rhos)}"
-    )
+    if prot_rhos:
+        per_prot_std = float(np.std(prot_rhos))
+        per_prot_mean = float(np.mean(prot_rhos))
+        print(
+            f"  Per-protein ρ: mean={per_prot_mean:.3f}  std={per_prot_std:.3f}  "
+            f"min={min(prot_rhos):.3f}  max={max(prot_rhos):.3f}  "
+            f"n={len(prot_rhos)}"
+        )
+    else:
+        per_prot_std = float("nan")
+        per_prot_mean = float("nan")
+        print("  Per-protein ρ: no protein had enough variants (>=5) — skipped")
 
     with open(os.path.join(OUT, "per_protein_spearman.json"), "w") as f:
         json.dump(per_prot, f, indent=2)
@@ -558,11 +574,14 @@ def main():
         ]
         if not vals_rho:
             continue
+        rho_mean, rho_std, n_seeds_used = mean_std_n(vals_rho)
+        au_mean, au_std, _ = mean_std_n(vals_auroc)
         summary[key] = {
-            "spearman_mean": float(np.mean(vals_rho)),
-            "spearman_std": float(np.std(vals_rho)),
-            "auroc_mean": float(np.nanmean(vals_auroc)),
-            "auroc_std": float(np.nanstd(vals_auroc)),
+            "spearman_mean": rho_mean,
+            "spearman_std": rho_std,
+            "auroc_mean": au_mean,
+            "auroc_std": au_std,
+            "n_seeds": n_seeds_used,
         }
 
     summary["per_protein"] = {
@@ -572,39 +591,20 @@ def main():
     }
 
     # ── 7. H3 — stability projection out of mechanism ─────────────────────────
+    # Use the canonical mechanism loader, which labels every variant GOF/DN/LOF
+    # (raising on an unexpected mechanism rather than defaulting to LOF) and
+    # asserts the embeddings are row-aligned to the variant list — no fallback
+    # labels, no blind length truncation.
     h3_result = None
-    merged_variants_path = VALID_VARIANTS_JSON
-    merged_wt_path = EMB_WT_MEAN
-    merged_mut_path = EMB_MUT_MEAN
     if all(
         os.path.exists(p)
-        for p in [merged_variants_path, merged_wt_path, merged_mut_path, PFAM_JSON]
+        for p in [VALID_VARIANTS_JSON, EMB_WT_MEAN, EMB_MUT_MEAN, PFAM_JSON]
     ):
         print("\nRunning H3 stability projection test...")
-        with open(merged_variants_path) as f:
-            merged_variants = json.load(f)
         with open(PFAM_JSON) as f:
             pfam_map = json.load(f)
-        merged_wt = np.load(merged_wt_path)
-        merged_mut = np.load(merged_mut_path)
-        merged_delta = merged_mut - merged_wt
 
-        label_map = {"GOF": "GOF", "DN": "DN", "HI": "LOF", "AR": "LOF", "LOF": "LOF"}
-        merged_labels = np.array(
-            [
-                label_map.get(v.get("mechanism", v.get("label", "")), "LOF")
-                for v in merged_variants
-            ]
-        )
-        merged_proteins = np.array(
-            [v.get("gene", v.get("protein", "")) for v in merged_variants]
-        )
-
-        # Align lengths: merged embeddings may differ from variant list if some were dropped
-        n_min = min(len(merged_delta), len(merged_labels))
-        merged_delta = merged_delta[:n_min]
-        merged_labels = merged_labels[:n_min]
-        merged_proteins = merged_proteins[:n_min]
+        merged_delta, merged_labels, merged_proteins = load_merged()
 
         h3_result = run_h3_stability_projection(
             merged_delta,

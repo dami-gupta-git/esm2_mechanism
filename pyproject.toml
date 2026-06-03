@@ -20,6 +20,9 @@ dependencies = [
     # Common
     "torch",
     "numpy",
+    "pandas",
+    "requests",
+    "openpyxl",
     "transformers",
     "datasets",
     "tiktoken",

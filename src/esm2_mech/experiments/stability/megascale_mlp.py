@@ -10,32 +10,26 @@ family-holdout, or does it evaporate (leakage)?
 
 Usage:
   cd esm2_mechanism
-  python scripts/megascale_mlp.py
+  python -m esm2_mech.experiments.stability.megascale_mlp
 
 Outputs:
   results/megascale_stability/mlp_summary.json
-  results/megascale_stability/mlp_per_protein_spearman.json
 """
 
 import functools
 import json
 import os
-import sys
 import numpy as np
 from scipy.stats import spearmanr, pearsonr
 
 print = functools.partial(print, flush=True)
-from sklearn.metrics import roc_auc_score
 from sklearn.preprocessing import StandardScaler
+from sklearn.linear_model import Ridge
 from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
 
-from esm2_mech.experiments.stability.megascale_stability import (
-    load_s1724_variants,
-    assign_protein_clusters,
-    cluster_split_cv,
-    per_protein_spearman,
-)
-from esm2_mech.utils.splits import random_split_cv, gene_split_cv
+from esm2_mech.experiments.stability.megascale_stability import load_s1724_variants
+from esm2_mech.utils.metrics import auroc_at_median, mean_std_n
+from esm2_mech.utils.splits import random_split_cv, gene_split_cv, family_split_cv
 
 PFAM = {
     "1AJ3": "PF13499",
@@ -87,22 +81,14 @@ os.makedirs(OUT, exist_ok=True)
 
 
 # ---------------------------------------------------------------------------
-# Pfam family-split CV
+# Pfam family-split CV — defers to the shared family_split_cv helper.
+# PFAM (above) is the {PDB_id: Pfam} map; every S1724 protein has an entry
+# (ubiquitin = "NO_PFAM", a truthy singleton family), so no protein is dropped.
 # ---------------------------------------------------------------------------
 
 
 def pfam_split_cv(proteins, n_folds=5, seed=42):
-    pfam_arr = np.array([PFAM.get(p, p) for p in proteins])
-    fams = np.array(sorted(set(pfam_arr)))
-    np.random.RandomState(seed).shuffle(fams)
-    splits = []
-    for fold_fams in np.array_split(fams, n_folds):
-        fs = set(fold_fams)
-        tr = np.where(~np.isin(pfam_arr, list(fs)))[0]
-        te = np.where(np.isin(pfam_arr, list(fs)))[0]
-        if len(tr) >= 10 and len(te) >= 5:
-            splits.append((tr, te))
-    return splits
+    return family_split_cv(proteins, PFAM, n_folds=n_folds, seed=seed)
 
 
 # ---------------------------------------------------------------------------
@@ -120,22 +106,18 @@ def run_sklearn_probe(X, y, splits, clf_fn):
         clf.fit(Xtr, y[tr])
         pred = clf.predict(Xte)
         rho, _ = spearmanr(y[te], pred)
-        binary = (y[te] >= np.median(y[te])).astype(int)
-        au = (
-            float(roc_auc_score(binary, pred))
-            if binary.sum() > 0 and (1 - binary).sum() > 0
-            else float("nan")
-        )
         rhos.append(float(rho))
-        aurocs.append(au)
+        aurocs.append(auroc_at_median(y[te], pred))
     if not rhos:
         return {}
+    rho_mean, rho_std, n_rho = mean_std_n(rhos)
+    au_mean, au_std, _ = mean_std_n(aurocs)
     return {
-        "spearman_mean": float(np.mean(rhos)),
-        "spearman_std": float(np.std(rhos)),
-        "auroc_mean": float(np.nanmean(aurocs)),
-        "auroc_std": float(np.nanstd(aurocs)),
-        "n_folds": len(rhos),
+        "spearman_mean": rho_mean,
+        "spearman_std": rho_std,
+        "auroc_mean": au_mean,
+        "auroc_std": au_std,
+        "n_folds": n_rho,
     }
 
 
@@ -224,28 +206,23 @@ def run_mlp_regression(
 
         rho, _ = spearmanr(y_te, pred)
         r, _ = pearsonr(y_te, pred)
-        med = np.median(y_te)
-        binary = (y_te >= med).astype(int)
-        au = (
-            float(roc_auc_score(binary, pred))
-            if binary.sum() > 0 and (1 - binary).sum() > 0
-            else float("nan")
-        )
-
         rhos.append(float(rho))
         rs.append(float(r))
-        aurocs.append(au)
+        aurocs.append(auroc_at_median(y_te, pred))
 
     if not rhos:
         return {}
+    rho_mean, rho_std, n_rho = mean_std_n(rhos)
+    r_mean, r_std, _ = mean_std_n(rs)
+    au_mean, au_std, _ = mean_std_n(aurocs)
     return {
-        "spearman_mean": float(np.mean(rhos)),
-        "spearman_std": float(np.std(rhos)),
-        "pearson_mean": float(np.mean(rs)),
-        "pearson_std": float(np.std(rs)),
-        "auroc_mean": float(np.nanmean(aurocs)),
-        "auroc_std": float(np.nanstd(aurocs)),
-        "n_folds": len(rhos),
+        "spearman_mean": rho_mean,
+        "spearman_std": rho_std,
+        "pearson_mean": r_mean,
+        "pearson_std": r_std,
+        "auroc_mean": au_mean,
+        "auroc_std": au_std,
+        "n_folds": n_rho,
     }
 
 
@@ -258,7 +235,6 @@ def main():
     variants = load_s1724_variants()
     proteins = np.array([v["protein"] for v in variants])
     ddg = np.array([v["ddg"] for v in variants])
-    cluster_map = assign_protein_clusters(variants)
 
     print(f"Loaded {len(variants)} variants across {len(set(proteins))} proteins")
 
@@ -267,76 +243,57 @@ def main():
     X = mut_mean - wt_mean
     print(f"Embeddings: {X.shape}")
 
-    probes = {
-        "MLP": lambda seed: (lambda: None),  # handled separately below
-        "RF": lambda seed: RandomForestRegressor(
-            n_estimators=100, random_state=seed, n_jobs=-1
-        ),
-        "GBM": lambda seed: GradientBoostingRegressor(
-            n_estimators=100, random_state=seed
-        ),
-    }
+    # The three CV schemes, built per-seed. Shared by every probe.
+    split_builders = [
+        ("random", lambda seed: random_split_cv(len(variants), N_FOLDS, seed)),
+        ("protein", lambda seed: gene_split_cv(proteins, n_folds=N_FOLDS, seed=seed)),
+        ("pfam", lambda seed: pfam_split_cv(proteins, N_FOLDS, seed)),
+    ]
+
+    # Each probe maps (X, y, splits, seed) -> per-fold-aggregated dict. The MLP
+    # uses its own torch runner; Ridge/RF/GBM use run_sklearn_probe with a fresh
+    # estimator per seed. Ridge is the linear baseline — running it here (rather
+    # than reading it from the stability summary) keeps its Pfam-split numbers
+    # computed under the exact same folds as the nonlinear probes, so the
+    # comparison table traces to this run with no hardcoded values.
+    def _ridge(seed):
+        return Ridge(alpha=1.0)
+
+    def _rf(seed):
+        return RandomForestRegressor(n_estimators=100, random_state=seed, n_jobs=-1)
+
+    def _gbm(seed):
+        return GradientBoostingRegressor(n_estimators=100, random_state=seed)
+
+    probe_runners = [
+        ("ridge", lambda X, y, splits, seed: run_sklearn_probe(X, y, splits, lambda: _ridge(seed))),
+        ("mlp", lambda X, y, splits, seed: run_mlp_regression(X, y, splits, seed=seed)),
+        ("rf", lambda X, y, splits, seed: run_sklearn_probe(X, y, splits, lambda: _rf(seed))),
+        ("gbm", lambda X, y, splits, seed: run_sklearn_probe(X, y, splits, lambda: _gbm(seed))),
+    ]
 
     summary = {}
-
-    # MLP: multi-seed via run_mlp_regression
-    print("\n── MLP ──")
-    for split_name, splits_fn in [
-        ("random", lambda s: random_split_cv(len(variants), N_FOLDS, s)),
-        ("protein", lambda s: protein_split_cv(proteins, N_FOLDS, s)),
-        ("pfam", lambda s: pfam_split_cv(proteins, N_FOLDS, s)),
-    ]:
-        rhos, aurocs = [], []
-        for seed in range(N_SEEDS):
-            res = run_mlp_regression(X, ddg, splits_fn(seed), seed=seed)
-            if res:
-                rhos.append(res["spearman_mean"])
-                aurocs.append(res["auroc_mean"])
-        key = f"mlp_{split_name}"
-        summary[key] = {
-            "spearman_mean": float(np.mean(rhos)),
-            "spearman_std": float(np.std(rhos)),
-            "auroc_mean": float(np.nanmean(aurocs)),
-            "auroc_std": float(np.nanstd(aurocs)),
-        }
-        print(
-            f"  {split_name:8s}: ρ={summary[key]['spearman_mean']:.3f}±{summary[key]['spearman_std']:.3f}  "
-            f"AUROC={summary[key]['auroc_mean']:.3f}±{summary[key]['auroc_std']:.3f}"
-        )
-
-    # RF and GBM: use sklearn probe
-    for probe_name, clf_factory in [
-        (
-            "RF",
-            lambda seed: RandomForestRegressor(
-                n_estimators=100, random_state=seed, n_jobs=-1
-            ),
-        ),
-        (
-            "GBM",
-            lambda seed: GradientBoostingRegressor(n_estimators=100, random_state=seed),
-        ),
-    ]:
-        print(f"\n── {probe_name} ──")
-        for split_name, splits_fn in [
-            ("random", lambda s: random_split_cv(len(variants), N_FOLDS, s)),
-            ("protein", lambda s: gene_split_cv(proteins, n_folds=N_FOLDS, seed=s)),
-            ("pfam", lambda s: pfam_split_cv(proteins, N_FOLDS, s)),
-        ]:
+    for probe_name, run_probe in probe_runners:
+        print(f"\n── {probe_name.upper()} ──")
+        for split_name, build_splits in split_builders:
             rhos, aurocs = [], []
             for seed in range(N_SEEDS):
-                res = run_sklearn_probe(
-                    X, ddg, splits_fn(seed), clf_fn=lambda s=seed: clf_factory(s)
-                )
+                res = run_probe(X, ddg, build_splits(seed), seed)
                 if res:
                     rhos.append(res["spearman_mean"])
                     aurocs.append(res["auroc_mean"])
-            key = f"{probe_name.lower()}_{split_name}"
+            key = f"{probe_name}_{split_name}"
+            rho_mean, rho_std, n_seeds_used = mean_std_n(rhos)
+            au_mean, au_std, _ = mean_std_n(aurocs)
+            if n_seeds_used == 0:
+                print(f"  {split_name:8s}: no valid folds across {N_SEEDS} seeds — skipped")
+                continue
             summary[key] = {
-                "spearman_mean": float(np.mean(rhos)),
-                "spearman_std": float(np.std(rhos)),
-                "auroc_mean": float(np.nanmean(aurocs)),
-                "auroc_std": float(np.nanstd(aurocs)),
+                "spearman_mean": rho_mean,
+                "spearman_std": rho_std,
+                "auroc_mean": au_mean,
+                "auroc_std": au_std,
+                "n_seeds": n_seeds_used,
             }
             print(
                 f"  {split_name:8s}: ρ={summary[key]['spearman_mean']:.3f}±{summary[key]['spearman_std']:.3f}  "
@@ -353,8 +310,6 @@ def main():
         prt = summary.get(f"{probe}_protein", {}).get("spearman_mean", float("nan"))
         pfm = summary.get(f"{probe}_pfam", {}).get("spearman_mean", float("nan"))
         pau = summary.get(f"{probe}_pfam", {}).get("auroc_mean", float("nan"))
-        if probe == "ridge":
-            rnd, prt, pfm, pau = 0.546, 0.280, 0.193, 0.597
         print(
             f"  {probe.upper():6s}  {rnd:>9.3f}  {prt:>10.3f}  {pfm:>7.3f}  {rnd-pfm:>10.3f}  {pau:>11.3f}"
         )

@@ -36,5 +36,17 @@ def seed_result_filename(seed: int) -> str:
     return f"{SEED_RESULT_PREFIX}{seed}{SEED_RESULT_EXT}"
 
 
+# ── Megascale / Tsuboyama 2023 stability parsing ──────────────────────────────
+# A natural domain's WT_name base is a real 4-char PDB id (digit + 3 alphanumeric)
+# followed by ".pdb"; de novo designs use synthetic names (e.g. "EA|run2_...",
+# "HHH", "XX|run1") that do not match. We keep only natural domains.
+MEGASCALE_PDB_ID_REGEX = r"^[0-9][A-Za-z0-9]{3}\.pdb$"
+# A single-point substitution mutation code, e.g. "D1Q" (wt-aa, 1-indexed pos, mut-aa).
+MEGASCALE_SUBSTITUTION_REGEX = r"^([A-Z])(\d+)([A-Z])$"
+# Tsuboyama marks the wild-type row with this mut_type value.
+MEGASCALE_WT_MUT_TYPE = "wt"
+# ddG_ML uses this string for rows whose fit was unreliable — dropped, never imputed.
+MEGASCALE_DDG_MISSING = "-"
+
 # ── External API roots ────────────────────────────────────────────────────────
 UNIPROT_REST = "https://rest.uniprot.org/uniprotkb"

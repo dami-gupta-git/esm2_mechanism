@@ -243,3 +243,4 @@ scripts_bak/
 # ...but never track .DS_Store, even under the un-ignored dirs above
 .DS_Store
 **/.DS_Store
+for_me/

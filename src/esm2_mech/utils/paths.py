@@ -99,6 +99,27 @@ CONSERVATION_PATHOGENICITY_NPY = DATA_DIR / "conservation_pathogenicity.npy"
 CONSERVATION_PATHOGENICITY_META_JSON = DATA_DIR / "conservation_pathogenicity_meta.json"
 # Megascale S1724 stability variants (Probe C / stability transfer).
 MEGASCALE_VARIANTS_JSON = DATA_DIR / "megascale_variants.json"
+# Source benchmark archive (S1724 + TED) and the cached protein→cluster map
+# used for the family-split analogue.
+MEGASCALE_BENCHMARKS_ZIP = DATA_DIR / "megascale" / "benchmarks.zip"
+MEGASCALE_PROTEIN_CLUSTERS_JSON = DATA_DIR / "megascale_protein_clusters.json"
+
+# ── Full Tsuboyama 2023 point-mutant stability dataset (scaled-up control) ────
+# The processed point-mutant ΔΔG table: per row a mutant aa_seq, mut_type code,
+# parent domain (WT_name) and ddG_ML label. Natural domains only (de novo designs
+# are dropped). Parsed/cached to MEGASCALE_TSUBOYAMA_VARIANTS_JSON.
+MEGASCALE_DOWNLOAD_DIR = DATA_DIR / "downloads" / "megascale"
+MEGASCALE_TSUBOYAMA_CSV = (
+    MEGASCALE_DOWNLOAD_DIR
+    / "Processed_K50_dG_datasets"
+    / "Tsuboyama2023_Dataset2_Dataset3_20230416.csv"
+)
+MEGASCALE_TSUBOYAMA_VARIANTS_JSON = DATA_DIR / "megascale_tsuboyama_variants.json"
+# Domain → Pfam family map (HMMER hmmscan against Pfam-A); domains with no Pfam
+# hit are absent from this map and excluded from family-split only.
+MEGASCALE_DOMAIN_FAMILIES_JSON = DATA_DIR / "megascale_domain_families.json"
+# Pfam-A profile database (hmmpress-ed) used by the domain-family mapping step.
+PFAM_A_HMM = MEGASCALE_DOWNLOAD_DIR / "Pfam-A.hmm"
 
 # ── Megascale S1724 embeddings (megascale_stability.py) ──────────────────────
 MEGASCALE_EMB_WT_MEAN = EMB_DIR / "megascale_wt_mean.npy"
