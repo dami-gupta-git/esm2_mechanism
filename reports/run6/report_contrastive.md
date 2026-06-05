@@ -14,16 +14,12 @@ delta.*
 
 The standard probes leave the mutation-induced delta at the chance floor under family-split
 (see [`report_classifier.md`](report_classifier.md)). This experiment asks whether training the
-delta specifically to ignore protein family — by a contrastive objective whose only positive
-pairs are same-mechanism variants from *different* families — can pull genuine mechanism signal
-out of it. It does raise the family-split macro_f1, from the 0.354 raw-kNN baseline to 0.395,
-clearly above the 0.288 floor, and the lift survives holding out whole families, so it is not
-family-recognition leakage. But the per-class scores show the gain is class balance, not improved
-separability of any single class: training does not raise any class's AUROC over the untrained
-delta — it lowers gain-of-function and dominant-negative, and moves loss-of-function within seed
-noise. All three classes are already weakly above chance in the untrained delta (≈0.58–0.60), and
-dominant-negative stays near chance throughout. The honest reading is a modest, real improvement in
-balanced accuracy that does not amount to recovering cross-family mechanism for any class.
+delta specifically to ignore protein family — a contrastive objective whose only positive pairs
+are same-mechanism variants from *different* families — can pull genuine mechanism signal out of
+it. It does raise the family-split macro_f1 above the floor, and the lift survives holding out
+whole families, but the per-class scores show the gain is better class balance rather than any
+mechanism becoming more separable. The honest reading is a modest, real improvement in balanced
+accuracy that does not amount to recovering cross-family mechanism.
 
 ---
 
