@@ -42,7 +42,7 @@ from esm2_mech.utils.paths import (
     MEGASCALE_EMB_MUT_MEAN,
 )
 from esm2_mech.experiments.mechanism.loaders import load_mechanism_variants
-from esm2_mech.utils.constants import GOF
+from esm2_mech.utils.constants import GOF, N_SEEDS
 from esm2_mech.utils.metrics import mean_std_n
 from esm2_mech.utils.probes import auroc_for_clf
 
@@ -178,7 +178,7 @@ def load_mechanism_gof():
     return dm[m], y[m], groups[m]
 
 
-def run(n_seeds=5):
+def run(n_seeds=N_SEEDS):
     """Run the transfer contrast across tasks. Each seed reshuffles the group
     half-splits; results are pooled over all n_seeds × partitions."""
     tasks = {}
@@ -223,7 +223,7 @@ def main():
     import argparse
 
     ap = argparse.ArgumentParser()
-    ap.add_argument("--seeds", type=int, default=5, help="number of seeds (>=1)")
+    ap.add_argument("--seeds", type=int, default=N_SEEDS, help="number of seeds (>=1)")
     args = ap.parse_args()
     run(n_seeds=args.seeds)
     print("\nRead: 'pooled' = random-split (easy). 'transfer' = probe fit on one")

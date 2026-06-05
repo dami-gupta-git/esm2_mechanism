@@ -56,6 +56,12 @@ from esm2_mech.utils.paths import (
     SEQUENCES_JSON,
     VALID_VARIANTS_JSON,
 )
+from esm2_mech.utils.constants import (
+    DELTA_MEAN_FEATURE, N_SEEDS, SPLIT_FAMILY, nonlinear_key,
+)
+
+# The matched ESM-2 probe for the ESM-3 comparison: MLP, delta_mean, family-split.
+MLP_DELTA_MEAN_FAMILY = nonlinear_key("mlp", DELTA_MEAN_FEATURE, SPLIT_FAMILY)
 from esm2_mech.utils.io import atomic_write_json, save_npy
 from esm2_mech.utils.sequences import apply_missense, window_sequence
 
@@ -99,7 +105,7 @@ def configure_dataset(dataset: str) -> None:
 
 # Probe config (matches the ESM-2 mechanism classifier exactly)
 N_FOLDS = 5
-SEEDS = [0, 1, 2, 3, 4]
+SEEDS = list(range(N_SEEDS))
 
 # Decision rule margins (pre-registered in plan_esm3_mechanism.md)
 M1_MARGIN = 0.05  # ESM-3 must beat the ESM-2 family-split floor by this much
@@ -110,7 +116,7 @@ M3_THRESHOLD = 0.03  # seq_struct − seq gap that counts as "structure adds sig
 ESM2_FLOOR_FALLBACK = 0.299
 
 
-def esm2_family_floor() -> tuple[float, str]:
+def esm2_family_floor(seeds: list[int] = SEEDS) -> tuple[float, str]:
     """Return (floor, source) for the ESM-2 family-split macro-F1 baseline.
 
     Reads the 5-seed mean of mlp_delta_mean_family from the run's nonlinear-probe
@@ -119,16 +125,16 @@ def esm2_family_floor() -> tuple[float, str]:
     pre-registered constant if no seed files are present (e.g. a geras-only checkout).
     """
     values = []
-    for seed in SEEDS:
+    for seed in seeds:
         path = Path(NONLINEAR_RESULTS_SEED_JSON.format(seed=seed))
         if not path.exists():
             continue
         data = json.loads(path.read_text())
-        entry = data.get("mlp_delta_mean_family")
+        entry = data.get(MLP_DELTA_MEAN_FAMILY)
         if entry and "macro_f1_mean" in entry:
             values.append(entry["macro_f1_mean"])
     if values:
-        return float(np.mean(values)), f"nonlinear_results (mlp_delta_mean_family, {len(values)}-seed mean)"
+        return float(np.mean(values)), f"nonlinear_results ({MLP_DELTA_MEAN_FAMILY}, {len(values)}-seed mean)"
     return ESM2_FLOOR_FALLBACK, "fallback constant (no nonlinear_results files found)"
 
 
@@ -653,7 +659,7 @@ def _run_mlp(
     return np.concatenate(all_pred), np.concatenate(all_true), np.vstack(all_proba)
 
 
-def phase3_probes() -> None:
+def phase3_probes(seeds: list[int] = SEEDS) -> None:
     from esm2_mech.utils.splits import gene_split_cv, family_split_cv
     from sklearn.linear_model import LogisticRegression
     from sklearn.preprocessing import StandardScaler
@@ -718,7 +724,7 @@ def phase3_probes() -> None:
             mlp_f1s, mlp_gof, mlp_dn, mlp_lof = [], [], [], []
             lr_f1s = []
 
-            for seed in SEEDS:
+            for seed in seeds:
                 splits = get_splits(seed)
                 if not splits:
                     print(f"  {cv_name} seed={seed}: no valid splits, skip")
@@ -802,7 +808,7 @@ def phase3_probes() -> None:
         results[cond] = cond_results
 
     # ── decision rules ─────────────────────────────────────────────────────
-    esm2_floor, floor_source = esm2_family_floor()
+    esm2_floor, floor_source = esm2_family_floor(seeds)
     m1_threshold = esm2_floor + M1_MARGIN
     print(f"\n=== DECISION RULES ===")
     print(f"  ESM-2 family-split floor = {esm2_floor:.3f}  [{floor_source}]")
@@ -888,7 +894,7 @@ def phase3_probes() -> None:
         "model": ESM3_MODEL,
         "dataset": DATASET,
         "n_folds": N_FOLDS,
-        "seeds": SEEDS,
+        "seeds": seeds,
     }
 
     with open(OUT / "summary.json", "w") as f:
@@ -914,7 +920,11 @@ def main() -> None:
         default="geras",
         help="geras=Gerasimavicius only (948 genes); merged=Gerasimavicius+G2P (matches ESM-2 classifier)",
     )
+    ap.add_argument("--seeds", type=int, default=N_SEEDS,
+                    help="number of probe seeds for phase 3; runs 0..seeds-1 (>=1)")
     args = ap.parse_args()
+    if args.seeds < 1:
+        ap.error("--seeds must be >= 1")
 
     configure_dataset(args.dataset)
     print(f"Dataset: {args.dataset}  →  embeddings {EMB_DIR}, results {OUT}")
@@ -927,7 +937,7 @@ def main() -> None:
         phase2_extract_embeddings(batch_size=args.batch_size)
     elif args.phase == "3":
         print("=== Phase 3: probes + decision rules ===")
-        phase3_probes()
+        phase3_probes(seeds=list(range(args.seeds)))
 
 
 if __name__ == "__main__":

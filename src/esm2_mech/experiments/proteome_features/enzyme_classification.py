@@ -17,7 +17,7 @@ Probes run:
 
 Usage:
     python enzyme_classification.py [--data_dir ../data] [--emb_dir ../data/embeddings]
-                                    [--seeds 0 1 2 3 4]
+                                    [--seeds 5]
 
 Output: results/enzyme_classification/enzyme_classification_summary.json
 """
@@ -37,6 +37,7 @@ import numpy as np
 from sklearn.metrics import f1_score, roc_auc_score
 from sklearn.neural_network import MLPClassifier
 from sklearn.preprocessing import LabelEncoder, StandardScaler
+from esm2_mech.utils.constants import N_SEEDS
 from esm2_mech.utils.splits import gene_split_cv, family_split_cv
 from esm2_mech.utils.paths import DATA_DIR, EMB_WT_MEAN, GENE_LIST_TSV, RESULTS_DIR, VALID_VARIANTS_JSON
 
@@ -372,14 +373,19 @@ def run_multiseed(
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--seeds", type=int, nargs="+", default=[0, 1, 2, 3, 4])
+    parser.add_argument("--seeds", type=int, default=N_SEEDS,
+                        help="number of seeds to run; runs 0..seeds-1 (>=1)")
     parser.add_argument("--n_folds", type=int, default=5)
     args = parser.parse_args()
+    if args.seeds < 1:
+        parser.error("--seeds must be >= 1")
+
+    seeds = list(range(args.seeds))
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
 
     print("=== Enzyme Classification from ESM-2 WT Embeddings ===")
-    print(f"Seeds: {args.seeds}  Folds: {args.n_folds}")
+    print(f"Seeds: {seeds}  Folds: {args.n_folds}")
 
     # Load data
     X_emb, gene_list, _ = load_gene_embeddings()
@@ -414,7 +420,7 @@ def main():
     print("PART 1: ESM-2 WT embedding (1280-dim)")
     print("=" * 60)
     emb_results = run_multiseed(
-        X_emb, y, gene_list, pfam_map, le, seeds=args.seeds, n_folds=args.n_folds
+        X_emb, y, gene_list, pfam_map, le, seeds=seeds, n_folds=args.n_folds
     )
 
     # -----------------------------------------------------------------------
@@ -455,7 +461,7 @@ def main():
             prot_aligned_genes,
             pfam_map,
             le,
-            seeds=args.seeds,
+            seeds=seeds,
             n_folds=args.n_folds,
         )
     except Exception as e:
@@ -496,7 +502,7 @@ def main():
             "from ESM-2 WT mean-pooled embeddings. Positive control paralleling the "
             "mechanism arc (results 1-10). Primary metric: family-split LogReg macro-F1."
         ),
-        "seeds": args.seeds,
+        "seeds": seeds,
         "n_folds": args.n_folds,
         "n_genes": len(gene_list),
         "class_distribution": dict(Counter(y_str)),

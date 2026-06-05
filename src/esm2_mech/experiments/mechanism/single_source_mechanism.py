@@ -39,6 +39,7 @@ from esm2_mech.experiments.mechanism.mechanism_delta_family_split import run as 
 from esm2_mech.experiments.mechanism.naive_baseline import evaluate as eval_naive
 from esm2_mech.utils.constants import (
     BOOTSTRAP_N_RESAMPLES,
+    N_SEEDS,
     SEED_RESULT_GLOB,
     SOURCE_GERASIMAVICIUS,
 )
@@ -61,8 +62,6 @@ from esm2_mech.utils.seed_aggregation import (
 )
 
 print = functools.partial(print, flush=True)
-
-DEFAULT_SEEDS = [0, 1, 2, 3, 4]
 
 
 def compute_subset_floor(labels: np.ndarray, genes: np.ndarray) -> dict:
@@ -88,8 +87,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--n_folds", type=int, default=5)
     parser.add_argument(
-        "--seeds", type=int, nargs="+", default=DEFAULT_SEEDS,
-        help="Random seeds to run (default: 0 1 2 3 4)",
+        "--seeds", type=int, default=N_SEEDS,
+        help="number of seeds to run; runs 0..seeds-1 (>=1)",
     )
     parser.add_argument("--no_ci", action="store_true", help="skip cluster-bootstrap CIs")
     parser.add_argument("--n_boot", type=int, default=BOOTSTRAP_N_RESAMPLES)
@@ -98,6 +97,8 @@ def main() -> None:
         help="label-permutation reps for headline features (0 = skip; slow, refits per rep)",
     )
     args = parser.parse_args()
+    if args.seeds < 1:
+        parser.error("--seeds must be >= 1")
 
     SINGLE_SOURCE_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -120,7 +121,7 @@ def main() -> None:
     print(f"Wrote {SINGLE_SOURCE_NAIVE_BASELINE_JSON}")
 
     print(f"\n=== Mechanism probe on {SOURCE_GERASIMAVICIUS}-only subset ===")
-    for seed in args.seeds:
+    for seed in range(args.seeds):
         print(f"\n--- Seed {seed} ---")
         run_family_split(
             data=subset, out_dir=str(SINGLE_SOURCE_DIR), seed=seed, n_folds=args.n_folds,

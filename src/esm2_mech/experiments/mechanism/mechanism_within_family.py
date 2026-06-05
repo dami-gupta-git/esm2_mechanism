@@ -55,6 +55,7 @@ from esm2_mech.utils.constants import (
     CHANCE_AUROC,
     GOF,
     MECHANISM_CLASSES,
+    N_SEEDS,
 )
 from esm2_mech.utils.data import load_variants
 from esm2_mech.utils.io import atomic_write_json
@@ -75,7 +76,6 @@ import json
 
 print = functools.partial(print, flush=True)
 
-N_SEEDS = 5
 MIN_GENES = 6
 MIN_CLASSES = 2
 N_FOLDS = 5
@@ -198,6 +198,7 @@ def _majority_baseline_f1(y, classes):
 
 def _probe_one_family(
     features_by_view, y, genes_rows, classes, n_seeds, n_folds, compute_ci=True,
+    mlp_kwargs=None,
 ):
     """Within-family gene-split CV for one family, both views x both probes, N seeds.
 
@@ -216,6 +217,9 @@ def _probe_one_family(
     at these sizes, reported rather than hidden.
     """
     probes = {"logreg": run_logreg_cv, "mlp": run_mlp_cv}
+    # Extra kwargs applied per probe. mlp_kwargs lets callers (tests) shrink the MLP
+    # to make the many CV refits cheap; defaults leave the production probe unchanged.
+    extra_kwargs = {"logreg": {}, "mlp": mlp_kwargs or {}}
 
     per_seed_f1 = {view: {p: [] for p in probes} for view in features_by_view}
     per_seed_auroc = {
@@ -237,6 +241,7 @@ def _probe_one_family(
                 res, oof = probe_fn(
                     feature_matrix, y, splits, classes=classes, seed=seed,
                     label=f"{view}:{probe_name}", genes=genes_rows, return_oof=True,
+                    **extra_kwargs[probe_name],
                 )
                 oof_by_view_probe[view][probe_name].append(oof)
                 # aggregate_folds returns flat keys: macro_f1_mean (the
@@ -310,12 +315,18 @@ def _stack_oof(oof_list):
     }
 
 
-def _run_delta_gof_auroc_for_labels(family_inputs, perm_labels_by_family, n_seeds, n_folds):
+def _run_delta_gof_auroc_for_labels(
+    family_inputs, perm_labels_by_family, n_seeds, n_folds,
+    mlp_hidden=(256, 64), mlp_max_iter=500,
+):
     """Refit the delta MLP within every GOF-bearing family under given labels; pool GOF AUROC.
 
     Used by the permutation test: `perm_labels_by_family` supplies a (shuffled) label
     vector per family. Mirrors _probe_one_family's delta/MLP arm exactly — same folds,
     same seed-averaging — so the permuted statistic is comparable to the observed one.
+
+    mlp_hidden / mlp_max_iter default to the production MLP; tests pass a smaller net
+    to make the permutation loop's many refits cheap without altering the real run.
     """
     per_family_oof = []
     for family, inp in family_inputs.items():
@@ -332,6 +343,7 @@ def _run_delta_gof_auroc_for_labels(family_inputs, perm_labels_by_family, n_seed
             _, oof = run_mlp_cv(
                 inp["X"], labels_fam, splits, classes=present, seed=seed,
                 genes=inp["genes"], return_oof=True, label="perm",
+                hidden=mlp_hidden, max_iter=mlp_max_iter,
             )
             # Re-align proba to the canonical 3-class order so GOF column is stable.
             if oof is not None:
@@ -349,6 +361,7 @@ def _run_delta_gof_auroc_for_labels(family_inputs, perm_labels_by_family, n_seed
 def pooled_gof_test(
     delta_oof_by_family, family_inputs, n_seeds, n_folds,
     compute_ci=True, n_permutations=0,
+    mlp_hidden=(256, 64), mlp_max_iter=500,
 ):
     """Cross-family pooled test of the delta's GOF separability against chance.
 
@@ -414,7 +427,8 @@ def pooled_gof_test(
     if n_permutations > 0:
         inputs = {fam: family_inputs[fam] for fam in gof_families}
         observed = _run_delta_gof_auroc_for_labels(
-            inputs, {fam: inputs[fam]["y"] for fam in gof_families}, n_seeds, n_folds
+            inputs, {fam: inputs[fam]["y"] for fam in gof_families}, n_seeds, n_folds,
+            mlp_hidden=mlp_hidden, mlp_max_iter=mlp_max_iter,
         )
 
         def _run_metric(flat_labels, _inputs=inputs):
@@ -425,7 +439,10 @@ def pooled_gof_test(
                 size = len(_inputs[fam]["y"])
                 by_family[fam] = flat_labels[cursor:cursor + size]
                 cursor += size
-            return _run_delta_gof_auroc_for_labels(_inputs, by_family, n_seeds, n_folds)
+            return _run_delta_gof_auroc_for_labels(
+                _inputs, by_family, n_seeds, n_folds,
+                mlp_hidden=mlp_hidden, mlp_max_iter=mlp_max_iter,
+            )
 
         flat_labels = np.concatenate([inputs[fam]["y"] for fam in gof_families])
         flat_genes = np.concatenate([inputs[fam]["genes"] for fam in gof_families])

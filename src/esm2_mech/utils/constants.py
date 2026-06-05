@@ -7,6 +7,12 @@ ESM2_MODEL = "esm2_t33_650M_UR50D"
 ESM2_MODEL_3B = "esm2_t36_3B_UR50D"
 ESM3_MODEL = "esm3-sm-open-v1"
 
+# ── Seeds ─────────────────────────────────────────────────────────────────────
+# Number of random seeds for every multi-seed probe. The `--seeds` CLI flag is a
+# COUNT (default N_SEEDS): seeds 0..N_SEEDS-1 are run. Single source of truth —
+# never hardcode 5 or [0, 1, 2, 3, 4] inline.
+N_SEEDS = 5
+
 # ── Mechanism class label constants ──────────────────────────────────────────
 GOF = "GOF"
 DN = "DN"
@@ -53,6 +59,35 @@ CONTRASTIVE_SEED_RESULT_GLOB = (
 # run's aggregate.json (written by classify_by_mechanism). The contrastive
 # verdict compares against this floor; never hardcode the floor value.
 DELTA_MEAN_FEATURE = "delta_mean"
+
+
+# ── Nonlinear delta-probe result keys ─────────────────────────────────────────
+# Keys under which experiments/mechanism/mlp stores each nonlinear probe's metrics
+# in nonlinear_results_seed{seed}.json. The convention is <model>_<feat>_<split>,
+# e.g. "mlp_delta_mean_family". Both the producer (mlp.py) and the consumers
+# (multiseed_v1, esm3_mechanism) build keys via nonlinear_key() so the format
+# lives in exactly one place — never hardcode the literal strings inline.
+DELTA_POS_FEATURE = "delta_pos"
+NONLINEAR_MODELS = ("mlp", "gbm", "rf", "knn")
+NONLINEAR_FEATURES = (DELTA_MEAN_FEATURE, DELTA_POS_FEATURE)
+SPLIT_GENE = "gene"
+SPLIT_FAMILY = "family"
+NONLINEAR_SPLITS = (SPLIT_GENE, SPLIT_FAMILY)
+
+
+def nonlinear_key(model: str, feature: str, split: str) -> str:
+    """Result key for one nonlinear delta probe: <model>_<feature>_<split>.
+
+    Validates each token against the known vocabularies so a typo fails loudly
+    here rather than silently reading a missing key downstream.
+    """
+    if model not in NONLINEAR_MODELS:
+        raise ValueError(f"unknown nonlinear model {model!r}; expected one of {NONLINEAR_MODELS}")
+    if feature not in NONLINEAR_FEATURES:
+        raise ValueError(f"unknown nonlinear feature {feature!r}; expected one of {NONLINEAR_FEATURES}")
+    if split not in NONLINEAR_SPLITS:
+        raise ValueError(f"unknown split {split!r}; expected one of {NONLINEAR_SPLITS}")
+    return f"{model}_{feature}_{split}"
 
 
 def contrastive_seed_result_filename(seed: int) -> str:

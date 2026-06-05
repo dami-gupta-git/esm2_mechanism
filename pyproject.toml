@@ -50,6 +50,10 @@ pythonpath = ["src"]
 
 testpaths = ["tests"]
 
+markers = [
+    "slow: fits real probes (logreg/MLP); deselect with -m 'not slow'",
+]
+
 [dependency-groups]
 dev = [
     "black>=26.5.1",

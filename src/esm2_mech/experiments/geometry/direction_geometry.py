@@ -30,6 +30,7 @@ import functools
 
 print = functools.partial(print, flush=True)
 
+from esm2_mech.utils.constants import N_SEEDS
 from esm2_mech.utils.io import atomic_write_json
 from esm2_mech.utils.paths import (
     GEOMETRY_RESULTS_DIR,
@@ -243,7 +244,7 @@ def probe2_universal(delta, y, genes, fam, n_partitions=10, seeds=(0,)):
     return out
 
 
-def run(n_seeds=5):
+def run(n_seeds=N_SEEDS):
     """Run both geometry probes over n_seeds and write the result JSON.
 
     Probe 1 (rank) uses the seeds directly; Probe 2 (family transfer) averages
@@ -267,7 +268,7 @@ def main():
     import argparse
 
     ap = argparse.ArgumentParser()
-    ap.add_argument("--seeds", type=int, default=5, help="number of seeds (>=1)")
+    ap.add_argument("--seeds", type=int, default=N_SEEDS, help="number of seeds (>=1)")
     args = ap.parse_args()
     result = run(n_seeds=args.seeds)
     r1, r2 = result["probe1_rank"], result["probe2_universal"]

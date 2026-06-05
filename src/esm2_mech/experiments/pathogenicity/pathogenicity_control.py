@@ -52,6 +52,7 @@ from pathlib import Path
 import numpy as np
 from joblib import Parallel, delayed
 
+from esm2_mech.utils.constants import N_SEEDS
 from esm2_mech.utils.data import load_variants, variants_fingerprint
 from esm2_mech.utils.embed import get_esm2_embeddings_for_pairs
 from esm2_mech.utils.io import atomic_write_json, save_npy
@@ -78,7 +79,6 @@ print = functools.partial(print, flush=True)
 # The pathogenicity embedding path constants (PATH_EMB_*) live under the 650M
 # EMB_DIR, so this control runs on the 650M model only.
 ESM2_MODEL_650M = "esm2_t33_650M_UR50D"
-N_SEEDS = 5
 
 CLINVAR_URL = (
     "https://ftp.ncbi.nlm.nih.gov/pub/clinvar/tab_delimited/variant_summary.txt.gz"

@@ -82,8 +82,8 @@ After completion, `scp` the `.npy` files and `embedded_variants.json` back to `d
 
 | Command | Description | Inputs | Outputs                                                 |
 |---|---|---|---------------------------------------------------------|
-| `python -m esm2_mech.experiments.mechanism.classify_by_mechanism` | Gene-split vs family-split baseline comparison | `variants.json`, `cache/sequences.json`, `pfam_families.json`, `embeddings_*.npy`, `alphamissense_scores_full.json` | `results/<run_name>/family_split_baselines_seed{0..4}.json` |
-| `python -m esm2_mech.experiments.mechanism.mlp --seed 0` | Nonlinear classifiers (MLP, GBM, RF, kNN) on delta embeddings | `valid_variants.json`, `pfam_families.json`, `embeddings_*.npy` | `results/<run_name>/nonlinear_results_seed0.json`                 |
+| `python -m esm2_mech.experiments.mechanism.classify_by_mechanism --seeds 5` | Gene-split vs family-split baseline comparison | `variants.json`, `cache/sequences.json`, `pfam_families.json`, `embeddings_*.npy`, `alphamissense_scores_full.json` | `results/<run_name>/family_split_baselines_seed{0..4}.json` |
+| `python -m esm2_mech.experiments.mechanism.mlp --seeds 5` | Nonlinear classifiers (MLP, GBM, RF, kNN) on delta embeddings | `valid_variants.json`, `pfam_families.json`, `embeddings_*.npy` | `results/<run_name>/nonlinear_results_seed{0..4}.json`                 |
 | `python -m esm2_mech.experiments.mechanism.family_clustering` | Diagnostic: do ESM-2 embeddings cluster by Pfam family? (kNN purity, within/between distance, family probe, mechanism–family overlap) — explains the homology leakage in the WT-only baseline | `valid_variants.json`, `pfam_families.json`, `embeddings_wt_mean.npy`, `embeddings_mut_mean.npy` | `results/<run_name>/family_clustering.json` |
 | `python -m esm2_mech.experiments.mechanism.naive_baseline` | Measured majority-class / stratified macro-F1 + AUROC floor (DummyClassifier, 5 seeds, same CV) — the chance reference for the other tables | `valid_variants.json`, `pfam_families.json` | `results/<run_name>/naive_baseline.json` |
 | `python -m esm2_mech.experiments.mechanism.leakage_fraction` | Derived diagnostic: leakage fraction per feature = (gene − family macro-F1) / (gene − chance), the share of each feature's above-chance gene-split score that is homology leakage | `family_split_baselines_seed{0..4}.json`, `naive_baseline.json`, `family_clustering.json` | `results/<run_name>/leakage_fraction.json` |
@@ -91,6 +91,8 @@ After completion, `scp` the `.npy` files and `embedded_variants.json` back to `d
 The first two run on RunPod inside a `tmux` session; `scp` results back to `results/<run_name>/` locally. `family_clustering`, `naive_baseline`, and `leakage_fraction` are CPU-only and run locally. `leakage_fraction` reads only the result JSONs above (no model inference), so run it after `classify_by_mechanism`, `naive_baseline`, and `family_clustering`.
 
 The mechanism probe (`classify_by_mechanism` here, and the Step 4 `single_source_mechanism`) and `naive_baseline` now emit gene/family cluster-bootstrap 95% CIs by default — dependency-aware intervals that resample whole genes (or families), the label unit, rather than 5-seed fold jitter (see `reports/run6/STATS_PLAN.md`; machinery in `utils/bootstrap.py`). CIs add roughly a minute per seed and need no flag.
+
+**`--seeds`:** every multi-seed command takes `--seeds N`, an integer **count** that runs seeds `0..N-1` and defaults to 5 (the single `N_SEEDS` constant in `utils/constants.py`). It is uniform across the runbook — `classify_by_mechanism`, `mlp`, `single_source_mechanism`, `mechanism_within_family`, `run_geometry`, `contrastive_mechanism`, and `esm3_mechanism --phase 3` all use the same flag with the same meaning. To run a subset, lower the count (`--seeds 1` runs seed 0 only).
 
 `classify_by_mechanism`, `single_source_mechanism`, and the standalone `mechanism_delta_family_split` each accept three stats flags:
 
@@ -116,9 +118,9 @@ locally; no GPU or RunPod needed.
 
 | Command | Description | Inputs | Outputs |
 |---|---|---|---|
-| `python -m esm2_mech.experiments.mechanism.single_source_mechanism` | Re-run the Step 3 mechanism probe on the Gerasimavicius-only subset; recompute the subset majority-class floor; aggregate across 5 seeds and print the robustness read against merged Step 3 | `valid_variants.json`, `cache/sequences.json`, `pfam_families.json`, `embeddings_*.npy`, `alphamissense_scores_full.json` | `results/<run_name>/single_source_gerasimavicius/{family_split_baselines_seed{0..4}.json, aggregate.json, naive_baseline.json}` |
+| `python -m esm2_mech.experiments.mechanism.single_source_mechanism --seeds 5` | Re-run the Step 3 mechanism probe on the Gerasimavicius-only subset; recompute the subset majority-class floor; aggregate across 5 seeds and print the robustness read against merged Step 3 | `valid_variants.json`, `cache/sequences.json`, `pfam_families.json`, `embeddings_*.npy`, `alphamissense_scores_full.json` | `results/<run_name>/single_source_gerasimavicius/{family_split_baselines_seed{0..4}.json, aggregate.json, naive_baseline.json}` |
 
-Args: `--n_folds` (default 5), `--seeds` (default `0 1 2 3 4`), plus the same `--no_ci` / `--n_boot` / `--n_permutations` stats flags documented under Step 3. The null holds on the subset if
+Args: `--n_folds` (default 5), `--seeds` (count, default 5 — see the `--seeds` note under Step 3), plus the same `--no_ci` / `--n_boot` / `--n_permutations` stats flags documented under Step 3. The null holds on the subset if
 `delta_mean` sits at the subset floor on both splits and `wt_only`'s gene-split lift collapses
 under family-split — confirming the mechanism null is not a source artifact.
 
@@ -185,7 +187,7 @@ and a HuggingFace token with the `esm3-sm-open-v1` licence accepted (`export HF_
 |---|---|---|---|
 | `python -m esm2_mech.experiments.esm3.esm3_mechanism --phase 1 --dataset merged` | CPU: download AF2 structures from EBI, cache per-residue coordinates | `valid_variants.json` (merged) or `gerasimavicius_variants.json` (geras) | `data/cache/esm3_struct_tokens.json`, `data/cache/af2_structures/*.pdb` |
 | `python -m esm2_mech.experiments.esm3.esm3_mechanism --phase 2 --dataset merged` | GPU: extract ESM-3 wt+mut mean-pooled embeddings for both conditions, save deltas + raw wt/mut arrays | `esm3_struct_tokens.json`, `cache/sequences.json`, variants | `data/embeddings/esm3-sm-open-v1/<dataset>/{seq,seq_struct}_mean.npy` (+ `_wt`/`_mut`), `valid_idx.npy`, `struct_meta.json` |
-| `python -m esm2_mech.experiments.esm3.esm3_mechanism --phase 3 --dataset merged` | CPU: MLP + logistic probes, gene/family-split, 5 seeds; evaluate M1/M2/M3 | `{seq,seq_struct}_mean.npy`, `valid_idx.npy`, `pfam_families.json`, `results/<run_name>/nonlinear_results_seed{0..4}.json` (ESM-2 floor) | `results/<run_name>/esm3_mechanism/<dataset>/summary.json` |
+| `python -m esm2_mech.experiments.esm3.esm3_mechanism --phase 3 --dataset merged --seeds 5` | CPU: MLP + logistic probes, gene/family-split, 5 seeds; evaluate M1/M2/M3 | `{seq,seq_struct}_mean.npy`, `valid_idx.npy`, `pfam_families.json`, `results/<run_name>/nonlinear_results_seed{0..4}.json` (ESM-2 floor) | `results/<run_name>/esm3_mechanism/<dataset>/summary.json` |
 
 Run phase 2 inside a `tmux` session on RunPod; `scp` the `<dataset>/` embedding and result
 subdirectories back locally. Report written as `reports/<run_name>/report_esm3_mechanism.md`.
@@ -232,8 +234,8 @@ JSONs back to `results/<run_name>/`.
 |---|---|---|---|
 | `python -m esm2_mech.experiments.mechanism.contrastive_mechanism` | Train the cross-family contrastive head, evaluate k-NN vs raw-kNN baseline under gene/family-split, 5 seeds, then pool across seeds | `valid_variants.json`, `pfam_families.json`, `embeddings_wt_mean.npy`, `embeddings_mut_mean.npy`, `aggregate.json` (MLP floor) | `results/<run_name>/contrastive_results_seed{0..4}.json`, `contrastive_aggregate.json` |
 
-Runs all 5 seeds and writes the across-seed pool by default; `--seed N` runs a single seed
-without aggregation. Headline: family-split `contrastive_knn` macro_f1 vs the raw-kNN baseline
+Runs all `N_SEEDS` seeds (default 5) and writes the across-seed pool by default; `--seed N` runs a
+single seed without aggregation. Headline: family-split `contrastive_knn` macro_f1 vs the raw-kNN baseline
 and the MLP floor, and the gene→family drop (a smaller drop than the baseline's is the signature
 of genuine cross-family signal rather than leakage). Report written as
 `reports/<run_name>/report_contrastive.md`.

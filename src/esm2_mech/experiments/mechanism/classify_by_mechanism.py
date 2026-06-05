@@ -24,7 +24,7 @@ from esm2_mech.utils.seed_aggregation import (
     load_seed_files,
     print_table,
 )
-from esm2_mech.utils.constants import BOOTSTRAP_N_RESAMPLES, SEED_RESULT_GLOB
+from esm2_mech.utils.constants import BOOTSTRAP_N_RESAMPLES, N_SEEDS, SEED_RESULT_GLOB
 from esm2_mech.utils.paths import (
     EMB_WT_MEAN,
     EMB_MUT_MEAN,
@@ -129,6 +129,10 @@ def load_data() -> dict:
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--seeds", type=int, default=N_SEEDS,
+        help="number of seeds to run; runs 0..seeds-1 (>=1)",
+    )
     parser.add_argument("--no_ci", action="store_true", help="skip cluster-bootstrap CIs")
     parser.add_argument("--n_boot", type=int, default=BOOTSTRAP_N_RESAMPLES)
     parser.add_argument(
@@ -136,13 +140,15 @@ def main():
         help="label-permutation reps for headline features (0 = skip; slow, refits per rep)",
     )
     args = parser.parse_args()
+    if args.seeds < 1:
+        parser.error("--seeds must be >= 1")
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
 
     data = load_data()
 
     print("\n=== Result 2: Gene-split vs family-split baselines ===")
-    for seed in [0, 1, 2, 3, 4]:
+    for seed in range(args.seeds):
         print(f"\n--- Seed {seed} ---")
         run_family_split(
             data=data, out_dir=str(OUT_DIR), seed=seed,

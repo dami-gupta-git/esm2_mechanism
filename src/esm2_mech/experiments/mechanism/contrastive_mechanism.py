@@ -50,6 +50,7 @@ from esm2_mech.utils.constants import (
     DN,
     GOF,
     MECHANISM_CLASSES,
+    N_SEEDS,
     contrastive_seed_result_filename,
 )
 from esm2_mech.utils.seed_aggregation import (
@@ -692,7 +693,7 @@ def main():
         "--seed",
         type=int,
         default=None,
-        help="Run a single seed (no across-seed aggregation). Omit to run seeds 0-4.",
+        help="Run a single seed (no across-seed aggregation). Omit to run seeds 0..N_SEEDS-1.",
     )
     parser.add_argument("--n_folds", type=int, default=5)
     parser.add_argument(
@@ -709,7 +710,7 @@ def main():
     out_dir = str(CONTRASTIVE_RESULTS_DIR)
     data = load_all_data()
 
-    seeds = [args.seed] if args.seed is not None else [0, 1, 2, 3, 4]
+    seeds = [args.seed] if args.seed is not None else list(range(N_SEEDS))
     for seed in seeds:
         print("\n\n" + "#" * 60)
         print(f"# SEED {seed}")

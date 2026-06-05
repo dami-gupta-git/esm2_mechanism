@@ -40,14 +40,13 @@ from sklearn.dummy import DummyClassifier
 from sklearn.metrics import f1_score, roc_auc_score
 
 from esm2_mech.utils.bootstrap import cluster_bootstrap_ci
-from esm2_mech.utils.constants import BOOTSTRAP_N_RESAMPLES, MECHANISM_CLASSES
+from esm2_mech.utils.constants import BOOTSTRAP_N_RESAMPLES, MECHANISM_CLASSES, N_SEEDS
 from esm2_mech.utils.paths import NAIVE_BASELINE_JSON, PFAM_JSON, VALID_VARIANTS_JSON
 from esm2_mech.utils.splits import family_split_cv, gene_split_cv
 
 print = functools.partial(print, flush=True)
 
 N_FOLDS = 5
-N_SEEDS = 5
 STRATEGIES = ["most_frequent", "prior", "stratified"]
 
 

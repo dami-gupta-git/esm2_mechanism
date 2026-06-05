@@ -40,6 +40,7 @@ print = functools.partial(print, flush=True)
 
 from joblib import Parallel, delayed
 
+from esm2_mech.utils.constants import N_SEEDS
 from esm2_mech.utils.io import atomic_write_json
 from esm2_mech.utils.paths import (
     GEOMETRY_RESULTS_DIR,
@@ -430,16 +431,18 @@ def evaluate_gates(path_res, mech_res, bio_res):
     return gates
 
 
-def run(n_seeds=5):
+def run(n_seeds=N_SEEDS):
     """Run the magnitude/direction decomposition over range(n_seeds)."""
     return _run_seeds(list(range(n_seeds)))
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--seeds", type=int, nargs="+", default=[0, 1, 2, 3, 4])
+    ap.add_argument("--seeds", type=int, default=N_SEEDS, help="number of seeds (>=1)")
     args = ap.parse_args()
-    _run_seeds(args.seeds)
+    if args.seeds < 1:
+        ap.error("--seeds must be >= 1")
+    run(n_seeds=args.seeds)
 
 
 def _run_seeds(seeds):

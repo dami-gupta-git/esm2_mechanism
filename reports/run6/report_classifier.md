@@ -243,7 +243,7 @@ deviation is small (≤0.016), so these values are stable.
 |---|---|
 | Can mechanism be predicted from ESM-2 above chance? | Yes — family-split macro_f1 ≈ 0.44 vs the 0.29 floor — but see the next row for why. |
 | What is the 0.44 actually using? | Protein/family identity, not the mutation. Family correlates with mechanism (kinases→GOF, structural→DN) because labels are gene-level, so identity acts as a proxy rather than mechanism understanding. |
-| Is the signal in the delta (the mutation's effect)? | Not linearly (chance level); only weakly under a nonlinear model. |
+| Is the signal in the delta (the mutation's effect)? | Not linearly (chance level). A nonlinear model recovers a little (family-split macro_f1 up to 0.38), but it stays below the linear protein-embedding score (0.44), and the best gene-split nonlinear model (kNN) loses most of its edge when whole families are held out — consistent with residual family structure rather than mechanism. |
 | Does AlphaMissense help? | No — at the floor; mechanism is a separate axis from pathogenicity. |
 | How much do gene-split scores overstate performance? | Approximately 0.10 macro_f1 of homology leakage. |
 
@@ -288,7 +288,7 @@ variant index row-aligned, length 17,826). AlphaMissense coverage 17,733 / 17,82
 
 Sources:
 - Linear baselines (Tables 1–2, feature rows): `experiments/mechanism/classify_by_mechanism`, 5 seeds → `results/run6/family_split_baselines_seed{0..4}.json`, `aggregate.json`.
-- Nonlinear results (all four models, both splits): `experiments/mechanism/mlp`, 5 seeds → `results/run6/nonlinear_results_seed{0..4}.json`. Keys: `<model>_delta_mean[_gene]` (gene-split) and `<model>_delta_mean_family` (family-split) for `model ∈ {mlp, knn, gbm, rf}`.
+- Nonlinear results (all four models, both splits): `experiments/mechanism/mlp`, 5 seeds → `results/run6/nonlinear_results_seed{0..4}.json`. Keys: `<model>_delta_mean_<split>` for `model ∈ {mlp, knn, gbm, rf}` and `split ∈ {gene, family}`.
 - Naive baseline row (0.288 / 0.50): `experiments/mechanism/naive_baseline.py`, a majority-class `DummyClassifier` run under the same labels and 5-seed gene/family-split CV as the feature rows → `results/run6/naive_baseline.json`.
 
 Full log: [`RUN_PROGRESS.md`](../../RUN_PROGRESS.md), Run 6.

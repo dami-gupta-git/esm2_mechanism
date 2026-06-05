@@ -178,6 +178,7 @@ def run_mlp_cv(
     genes: np.ndarray | None = None,
     label: str = "",
     return_oof: bool = False,
+    max_iter: int = 500,
 ):
     """Sklearn MLP CV: scale → oversample → fit → aggregate metrics.
 
@@ -228,7 +229,7 @@ def run_mlp_cv(
 
         clf = MLPClassifier(
             hidden_layer_sizes=hidden,
-            max_iter=500,
+            max_iter=max_iter,
             early_stopping=True,
             validation_fraction=0.15,
             random_state=seed,

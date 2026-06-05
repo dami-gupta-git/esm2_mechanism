@@ -31,6 +31,7 @@ from esm2_mech.experiments.geometry import (
     transfer_contrast,
     probe4_axis_identity,
 )
+from esm2_mech.utils.constants import N_SEEDS
 
 print = functools.partial(print, flush=True)
 
@@ -45,7 +46,7 @@ PROBES = {
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--seeds", type=int, default=5, help="number of seeds (>=1)")
+    parser.add_argument("--seeds", type=int, default=N_SEEDS, help="number of seeds (>=1)")
     parser.add_argument(
         "--probe",
         nargs="+",

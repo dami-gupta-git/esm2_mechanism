@@ -16,8 +16,8 @@ Outputs:
 
 Usage:
   cd esm2_mechanism
-  python scripts/multiseed_v1.py
-  python scripts/multiseed_v1.py --seeds 0 1 2 3 4   # re-run all including seed 0
+  python scripts/multiseed_v1.py                       # seeds 0..4 (seed 0 from disk)
+  python scripts/multiseed_v1.py --seeds 5 --include_seed0   # re-run all including seed 0
 """
 
 import argparse
@@ -29,6 +29,9 @@ from collections import defaultdict
 import functools
 
 print = functools.partial(print, flush=True)
+from esm2_mech.utils.constants import (
+    DELTA_MEAN_FEATURE, DELTA_POS_FEATURE, N_SEEDS, SPLIT_FAMILY, SPLIT_GENE, nonlinear_key,
+)
 from esm2_mech.utils.splits import gene_split_cv, family_split_cv
 from esm2_mech.utils.probes import run_logreg_binary_cv, run_mlp_probe_cv
 from esm2_mech.utils.paths import (
@@ -42,6 +45,11 @@ from esm2_mech.utils.paths import (
     PATH_EMB_WT_MEAN,
     PATH_EMB_MUT_MEAN,
 )
+
+# Nonlinear-result keys this experiment writes and reads, built via the shared
+# helper so the <model>_<feat>_<split> format lives in one place (constants.py).
+MLP_DELTA_MEAN_GENE = nonlinear_key("mlp", DELTA_MEAN_FEATURE, SPLIT_GENE)
+MLP_DELTA_MEAN_FAMILY = nonlinear_key("mlp", DELTA_MEAN_FEATURE, SPLIT_FAMILY)
 
 # ── paths ────────────────────────────────────────────────────────────────────
 
@@ -168,13 +176,13 @@ def run_seed(seed, pfam_map, out_dir):
         gs = gene_split_cv(genes, seed=seed)
         fs = family_split_cv(genes, pfam_map, seed=seed)
         geras_results = {}
-        for feat_name, X in [("delta_mean", dm), ("delta_pos", dp)]:
+        for feat_name, X in [(DELTA_MEAN_FEATURE, dm), (DELTA_POS_FEATURE, dp)]:
             print(f"  MLP gene-split {feat_name}")
-            geras_results[f"mlp_{feat_name}_gene"] = run_mlp_probe_cv(
+            geras_results[nonlinear_key("mlp", feat_name, SPLIT_GENE)] = run_mlp_probe_cv(
                 X, labels, gs, seed=seed, genes=genes, label=f"{feat_name}_gene"
             )
             print(f"  MLP family-split {feat_name}")
-            geras_results[f"mlp_{feat_name}_family"] = run_mlp_probe_cv(
+            geras_results[nonlinear_key("mlp", feat_name, SPLIT_FAMILY)] = run_mlp_probe_cv(
                 X, labels, fs, seed=seed, genes=genes, label=f"{feat_name}_family"
             )
         with open(geras_out, "w") as f:
@@ -194,11 +202,11 @@ def run_seed(seed, pfam_map, out_dir):
         fs = family_split_cv(genes, pfam_map, seed=seed)
         merged_results = {}
         print(f"  MLP gene-split delta_mean")
-        merged_results["mlp_delta_mean_gene"] = run_mlp_probe_cv(
+        merged_results[MLP_DELTA_MEAN_GENE] = run_mlp_probe_cv(
             dm, labels, gs, seed=seed, genes=genes, label="delta_mean_gene"
         )
         print(f"  MLP family-split delta_mean")
-        merged_results["mlp_delta_mean_family"] = run_mlp_probe_cv(
+        merged_results[MLP_DELTA_MEAN_FAMILY] = run_mlp_probe_cv(
             dm, labels, fs, seed=seed, genes=genes, label="delta_mean_family"
         )
         with open(merged_out, "w") as f:
@@ -274,34 +282,34 @@ def summarise(all_seeds, out_dir):
 
         vals = {
             "mechanism_geras_mlp_delta_mean_family_macro_f1": g(
-                geras, "mlp_delta_mean_family", "macro_f1_mean"
+                geras, MLP_DELTA_MEAN_FAMILY, "macro_f1_mean"
             ),
             "mechanism_geras_mlp_delta_mean_family_auroc_GOF": g(
-                geras, "mlp_delta_mean_family", "auroc_GOF_mean"
+                geras, MLP_DELTA_MEAN_FAMILY, "auroc_GOF_mean"
             ),
             "mechanism_geras_mlp_delta_mean_family_auroc_DN": g(
-                geras, "mlp_delta_mean_family", "auroc_DN_mean"
+                geras, MLP_DELTA_MEAN_FAMILY, "auroc_DN_mean"
             ),
             "mechanism_geras_mlp_delta_mean_family_auroc_LOF": g(
-                geras, "mlp_delta_mean_family", "auroc_LOF_mean"
+                geras, MLP_DELTA_MEAN_FAMILY, "auroc_LOF_mean"
             ),
             "mechanism_geras_mlp_delta_mean_gene_macro_f1": g(
-                geras, "mlp_delta_mean_gene", "macro_f1_mean"
+                geras, MLP_DELTA_MEAN_GENE, "macro_f1_mean"
             ),
             "mechanism_merged_mlp_delta_mean_family_macro_f1": g(
-                merged, "mlp_delta_mean_family", "macro_f1_mean"
+                merged, MLP_DELTA_MEAN_FAMILY, "macro_f1_mean"
             ),
             "mechanism_merged_mlp_delta_mean_family_auroc_GOF": g(
-                merged, "mlp_delta_mean_family", "auroc_GOF_mean"
+                merged, MLP_DELTA_MEAN_FAMILY, "auroc_GOF_mean"
             ),
             "mechanism_merged_mlp_delta_mean_family_auroc_DN": g(
-                merged, "mlp_delta_mean_family", "auroc_DN_mean"
+                merged, MLP_DELTA_MEAN_FAMILY, "auroc_DN_mean"
             ),
             "mechanism_merged_mlp_delta_mean_family_auroc_LOF": g(
-                merged, "mlp_delta_mean_family", "auroc_LOF_mean"
+                merged, MLP_DELTA_MEAN_FAMILY, "auroc_LOF_mean"
             ),
             "mechanism_merged_mlp_delta_mean_gene_macro_f1": g(
-                merged, "mlp_delta_mean_gene", "macro_f1_mean"
+                merged, MLP_DELTA_MEAN_GENE, "macro_f1_mean"
             ),
             "pathogenicity_mlp_gene_auroc": g(path, "mlp_gene", "auroc_mean"),
             "pathogenicity_mlp_family_auroc": g(path, "mlp_family", "auroc_mean"),
@@ -364,9 +372,9 @@ def main():
     parser.add_argument(
         "--seeds",
         type=int,
-        nargs="+",
-        default=[1, 2, 3, 4],
-        help="Seeds to run (default: 1 2 3 4; seed 0 already exists)",
+        default=N_SEEDS,
+        help="number of seeds to run; runs 0..seeds-1 (>=1). Seed 0 is loaded from "
+             "existing results unless --include_seed0 forces a recompute.",
     )
     parser.add_argument(
         "--include_seed0",
@@ -379,6 +387,8 @@ def main():
         help="Skip computation, just re-aggregate existing JSONs",
     )
     args = parser.parse_args()
+    if args.seeds < 1:
+        parser.error("--seeds must be >= 1")
 
     os.makedirs(OUT_DIR, exist_ok=True)
 
@@ -386,9 +396,9 @@ def main():
         pfam_map = json.load(f)
     print(f"Pfam map loaded: {len(pfam_map)} genes")
 
-    seeds = args.seeds
-    if args.include_seed0:
-        seeds = [0] + seeds
+    # Seeds 0..seeds-1. Seed 0 is always sourced from the existing on-disk results
+    # below and skipped in the compute loop unless --include_seed0 forces a rerun.
+    seeds = list(range(args.seeds))
 
     all_seeds = []
 
@@ -427,6 +437,8 @@ def main():
             all_seeds.append((seed, g, m, p))
     else:
         for seed in seeds:
+            if seed == 0 and not args.include_seed0:
+                continue  # seed 0 already added from the existing results above
             gf = os.path.join(OUT_DIR, f"mechanism_geras_seed{seed}.json")
             mf = os.path.join(OUT_DIR, f"mechanism_merged_seed{seed}.json")
             pf = os.path.join(OUT_DIR, f"pathogenicity_seed{seed}.json")
