@@ -33,6 +33,7 @@ from sklearn.metrics import roc_auc_score, f1_score
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.preprocessing import LabelEncoder
 from esm2_mech.utils.io import atomic_write_json
+from esm2_mech.utils.metrics import align_proba
 from esm2_mech.utils.splits import gene_split_cv, family_split_cv
 from esm2_mech.utils.paths import (
     CONTRASTIVE_AGGREGATE_JSON,
@@ -371,16 +372,13 @@ def run_knn(Z_train, Z_test, y_train, y_test, le, k=10):
     knn.fit(Z_train, y_train)
     pred = knn.predict(Z_test)
 
-    # Build full probability matrix aligned to le.classes_ (string labels)
+    # Reorder the k-NN proba columns to canonical class order. knn.classes_ are
+    # integer-encoded (training labels are ints); decode to strings so the shared
+    # align_proba helper can map them onto le.classes_.
     raw_proba = knn.predict_proba(Z_test)  # shape (n_test, n_train_classes)
-    # knn.classes_ are integer encoded; decode back to string class names
-    train_cls_int = list(knn.classes_)
     all_classes = list(le.classes_)  # string names in canonical order
-    proba = np.zeros((len(Z_test), len(all_classes)), dtype=np.float32)
-    for train_i, cls_int in enumerate(train_cls_int):
-        cls_str = le.classes_[cls_int]
-        all_i = all_classes.index(cls_str)
-        proba[:, all_i] = raw_proba[:, train_i]
+    train_cls_str = le.classes_[np.asarray(knn.classes_)]
+    proba = align_proba(raw_proba, train_cls_str, all_classes)
 
     fm = {"macro_f1": float(f1_score(y_test, pred, average="macro", zero_division=0))}
     # A class whose AUROC is undefined on this fold (absent from test, or all-equal
