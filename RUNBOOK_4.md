@@ -90,6 +90,8 @@ After completion, `scp` the `.npy` files and `embedded_variants.json` back to `d
 
 The first two run on RunPod inside a `tmux` session; `scp` results back to `results/<run_name>/` locally. `family_clustering`, `naive_baseline`, and `leakage_fraction` are CPU-only and run locally. `leakage_fraction` reads only the result JSONs above (no model inference), so run it after `classify_by_mechanism`, `naive_baseline`, and `family_clustering`.
 
+The mechanism probe (`classify_by_mechanism` / `mechanism_delta_family_split`, and the Step 4 `single_source_mechanism`) and `naive_baseline` now emit gene/family cluster-bootstrap 95% CIs by default — dependency-aware intervals that resample whole genes (or families), the label unit, rather than 5-seed fold jitter (see `reports/run6/STATS_PLAN.md`; machinery in `utils/bootstrap.py`). The mechanism probe exposes `--no_ci` (skip CIs), `--n_boot` (resamples, default 1000), and the opt-in `--n_permutations` (default 0; label-permutation p-value against chance, slow because it refits the probe per repeat — a candidate for joblib parallelism on a many-core pod). CIs add roughly a minute per seed; permutation is left off by default.
+
 ### Step 4 — single-source robustness check (CPU)
 
 The merged dataset confounds mechanism class with curation source: the AR loss-of-function

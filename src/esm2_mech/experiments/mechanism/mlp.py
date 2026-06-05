@@ -30,6 +30,7 @@ from esm2_mech.utils.paths import (
     EMB_MUT_MEAN, EMB_MUT_POS, EMB_WT_MEAN, EMB_WT_POS,
     PFAM_JSON, RESULTS_DIR, VALID_VARIANTS_JSON,
 )
+from esm2_mech.utils.io import atomic_write_json
 from esm2_mech.utils.probes import run_mlp_probe_cv, run_sklearn_probe_pca, run_sklearn_probe
 from esm2_mech.utils.splits import gene_split_cv, family_split_cv
 
@@ -69,6 +70,10 @@ def main():
     parser.add_argument("--patience", type=int, default=10)
     parser.add_argument("--out_dir", type=str, default=str(OUT_DIR),
                         help="Output directory for result JSON (default: RESULTS_DIR).")
+    parser.add_argument("--only_new_family_arms", action="store_true",
+                        help="Compute ONLY the GBM/RF/kNN family-split arms (gbm/rf/knn_<feat>_family) "
+                             "and merge them into the existing nonlinear_results_seed{seed}.json in "
+                             "out_dir, preserving all existing keys. Skips MLP and all gene-split work.")
     args = parser.parse_args()
 
     out_dir = Path(args.out_dir)
@@ -93,6 +98,47 @@ def main():
         from sklearn.neighbors import KNeighborsClassifier
         return KNeighborsClassifier(n_neighbors=10, metric="cosine")
 
+    def run_tree_knn(feat_name, X, split_name, splits, results):
+        """Run GBM/RF/kNN for one feature under one split, storing into results.
+        Gene-split keeps historical keys (gbm_<feat>, no suffix); family adds _family."""
+        suffix = "" if split_name == "gene" else "_family"
+        print(f"\n=== GBM {split_name}-split: {feat_name} (PCA-50) ===")
+        key = f"gbm_{feat_name}{suffix}"
+        results[key] = run_sklearn_probe_pca(gbm_fn, X, labels, genes, seed=args.seed, splits=splits)
+        print(f"  macro_f1={results[key].get('macro_f1_mean', float('nan')):.3f}")
+
+        print(f"\n=== RF {split_name}-split: {feat_name} (PCA-50) ===")
+        key = f"rf_{feat_name}{suffix}"
+        results[key] = run_sklearn_probe_pca(rf_fn, X, labels, genes, seed=args.seed, splits=splits)
+        print(f"  macro_f1={results[key].get('macro_f1_mean', float('nan')):.3f}")
+
+        print(f"\n=== kNN {split_name}-split: {feat_name} ===")
+        key = f"knn_{feat_name}{suffix}"
+        results[key] = run_sklearn_probe(knn_fn, X, labels, genes, seed=args.seed, normalize=True, splits=splits)
+        print(f"  macro_f1={results[key].get('macro_f1_mean', float('nan')):.3f}")
+
+    out_path = out_dir / f"nonlinear_results_seed{args.seed}.json"
+
+    # Merge mode: compute only the new GBM/RF/kNN family-split arms and fold them
+    # into the existing result file, leaving every existing key untouched.
+    if args.only_new_family_arms:
+        if not out_path.exists():
+            raise FileNotFoundError(out_path)
+        with open(out_path) as f:
+            existing = json.load(f)
+        new_arms = {}
+        for feat_name, X in [("delta_mean", delta_mean), ("delta_pos", delta_pos)]:
+            run_tree_knn(feat_name, X, "family", family_splits, new_arms)
+        overwritten = sorted(set(existing) & set(new_arms))
+        if overwritten:
+            print(f"\nOverwriting existing keys with fresh values: {overwritten}")
+        existing.update(new_arms)
+        atomic_write_json(out_path, existing)
+        print(f"\nMerged {len(new_arms)} family-split arms into {out_path}")
+        for key, res in new_arms.items():
+            print(f"  {key}: macro_f1={res.get('macro_f1_mean', float('nan')):.3f}")
+        return
+
     results = {}
     for feat_name, X in [("delta_mean", delta_mean), ("delta_pos", delta_pos)]:
         for split_name, splits in [("gene", gene_splits), ("family", family_splits)]:
@@ -104,27 +150,9 @@ def main():
             )
             print(f"  macro_f1={results[key].get('macro_f1_mean', float('nan')):.3f}")
 
-        # GBM/RF/kNN under both gene-split and family-split. The gene-split keys
-        # keep their historical names (gbm_<feat>, no suffix); family-split adds a
-        # _family suffix, mirroring the MLP keys above.
+        # GBM/RF/kNN under both gene-split and family-split.
         for split_name, splits in [("gene", gene_splits), ("family", family_splits)]:
-            gene_split = split_name == "gene"
-            suffix = "" if gene_split else "_family"
-
-            print(f"\n=== GBM {split_name}-split: {feat_name} (PCA-50) ===")
-            key = f"gbm_{feat_name}{suffix}"
-            results[key] = run_sklearn_probe_pca(gbm_fn, X, labels, genes, seed=args.seed, splits=splits)
-            print(f"  macro_f1={results[key].get('macro_f1_mean', float('nan')):.3f}")
-
-            print(f"\n=== RF {split_name}-split: {feat_name} (PCA-50) ===")
-            key = f"rf_{feat_name}{suffix}"
-            results[key] = run_sklearn_probe_pca(rf_fn, X, labels, genes, seed=args.seed, splits=splits)
-            print(f"  macro_f1={results[key].get('macro_f1_mean', float('nan')):.3f}")
-
-            print(f"\n=== kNN {split_name}-split: {feat_name} ===")
-            key = f"knn_{feat_name}{suffix}"
-            results[key] = run_sklearn_probe(knn_fn, X, labels, genes, seed=args.seed, normalize=True, splits=splits)
-            print(f"  macro_f1={results[key].get('macro_f1_mean', float('nan')):.3f}")
+            run_tree_knn(feat_name, X, split_name, splits, results)
 
     print("\n=== Summary ===")
     for feat, res in results.items():
@@ -132,9 +160,7 @@ def main():
         auroc_gof = res.get("auroc_GOF_mean", float("nan"))
         print(f"  {feat}: macro_f1={mf1:.3f}  auroc_GOF={auroc_gof:.3f}")
 
-    out_path = out_dir / f"nonlinear_results_seed{args.seed}.json"
-    with open(out_path, "w") as f:
-        json.dump(results, f, indent=2)
+    atomic_write_json(out_path, results)
     print(f"\nResults written to {out_path}")
 
 

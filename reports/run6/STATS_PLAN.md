@@ -3,7 +3,13 @@
 Tracking document for the inferential statistics to add before this work is submitted as a
 preprint. The run6 reports each carry a short "Statistical limitations and planned analyses"
 section; this file holds the fuller rationale and the shared methodology so the per-report
-sections can stay tight. Nothing here is reflected in the result files yet.
+sections can stay tight.
+
+The shared resampling machinery is now built (`src/esm2_mech/utils/bootstrap.py`:
+`cluster_bootstrap_ci`, `bootstrap_mechanism_metrics`, `label_permutation_pvalue`), and the
+mechanism probe and naive-baseline floor emit cluster-bootstrap CIs by default. The result files
+under `results/run6/` will carry these CIs after the planned pipeline re-run; the per-report
+tables are updated from those files at that point.
 
 The central issue throughout: the reported error bars are 5-seed spreads, and a seed only
 reshuffles the cross-validation folds on a fixed dataset. That measures fold-assignment jitter,
@@ -64,6 +70,20 @@ discrimination, not calibration.
 - Calibration: the probes are not calibrated; the reported scores measure discrimination only
   and are not risk estimates.
 
+### single-source robustness check (Gerasimavicius-only)
+
+- Same plan as the classifier report, recomputed on the single-source subset (10,138 variants;
+  LOF 7,262 / GOF 1,982 / DN 894) so the source/class confound is removed.
+- Dependency-aware confidence intervals: 95% CIs from a cluster bootstrap that resamples whole
+  genes on the subset, on every macro-F1 and AUROC. The effective N is smaller than the merged
+  result and far smaller for the rare classes, so the CIs are expected to be wide — the point is
+  whether delta_mean's interval still straddles the floor.
+- Significance against chance: the label-permutation test compares against the recomputed
+  single-source floor (most-frequent macro-F1 ≈ 0.279), not the merged 0.288 floor.
+- Headline to confirm with intervals: delta_mean sits at the floor on both splits, while wt_only
+  drops from 0.612 (gene) to 0.445 (family) — a CI on that gene-minus-family gap quantifies the
+  cross-family collapse.
+
 ### report_control.md (pathogenicity positive control)
 
 - Dependency-aware confidence intervals: a 95% CI from a cluster bootstrap that resamples whole
@@ -108,6 +128,20 @@ discrimination, not calibration.
   merged shared subset (17,826 variants, 1,935 genes). The geras report is superseded (different
   dataset and a now-fixed data defect) and is not cited.
 
+### report_contrastive.md (cross-family contrastive head)
+
+- Significance of the gain: the contrastive k-NN macro-F1 (0.395) beats the raw-delta k-NN
+  baseline (0.354) by +0.041 on the shared family-split subset. Run a paired cluster bootstrap
+  over genes on that subset and report a 95% CI on the difference, so the gain rests on a tested
+  gap rather than two separated point estimates.
+- Significance against chance: a label-permutation test for the contrastive macro-F1, located in
+  the gene-shuffled null, and compared against BOTH the 0.288 MLP floor and the raw-kNN baseline.
+- Per-class caveat to confirm: the report attributes the gain to class balance rather than
+  per-class separability, with DN staying at chance (AUROC 0.577 → 0.545). Attach gene-cluster
+  CIs to the per-class AUROCs so the "DN unmoved" claim is read as a tested null, not a point drop.
+- This report's own "Statistical limitations" section already names this plan; the shared
+  machinery now supports it.
+
 ### report_geometry.md (magnitude/direction/conservation)
 
 - Dependency-aware confidence intervals: 95% CIs from a cluster bootstrap that resamples whole
@@ -130,5 +164,8 @@ discrimination, not calibration.
 
 The two analyses that most change the standing of the work — and that reuse existing data with
 no GPU — are the cluster bootstrap over genes (confidence intervals) and the label-permutation
-test (p-value against chance). Do these first; the rest (AUPRC/PPV-NPV, FDR, power, multi-seed,
-calibration note) build on the same resampling machinery.
+test (p-value against chance). The shared machinery for both is built (`utils/bootstrap.py`) and
+wired into the mechanism probe (CIs on by default; permutation opt-in via `--n_permutations`,
+slow because it refits per repeat) and the naive-baseline floor. What remains is the planned
+pipeline re-run to populate the result files, then the rest (AUPRC/PPV-NPV, FDR, power,
+multi-seed, calibration note), which build on the same resampling machinery.
