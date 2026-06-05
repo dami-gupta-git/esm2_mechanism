@@ -74,5 +74,12 @@ MEGASCALE_WT_MUT_TYPE = "wt"
 # ddG_ML uses this string for rows whose fit was unreliable — dropped, never imputed.
 MEGASCALE_DDG_MISSING = "-"
 
+# ── Cluster-bootstrap / permutation inference (pre-preprint statistics) ───────
+# Dependency-aware inference resamples whole genes/families (the label unit), not
+# variants. See reports/run6/STATS_PLAN.md for the rationale.
+BOOTSTRAP_N_RESAMPLES = 1000
+BOOTSTRAP_CI_LEVEL = 0.95
+PERMUTATION_N_RESAMPLES = 1000
+
 # ── External API roots ────────────────────────────────────────────────────────
 UNIPROT_REST = "https://rest.uniprot.org/uniprotkb"

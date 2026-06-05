@@ -39,7 +39,8 @@ import numpy as np
 from sklearn.dummy import DummyClassifier
 from sklearn.metrics import f1_score, roc_auc_score
 
-from esm2_mech.utils.constants import MECHANISM_CLASSES
+from esm2_mech.utils.bootstrap import cluster_bootstrap_ci
+from esm2_mech.utils.constants import BOOTSTRAP_N_RESAMPLES, MECHANISM_CLASSES
 from esm2_mech.utils.paths import NAIVE_BASELINE_JSON, PFAM_JSON, VALID_VARIANTS_JSON
 from esm2_mech.utils.splits import family_split_cv, gene_split_cv
 
@@ -122,6 +123,35 @@ def evaluate(strategy, split_name, labels, genes, pfam_map):
     return result
 
 
+def floor_macro_f1_ci(labels, genes, pfam_map, seed=0, n_boot=BOOTSTRAP_N_RESAMPLES):
+    """Cluster-bootstrap CIs for the most_frequent floor macro-F1.
+
+    The most_frequent floor predicts the global majority class for every variant, so
+    its macro-F1 varies across resamples only through class balance. The gene CI
+    resamples whole genes; the family CI resamples whole Pfam families (unannotated
+    genes excluded, matching family-split CV). Returns {"gene": ci, "family": ci}.
+    """
+    majority = Counter(labels).most_common(1)[0][0]
+    pred = np.full(len(labels), majority)
+
+    def _macro_f1(rows):
+        return float(f1_score(labels[rows], pred[rows], average="macro", zero_division=0))
+
+    families = np.array([pfam_map.get(g) for g in genes], dtype=object)
+    fam_mask = np.array([f is not None for f in families])
+
+    gene_ci = cluster_bootstrap_ci(genes, _macro_f1, n_resamples=n_boot, seed=seed)
+
+    fam_rows = np.where(fam_mask)[0]
+    fam_ci = cluster_bootstrap_ci(
+        families[fam_mask],
+        lambda local_rows: _macro_f1(fam_rows[local_rows]),
+        n_resamples=n_boot,
+        seed=seed,
+    )
+    return {"gene": gene_ci, "family": fam_ci}
+
+
 def main() -> None:
     with open(VALID_VARIANTS_JSON) as fh:
         variants = json.load(fh)
@@ -158,6 +188,17 @@ def main() -> None:
                 f"{cell[f'auroc_{c}_mean']:.3f}" for c in MECHANISM_CLASSES
             )
             print(f"{strategy:14} {split_name:7} {macro:>15}  {auroc_str}")
+
+    print("\nMost_frequent floor cluster-bootstrap CIs (macro-F1)...")
+    floor_ci = floor_macro_f1_ci(labels, genes, pfam_map)
+    results["most_frequent_floor_ci"] = floor_ci
+    for split_name in ("gene", "family"):
+        cell = floor_ci[split_name]
+        print(
+            f"  {split_name:7} point {cell['point']:.3f}  "
+            f"95% CI [{cell['ci_low']:.3f}, {cell['ci_high']:.3f}]  "
+            f"(n_clusters {cell['n_clusters']})"
+        )
 
     NAIVE_BASELINE_JSON.parent.mkdir(parents=True, exist_ok=True)
     with open(NAIVE_BASELINE_JSON, "w") as fh:

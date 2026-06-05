@@ -25,9 +25,15 @@ from esm2_mech.utils.paths import (
 
 OUT_DIR = RESULTS_DIR
 from esm2_mech.utils.sequences import window_sequence, apply_missense
-from esm2_mech.utils.constants import seed_result_filename
+from esm2_mech.utils.constants import (
+    seed_result_filename,
+    MECHANISM_CLASSES,
+    BOOTSTRAP_N_RESAMPLES,
+)
 from esm2_mech.utils.splits import gene_split_cv, family_split_cv
 from esm2_mech.utils.embed import unpack_run_data
+from esm2_mech.utils.metrics import align_proba
+from esm2_mech.utils.bootstrap import bootstrap_mechanism_metrics, label_permutation_pvalue
 
 from sklearn.decomposition import PCA
 from sklearn.linear_model import LogisticRegression
@@ -43,9 +49,16 @@ AA_ORDER = list("ACDEFGHIKLMNPQRSTVWY")
 AA_INDEX = {a: i for i, a in enumerate(AA_ORDER)}
 
 
-def run_probe_on_splits(X, y, splits, seed=42):
-    """Run logistic regression across a pre-computed list of (train, test) splits."""
+def run_probe_on_splits(X, y, splits, genes=None, seed=42):
+    """Run logistic regression across a pre-computed list of (train, test) splits.
+
+    Returns (agg, oof). `agg` is the per-fold mean ± std metric dict (unchanged).
+    `oof` collects the out-of-fold test predictions for dependency-aware inference:
+    {"y_true", "proba" (aligned to MECHANISM_CLASSES), "genes"}, or None when `genes`
+    is not supplied or no fold ran. Each variant appears once (one held-out fold).
+    """
     fold_results = []
+    oof_y, oof_proba, oof_genes = [], [], []
     for train_idx, test_idx in splits:
         X_train, X_test = X[train_idx], X[test_idx]
         y_train, y_test = y[train_idx], y[test_idx]
@@ -69,8 +82,13 @@ def run_probe_on_splits(X, y, splits, seed=42):
                 fm[f"pr_auc_{cls}"] = float(auc(rec, prec))
         fold_results.append(fm)
 
+        if genes is not None:
+            oof_y.append(y_test)
+            oof_proba.append(align_proba(proba, clf.classes_, MECHANISM_CLASSES))
+            oof_genes.append(genes[test_idx])
+
     if not fold_results:
-        return {"error": "insufficient data"}
+        return {"error": "insufficient data"}, None
 
     agg = {}
     all_keys = set().union(*[set(f.keys()) for f in fold_results])
@@ -80,7 +98,15 @@ def run_probe_on_splits(X, y, splits, seed=42):
             agg[f"{key}_mean"] = float(np.mean(vals))
             agg[f"{key}_std"] = float(np.std(vals))
     agg["n_folds"] = len(fold_results)
-    return agg
+
+    oof = None
+    if oof_y:
+        oof = {
+            "y_true": np.concatenate(oof_y),
+            "proba": np.concatenate(oof_proba),
+            "genes": np.concatenate(oof_genes),
+        }
+    return agg, oof
 
 
 def build_onehot(aa_wt_list, aa_mut_list):
@@ -94,7 +120,18 @@ def build_onehot(aa_wt_list, aa_mut_list):
     return onehot
 
 
-def run(data: dict, out_dir: str, seed: int = 0, n_folds: int = 5) -> dict:
+PERMUTATION_FEATURES = ("delta_mean", "wt_only_mean")  # headline features for the slow permutation test
+
+
+def run(
+    data: dict,
+    out_dir: str,
+    seed: int = 0,
+    n_folds: int = 5,
+    compute_ci: bool = True,
+    n_boot: int = BOOTSTRAP_N_RESAMPLES,
+    n_permutations: int = 0,
+) -> dict:
     # ------------------------------------------------------------------
     # 1–3. Extract pre-loaded data
     # ------------------------------------------------------------------
@@ -204,7 +241,12 @@ def run(data: dict, out_dir: str, seed: int = 0, n_folds: int = 5) -> dict:
             continue
         print(f"\n--- {name} (dim={X.shape[1]}, n={len(feat_labels)}) ---")
 
-        gs = run_probe_on_splits(X, feat_labels, feat_gene_splits, seed=seed)
+        gs, gs_oof = run_probe_on_splits(X, feat_labels, feat_gene_splits, feat_genes, seed=seed)
+        if compute_ci and gs_oof is not None:
+            gs["ci"] = bootstrap_mechanism_metrics(
+                gs_oof["y_true"], gs_oof["proba"], gs_oof["genes"],
+                n_resamples=n_boot, seed=seed,
+            )
         results["gene_split"][name] = gs
         print(
             f"  gene-split   macro-F1 = {gs.get('macro_f1_mean', float('nan')):.3f} "
@@ -215,7 +257,26 @@ def run(data: dict, out_dir: str, seed: int = 0, n_folds: int = 5) -> dict:
         )
 
         if feat_family_splits:
-            fs = run_probe_on_splits(X, feat_labels, feat_family_splits, seed=seed)
+            fs, fs_oof = run_probe_on_splits(X, feat_labels, feat_family_splits, feat_genes, seed=seed)
+            if compute_ci and fs_oof is not None:
+                fs["ci"] = bootstrap_mechanism_metrics(
+                    fs_oof["y_true"], fs_oof["proba"], fs_oof["genes"],
+                    n_resamples=n_boot, seed=seed,
+                )
+            if n_permutations > 0 and name in PERMUTATION_FEATURES:
+                def _family_macro_f1(perm_labels, _X=X, _splits=feat_family_splits, _genes=feat_genes):
+                    agg_perm, _ = run_probe_on_splits(_X, perm_labels, _splits, _genes, seed=seed)
+                    return agg_perm.get("macro_f1_mean")
+
+                fs["permutation"] = label_permutation_pvalue(
+                    _family_macro_f1, feat_labels, groups=feat_genes,
+                    n_permutations=n_permutations, seed=seed,
+                )
+                print(
+                    f"  family-split permutation p = {fs['permutation'].get('p_value')} "
+                    f"(observed {fs['permutation'].get('observed')}, "
+                    f"null mean {fs['permutation'].get('null_mean')})"
+                )
             results["family_split"][name] = fs
             delta_macro = gs.get("macro_f1_mean", float("nan")) - fs.get(
                 "macro_f1_mean", float("nan")
@@ -240,62 +301,6 @@ def run(data: dict, out_dir: str, seed: int = 0, n_folds: int = 5) -> dict:
         json.dump(results, f, indent=2)
     print(f"\nResults written to {out_path}")
     return results
-
-    # ------------------------------------------------------------------
-    # 8. Headline interpretation
-    # ------------------------------------------------------------------
-    print("\n" + "=" * 60)
-    print("HEADLINE")
-    print("=" * 60)
-    wt_gene = (
-        results["gene_split"].get("wt_only_mean", {}).get("macro_f1_mean", float("nan"))
-    )
-    wt_family = (
-        results["family_split"]
-        .get("wt_only_mean", {})
-        .get("macro_f1_mean", float("nan"))
-    )
-    delta_gene = (
-        results["gene_split"].get("delta_mean", {}).get("macro_f1_mean", float("nan"))
-    )
-    delta_family = (
-        results["family_split"].get("delta_mean", {}).get("macro_f1_mean", float("nan"))
-    )
-
-    def _fmt(val):
-        return f"{val:.3f}" if not np.isnan(val) else "n/a"
-
-    def _fmt_delta(a, b):
-        return f"{a - b:+.3f}" if not (np.isnan(a) or np.isnan(b)) else "n/a"
-
-    print(
-        f"WT-only macro-F1:  gene-split {_fmt(wt_gene)}  →  family-split {_fmt(wt_family)}  "
-        f"(Δ = {_fmt_delta(wt_gene, wt_family)})"
-    )
-    print(
-        f"Delta   macro-F1:  gene-split {_fmt(delta_gene)}  →  family-split {_fmt(delta_family)}  "
-        f"(Δ = {_fmt_delta(delta_gene, delta_family)})"
-    )
-    print(f"Chance (3-class):  0.333\n")
-
-    if not family_splits:
-        print("  ⇒ Family-split CV was infeasible (< 10 Pfam families annotated).")
-        print("    Gene-split results only — homology leakage cannot be assessed.")
-    elif not np.isnan(wt_family):
-        if wt_family > 0.50:
-            print(
-                "  ⇒ WT-only signal SURVIVES family-split — real protein-family→mechanism"
-            )
-            print("    association in ESM-2 embeddings.")
-        elif wt_family > 0.40:
-            print(
-                "  ⇒ WT-only signal PARTIALLY survives — some real signal + some leakage."
-            )
-        else:
-            print(
-                "  ⇒ WT-only signal COLLAPSES under family-split — apparent mechanism"
-            )
-            print("    classification was largely paralog/homology leakage.")
 
 
 def _load_data_inline() -> dict:
@@ -367,9 +372,18 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--n_folds", type=int, default=5)
+    parser.add_argument("--no_ci", action="store_true", help="skip cluster-bootstrap CIs")
+    parser.add_argument("--n_boot", type=int, default=BOOTSTRAP_N_RESAMPLES)
+    parser.add_argument(
+        "--n_permutations", type=int, default=0,
+        help="label-permutation reps for headline features (0 = skip; slow, refits per rep)",
+    )
     args = parser.parse_args()
     data = _load_data_inline()
-    run(data=data, out_dir=str(OUT_DIR), seed=args.seed, n_folds=args.n_folds)
+    run(
+        data=data, out_dir=str(OUT_DIR), seed=args.seed, n_folds=args.n_folds,
+        compute_ci=not args.no_ci, n_boot=args.n_boot, n_permutations=args.n_permutations,
+    )
 
 
 if __name__ == "__main__":

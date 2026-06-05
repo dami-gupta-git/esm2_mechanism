@@ -724,6 +724,11 @@ def phase3_probes() -> None:
                     print(f"  {cv_name} seed={seed}: no valid splits, skip")
                     continue
 
+                print(
+                    f"  {cond} {cv_name} seed={seed}: training MLP "
+                    f"({len(splits)} folds)..."
+                )
+
                 # PyTorch MLP — matches result_7
                 pred, true, proba = _run_mlp(
                     delta, y_cond, splits, n_classes, seed, genes=genes_cond
