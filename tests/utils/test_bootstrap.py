@@ -311,3 +311,94 @@ class TestLabelPermutationPvalue:
         # observed, so p == 1.0, and p is always in (0, 1].
         assert 0.0 < out["p_value"] <= 1.0
         assert out["p_value"] == pytest.approx(1.0)
+
+    def test_deterministic_across_runs_for_fixed_seed(self):
+        # Each permutation is seeded from a SeedSequence spawned off `seed`, so the
+        # whole null distribution must reproduce exactly run-to-run — independent of
+        # how joblib schedules the parallel refits.
+        rng = np.random.RandomState(3)
+        genes = np.array([f"G{i // 4}" for i in range(40)])
+        labels = np.array([GOF if i % 2 else LOF for i in range(40)])
+        feature = rng.rand(40)
+
+        def run_metric(lab):
+            y_bin = (lab == GOF).astype(int)
+            if y_bin.sum() in (0, len(y_bin)):
+                return None
+            return float(np.corrcoef(feature, y_bin)[0, 1])
+
+        first = label_permutation_pvalue(
+            run_metric, labels, groups=genes, n_permutations=64, seed=7
+        )
+        second = label_permutation_pvalue(
+            run_metric, labels, groups=genes, n_permutations=64, seed=7
+        )
+        assert first["p_value"] == second["p_value"]
+        assert first["null_mean"] == second["null_mean"]
+        assert first["n_permutations"] == second["n_permutations"]
+
+    def test_serial_and_parallel_agree(self):
+        # n_jobs must not change the result: n_jobs=1 (serial) and n_jobs=2 (parallel)
+        # consume the same per-permutation seeds, so the null is identical.
+        rng = np.random.RandomState(4)
+        genes = np.array([f"G{i // 4}" for i in range(40)])
+        labels = np.array([GOF if i % 2 else LOF for i in range(40)])
+        feature = rng.rand(40)
+
+        def run_metric(lab):
+            y_bin = (lab == GOF).astype(int)
+            if y_bin.sum() in (0, len(y_bin)):
+                return None
+            return float(np.corrcoef(feature, y_bin)[0, 1])
+
+        serial = label_permutation_pvalue(
+            run_metric, labels, groups=genes, n_permutations=48, seed=1, n_jobs=1
+        )
+        parallel = label_permutation_pvalue(
+            run_metric, labels, groups=genes, n_permutations=48, seed=1, n_jobs=2
+        )
+        assert serial["p_value"] == parallel["p_value"]
+        assert serial["null_mean"] == parallel["null_mean"]
+
+    def test_nested_closure_capturing_array_is_picklable(self):
+        # The real call sites pass a nested closure that captures a large feature
+        # matrix via a default arg (e.g. `_family_macro_f1(perm, _X=X)`). joblib must
+        # ship that closure to workers, so this guards against a pickling regression.
+        def make_metric():
+            captured_X = np.random.RandomState(5).randn(200, 8)
+
+            def metric(lab, _X=captured_X):
+                y = (lab == GOF).astype(float)
+                return float(np.corrcoef(_X[:, 0], y)[0, 1] ** 2)
+
+            return metric
+
+        genes = np.array([f"G{i // 4}" for i in range(200)])
+        labels = np.array([GOF if i % 3 == 0 else LOF for i in range(200)])
+
+        out = label_permutation_pvalue(
+            make_metric(), labels, groups=genes, n_permutations=32, seed=0, n_jobs=2
+        )
+        assert out["n_permutations"] == 32
+        assert 0.0 < out["p_value"] <= 1.0
+
+    def test_non_finite_metric_values_dropped_from_null(self):
+        # A metric that sometimes returns None/NaN must not poison the null: those
+        # draws are dropped and n_permutations reflects only the finite ones.
+        genes = np.array([f"G{i // 2}" for i in range(20)])
+        labels = np.array([GOF if i % 2 else LOF for i in range(20)])
+
+        calls = {"n": 0}
+
+        def flaky_metric(lab):
+            calls["n"] += 1
+            if calls["n"] % 2 == 0:
+                return float("nan")
+            return 0.5
+
+        out = label_permutation_pvalue(
+            flaky_metric, labels, groups=genes, n_permutations=10, seed=0, n_jobs=1
+        )
+        # Half the draws are NaN and dropped; the kept null has only finite values.
+        assert out["n_permutations"] < 10
+        assert np.isfinite(out["null_mean"])

@@ -149,13 +149,31 @@ def _load_scan_embeddings():
 # ── Phase 3: feature computation ─────────────────────────────────────────────
 
 
+def _top_explained_variance_ratios(mat: np.ndarray, k: int = 2) -> np.ndarray:
+    """Explained-variance ratio of the top-k principal components of `mat`.
+
+    Equivalent to sklearn PCA's `explained_variance_ratio_[:k]`, but computed with
+    a single torch SVD on the centered matrix. PCA variance is the squared singular
+    values normalized by the total (the sum over all singular values squared), so
+    we only need the singular values, not the full PCA object — this avoids
+    constructing a fresh sklearn estimator per gene across thousands of genes.
+    """
+    import torch
+
+    centered = torch.from_numpy(np.ascontiguousarray(mat, dtype=np.float32))
+    centered = centered - centered.mean(0, keepdim=True)
+    svals = torch.linalg.svdvals(centered)
+    variances = svals.square()
+    total = variances.sum()
+    ratios = (variances / total).cpu().numpy()
+    return ratios[:k]
+
+
 def compute_scan_features(probes, wt_emb, mut_emb, covered_genes, ablation=False):
     """
     Build per-gene feature vectors from the probe embedding deltas.
     Returns: gene_list (array), X (n_genes × n_features), feature_names (list)
     """
-    from sklearn.decomposition import PCA
-
     deltas = mut_emb - wt_emb  # (n_probes, 1280)
 
     # Group probes by gene
@@ -201,14 +219,9 @@ def compute_scan_features(probes, wt_emb, mut_emb, covered_genes, ablation=False
 
         # PC1 variance fraction
         if len(idxs) >= 4:
-            pca = PCA(n_components=min(2, len(idxs) - 1))
-            pca.fit(gene_deltas)
-            pc1_var = float(pca.explained_variance_ratio_[0])
-            pc2_var = (
-                float(pca.explained_variance_ratio_[1])
-                if len(pca.explained_variance_ratio_) > 1
-                else 0.0
-            )
+            ratios = _top_explained_variance_ratios(gene_deltas, k=2)
+            pc1_var = float(ratios[0])
+            pc2_var = float(ratios[1]) if len(ratios) > 1 else 0.0
         else:
             pc1_var, pc2_var = 0.0, 0.0
 
@@ -216,7 +229,7 @@ def compute_scan_features(probes, wt_emb, mut_emb, covered_genes, ablation=False
         # Group by position, compute variance of magnitudes across probes at that position
         pos_to_mags = defaultdict(list)
         for j, p in enumerate(gene_probes):
-            pos_to_mags[p["aa_pos"]].append(mags[idxs.index(idxs[j])])
+            pos_to_mags[p["aa_pos"]].append(mags[j])
         sub_vars = [np.var(v) for v in pos_to_mags.values() if len(v) >= 2]
         scan_sub_variance = float(np.mean(sub_vars)) if sub_vars else 0.0
 

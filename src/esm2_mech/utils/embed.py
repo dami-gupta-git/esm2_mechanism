@@ -135,25 +135,41 @@ def get_esm2_embeddings_for_pairs(
         tokens = tokens.to(device, non_blocking=True)
         with torch.inference_mode():
             out = model(tokens, repr_layers=[n_layers])
-        reps = out["representations"][n_layers].cpu().float()
+        # Keep representations on-device: the mean-pool over residues and the
+        # per-position gather are GPU-friendly reductions, and reducing here means
+        # we transfer (2*batch, D) instead of the full (2*batch, seqlen, D) tensor.
+        reps = out["representations"][n_layers].float()
 
+        # Reduce each item on-device into per-batch stacks, then move once to CPU.
+        wt_mean_batch, mut_mean_batch = [], []
+        wt_pos_batch, mut_pos_batch = [], []
         for j, (wt, mut, var_pos) in enumerate(pairs):
             wt_rep = reps[2 * j]
             mut_rep = reps[2 * j + 1]
 
             # Slice off BOS/EOS tokens (token 0 = BOS, tokens 1..len = residues).
-            wt_mean_list.append(wt_rep[1 : len(wt) + 1].mean(0).numpy())
-            mut_mean_list.append(mut_rep[1 : len(mut) + 1].mean(0).numpy())
+            wt_mean_batch.append(wt_rep[1 : len(wt) + 1].mean(0))
+            mut_mean_batch.append(mut_rep[1 : len(mut) + 1].mean(0))
 
             # var_pos is 1-indexed; BOS occupies token 0, so sequence tokens are 1..len(wt)
             if 0 < var_pos <= len(wt):
-                wt_pos_list.append(wt_rep[var_pos].numpy())
-                mut_pos_list.append(mut_rep[var_pos].numpy())
+                wt_pos_batch.append(wt_rep[var_pos])
+                mut_pos_batch.append(mut_rep[var_pos])
             else:
                 raise ValueError(
                     f"var_pos={var_pos} out of range for sequence length {len(wt)}"
                     f" (batch item {j}) — this should have been caught by _build_valid_pairs"
                 )
+
+        # One device→host transfer per batch instead of 4 per variant.
+        wt_mean_np = torch.stack(wt_mean_batch).cpu().numpy()
+        mut_mean_np = torch.stack(mut_mean_batch).cpu().numpy()
+        wt_pos_np = torch.stack(wt_pos_batch).cpu().numpy()
+        mut_pos_np = torch.stack(mut_pos_batch).cpu().numpy()
+        wt_mean_list.extend(wt_mean_np)
+        mut_mean_list.extend(mut_mean_np)
+        wt_pos_list.extend(wt_pos_np)
+        mut_pos_list.extend(mut_pos_np)
 
         n_done = len(wt_mean_list)
         if n_done - last_flush >= checkpoint_every:

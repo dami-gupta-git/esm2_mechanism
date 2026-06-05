@@ -65,7 +65,7 @@ forward passes so the delta cancels everything except the substitution.
 | Gene-split | 5-fold CV holding out whole genes; related genes may sit in train and test | — |
 | Family-split | 5-fold CV holding out whole Pfam families; the leakage-free measure | ESM-2 delta floor, 0.380 |
 | Macro_f1 | mean per-class F1 over GOF/DN/LOF, so rare classes count equally | three-class chance, well below 0.33 |
-| GOF AUROC | one-vs-rest ranking of gain-of-function variants | 0.5 |
+| GOF / DN / LOF AUROC | one-vs-rest ranking for each mechanism class against the other two | 0.5 |
 
 The probe is a PyTorch MLP (256→64, dropout 0.3, class-weighted cross-entropy, early stopping)
 matching the ESM-2 classifier report exactly, with a balanced logistic regression as a
@@ -99,10 +99,10 @@ mean of MLP delta_mean family-split macro-F1 from `nonlinear_results_seed*.json`
 
 ## Table 2 — Per-class AUROC and logistic regression (family-split, 5-seed mean)
 
-| Condition | GOF AUROC | DN AUROC | LR macro-F1 |
-|---|---|---|---|
-| ESM-3 seq | 0.689 | 0.647 | 0.429 ± 0.003 |
-| ESM-3 seq_struct | 0.699 | 0.628 | 0.439 ± 0.005 |
+| Condition | GOF AUROC | DN AUROC | LOF AUROC | LR macro-F1 |
+|---|---|---|---|---|
+| ESM-3 seq | 0.689 | 0.647 | 0.693 | 0.429 ± 0.003 |
+| ESM-3 seq_struct | 0.699 | 0.628 | 0.705 | 0.439 ± 0.005 |
 
 ## Table 3 — Decision rules
 
@@ -130,8 +130,8 @@ genes on the shared variant set is the planned test (see statistical limitations
 Sequence-plus-structure reaches 0.453, edging out sequence-only by 0.014. M1 passes (0.453 is
 above 0.430), so ESM-3-with-structure also beats ESM-2 — but M3 fails: the seq_struct − seq gap
 of 0.014 is below the 0.030 bar pre-registered for calling structure a distinct ingredient. The
-gain is real and consistent (seq_struct is higher than seq on family-split MLP, GOF AUROC, and
-LR), but small, and most of the score is already there from sequence alone. The script's verdict
+gain is real and consistent (seq_struct is higher than seq on family-split MLP, GOF AUROC, LOF
+AUROC, and LR), but small, and most of the score is already there from sequence alone. The script's verdict
 is "scale suffices."
 
 **3. The lift is not leakage.**
@@ -142,9 +142,10 @@ family-transferable signal, not gene-identity leakage.
 
 **4. The number is up, but not useful.**
 0.45 macro-F1 on three classes is above the chance floor but well below what mechanism
-prediction would need to be relied on. The DN AUROC sits near 0.63–0.65 and GOF near 0.69, so
-most of the separability is GOF-versus-rest rather than a clean three-way resolution. Scale
-moved the floor; it did not solve the task.
+prediction would need to be relied on. The per-class AUROCs sit close together — LOF near 0.70,
+GOF near 0.69, DN near 0.63–0.65 — so no single class is cleanly resolved and the separability is
+spread across all three rather than a clean three-way split. Scale moved the floor; it did not
+solve the task.
 
 ---
 

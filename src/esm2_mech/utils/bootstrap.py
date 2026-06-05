@@ -20,6 +20,7 @@ import functools
 from typing import Callable
 
 import numpy as np
+from joblib import Parallel, delayed
 from sklearn.metrics import f1_score, roc_auc_score
 
 from esm2_mech.utils.constants import (
@@ -198,6 +199,26 @@ def _permute_labels(
     return np.array([mapping[g] for g in groups])
 
 
+def _permutation_null_value(
+    run_metric_fn: Callable[[np.ndarray], float | None],
+    labels: np.ndarray,
+    groups: np.ndarray | None,
+    child_seed: int,
+) -> float | None:
+    """Shuffle labels with an independent seeded RNG, then recompute the metric.
+
+    Each call gets its own `RandomState(child_seed)` so the permutations are
+    reproducible and order-independent — a requirement for running them in parallel,
+    where the sequential RNG state of a single shared generator cannot be relied on.
+    """
+    rng = np.random.RandomState(child_seed)
+    permuted = _permute_labels(np.asarray(labels), groups, rng)
+    value = run_metric_fn(permuted)
+    if value is not None and np.isfinite(value):
+        return float(value)
+    return None
+
+
 def label_permutation_pvalue(
     run_metric_fn: Callable[[np.ndarray], float | None],
     labels: np.ndarray,
@@ -205,6 +226,7 @@ def label_permutation_pvalue(
     n_permutations: int = PERMUTATION_N_RESAMPLES,
     seed: int = 0,
     alternative: str = "greater",
+    n_jobs: int = -1,
 ) -> dict:
     """One-sided permutation p-value for a metric against the label-shuffled null.
 
@@ -213,15 +235,25 @@ def label_permutation_pvalue(
     this cannot be computed from fixed out-of-fold predictions. Pass groups=genes for a
     gene-level shuffle (the correct null when labels are gene-level). The p-value is
     (1 + #{null >= observed}) / (1 + n) for alternative="greater".
+
+    The n_permutations refits are independent and run across cores via joblib
+    (n_jobs=-1 = all cores). Each permutation draws from its own RNG seeded by a
+    SeedSequence spawned from `seed`, so the null distribution is identical to a
+    serial run regardless of how the work is scheduled.
     """
     observed = run_metric_fn(labels)
-    rng = np.random.RandomState(seed)
-    null: list[float] = []
-    for _ in range(n_permutations):
-        permuted = _permute_labels(np.asarray(labels), groups, rng)
-        value = run_metric_fn(permuted)
-        if value is not None and np.isfinite(value):
-            null.append(float(value))
+
+    # Spawn one independent child seed per permutation up front. SeedSequence.spawn
+    # guarantees statistically independent, reproducible streams without relying on
+    # a single generator's sequential state (which parallel execution would break).
+    child_seqs = np.random.SeedSequence(seed).spawn(n_permutations)
+    child_seeds = [int(s.generate_state(1)[0]) for s in child_seqs]
+
+    null_values = Parallel(n_jobs=n_jobs)(
+        delayed(_permutation_null_value)(run_metric_fn, labels, groups, child_seed)
+        for child_seed in child_seeds
+    )
+    null = [value for value in null_values if value is not None]
 
     null_arr = np.array(null)
     if observed is None or not np.isfinite(observed) or len(null_arr) == 0:

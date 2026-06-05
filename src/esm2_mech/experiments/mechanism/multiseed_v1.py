@@ -427,7 +427,11 @@ def main():
             },
         }
 
-    all_seeds.append((0, seed0_geras, seed0_merged, reformat_path_seed0(seed0_path)))
+    # Seed 0 comes from the existing on-disk results unless --include_seed0 forces a
+    # fresh recompute below, in which case the loop produces it instead (don't add it
+    # twice — that would double-weight seed 0 in the across-seed summary).
+    if not args.include_seed0:
+        all_seeds.append((0, seed0_geras, seed0_merged, reformat_path_seed0(seed0_path)))
 
     if not args.summarise_only:
         for seed in seeds:
