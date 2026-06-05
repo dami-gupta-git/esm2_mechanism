@@ -18,11 +18,12 @@ delta specifically to ignore protein family — by a contrastive objective whose
 pairs are same-mechanism variants from *different* families — can pull genuine mechanism signal
 out of it. It does raise the family-split macro_f1, from the 0.354 raw-kNN baseline to 0.395,
 clearly above the 0.288 floor, and the lift survives holding out whole families, so it is not
-family-recognition leakage. But the per-class scores show the gain is class balance and
-loss-of-function, not separability of gain-of-function or dominant-negative across families:
-both of those classes are no better than the untrained baseline, and dominant-negative stays at
-chance. The honest reading is a modest, real improvement in balanced accuracy that does not amount
-to recovering cross-family mechanism.
+family-recognition leakage. But the per-class scores show the gain is class balance, not improved
+separability of any single class: training does not raise any class's AUROC over the untrained
+delta — it lowers gain-of-function and dominant-negative, and moves loss-of-function within seed
+noise. All three classes are already weakly above chance in the untrained delta (≈0.58–0.60), and
+dominant-negative stays near chance throughout. The honest reading is a modest, real improvement in
+balanced accuracy that does not amount to recovering cross-family mechanism for any class.
 
 ---
 
@@ -108,12 +109,14 @@ head on top of it.
 are held out, not more. A lift driven by family recognition would inflate gene-split and collapse
 under family-split; this does the opposite, so the family-invariance construction holds.
 
-**4. The gain is loss-of-function and class balance, not GOF or DN.**
-On family-split per-class AUROC, `contrastive_knn` beats `raw_knn_baseline` only on LOF (0.595 vs
-0.588). On GOF it is lower (0.589 vs 0.595) and on DN lower still (0.545 vs 0.577). The macro_f1
-rises while two of the three per-class discriminations do not, which means the improvement comes
-from predicting the classes in more balanced proportions, not from making gain-of-function or
-dominant-negative more separable across families.
+**4. The gain is class balance, not per-class separability of any class.**
+On family-split per-class AUROC, training raises no class over the untrained `raw_knn_baseline`: LOF
+moves +0.006 (0.595 vs 0.588), inside the ±0.007 seed noise; GOF is lower (0.589 vs 0.595) and DN
+lower still (0.545 vs 0.577). The macro_f1 rises while every per-class discrimination stays flat or
+falls, which means the improvement comes from predicting the classes in more balanced proportions,
+not from making any mechanism more separable across families. (All three classes are already weakly
+above the 0.50 chance line in the untrained delta — ≈0.58–0.60 — so the residual delta signal is
+not class-specific and contrastive training does not add to it per class.)
 
 **5. Dominant-negative stays at chance.**
 `contrastive_knn` reaches AUROC 0.545 for DN under family-split, and the training lowers it relative
@@ -128,7 +131,7 @@ the interaction-dependent mechanism — does not separate across unseen families
 |---|---|
 | Does contrastive training raise family-split macro_f1? | Yes — 0.395 ± 0.009, above the 0.354 raw-kNN baseline and the 0.288 MLP floor. |
 | Is the lift genuine cross-family signal or leakage? | Cross-family. The gene→family drop is smaller for the trained method (0.043) than the untrained one (0.054). |
-| Does it recover per-class mechanism (GOF/DN)? | No. GOF and DN AUROC are no better than the untrained baseline; the macro_f1 gain is class balance and LOF. |
+| Does it recover per-class mechanism (any class)? | No. Training raises no class's AUROC over the untrained delta (LOF +0.006 within noise, GOF and DN lower); the macro_f1 gain is class balance alone. |
 | Does dominant-negative transfer across families? | No — AUROC 0.545, at chance, and training does not help. |
 | Net reading | A modest, real improvement in balanced accuracy; not a recovery of cross-family mechanism. |
 
