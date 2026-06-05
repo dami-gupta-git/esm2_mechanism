@@ -181,6 +181,33 @@ JSONs back to `results/<run_name>/magnitude_direction/`.
 
 ---
 
+## Experiment 6 — contrastive metric learning on the delta (report_contrastive)
+
+Asks whether training the `delta_mean` feature to be family-invariant — a supervised
+contrastive (triplet) objective whose only positive pairs are same-mechanism variants from
+*different* Pfam families, with within-family pairs excluded — can surface cross-family
+mechanism signal that the standard probes (Experiment 1) leave at the floor. A small projection
+head (1280 → 256 → 64, TripletMarginLoss) is trained per fold, then variants are classified by
+k-NN (k=10, cosine) in the learned space, against a raw-kNN baseline on the untrained delta.
+Both gene-split and family-split CV, 5 seeds; the verdict reads the MLP `delta_mean` family
+floor live from `aggregate.json` (never hardcoded).
+
+CPU-light but GPU-resident: the feature matrix and triplet indices stay on the device, so a full
+5-seed run is ~2 minutes on a recent GPU. Run on RunPod in a `tmux` session; `scp` the result
+JSONs back to `results/<run_name>/`.
+
+| Command | Description | Inputs | Outputs |
+|---|---|---|---|
+| `python -m esm2_mech.experiments.mechanism.contrastive_mechanism` | Train the cross-family contrastive head, evaluate k-NN vs raw-kNN baseline under gene/family-split, 5 seeds, then pool across seeds | `valid_variants.json`, `pfam_families.json`, `embeddings_wt_mean.npy`, `embeddings_mut_mean.npy`, `aggregate.json` (MLP floor) | `results/<run_name>/contrastive_results_seed{0..4}.json`, `contrastive_aggregate.json` |
+
+Runs all 5 seeds and writes the across-seed pool by default; `--seed N` runs a single seed
+without aggregation. Headline: family-split `contrastive_knn` macro_f1 vs the raw-kNN baseline
+and the MLP floor, and the gene→family drop (a smaller drop than the baseline's is the signature
+of genuine cross-family signal rather than leakage). Report written as
+`reports/<run_name>/report_contrastive.md`.
+
+---
+
 ## Verification checklist
 
 - [ ] `data/embeddings/esm2_t33_650M_UR50D/embedded_variants.json` row count matches all four `.npy` arrays. (This file is a write-only provenance artifact — no code reads it; it is the row-aligned variant index for the `.npy` arrays and should equal `data/valid_variants.json`. See `utils/embed.py` `_flush_checkpoint`.)
@@ -189,4 +216,5 @@ JSONs back to `results/<run_name>/magnitude_direction/`.
 - [ ] `data/alphamissense_scores_full.json` non-empty and covers > 90% of `valid_variants.json`.
 - [ ] result 6 (pathogenicity AUROC ~0.88) and result 7 (mechanism family-split floor ~0.35–0.39) reproduce their headline numbers — these are the pipeline spine and should not move.
 - [ ] report_esm3_mechanism: ESM-3 compared against ESM-2 only on `--dataset merged` (matched 17,826-variant set), not geras (see Experiment 4 comparison caveat). Both scored under the identical fold rule.
+- [ ] report_contrastive: family-split `contrastive_knn` macro_f1 clears the MLP `delta_mean` floor (read from `aggregate.json`), and its gene→family drop is no larger than the raw-kNN baseline's (else the lift is leakage, not cross-family signal).
 - [ ] `git status` clean; results committed.
