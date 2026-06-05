@@ -37,7 +37,11 @@ import numpy as np
 from esm2_mech.experiments.mechanism.classify_by_mechanism import load_data
 from esm2_mech.experiments.mechanism.mechanism_delta_family_split import run as run_family_split
 from esm2_mech.experiments.mechanism.naive_baseline import evaluate as eval_naive
-from esm2_mech.utils.constants import SEED_RESULT_GLOB, SOURCE_GERASIMAVICIUS
+from esm2_mech.utils.constants import (
+    BOOTSTRAP_N_RESAMPLES,
+    SEED_RESULT_GLOB,
+    SOURCE_GERASIMAVICIUS,
+)
 from esm2_mech.utils.data import build_source_mask, subset_data
 from esm2_mech.utils.io import atomic_write_json
 from esm2_mech.utils.paths import (
@@ -87,6 +91,12 @@ def main() -> None:
         "--seeds", type=int, nargs="+", default=DEFAULT_SEEDS,
         help="Random seeds to run (default: 0 1 2 3 4)",
     )
+    parser.add_argument("--no_ci", action="store_true", help="skip cluster-bootstrap CIs")
+    parser.add_argument("--n_boot", type=int, default=BOOTSTRAP_N_RESAMPLES)
+    parser.add_argument(
+        "--n_permutations", type=int, default=0,
+        help="label-permutation reps for headline features (0 = skip; slow, refits per rep)",
+    )
     args = parser.parse_args()
 
     SINGLE_SOURCE_DIR.mkdir(parents=True, exist_ok=True)
@@ -112,7 +122,11 @@ def main() -> None:
     print(f"\n=== Mechanism probe on {SOURCE_GERASIMAVICIUS}-only subset ===")
     for seed in args.seeds:
         print(f"\n--- Seed {seed} ---")
-        run_family_split(data=subset, out_dir=str(SINGLE_SOURCE_DIR), seed=seed, n_folds=args.n_folds)
+        run_family_split(
+            data=subset, out_dir=str(SINGLE_SOURCE_DIR), seed=seed, n_folds=args.n_folds,
+            compute_ci=not args.no_ci, n_boot=args.n_boot,
+            n_permutations=args.n_permutations,
+        )
 
     print("\n=== Aggregating across seeds ===")
     seed_results = load_seed_files(str(SINGLE_SOURCE_DIR), SEED_RESULT_GLOB)

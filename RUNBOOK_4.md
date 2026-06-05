@@ -90,7 +90,15 @@ After completion, `scp` the `.npy` files and `embedded_variants.json` back to `d
 
 The first two run on RunPod inside a `tmux` session; `scp` results back to `results/<run_name>/` locally. `family_clustering`, `naive_baseline`, and `leakage_fraction` are CPU-only and run locally. `leakage_fraction` reads only the result JSONs above (no model inference), so run it after `classify_by_mechanism`, `naive_baseline`, and `family_clustering`.
 
-The mechanism probe (`classify_by_mechanism` here, and the Step 4 `single_source_mechanism`) and `naive_baseline` now emit gene/family cluster-bootstrap 95% CIs by default — dependency-aware intervals that resample whole genes (or families), the label unit, rather than 5-seed fold jitter (see `reports/run6/STATS_PLAN.md`; machinery in `utils/bootstrap.py`). CIs add roughly a minute per seed; both commands take no extra flags. The CI/permutation knobs (`--no_ci` to skip CIs, `--n_boot` resamples default 1000, and the opt-in `--n_permutations` default 0 — a label-permutation p-value against chance, slow because it refits the probe per repeat, a candidate for joblib parallelism on a many-core pod) live on the underlying `mechanism_delta_family_split` module and are only reachable by running it directly (`python -m esm2_mech.experiments.mechanism.mechanism_delta_family_split`); `classify_by_mechanism` and `single_source_mechanism` call it with the defaults (CIs on, no permutation).
+The mechanism probe (`classify_by_mechanism` here, and the Step 4 `single_source_mechanism`) and `naive_baseline` now emit gene/family cluster-bootstrap 95% CIs by default — dependency-aware intervals that resample whole genes (or families), the label unit, rather than 5-seed fold jitter (see `reports/run6/STATS_PLAN.md`; machinery in `utils/bootstrap.py`). CIs add roughly a minute per seed and need no flag.
+
+`classify_by_mechanism`, `single_source_mechanism`, and the standalone `mechanism_delta_family_split` each accept three stats flags:
+
+- `--no_ci` — skip the cluster-bootstrap CIs (faster).
+- `--n_boot N` — bootstrap resamples (default 1000).
+- `--n_permutations N` — label-permutation p-value against chance for the headline features (default 0 = off). Slow: it refits the probe once per permutation, so a full run multiplies the per-seed probe time by N — a candidate for joblib parallelism on a many-core pod. Off by default; turn it on deliberately when you want the p-value (e.g. `--n_permutations 1000`).
+
+Example with the permutation test on: `python -m esm2_mech.experiments.mechanism.classify_by_mechanism --n_permutations 1000`.
 
 ### Step 4 — single-source robustness check (CPU)
 
@@ -110,7 +118,7 @@ locally; no GPU or RunPod needed.
 |---|---|---|---|
 | `python -m esm2_mech.experiments.mechanism.single_source_mechanism` | Re-run the Step 3 mechanism probe on the Gerasimavicius-only subset; recompute the subset majority-class floor; aggregate across 5 seeds and print the robustness read against merged Step 3 | `valid_variants.json`, `cache/sequences.json`, `pfam_families.json`, `embeddings_*.npy`, `alphamissense_scores_full.json` | `results/<run_name>/single_source_gerasimavicius/{family_split_baselines_seed{0..4}.json, aggregate.json, naive_baseline.json}` |
 
-Args: `--n_folds` (default 5), `--seeds` (default `0 1 2 3 4`). The null holds on the subset if
+Args: `--n_folds` (default 5), `--seeds` (default `0 1 2 3 4`), plus the same `--no_ci` / `--n_boot` / `--n_permutations` stats flags documented under Step 3. The null holds on the subset if
 `delta_mean` sits at the subset floor on both splits and `wt_only`'s gene-split lift collapses
 under family-split — confirming the mechanism null is not a source artifact.
 

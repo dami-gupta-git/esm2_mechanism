@@ -8,6 +8,7 @@ and family-split CV across 5 seeds.
 Reads from paths.py constants. Writes results to RESULTS_DIR/<run_name>/.
 """
 
+import argparse
 import functools
 import json
 import os
@@ -23,7 +24,7 @@ from esm2_mech.utils.seed_aggregation import (
     load_seed_files,
     print_table,
 )
-from esm2_mech.utils.constants import SEED_RESULT_GLOB
+from esm2_mech.utils.constants import BOOTSTRAP_N_RESAMPLES, SEED_RESULT_GLOB
 from esm2_mech.utils.paths import (
     EMB_WT_MEAN,
     EMB_MUT_MEAN,
@@ -127,6 +128,15 @@ def load_data() -> dict:
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--no_ci", action="store_true", help="skip cluster-bootstrap CIs")
+    parser.add_argument("--n_boot", type=int, default=BOOTSTRAP_N_RESAMPLES)
+    parser.add_argument(
+        "--n_permutations", type=int, default=0,
+        help="label-permutation reps for headline features (0 = skip; slow, refits per rep)",
+    )
+    args = parser.parse_args()
+
     OUT_DIR.mkdir(parents=True, exist_ok=True)
 
     data = load_data()
@@ -134,7 +144,11 @@ def main():
     print("\n=== Result 2: Gene-split vs family-split baselines ===")
     for seed in [0, 1, 2, 3, 4]:
         print(f"\n--- Seed {seed} ---")
-        run_family_split(data=data, out_dir=str(OUT_DIR), seed=seed)
+        run_family_split(
+            data=data, out_dir=str(OUT_DIR), seed=seed,
+            compute_ci=not args.no_ci, n_boot=args.n_boot,
+            n_permutations=args.n_permutations,
+        )
 
     # Final step: pool the per-seed files into one honest headline figure
     # (mean ± std ACROSS seeds, not across folds within a seed).
