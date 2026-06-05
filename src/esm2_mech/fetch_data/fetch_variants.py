@@ -44,6 +44,7 @@ from typing import Optional
 import openpyxl
 import requests
 
+from esm2_mech.utils.constants import SOURCE_CLINVAR_G2P, SOURCE_GERASIMAVICIUS
 from esm2_mech.utils.io import atomic_write_json
 from esm2_mech.utils.paths import CACHE_DIR, DATA_DIR, GENE_LIST_TSV, VARIANTS_JSON
 
@@ -676,7 +677,7 @@ def main_merge(pathogenic_only: bool = False) -> None:
                 "mechanism": mech,
                 "foldx_ddg": None,
                 "clinvar_id": "",
-                "source": "clinvar_g2p",
+                "source": SOURCE_CLINVAR_G2P,
                 "wt_validated": wt_validated,
             }
         )
@@ -688,7 +689,7 @@ def main_merge(pathogenic_only: bool = False) -> None:
     )
 
     for v in geras:
-        v["source"] = "gerasimavicius"
+        v["source"] = SOURCE_GERASIMAVICIUS
         # Gerasimavicius aa_wt comes from the curated Uniprot_variant string, not
         # validated against a fetched reference sequence here. Mark unverified
         # rather than asserting True so the flag means exactly "checked vs sequence".

@@ -13,6 +13,10 @@ DN = "DN"
 LOF = "LOF"
 MECHANISM_CLASSES = [GOF, DN, LOF]
 
+# ── Variant label sources (the `source` field in valid_variants.json) ─────────
+SOURCE_GERASIMAVICIUS = "gerasimavicius"
+SOURCE_CLINVAR_G2P = "clinvar_g2p"
+
 # ── ESM-2 sequence limits ─────────────────────────────────────────────────────
 MAX_SEQ_LEN = 1022          # ESM-2 token limit: 1024 - <cls> - <eos>
 WINDOW_HALF = MAX_SEQ_LEN // 2  # 511: centre variant with full budget used

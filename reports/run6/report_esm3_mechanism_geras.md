@@ -133,8 +133,7 @@ compare this to the ESM-2 delta baseline, but that baseline (0.288) is on the *m
 set, not Gerasimavicius — different data, so the gap conflates scale and dataset. The matched ESM-2
 floor on the comparison set is 0.380 (threshold 0.430), which 0.421 does not clear. Any scale claim
 must come from the merged ESM-3 run, where both models score the same variants; it is not
-established by this report. The gain comes
-larger sequence model does carry more of whatever weakly tracks mechanism.
+established by this report.
 
 **2. Structure tokens add nothing.**
 Sequence-plus-structure also scores 0.421 on family-split — the same number, with the M3 gap
@@ -144,14 +143,15 @@ does not add mechanism signal beyond what the sequence model already provides. I
 per-class AUROCs are slightly lower with structure (GOF 0.676 vs 0.700), and the gene-split
 score dips (0.434 vs 0.452), so structure is neutral-to-faintly-harmful rather than helpful.
 
-**3. The lift is family-transferable, not leaked.**
-ESM-3's leakage Δ (family-split minus gene-split) is −0.031 for `seq`: the score barely falls
-when whole families are held out, so almost all of it survives the leakage-free split. The ESM-2
-delta carried no family-split signal to begin with (0.288 on both splits, the chance floor), so
-ESM-3 is not winning by leaking gene identity — its gain holds up precisely where the ESM-2 delta
-had nothing. That said, the GOF AUROC of 0.700 on family-split is in the range ESM-2's *absolute*
-(wildtype) embeddings reached on gene-split, so part of what ESM-3's sequence model carries is the
-same conservation-like family signal, now transferring across families rather than leaking within them.
+**3. ESM-3's score is family-split-stable (within-run).**
+ESM-3's leakage Δ (family-split minus gene-split) is −0.031 for `seq`: its score barely falls
+when whole families are held out, so almost all of what it reads survives the leakage-free split.
+This is a within-run property of ESM-3 and does not, on its own, establish a gain over ESM-2 — that
+comparison is cross-dataset and not valid here (point 1). What it does show is that the signal ESM-3
+carries is family-transferable rather than gene-identity leakage. The GOF AUROC of 0.700 on
+family-split is in the range ESM-2's *absolute* (wildtype) embeddings reached on gene-split, so part
+of what ESM-3's sequence model carries is the same conservation-like family signal, now transferring
+across families rather than leaking within them.
 
 **4. The two probes agree.**
 Logistic regression gives 0.442 (`seq`) and 0.443 (`seq_struct`) on family-split — the same
@@ -160,7 +160,7 @@ null is not an artifact of the MLP; a linear probe reads it the same way.
 
 **5. The number is up, but not useful.**
 0.421 macro-F1 on three classes is well above the chance floor but well below what mechanism
-prediction would need to be relied on. The DN AUROC sits near 0.56 — barely above a coin flip —
+prediction would need to be relied on. The DN AUROC sits near 0.57 — barely above a coin flip —
 so most of the F1 comes from separating GOF from the rest, not from resolving all three
 mechanisms. Scale moved the floor; it did not solve the task.
 

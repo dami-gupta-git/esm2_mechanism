@@ -37,6 +37,14 @@ NONLINEAR_RESULTS_SEED_JSON = str(RESULTS_DIR / "nonlinear_results_seed{seed}.js
 CONTRASTIVE_RESULTS_DIR = RESULTS_DIR
 CONTRASTIVE_AGGREGATE_JSON = RESULTS_DIR / "contrastive_aggregate.json"
 
+# ── Single-source robustness check (Gerasimavicius-only mechanism re-run) ─────
+# Re-runs the gene/family-split mechanism probe on the single-source subset to
+# confirm the mechanism null is not a curation/source confound. Lives in its own
+# subdir so it never clobbers the merged-dataset seed files written to RESULTS_DIR.
+SINGLE_SOURCE_DIR = RESULTS_DIR / "single_source_gerasimavicius"
+SINGLE_SOURCE_AGGREGATE_JSON = SINGLE_SOURCE_DIR / "aggregate.json"
+SINGLE_SOURCE_NAIVE_BASELINE_JSON = SINGLE_SOURCE_DIR / "naive_baseline.json"
+
 # ── Geometry experiments (magnitude/direction, result_23) ────────────────────
 GEOMETRY_RESULTS_DIR = RESULTS_DIR / "magnitude_direction"
 MAGNITUDE_DIRECTION_JSON = GEOMETRY_RESULTS_DIR / "probe_results.json"

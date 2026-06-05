@@ -8,6 +8,8 @@ import hashlib
 import json
 from pathlib import Path
 
+import numpy as np
+
 print = functools.partial(print, flush=True)
 
 
