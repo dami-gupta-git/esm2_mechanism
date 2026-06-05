@@ -64,3 +64,53 @@ def build_gene_to_row(gene_list_path: Path) -> dict[str, int]:
                 seen[gene] = idx
                 idx += 1
     return seen
+
+
+def build_source_mask(valid_variants: list[dict], source: str) -> np.ndarray:
+    """Boolean mask (aligned to valid_variants / every row-aligned feature array)
+    selecting rows whose `source` field equals `source`.
+
+    Rows with no `source` are excluded and counted rather than silently assigned —
+    absent provenance is not a default value.
+    """
+    flags = []
+    n_missing = 0
+    for variant in valid_variants:
+        variant_source = variant.get("source")
+        if variant_source is None:
+            n_missing += 1
+        flags.append(variant_source == source)
+    if n_missing:
+        print(f"WARNING: {n_missing} variants have no `source` field — excluded from subset")
+    return np.array(flags, dtype=bool)
+
+
+def subset_data(data: dict, mask: np.ndarray) -> dict:
+    """Return a copy of a row-aligned data dict with every array/list filtered by mask.
+
+    Every value in `data` must be aligned by row to the same N (e.g. the per-variant
+    arrays and lists produced by the mechanism experiments' load_data), so a single
+    boolean mask applies to all of them: numpy arrays are indexed, python lists are
+    comprehended. The expected row count N is taken from `data["valid_variants"]`; a
+    value whose length differs raises rather than silently mis-aligning.
+    """
+    n_full = len(data["valid_variants"])
+    subset: dict = {}
+    for key, value in data.items():
+        if isinstance(value, np.ndarray):
+            if value.shape[0] != n_full:
+                raise ValueError(
+                    f"data['{key}'] has {value.shape[0]} rows, expected {n_full} "
+                    f"(not row-aligned to valid_variants — cannot subset by mask)"
+                )
+            subset[key] = value[mask]
+        elif isinstance(value, list):
+            if len(value) != n_full:
+                raise ValueError(
+                    f"data['{key}'] has {len(value)} rows, expected {n_full} "
+                    f"(not row-aligned to valid_variants — cannot subset by mask)"
+                )
+            subset[key] = [item for item, keep in zip(value, mask) if keep]
+        else:
+            raise TypeError(f"Unexpected non-row-aligned value in data['{key}']: {type(value)}")
+    return subset

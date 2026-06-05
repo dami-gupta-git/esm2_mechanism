@@ -22,6 +22,7 @@ import argparse
 import functools
 import json
 import os
+from pathlib import Path
 
 import numpy as np
 
@@ -66,9 +67,12 @@ def main():
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--max_epochs", type=int, default=100)
     parser.add_argument("--patience", type=int, default=10)
+    parser.add_argument("--out_dir", type=str, default=str(OUT_DIR),
+                        help="Output directory for result JSON (default: RESULTS_DIR).")
     args = parser.parse_args()
 
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    out_dir = Path(args.out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
     np.random.seed(args.seed)
 
     labels, genes, delta_mean, delta_pos, pfam_map = load_data()
@@ -100,20 +104,27 @@ def main():
             )
             print(f"  macro_f1={results[key].get('macro_f1_mean', float('nan')):.3f}")
 
-        print(f"\n=== GBM gene-split: {feat_name} (PCA-50) ===")
-        key = f"gbm_{feat_name}"
-        results[key] = run_sklearn_probe_pca(gbm_fn, X, labels, genes, seed=args.seed, splits=gene_splits)
-        print(f"  macro_f1={results[key].get('macro_f1_mean', float('nan')):.3f}")
+        # GBM/RF/kNN under both gene-split and family-split. The gene-split keys
+        # keep their historical names (gbm_<feat>, no suffix); family-split adds a
+        # _family suffix, mirroring the MLP keys above.
+        for split_name, splits in [("gene", gene_splits), ("family", family_splits)]:
+            gene_split = split_name == "gene"
+            suffix = "" if gene_split else "_family"
 
-        print(f"\n=== RF gene-split: {feat_name} (PCA-50) ===")
-        key = f"rf_{feat_name}"
-        results[key] = run_sklearn_probe_pca(rf_fn, X, labels, genes, seed=args.seed, splits=gene_splits)
-        print(f"  macro_f1={results[key].get('macro_f1_mean', float('nan')):.3f}")
+            print(f"\n=== GBM {split_name}-split: {feat_name} (PCA-50) ===")
+            key = f"gbm_{feat_name}{suffix}"
+            results[key] = run_sklearn_probe_pca(gbm_fn, X, labels, genes, seed=args.seed, splits=splits)
+            print(f"  macro_f1={results[key].get('macro_f1_mean', float('nan')):.3f}")
 
-        print(f"\n=== kNN gene-split: {feat_name} ===")
-        key = f"knn_{feat_name}"
-        results[key] = run_sklearn_probe(knn_fn, X, labels, genes, seed=args.seed, normalize=True, splits=gene_splits)
-        print(f"  macro_f1={results[key].get('macro_f1_mean', float('nan')):.3f}")
+            print(f"\n=== RF {split_name}-split: {feat_name} (PCA-50) ===")
+            key = f"rf_{feat_name}{suffix}"
+            results[key] = run_sklearn_probe_pca(rf_fn, X, labels, genes, seed=args.seed, splits=splits)
+            print(f"  macro_f1={results[key].get('macro_f1_mean', float('nan')):.3f}")
+
+            print(f"\n=== kNN {split_name}-split: {feat_name} ===")
+            key = f"knn_{feat_name}{suffix}"
+            results[key] = run_sklearn_probe(knn_fn, X, labels, genes, seed=args.seed, normalize=True, splits=splits)
+            print(f"  macro_f1={results[key].get('macro_f1_mean', float('nan')):.3f}")
 
     print("\n=== Summary ===")
     for feat, res in results.items():
@@ -121,7 +132,7 @@ def main():
         auroc_gof = res.get("auroc_GOF_mean", float("nan"))
         print(f"  {feat}: macro_f1={mf1:.3f}  auroc_GOF={auroc_gof:.3f}")
 
-    out_path = OUT_DIR / f"nonlinear_results_seed{args.seed}.json"
+    out_path = out_dir / f"nonlinear_results_seed{args.seed}.json"
     with open(out_path, "w") as f:
         json.dump(results, f, indent=2)
     print(f"\nResults written to {out_path}")

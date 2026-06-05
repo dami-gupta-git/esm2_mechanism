@@ -38,6 +38,7 @@ from esm2_mech.experiments.mechanism.classify_by_mechanism import load_data
 from esm2_mech.experiments.mechanism.mechanism_delta_family_split import run as run_family_split
 from esm2_mech.experiments.mechanism.naive_baseline import evaluate as eval_naive
 from esm2_mech.utils.constants import SEED_RESULT_GLOB, SOURCE_GERASIMAVICIUS
+from esm2_mech.utils.data import build_source_mask, subset_data
 from esm2_mech.utils.io import atomic_write_json
 from esm2_mech.utils.paths import (
     PFAM_JSON,
@@ -58,51 +59,6 @@ from esm2_mech.utils.seed_aggregation import (
 print = functools.partial(print, flush=True)
 
 DEFAULT_SEEDS = [0, 1, 2, 3, 4]
-
-
-def build_source_mask(valid_variants: list[dict], source: str) -> np.ndarray:
-    """Boolean mask (aligned to valid_variants / every feature array) selecting rows
-    whose `source` field equals `source`. Rows with no source are excluded and counted
-    rather than silently assigned — absent provenance is not a default value."""
-    flags = []
-    n_missing = 0
-    for variant in valid_variants:
-        variant_source = variant.get("source")
-        if variant_source is None:
-            n_missing += 1
-        flags.append(variant_source == source)
-    if n_missing:
-        print(f"WARNING: {n_missing} variants have no `source` field — excluded from subset")
-    return np.array(flags, dtype=bool)
-
-
-def subset_data(data: dict, mask: np.ndarray) -> dict:
-    """Return a copy of the data dict with every row-aligned array/list filtered by mask.
-
-    Every value in data is aligned by row to valid_variants, so the same boolean mask
-    applies to all of them: numpy arrays are indexed, python lists are comprehended.
-    A length check guards against an array that is not actually row-aligned.
-    """
-    n_full = len(data["valid_variants"])
-    subset: dict = {}
-    for key, value in data.items():
-        if isinstance(value, np.ndarray):
-            if value.shape[0] != n_full:
-                raise ValueError(
-                    f"data['{key}'] has {value.shape[0]} rows, expected {n_full} "
-                    f"(not row-aligned to valid_variants — cannot subset by source mask)"
-                )
-            subset[key] = value[mask]
-        elif isinstance(value, list):
-            if len(value) != n_full:
-                raise ValueError(
-                    f"data['{key}'] has {len(value)} rows, expected {n_full} "
-                    f"(not row-aligned to valid_variants — cannot subset by source mask)"
-                )
-            subset[key] = [item for item, keep in zip(value, mask) if keep]
-        else:
-            raise TypeError(f"Unexpected non-row-aligned value in data['{key}']: {type(value)}")
-    return subset
 
 
 def compute_subset_floor(labels: np.ndarray, genes: np.ndarray) -> dict:

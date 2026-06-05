@@ -1,0 +1,110 @@
+{
+  "mlp_delta_mean_gene": {
+    "macro_f1_mean": 0.3849712585803451,
+    "macro_f1_std": 0.025452111148860236,
+    "auroc_GOF_mean": 0.6443008365195938,
+    "auroc_GOF_std": 0.0768929892355905,
+    "auroc_LOF_mean": 0.6945590596032902,
+    "auroc_LOF_std": 0.037059457136710904,
+    "auroc_DN_mean": 0.5556763441313729,
+    "auroc_DN_std": 0.04959830815857504,
+    "per_gene_f1_mean": 0.38888286732528826,
+    "per_gene_f1_std": 0.03346026417295024
+  },
+  "mlp_delta_mean_family": {
+    "macro_f1_mean": 0.39487236281213806,
+    "macro_f1_std": 0.037728518612997766,
+    "auroc_GOF_mean": 0.6460250137086746,
+    "auroc_GOF_std": 0.033300891078624856,
+    "auroc_LOF_mean": 0.6670171007016925,
+    "auroc_LOF_std": 0.02936645031666617,
+    "auroc_DN_mean": 0.618180843361803,
+    "auroc_DN_std": 0.06857052065172246,
+    "per_gene_f1_mean": 0.385084783737863,
+    "per_gene_f1_std": 0.04225610269009809
+  },
+  "gbm_delta_mean": {
+    "macro_f1_mean": 0.31554871755266,
+    "macro_f1_std": 0.021517950060540036,
+    "auroc_DN_mean": 0.577939661259059,
+    "auroc_DN_std": 0.11745555200241146,
+    "auroc_GOF_mean": 0.6612485210921438,
+    "auroc_GOF_std": 0.06379356076957883,
+    "auroc_LOF_mean": 0.662214284549423,
+    "auroc_LOF_std": 0.035947305919044395
+  },
+  "rf_delta_mean": {
+    "macro_f1_mean": 0.3038082665495475,
+    "macro_f1_std": 0.016572666465896623,
+    "auroc_DN_mean": 0.5654976458338068,
+    "auroc_DN_std": 0.10960120464867862,
+    "auroc_GOF_mean": 0.64682129878332,
+    "auroc_GOF_std": 0.04955538961159175,
+    "auroc_LOF_mean": 0.6471862917693826,
+    "auroc_LOF_std": 0.037374174389230755
+  },
+  "knn_delta_mean": {
+    "macro_f1_mean": 0.40442785459315234,
+    "macro_f1_std": 0.022247139571070475,
+    "auroc_DN_mean": 0.6068605268654084,
+    "auroc_DN_std": 0.07241717714639041,
+    "auroc_GOF_mean": 0.6483735404712391,
+    "auroc_GOF_std": 0.04154215039983734,
+    "auroc_LOF_mean": 0.6514744663346008,
+    "auroc_LOF_std": 0.025878198237680505
+  },
+  "mlp_delta_pos_gene": {
+    "macro_f1_mean": 0.35037331581662945,
+    "macro_f1_std": 0.05935545641865988,
+    "auroc_GOF_mean": 0.5741635805019596,
+    "auroc_GOF_std": 0.0544194465822279,
+    "auroc_LOF_mean": 0.6086105371732773,
+    "auroc_LOF_std": 0.046811376782113,
+    "auroc_DN_mean": 0.5086551794930572,
+    "auroc_DN_std": 0.124567437227859,
+    "per_gene_f1_mean": 0.36219368011853165,
+    "per_gene_f1_std": 0.03065025972433174
+  },
+  "mlp_delta_pos_family": {
+    "macro_f1_mean": 0.3418365643279858,
+    "macro_f1_std": 0.04787283862694237,
+    "auroc_GOF_mean": 0.5636880722437415,
+    "auroc_GOF_std": 0.034905026579353855,
+    "auroc_LOF_mean": 0.5840184895400116,
+    "auroc_LOF_std": 0.03413939936501885,
+    "auroc_DN_mean": 0.6060167582299253,
+    "auroc_DN_std": 0.11511560197760295,
+    "per_gene_f1_mean": 0.3481332483899701,
+    "per_gene_f1_std": 0.07114064877388364
+  },
+  "gbm_delta_pos": {
+    "macro_f1_mean": 0.31099073768912827,
+    "macro_f1_std": 0.024503034506683542,
+    "auroc_DN_mean": 0.5945179280333102,
+    "auroc_DN_std": 0.08472902006106486,
+    "auroc_GOF_mean": 0.6133844520279179,
+    "auroc_GOF_std": 0.03157517429296714,
+    "auroc_LOF_mean": 0.5959606790635799,
+    "auroc_LOF_std": 0.029045165268024257
+  },
+  "rf_delta_pos": {
+    "macro_f1_mean": 0.29616669849431215,
+    "macro_f1_std": 0.016496087422652662,
+    "auroc_DN_mean": 0.588757703869943,
+    "auroc_DN_std": 0.08913463957481065,
+    "auroc_GOF_mean": 0.6066986254751274,
+    "auroc_GOF_std": 0.031064034197624515,
+    "auroc_LOF_mean": 0.5837360114893287,
+    "auroc_LOF_std": 0.024264700511824187
+  },
+  "knn_delta_pos": {
+    "macro_f1_mean": 0.3639918568829211,
+    "macro_f1_std": 0.044382907244740165,
+    "auroc_DN_mean": 0.5991984132516597,
+    "auroc_DN_std": 0.06865159678367559,
+    "auroc_GOF_mean": 0.6005269635486163,
+    "auroc_GOF_std": 0.042707897191227986,
+    "auroc_LOF_mean": 0.6051511900140685,
+    "auroc_LOF_std": 0.035301747098735896
+  }
+}

@@ -90,6 +90,28 @@ After completion, `scp` the `.npy` files and `embedded_variants.json` back to `d
 
 The first two run on RunPod inside a `tmux` session; `scp` results back to `results/<run_name>/` locally. `family_clustering`, `naive_baseline`, and `leakage_fraction` are CPU-only and run locally. `leakage_fraction` reads only the result JSONs above (no model inference), so run it after `classify_by_mechanism`, `naive_baseline`, and `family_clustering`.
 
+### Step 4 — single-source robustness check (CPU)
+
+The merged dataset confounds mechanism class with curation source: the AR loss-of-function
+subtype is entirely Gerasimavicius, HI is mostly Gene2Phenotype, while GOF and DN are
+predominantly Gerasimavicius. A reviewer could argue any class-level difference (or its absence)
+reflects source/curation rather than biology. This step removes that confound by re-running the
+exact Step 3 gene-split vs family-split probe on the Gerasimavicius-only subset, which contains
+all three classes from a single curation pipeline. It reuses `load_data()` and `run_family_split()`
+unchanged — only the row set is filtered — and recomputes the majority-class floor on the subset
+(the floor shifts because the subset's class balance differs from the merged set).
+
+CPU-only — it reuses the existing Step 1/Step 2 inputs (no new fetch or embedding) and runs
+locally; no GPU or RunPod needed.
+
+| Command | Description | Inputs | Outputs |
+|---|---|---|---|
+| `python -m esm2_mech.experiments.mechanism.single_source_mechanism` | Re-run the Step 3 mechanism probe on the Gerasimavicius-only subset; recompute the subset majority-class floor; aggregate across 5 seeds and print the robustness read against merged Step 3 | `valid_variants.json`, `cache/sequences.json`, `pfam_families.json`, `embeddings_*.npy`, `alphamissense_scores_full.json` | `results/<run_name>/single_source_gerasimavicius/{family_split_baselines_seed{0..4}.json, aggregate.json, naive_baseline.json}` |
+
+Args: `--n_folds` (default 5), `--seeds` (default `0 1 2 3 4`). The null holds on the subset if
+`delta_mean` sits at the subset floor on both splits and `wt_only`'s gene-split lift collapses
+under family-split — confirming the mechanism null is not a source artifact.
+
 ---
 
 ## Experiment 2 — pathogenicity positive control (result_control)

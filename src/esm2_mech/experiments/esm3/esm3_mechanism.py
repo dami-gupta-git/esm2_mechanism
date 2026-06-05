@@ -715,7 +715,7 @@ def phase3_probes() -> None:
                 lambda seed: family_split_cv(genes_cond, pfam_map, N_FOLDS, seed),
             ),
         ]:
-            mlp_f1s, mlp_gof, mlp_dn = [], [], []
+            mlp_f1s, mlp_gof, mlp_dn, mlp_lof = [], [], [], []
             lr_f1s = []
 
             for seed in SEEDS:
@@ -741,6 +741,12 @@ def phase3_probes() -> None:
                     roc_auc_score(
                         (true == label_set.index("DN")).astype(int),
                         proba[:, label_set.index("DN")],
+                    )
+                )
+                mlp_lof.append(
+                    roc_auc_score(
+                        (true == label_set.index("LOF")).astype(int),
+                        proba[:, label_set.index("LOF")],
                     )
                 )
 
@@ -775,6 +781,7 @@ def phase3_probes() -> None:
                 "mlp_f1_std": float(np.std(mlp_f1s)),
                 "mlp_gof_auroc_mean": float(np.mean(mlp_gof)),
                 "mlp_dn_auroc_mean": float(np.mean(mlp_dn)),
+                "mlp_lof_auroc_mean": float(np.mean(mlp_lof)),
                 "lr_f1_mean": float(np.mean(lr_f1s)),
                 "lr_f1_std": float(np.std(lr_f1s)),
                 "n_seeds": len(mlp_f1s),
@@ -783,6 +790,7 @@ def phase3_probes() -> None:
             print(
                 f"  {cv_name}: MLP F1={r['mlp_f1_mean']:.3f}±{r['mlp_f1_std']:.3f}  "
                 f"GOF={r['mlp_gof_auroc_mean']:.3f}  DN={r['mlp_dn_auroc_mean']:.3f}  "
+                f"LOF={r['mlp_lof_auroc_mean']:.3f}  "
                 f"LR F1={r['lr_f1_mean']:.3f}"
             )
 
