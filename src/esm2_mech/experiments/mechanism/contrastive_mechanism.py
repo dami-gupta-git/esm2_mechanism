@@ -212,6 +212,8 @@ def train_projection_head(
     batch_size=512,
     margin=1.0,
     seed=42,
+    progress_label="",
+    log_every=10,
 ):
     import torch
     import torch.nn as nn
@@ -272,6 +274,13 @@ def train_projection_head(
     patience_count = 0
     best_state = None
 
+    print(
+        f"    training projection head{(' ' + progress_label) if progress_label else ''}: "
+        f"{len(anc_tr)} train / {len(anc_val)} val triplets, "
+        f"max_epochs={max_epochs} patience={patience} batch_size={batch_size} "
+        f"on {device.type}"
+    )
+
     # Count of epochs actually run (0 if max_epochs == 0), so the return below
     # is well-defined even when the loop body never executes.
     epochs_run = 0
@@ -294,14 +303,26 @@ def train_projection_head(
             z_n = proj(X_t[neg_val].to(device))
             val_loss = triplet_loss(z_a, z_p, z_n).item()
 
-        if val_loss < best_loss - 1e-4:
+        improved = val_loss < best_loss - 1e-4
+        if improved:
             best_loss = val_loss
             patience_count = 0
             best_state = {k: v.clone() for k, v in proj.state_dict().items()}
         else:
             patience_count += 1
-            if patience_count >= patience:
-                break
+
+        # Heartbeat so the training loop is not silent for the bulk of each fold:
+        # log on the first epoch, every log_every epochs, and the last epoch.
+        if epoch == 0 or epochs_run % log_every == 0 or patience_count >= patience:
+            print(
+                f"      epoch {epochs_run}/{max_epochs}  "
+                f"val_loss={val_loss:.4f}  best={best_loss:.4f}  "
+                f"patience={patience_count}/{patience}"
+            )
+
+        if patience_count >= patience:
+            print(f"      early stop at epoch {epochs_run} (best val_loss={best_loss:.4f})")
+            break
 
     if best_state is not None:
         proj.load_state_dict(best_state)
@@ -432,6 +453,7 @@ def run_cv(
             hidden=hidden,
             seed=seed + fold_i,
             batch_size=batch_size,
+            progress_label=f"[{split_name} split {fold_i+1}/{len(splits)}]",
         )
         Z_te_proj = project_test(proj, X_te, mu, std)
 
