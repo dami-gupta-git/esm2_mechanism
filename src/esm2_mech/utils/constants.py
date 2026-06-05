@@ -80,6 +80,9 @@ MEGASCALE_DDG_MISSING = "-"
 BOOTSTRAP_N_RESAMPLES = 1000
 BOOTSTRAP_CI_LEVEL = 0.95
 PERMUTATION_N_RESAMPLES = 1000
+# No-signal reference for a one-vs-rest AUROC (ranking metric): a CI clearing this
+# from above, or a permutation p-value against it, marks above-chance separation.
+CHANCE_AUROC = 0.5
 
 # ── External API roots ────────────────────────────────────────────────────────
 UNIPROT_REST = "https://rest.uniprot.org/uniprotkb"

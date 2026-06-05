@@ -32,6 +32,50 @@ from esm2_mech.utils.constants import (
 print = functools.partial(print, flush=True)
 
 
+def average_oof_over_seeds(oof_list: list[dict | None]) -> dict | None:
+    """Collapse per-seed out-of-fold predictions to one proba-per-variant.
+
+    Each entry is a probe's OOF dict {"y_true", "proba", "genes", "row_ids"} from one
+    seed, where row_ids index a fixed per-row array (e.g. a family's variant rows). A
+    variant appears once per seed's CV; averaging its proba across seeds gives a single
+    de-duplicated prediction per variant, so a downstream gene-cluster bootstrap counts
+    each variant once instead of n_seeds times (which would falsely narrow the CI).
+
+    None entries (seeds with no scorable fold) are skipped. Returns a single OOF dict
+    keyed back to unique row_ids (sorted), or None if no entry had data.
+    """
+    valid = [oof for oof in oof_list if oof is not None and len(oof["row_ids"])]
+    if not valid:
+        return None
+
+    proba_sum: dict = {}
+    proba_count: dict = {}
+    y_by_row: dict = {}
+    gene_by_row: dict = {}
+    for oof in valid:
+        for pos, row in enumerate(oof["row_ids"]):
+            row = int(row)
+            vec = np.asarray(oof["proba"][pos], dtype=float)
+            if row in proba_sum:
+                proba_sum[row] = proba_sum[row] + vec
+                proba_count[row] += 1
+            else:
+                proba_sum[row] = vec.copy()
+                proba_count[row] = 1
+            # y_true and gene are constant per row across seeds; record once.
+            y_by_row.setdefault(row, oof["y_true"][pos])
+            gene_by_row.setdefault(row, oof["genes"][pos])
+
+    rows_sorted = sorted(proba_sum.keys())
+    proba = np.array([proba_sum[row] / proba_count[row] for row in rows_sorted])
+    return {
+        "y_true": np.array([y_by_row[row] for row in rows_sorted]),
+        "proba": proba,
+        "genes": np.array([gene_by_row[row] for row in rows_sorted], dtype=object),
+        "row_ids": np.array(rows_sorted, dtype=int),
+    }
+
+
 def _cluster_to_rows(clusters: np.ndarray) -> tuple[np.ndarray, list[np.ndarray]]:
     """Group row indices by cluster id. Returns (unique_clusters, row_arrays) aligned."""
     order: dict = {}

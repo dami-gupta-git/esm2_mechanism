@@ -189,8 +189,9 @@ On gene-split, the nonlinear models on `delta_mean` score macro_f1 ≈ 0.40 (kNN
 probe. A nonlinear model raises the delta from the chance floor (0.29) to about 0.40,
 indicating a faint signal in the delta not accessible to a linear model — though this
 analysis cannot say whether that signal is mechanism or residual protein/family structure
-the subtraction did not fully remove. For the MLP — the only model run under family-split —
-the value is lower there (0.380). Full nonlinear table below.
+the subtraction did not fully remove. Under family-split every model is lower, and kNN — the
+top gene-split model — falls the most (0.408 → 0.354), leaving the MLP (0.380) as the best
+nonlinear delta probe on the honest split. Full nonlinear table below.
 
 **7. Per-residue delta vs mean-pooled delta.**
 On gene-split, `delta_per_residue` scores macro_f1 = 0.315 versus 0.288 for `delta_mean`. The
@@ -202,30 +203,37 @@ the floor.
 
 ## Nonlinear probes on the delta
 
-A linear probe recovers only signal that is linearly separable. An MLP can capture
-nonlinear structure, so the relevant question is whether a nonlinear model recovers signal
-in the delta that the linear probe does not.
+A linear probe recovers only signal that is linearly separable. Nonlinear models (an MLP, a
+k-nearest-neighbour classifier, and two tree ensembles) can capture nonlinear structure, so
+the relevant question is whether any of them recovers signal in the delta that the linear
+probe does not — and, under family-split, whether that signal survives when whole families
+are held out.
 
-Values are means ± standard deviation across 5 seeds.
+Values are means ± standard deviation across 5 seeds. All four models were run under both
+splits.
 
 | model (on `delta_mean`) | gene-split macro_f1 | family-split macro_f1 |
 |---|---:|---:|
 | MLP | 0.399 ± 0.009 | 0.380 ± 0.010 |
-| kNN | 0.408 ± 0.008 | — |
-| GBM (gradient-boosted trees) | 0.309 ± 0.004 | — |
-| Random Forest | 0.298 ± 0.004 | — |
-
-Family-split was computed for the MLP only; GBM/RF/kNN family-split were not run (—).
+| kNN | 0.408 ± 0.008 | 0.354 ± 0.006 |
+| GBM (gradient-boosted trees) | 0.309 ± 0.004 | 0.295 ± 0.001 |
+| Random Forest | 0.298 ± 0.004 | 0.288 ± 0.002 |
 
 On gene-split, the nonlinear models raise the delta from the 0.29 floor to about 0.40 — kNN
 (0.408) and the MLP (0.399) are comparable and within seed noise of each other, while the
 tree models (GBM 0.309, RF 0.298) are lower. This indicates the delta contains weak,
 nonlinear structure not accessible to a linear probe; this analysis does not establish
-whether that structure is mechanism or residual protein/family signal. Under family-split —
-the honest test, computed here for the MLP only — the score is 0.38, which remains below the
-linear protein-embedding score (0.44); the nonlinear delta does not exceed the linear
-absolute embedding. Seed-to-seed standard deviation is small (≤0.013), so these values are
-stable.
+whether that structure is mechanism or residual protein/family signal.
+
+Under family-split — the honest test — every model falls, and the model that fell the most
+is the one that scored highest on gene-split: kNN drops from 0.408 to 0.354, a loss of 0.054,
+against the MLP's 0.019. That pattern is what residual family structure looks like: kNN
+classifies by nearest neighbours, so when whole families are held out it loses the related
+proteins it was leaning on. The MLP (0.380) is the strongest nonlinear delta probe under the
+honest split, and the tree models collapse back toward the 0.29 floor (GBM 0.295, RF 0.288).
+None of the nonlinear family-split scores reach the linear protein-embedding score (0.44), so
+the nonlinear delta does not exceed the linear absolute embedding. Seed-to-seed standard
+deviation is small (≤0.016), so these values are stable.
 
 ---
 
@@ -280,7 +288,7 @@ variant index row-aligned, length 17,826). AlphaMissense coverage 17,733 / 17,82
 
 Sources:
 - Linear baselines (Tables 1–2, feature rows): `experiments/mechanism/classify_by_mechanism`, 5 seeds → `results/run6/family_split_baselines_seed{0..4}.json`, `aggregate.json`.
-- Nonlinear results: `experiments/mechanism/mlp`, 5 seeds → `results/run6/nonlinear_results_seed{0..4}.json`.
+- Nonlinear results (all four models, both splits): `experiments/mechanism/mlp`, 5 seeds → `results/run6/nonlinear_results_seed{0..4}.json`. Keys: `<model>_delta_mean[_gene]` (gene-split) and `<model>_delta_mean_family` (family-split) for `model ∈ {mlp, knn, gbm, rf}`.
 - Naive baseline row (0.288 / 0.50): `experiments/mechanism/naive_baseline.py`, a majority-class `DummyClassifier` run under the same labels and 5-seed gene/family-split CV as the feature rows → `results/run6/naive_baseline.json`.
 
 Full log: [`RUN_PROGRESS.md`](../../RUN_PROGRESS.md), Run 6.

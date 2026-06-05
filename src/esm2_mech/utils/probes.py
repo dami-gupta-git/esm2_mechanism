@@ -39,7 +39,8 @@ def run_logreg_cv(
     genes: np.ndarray | None = None,
     label: str = "",
     min_train_classes: int | None = None,
-) -> dict:
+    return_oof: bool = False,
+):
     """Run LogReg + StandardScaler over pre-computed splits, return aggregated metrics.
 
     genes : if provided, also computes per_gene_f1 per fold
@@ -50,10 +51,16 @@ def run_logreg_cv(
         (a classifier only needs two classes to fit); this also lets a caller make
         the probe's fold set match a separately-computed chance floor that skips on
         the same condition.
+    return_oof : if True, return (agg, oof) where oof collects the out-of-fold test
+        predictions for dependency-aware inference (cluster bootstrap / permutation):
+        {"y_true", "proba" (aligned to `classes`), "genes"}, or None if no fold was
+        scorable. `genes` must be provided for oof to carry gene ids. Default False
+        keeps the bare-`agg` return for existing callers.
     """
     n_classes = len(classes)
     min_train_classes = n_classes if min_train_classes is None else min_train_classes
     fold_results, pg_f1s = [], []
+    oof_y, oof_proba, oof_genes, oof_rows = [], [], [], []
     for fold_i, (tr, te) in enumerate(splits):
         X_tr, X_te = X[tr], X[te]
         y_tr, y_te = y[tr], y[te]
@@ -72,6 +79,11 @@ def run_logreg_cv(
         pred = np.array([classes[idx] for idx in proba.argmax(axis=1)])
         fm = compute_metrics(y_te, pred, proba, classes)
         fold_results.append(fm)
+        if return_oof and genes is not None:
+            oof_y.append(y_te)
+            oof_proba.append(proba)
+            oof_genes.append(genes[te])
+            oof_rows.append(np.asarray(te))
 
         pg_str = ""
         if genes is not None:
@@ -95,6 +107,16 @@ def run_logreg_cv(
     if pg_f1s:
         agg["per_gene_f1_mean"] = float(np.mean(pg_f1s))
         agg["per_gene_f1_std"] = float(np.std(pg_f1s))
+    if return_oof:
+        oof = None
+        if oof_y:
+            oof = {
+                "y_true": np.concatenate(oof_y),
+                "proba": np.concatenate(oof_proba),
+                "genes": np.concatenate(oof_genes),
+                "row_ids": np.concatenate(oof_rows),
+            }
+        return agg, oof
     return agg
 
 
@@ -155,18 +177,24 @@ def run_mlp_cv(
     classes: list[str] = MECHANISM_CLASSES,
     genes: np.ndarray | None = None,
     label: str = "",
-) -> dict:
+    return_oof: bool = False,
+):
     """Sklearn MLP CV: scale → oversample → fit → aggregate metrics.
 
     splits : pre-computed list of (train_idx, test_idx)
     genes  : if provided, also computes per_gene_f1 per fold
     label  : prefix for per-fold log lines
+    return_oof : if True, return (agg, oof) with out-of-fold test predictions
+        {"y_true", "proba" (aligned to `classes`), "genes"} for dependency-aware
+        inference, or None if no fold was scorable. `genes` must be provided.
+        Default False keeps the bare-`agg` return for existing callers.
     """
     from sklearn.neural_network import MLPClassifier
 
     n_classes = len(classes)
     cls_to_idx = {cls: idx for idx, cls in enumerate(classes)}
     fold_results, pg_f1s = [], []
+    oof_y, oof_proba, oof_genes, oof_rows = [], [], [], []
 
     for fold_i, (tr, te) in enumerate(splits):
         X_tr, X_te = X[tr], X[te]
@@ -217,6 +245,11 @@ def run_mlp_cv(
         pred = np.array([classes[idx] for idx in proba.argmax(axis=1)])
         fm = compute_metrics(y_te, pred, proba, classes)
         fold_results.append(fm)
+        if return_oof and genes is not None:
+            oof_y.append(y_te)
+            oof_proba.append(proba)
+            oof_genes.append(genes[te])
+            oof_rows.append(np.asarray(te))
 
         pg_str = ""
         if genes is not None:
@@ -240,6 +273,16 @@ def run_mlp_cv(
     if pg_f1s:
         agg["per_gene_f1_mean"] = float(np.mean(pg_f1s))
         agg["per_gene_f1_std"] = float(np.std(pg_f1s))
+    if return_oof:
+        oof = None
+        if oof_y:
+            oof = {
+                "y_true": np.concatenate(oof_y),
+                "proba": np.concatenate(oof_proba),
+                "genes": np.concatenate(oof_genes),
+                "row_ids": np.concatenate(oof_rows),
+            }
+        return agg, oof
     return agg
 
 
