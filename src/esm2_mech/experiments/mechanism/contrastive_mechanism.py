@@ -217,7 +217,6 @@ def train_projection_head(
 ):
     import torch
     import torch.nn as nn
-    from torch.utils.data import DataLoader, TensorDataset
 
     # Normalize
     mu = X_train.mean(0)
@@ -251,7 +250,11 @@ def train_projection_head(
     optimizer = torch.optim.Adam(proj.parameters(), lr=lr, weight_decay=1e-4)
     triplet_loss = nn.TripletMarginLoss(margin=margin, p=2)
 
-    X_t = torch.tensor(X_norm, dtype=torch.float32)
+    # Keep the full normalized feature matrix resident on the device once. It is
+    # only ~N*1280*4 bytes (≈91 MB for the merged set), so indexing happens
+    # on-device and we avoid a host→device copy of every triplet batch — the
+    # previous CPU-gather-then-copy pattern left the GPU idle and pegged ~30 cores.
+    X_t = torch.tensor(X_norm, dtype=torch.float32, device=device)
 
     # Validation: hold out ~15% of triplets
     n_val = min(max(10, len(anchors) // 7), len(anchors) - 1)
@@ -260,15 +263,19 @@ def train_projection_head(
     train_idx_mask = np.ones(len(anchors), dtype=bool)
     train_idx_mask[val_idx] = False
 
-    anc_tr = anchors[train_idx_mask]
-    pos_tr = positives[train_idx_mask]
-    neg_tr = negatives[train_idx_mask]
-    anc_val = anchors[val_idx]
-    pos_val = positives[val_idx]
-    neg_val = negatives[val_idx]
+    # Triplet index tensors live on the device too, so per-batch slicing never
+    # touches the host. anc/pos/neg are row indices into X_t.
+    anc_tr = torch.as_tensor(anchors[train_idx_mask], dtype=torch.long, device=device)
+    pos_tr = torch.as_tensor(positives[train_idx_mask], dtype=torch.long, device=device)
+    neg_tr = torch.as_tensor(negatives[train_idx_mask], dtype=torch.long, device=device)
+    anc_val = torch.as_tensor(anchors[val_idx], dtype=torch.long, device=device)
+    pos_val = torch.as_tensor(positives[val_idx], dtype=torch.long, device=device)
+    neg_val = torch.as_tensor(negatives[val_idx], dtype=torch.long, device=device)
+    n_train_triplets = anc_tr.shape[0]
 
-    ds = TensorDataset(torch.tensor(anc_tr), torch.tensor(pos_tr), torch.tensor(neg_tr))
-    loader = DataLoader(ds, batch_size=batch_size, shuffle=True)
+    # Per-epoch shuffle generator (seeded) replaces the CPU DataLoader: with all
+    # tensors on-device, a permutation + contiguous slices is the efficient path.
+    gen = torch.Generator(device=device).manual_seed(seed + 7)
 
     best_loss = float("inf")
     patience_count = 0
@@ -287,20 +294,25 @@ def train_projection_head(
     for epoch in range(max_epochs):
         epochs_run = epoch + 1
         proj.train()
-        for anc_b, pos_b, neg_b in loader:
+        # Shuffle triplet order each epoch on-device, then iterate contiguous
+        # batches — same per-epoch shuffling as the old DataLoader(shuffle=True),
+        # without any host involvement.
+        perm = torch.randperm(n_train_triplets, generator=gen, device=device)
+        for start in range(0, n_train_triplets, batch_size):
+            batch_idx = perm[start : start + batch_size]
             optimizer.zero_grad()
-            z_a = proj(X_t[anc_b].to(device))
-            z_p = proj(X_t[pos_b].to(device))
-            z_n = proj(X_t[neg_b].to(device))
+            z_a = proj(X_t[anc_tr[batch_idx]])
+            z_p = proj(X_t[pos_tr[batch_idx]])
+            z_n = proj(X_t[neg_tr[batch_idx]])
             loss = triplet_loss(z_a, z_p, z_n)
             loss.backward()
             optimizer.step()
 
         proj.eval()
         with torch.no_grad():
-            z_a = proj(X_t[anc_val].to(device))
-            z_p = proj(X_t[pos_val].to(device))
-            z_n = proj(X_t[neg_val].to(device))
+            z_a = proj(X_t[anc_val])
+            z_p = proj(X_t[pos_val])
+            z_n = proj(X_t[neg_val])
             val_loss = triplet_loss(z_a, z_p, z_n).item()
 
         improved = val_loss < best_loss - 1e-4
@@ -329,7 +341,9 @@ def train_projection_head(
 
     proj.eval()
     with torch.no_grad():
-        Z = proj(X_t.to(device)).cpu().numpy()
+        # X_t is already on `device`; forward the whole matrix and bring the
+        # projected embeddings back to host for the sklearn k-NN evaluation.
+        Z = proj(X_t).cpu().numpy()
 
     return proj, Z, mu, std, epochs_run
 
@@ -688,8 +702,9 @@ def main():
         help="Output dimension of projection head (default 64)",
     )
     parser.add_argument(
-        "--batch_size", type=int, default=512,
-        help="Batch size for triplet training (default 512, use 4096+ on GPU)",
+        "--batch_size", type=int, default=16384,
+        help="Batch size for triplet training. With the feature matrix resident "
+        "on-device, large batches are cheap; default 16384 (lower for tiny GPUs).",
     )
     args = parser.parse_args()
 
