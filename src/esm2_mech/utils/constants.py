@@ -36,6 +36,28 @@ def seed_result_filename(seed: int) -> str:
     return f"{SEED_RESULT_PREFIX}{seed}{SEED_RESULT_EXT}"
 
 
+# ── Contrastive metric-learning per-seed result files ─────────────────────────
+# Written by contrastive_mechanism.run; pooled by contrastive_mechanism.main.
+# Same single-source pattern as SEED_RESULT_* above.
+CONTRASTIVE_SEED_RESULT_PREFIX = "contrastive_results_seed"
+CONTRASTIVE_SEED_RESULT_EXT = ".json"
+CONTRASTIVE_SEED_RESULT_GLOB = (
+    f"{CONTRASTIVE_SEED_RESULT_PREFIX}*{CONTRASTIVE_SEED_RESULT_EXT}"
+)
+
+# Feature key under which the MLP delta_mean family-split floor is stored in the
+# run's aggregate.json (written by classify_by_mechanism). The contrastive
+# verdict compares against this floor; never hardcode the floor value.
+DELTA_MEAN_FEATURE = "delta_mean"
+
+
+def contrastive_seed_result_filename(seed: int) -> str:
+    """Filename for one seed's contrastive metric-learning results."""
+    return (
+        f"{CONTRASTIVE_SEED_RESULT_PREFIX}{seed}{CONTRASTIVE_SEED_RESULT_EXT}"
+    )
+
+
 # ── Megascale / Tsuboyama 2023 stability parsing ──────────────────────────────
 # A natural domain's WT_name base is a real 4-char PDB id (digit + 3 alphanumeric)
 # followed by ".pdb"; de novo designs use synthetic names (e.g. "EA|run2_...",

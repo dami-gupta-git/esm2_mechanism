@@ -12,14 +12,14 @@ compared to k-NN in raw 1280-d delta space.
 Key question: if we explicitly force the projection to be family-invariant, does
 mechanism signal emerge that the standard MLP (which has no such constraint) could not find?
 
-Usage:
-    python contrastive_mechanism.py \
-        --data_dir ../data \
-        --emb_dir ../data/embeddings \
-        --out_dir ../results/20260524_baseline_run/run_0 \
-        --seed 0
+Runs the merged dataset (VALID_VARIANTS_JSON) across seeds 0-4 and pools the
+per-seed files into an across-seed headline (mean ± std ACROSS seeds), mirroring
+classify_by_mechanism. Per-seed files: contrastive_results_seed{seed}.json under
+RESULTS_DIR; pooled into contrastive_aggregate.json.
 
-Outputs: contrastive_results_seed{seed}.json
+Usage:
+    python contrastive_mechanism.py            # all 5 seeds + aggregate
+    python contrastive_mechanism.py --seed 2   # single seed, no aggregation
 """
 
 import argparse
@@ -32,26 +32,37 @@ import numpy as np
 from sklearn.metrics import roc_auc_score, f1_score
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.preprocessing import LabelEncoder
+from esm2_mech.utils.io import atomic_write_json
 from esm2_mech.utils.splits import gene_split_cv, family_split_cv
 from esm2_mech.utils.paths import (
+    CONTRASTIVE_AGGREGATE_JSON,
+    CONTRASTIVE_RESULTS_DIR,
     EMB_MUT_MEAN,
     EMB_WT_MEAN,
     MECHANISM_AGGREGATE_JSON,
     PFAM_JSON,
-    RESULTS_DIR,
     VALID_VARIANTS_JSON,
 )
-from esm2_mech.utils.constants import GOF, DN, MECHANISM_CLASSES
-from esm2_mech.utils.seed_aggregation import FAMILY_SPLIT, read_across_seed_metric
+from esm2_mech.utils.constants import (
+    CONTRASTIVE_SEED_RESULT_GLOB,
+    DELTA_MEAN_FEATURE,
+    DN,
+    GOF,
+    MECHANISM_CLASSES,
+    contrastive_seed_result_filename,
+)
+from esm2_mech.utils.seed_aggregation import (
+    FAMILY_SPLIT,
+    aggregate_across_seeds,
+    load_seed_files,
+    print_table,
+    read_across_seed_metric,
+)
 import functools
 
 print = functools.partial(print, flush=True)
 
 warnings.filterwarnings("ignore")
-
-# Feature key for the mean-pooled delta baseline in the aggregate result file.
-# Must match the name written by mechanism_delta_family_split.run.
-DELTA_MEAN_FEATURE = "delta_mean"
 
 # ---------------------------------------------------------------------------
 # Data loading
@@ -261,7 +272,11 @@ def train_projection_head(
     patience_count = 0
     best_state = None
 
+    # Count of epochs actually run (0 if max_epochs == 0), so the return below
+    # is well-defined even when the loop body never executes.
+    epochs_run = 0
     for epoch in range(max_epochs):
+        epochs_run = epoch + 1
         proj.train()
         for anc_b, pos_b, neg_b in loader:
             optimizer.zero_grad()
@@ -295,7 +310,7 @@ def train_projection_head(
     with torch.no_grad():
         Z = proj(X_t.to(device)).cpu().numpy()
 
-    return proj, Z, mu, std, epoch + 1
+    return proj, Z, mu, std, epochs_run
 
 
 def project_test(proj, X_test, mu, std):
@@ -333,11 +348,21 @@ def run_knn(Z_train, Z_test, y_train, y_test, le, k=10):
         proba[:, all_i] = raw_proba[:, train_i]
 
     fm = {"macro_f1": float(f1_score(y_test, pred, average="macro", zero_division=0))}
+    # A class whose AUROC is undefined on this fold (absent from test, or all-equal
+    # neighbour votes) is recorded by name so the caller can see that this fold's
+    # per-class metric rests on fewer folds than n_folds — never silently dropped.
+    auroc_skipped = {}
     for all_i, cls_str in enumerate(all_classes):
         cls_int = le.transform([cls_str])[0]
         y_bin = (y_test == cls_int).astype(int)
-        if y_bin.sum() > 0 and (1 - y_bin).sum() > 0 and proba[:, all_i].std() > 0:
+        if y_bin.sum() == 0 or (1 - y_bin).sum() == 0:
+            auroc_skipped[cls_str] = "class_absent_in_test"
+        elif proba[:, all_i].std() == 0:
+            auroc_skipped[cls_str] = "constant_proba"
+        else:
             fm[f"auroc_{cls_str}"] = float(roc_auc_score(y_bin, proba[:, all_i]))
+    if auroc_skipped:
+        fm["auroc_skipped"] = auroc_skipped
     return fm
 
 
@@ -369,12 +394,17 @@ def run_cv(
         labels_tr = labels[train_idx]
         gene_pfam_tr = gene_pfam[train_idx]
 
+        # fold_i is the split index (position in `splits`); it advances even when
+        # a split is skipped, so the seed offset (seed + fold_i) stays stable. The
+        # number of folds that actually contribute is len(fold_results_*), which
+        # can be < len(splits) — reported as n_folds in the aggregate.
         if len(set(y_tr)) < 2 or len(set(y_te)) < 2:
-            print(f"  Fold {fold_i+1}: skipped (missing class)")
+            print(f"  Split {fold_i+1}/{len(splits)}: skipped (missing class)")
             continue
 
         print(
-            f"\n  Fold {fold_i+1}/{len(splits)} [{split_name}]  "
+            f"\n  Split {fold_i+1}/{len(splits)} [{split_name}]  "
+            f"(completed so far: {len(fold_results_contrastive)})  "
             f"train={len(train_idx)} test={len(test_idx)}"
         )
         print(f"    train classes: {dict(Counter(labels_tr))}")
@@ -417,13 +447,38 @@ def run_cv(
     def agg(fold_list):
         if not fold_list:
             return {"error": "no folds"}
-        all_keys = set().union(*[set(f.keys()) for f in fold_list])
+        # Only aggregate float-valued per-fold metrics (macro_f1, per-class AUROC).
+        # Restricting to float (not int/bool) means a future count or boolean
+        # per-fold field is never meaned into a _mean/_std, and the np.isnan guard
+        # below only ever sees floats. The "auroc_skipped" bookkeeping dict is
+        # pooled separately so the caller can see how many folds each per-class
+        # AUROC actually rests on.
+        metric_keys = set()
+        for fold in fold_list:
+            for key, value in fold.items():
+                if type(value) is float:
+                    metric_keys.add(key)
         out = {}
-        for k in all_keys:
-            vals = [f[k] for f in fold_list if k in f and not np.isnan(f[k])]
+        for key in metric_keys:
+            vals = [
+                fold[key]
+                for fold in fold_list
+                if key in fold and not np.isnan(fold[key])
+            ]
             if vals:
-                out[f"{k}_mean"] = float(np.mean(vals))
-                out[f"{k}_std"] = float(np.std(vals))
+                out[f"{key}_mean"] = float(np.mean(vals))
+                out[f"{key}_std"] = float(np.std(vals))
+                # Count of folds contributing to this metric (may be < n_folds
+                # when a per-class AUROC was undefined on some folds).
+                out[f"{key}_n_folds"] = len(vals)
+        # Pool per-class AUROC skip reasons across folds, counted by reason.
+        skip_counts = Counter()
+        for fold in fold_list:
+            for cls_str, reason in fold.get("auroc_skipped", {}).items():
+                skip_counts[f"auroc_{cls_str}:{reason}"] += 1
+        if skip_counts:
+            out["auroc_skipped_counts"] = dict(skip_counts)
+            print(f"    auroc skipped (by class:reason): {dict(skip_counts)}")
         out["n_folds"] = len(fold_list)
         return out
 
@@ -435,78 +490,43 @@ def run_cv(
 # ---------------------------------------------------------------------------
 
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--out_dir", default=str(RESULTS_DIR))
-    parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--n_folds", type=int, default=5)
-    parser.add_argument(
-        "--proj_dim",
-        type=int,
-        default=64,
-        help="Output dimension of projection head (default 64)",
-    )
-    parser.add_argument(
-        "--batch_size",
-        type=int,
-        default=512,
-        help="Batch size for triplet training (default 512, use 4096+ on GPU)",
-    )
-    args = parser.parse_args()
+def run(data, out_dir, seed, n_folds=5, proj_dim=64, batch_size=512):
+    """Run gene-split and family-split contrastive CV for one seed.
 
-    np.random.seed(args.seed)
+    `data` is the preloaded dict from load_all_data() (loaded once and shared
+    across seeds so the embeddings are not re-read five times). Writes one
+    per-seed JSON to out_dir and returns the results dict.
+    """
+    labels = data["labels"]
+    genes = data["genes"]
+    delta_mean = data["delta_mean"]
+    gene_pfam = data["gene_pfam"]
+    pfam_map = data["pfam_map"]
+    le = data["le"]
 
-    print("=== Loading data ===")
-    variants, labels, genes, delta_mean = load_data()
-
-    print("\n=== Loading Pfam map ===")
-    gene_pfam, pfam_map = load_pfam(genes)
-
-    le = LabelEncoder()
-    le.fit(labels)
-    print(f"Classes: {list(le.classes_)}")
+    np.random.seed(seed)
 
     print("\n=== Building CV splits ===")
-    gene_splits = gene_split_cv(genes, n_folds=args.n_folds, seed=args.seed)
-    fam_splits = family_split_cv(genes, pfam_map, n_folds=args.n_folds, seed=args.seed)
-    print(
-        f"Gene-split: {len(gene_splits)} folds | Family-split: {len(fam_splits)} folds"
-    )
+    gene_splits = gene_split_cv(genes, n_folds=n_folds, seed=seed)
+    fam_splits = family_split_cv(genes, pfam_map, n_folds=n_folds, seed=seed)
+    print(f"Gene-split: {len(gene_splits)} folds | Family-split: {len(fam_splits)} folds")
 
-    hidden = (256, args.proj_dim)
+    hidden = (256, proj_dim)
 
     print("\n\n" + "=" * 60)
-    print("GENE-SPLIT CV")
+    print(f"GENE-SPLIT CV (seed {seed})")
     print("=" * 60)
     gene_cont, gene_raw = run_cv(
-        delta_mean,
-        labels,
-        genes,
-        gene_pfam,
-        pfam_map,
-        le,
-        gene_splits,
-        "gene-split",
-        hidden=hidden,
-        seed=args.seed,
-        batch_size=args.batch_size,
+        delta_mean, labels, genes, gene_pfam, pfam_map, le, gene_splits,
+        "gene-split", hidden=hidden, seed=seed, batch_size=batch_size,
     )
 
     print("\n\n" + "=" * 60)
-    print("FAMILY-SPLIT CV")
+    print(f"FAMILY-SPLIT CV (seed {seed})")
     print("=" * 60)
     fam_cont, fam_raw = run_cv(
-        delta_mean,
-        labels,
-        genes,
-        gene_pfam,
-        pfam_map,
-        le,
-        fam_splits,
-        "family-split",
-        hidden=hidden,
-        seed=args.seed,
-        batch_size=args.batch_size,
+        delta_mean, labels, genes, gene_pfam, pfam_map, le, fam_splits,
+        "family-split", hidden=hidden, seed=seed, batch_size=batch_size,
     )
 
     results = {
@@ -515,11 +535,11 @@ def main():
             "Positives: same mechanism, different Pfam family. "
             "Negatives: different mechanism. "
             "Within-family pairs excluded from positives. "
-            f"Evaluated by k-NN (k=10, cosine) in projected {args.proj_dim}-d space."
+            f"Evaluated by k-NN (k=10, cosine) in projected {proj_dim}-d space."
         ),
-        "architecture": f"1280 -> 256 -> {args.proj_dim} (TripletMarginLoss)",
-        "seed": args.seed,
-        "n_folds": args.n_folds,
+        "architecture": f"1280 -> 256 -> {proj_dim} (TripletMarginLoss)",
+        "seed": seed,
+        "n_folds": n_folds,
         "gene_split": {
             "contrastive_knn": gene_cont,
             "raw_knn_baseline": gene_raw,
@@ -530,9 +550,9 @@ def main():
         },
     }
 
-    # Headline summary
+    # Per-seed headline summary
     print("\n\n" + "=" * 60)
-    print("HEADLINE SUMMARY")
+    print(f"SEED {seed} HEADLINE SUMMARY")
     print("=" * 60)
     for split_name, split_key in [
         ("Gene-split", "gene_split"),
@@ -549,58 +569,148 @@ def main():
 
         print(f"\n{split_name}:")
         print(
-            f"  Contrastive k-NN:  macro_f1={cont.get('macro_f1_mean', float('nan')):.3f} ± {cont.get('macro_f1_std', float('nan')):.3f}"
-            + auroc_str(cont)
+            f"  Contrastive k-NN:  macro_f1={cont.get('macro_f1_mean', float('nan')):.3f} "
+            f"± {cont.get('macro_f1_std', float('nan')):.3f}" + auroc_str(cont)
         )
         print(
-            f"  Raw k-NN baseline: macro_f1={raw.get('macro_f1_mean', float('nan')):.3f} ± {raw.get('macro_f1_std', float('nan')):.3f}"
-            + auroc_str(raw)
+            f"  Raw k-NN baseline: macro_f1={raw.get('macro_f1_mean', float('nan')):.3f} "
+            f"± {raw.get('macro_f1_std', float('nan')):.3f}" + auroc_str(raw)
         )
         delta_f1 = cont.get("macro_f1_mean", float("nan")) - raw.get(
             "macro_f1_mean", float("nan")
         )
         print(f"  Δ contrastive − raw: {delta_f1:+.3f}")
 
-    print("\nInterpretation:")
-    fam_cont_f1 = fam_cont.get("macro_f1_mean", float("nan"))
-    raw_fam_f1 = fam_raw.get("macro_f1_mean", float("nan"))
+    # Per-seed file written as each seed completes (resume + progress).
+    os.makedirs(out_dir, exist_ok=True)
+    out_path = os.path.join(out_dir, contrastive_seed_result_filename(seed))
+    atomic_write_json(out_path, results)
+    print(f"\nSeed {seed} results written to {out_path}")
+    return results
+
+
+def load_all_data():
+    """Load variants, Pfam map, deltas, and a fitted label encoder once."""
+    print("=== Loading data ===")
+    variants, labels, genes, delta_mean = load_data()
+
+    print("\n=== Loading Pfam map ===")
+    gene_pfam, pfam_map = load_pfam(genes)
+
+    le = LabelEncoder()
+    le.fit(labels)
+    print(f"Classes: {list(le.classes_)}")
+
+    return {
+        "variants": variants,
+        "labels": labels,
+        "genes": genes,
+        "delta_mean": delta_mean,
+        "gene_pfam": gene_pfam,
+        "pfam_map": pfam_map,
+        "le": le,
+    }
+
+
+def print_interpretation(aggregated):
+    """Print the across-seed verdict against the MLP delta_mean family floor.
+
+    The floor is read live from the run's mechanism aggregate.json (never
+    hardcoded), so it tracks whatever the current run's MLP baseline is.
+    """
+    fam = aggregated.get(FAMILY_SPLIT, {})
+    cont = fam.get("contrastive_knn", {})
+    raw = fam.get("raw_knn_baseline", {})
+    cont_f1 = cont.get("macro_f1_seed_mean", float("nan"))
+    raw_f1 = raw.get("macro_f1_seed_mean", float("nan"))
     floor = read_across_seed_metric(
         MECHANISM_AGGREGATE_JSON, FAMILY_SPLIT, DELTA_MEAN_FEATURE
     )
-    if fam_cont_f1 > floor + 0.03:
-        print(
-            f"  ✓ Contrastive family-split F1 ({fam_cont_f1:.3f}) > MLP floor ({floor:.3f}) + 0.03"
-        )
-        print(
-            "    → Cross-family mechanism signal CAN be improved by explicit family-invariance pressure."
-        )
-        print(
-            "    → ESM-2 deltas DO encode mechanism beyond family, accessible via metric learning."
-        )
-    elif fam_cont_f1 > raw_fam_f1 + 0.02:
-        print(
-            f"  ~ Contrastive ({fam_cont_f1:.3f}) > raw k-NN ({raw_fam_f1:.3f}) but below MLP floor ({floor:.3f})"
-        )
-        print(
-            "    → Small improvement from contrastive training; mechanism is weakly present but hard to extract."
-        )
-    else:
-        print(f"  ✗ Contrastive ({fam_cont_f1:.3f}) ≈ raw k-NN ({raw_fam_f1:.3f})")
-        print(
-            "    → Family-invariance pressure doesn't recover additional mechanism signal."
-        )
-        print(
-            "    → Strong negative: even with explicit supervision to ignore family, ESM-2 deltas"
-        )
-        print("      cannot separate mechanism across families.")
 
-    os.makedirs(args.out_dir, exist_ok=True)
-    out_path = os.path.join(
-        args.out_dir, f"contrastive_results_seed{args.seed}.json"
+    print("\n=== Across-seed interpretation (family-split) ===")
+    print(f"  MLP delta_mean floor (from aggregate.json): {floor:.3f}")
+    # Distinguish "data missing" from a genuine negative: a NaN in any operand
+    # makes every > comparison False, which would otherwise be misreported as the
+    # "no signal" verdict. Report the missing data explicitly instead.
+    if not all(np.isfinite(value) for value in (cont_f1, raw_f1, floor)):
+        print(
+            "  ? Verdict undefined — a required value is missing/NaN: "
+            f"contrastive_f1={cont_f1}, raw_f1={raw_f1}, floor={floor}."
+        )
+        print("    → Check that all seeds produced family-split macro_f1 and that "
+              "the MLP aggregate.json contains the delta_mean floor.")
+        return
+    if cont_f1 > floor + 0.03:
+        print(f"  ✓ Contrastive family-split F1 ({cont_f1:.3f}) > MLP floor ({floor:.3f}) + 0.03")
+        print("    → Cross-family mechanism signal CAN be improved by explicit family-invariance pressure.")
+        print("    → ESM-2 deltas DO encode mechanism beyond family, accessible via metric learning.")
+    elif cont_f1 > raw_f1 + 0.02:
+        print(f"  ~ Contrastive ({cont_f1:.3f}) > raw k-NN ({raw_f1:.3f}) but below MLP floor ({floor:.3f}) + 0.03")
+        print("    → Small improvement from contrastive training; mechanism is weakly present but hard to extract.")
+    else:
+        print(f"  ✗ Contrastive ({cont_f1:.3f}) ≈ raw k-NN ({raw_f1:.3f})")
+        print("    → Family-invariance pressure doesn't recover additional mechanism signal.")
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="Run a single seed (no across-seed aggregation). Omit to run seeds 0-4.",
     )
-    with open(out_path, "w") as f:
-        json.dump(results, f, indent=2)
-    print(f"\nResults written to {out_path}")
+    parser.add_argument("--n_folds", type=int, default=5)
+    parser.add_argument(
+        "--proj_dim", type=int, default=64,
+        help="Output dimension of projection head (default 64)",
+    )
+    parser.add_argument(
+        "--batch_size", type=int, default=512,
+        help="Batch size for triplet training (default 512, use 4096+ on GPU)",
+    )
+    args = parser.parse_args()
+
+    out_dir = str(CONTRASTIVE_RESULTS_DIR)
+    data = load_all_data()
+
+    seeds = [args.seed] if args.seed is not None else [0, 1, 2, 3, 4]
+    for seed in seeds:
+        print("\n\n" + "#" * 60)
+        print(f"# SEED {seed}")
+        print("#" * 60)
+        run(
+            data, out_dir, seed,
+            n_folds=args.n_folds, proj_dim=args.proj_dim, batch_size=args.batch_size,
+        )
+
+    if args.seed is not None:
+        # Single-seed run: skip aggregation (would pool only one seed).
+        return
+
+    # Pool the per-seed files into one across-seed headline (mean ± std ACROSS
+    # seeds), mirroring classify_by_mechanism.main.
+    print("\n=== Aggregating across seeds ===")
+    seed_results = load_seed_files(out_dir, CONTRASTIVE_SEED_RESULT_GLOB)
+    if not seed_results:
+        print(f"WARNING: no seed files to aggregate in {out_dir}")
+        return
+    print(f"Loaded {len(seed_results)} seed files:")
+    for filename, _result in seed_results:
+        print(f"  {filename}")
+
+    aggregated = aggregate_across_seeds(seed_results)
+    atomic_write_json(
+        CONTRASTIVE_AGGREGATE_JSON,
+        {
+            "n_seeds": len(seed_results),
+            "seed_files": [filename for filename, _result in seed_results],
+            "across_seed": aggregated,
+        },
+    )
+    print_table(aggregated)
+    print_interpretation(aggregated)
+    print(f"\nWrote {CONTRASTIVE_AGGREGATE_JSON}")
 
 
 if __name__ == "__main__":

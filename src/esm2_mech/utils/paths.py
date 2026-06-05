@@ -31,6 +31,12 @@ WITHIN_FAMILY_MECHANISM_JSON = RESULTS_DIR / "within_family_mechanism.json"
 # derive the matched ESM-2 family-split floor instead of hardcoding it.
 NONLINEAR_RESULTS_SEED_JSON = str(RESULTS_DIR / "nonlinear_results_seed{seed}.json")
 
+# Per-seed contrastive metric-learning results live directly under RESULTS_DIR
+# (= results/<run>); filenames come from constants.contrastive_seed_result_filename.
+# contrastive_mechanism.main pools them into CONTRASTIVE_AGGREGATE_JSON.
+CONTRASTIVE_RESULTS_DIR = RESULTS_DIR
+CONTRASTIVE_AGGREGATE_JSON = RESULTS_DIR / "contrastive_aggregate.json"
+
 # ── Geometry experiments (magnitude/direction, result_23) ────────────────────
 GEOMETRY_RESULTS_DIR = RESULTS_DIR / "magnitude_direction"
 MAGNITUDE_DIRECTION_JSON = GEOMETRY_RESULTS_DIR / "probe_results.json"
