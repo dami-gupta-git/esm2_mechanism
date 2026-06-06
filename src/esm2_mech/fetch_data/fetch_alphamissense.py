@@ -19,14 +19,19 @@ from __future__ import annotations
 
 import argparse
 import functools
-import gzip
 import json
-import os
 import sys
 from pathlib import Path
-import urllib.request
 from typing import Optional
 
+from esm2_mech.fetch_data.alphamissense_common import (
+    AM_URL,
+    build_gene_uniprot_map,
+    build_lookup,
+    download_am,
+    stream_am_filter,
+)
+from esm2_mech.utils.io import atomic_write_json
 from esm2_mech.utils.paths import AM_CACHE_FILE, DATA_DIR, VALID_VARIANTS_JSON
 
 print = functools.partial(print, flush=True)
@@ -35,132 +40,6 @@ AM_CACHE = AM_CACHE_FILE
 AM_OUT = DATA_DIR / "alphamissense_scores_full.json"
 AM_MERGED_VALID_VARIANTS = VALID_VARIANTS_JSON
 AM_PATHOGENICITY_VARIANTS = DATA_DIR / "pathogenicity_valid_variants.json"
-
-AM_URL = (
-    "https://storage.googleapis.com/dm_alphamissense/"
-    "AlphaMissense_aa_substitutions.tsv.gz"
-)
-
-
-def _build_am_gene_uniprot_map() -> dict[str, str]:
-    with open(AM_MERGED_VALID_VARIANTS) as f:
-        rows = json.load(f)
-
-    # Count how often each (gene, uniprot_id) pair appears so we can pick the
-    # most-frequent UniProt ID when a gene maps to more than one (e.g. isoforms).
-    counts: dict[str, dict[str, int]] = {}
-    for r in rows:
-        g, u = r["gene"], r["uniprot_id"]
-        if not g or not u:
-            continue
-        counts.setdefault(g, {}).setdefault(u, 0)
-        counts[g][u] += 1
-
-    g2u: dict[str, str] = {}
-    for g, uid_counts in counts.items():
-        best = max(uid_counts, key=lambda u: uid_counts[u])
-        if len(uid_counts) > 1:
-            print(
-                f"WARN: gene {g} has multiple UniProt IDs {uid_counts} — using most frequent: {best}",
-                file=sys.stderr,
-            )
-        g2u[g] = best
-    return g2u
-
-
-def _build_am_lookup(
-    variants: list[dict], g2u: dict[str, str]
-) -> tuple[dict, list, list]:
-    """
-    Returns (index, skipped_no_uniprot, skipped_key_collision).
-
-    skipped_no_uniprot: variants whose gene has no UniProt mapping.
-    skipped_key_collision: variants dropped because another gene shares the same
-        (uniprot, protein_variant) key — they will receive no AM score.
-    """
-    # Maps (uniprot_id, protein_variant) → variant key string so that when we
-    # stream the AM file we can look up each row in O(1) and write the score
-    # back under the gene-level key used everywhere else in the project.
-    index: dict[tuple[str, str], str] = {}
-    skipped_no_uniprot = []
-    skipped_key_collision = []
-    for v in variants:
-        uniprot = g2u.get(v["gene"])
-        if not uniprot:
-            skipped_no_uniprot.append(v)
-            continue
-        pv = f"{v['aa_wt']}{v['aa_pos']}{v['aa_mut']}"
-        vkey = f"{v['gene']}_{v['aa_pos']}_{v['aa_wt']}_{v['aa_mut']}"
-        key = (uniprot, pv)
-        if key in index and index[key] != vkey:
-            skipped_key_collision.append(v)
-            continue
-        index[key] = vkey
-    if skipped_key_collision:
-        print(
-            f"  WARNING: {len(skipped_key_collision)} variants dropped due to duplicate "
-            f"(uniprot, protein_variant) key — these will have no AM score. "
-            f"First 5: {[v['gene'] for v in skipped_key_collision[:5]]}"
-        )
-    return index, skipped_no_uniprot, skipped_key_collision
-
-
-def _download_am(url: str, dest: Path) -> None:
-    # Writes to a .part file and atomically renames on completion so an
-    # interrupted download never leaves a corrupt file at dest.
-    if dest.exists():
-        print(f"already exists: {dest} ({dest.stat().st_size:,} bytes)")
-        return
-    print(f"downloading {url}\n  -> {dest}")
-    tmp = dest.with_suffix(dest.suffix + ".part")
-    with urllib.request.urlopen(url) as r, open(tmp, "wb") as out:
-        total = 0
-        chunk = 1 << 20
-        while True:
-            buf = r.read(chunk)
-            if not buf:
-                break
-            out.write(buf)
-            total += len(buf)
-            if total % (50 << 20) < chunk:
-                print(f"  {total / 1e9:.2f} GB", file=sys.stderr)
-    os.replace(tmp, dest)
-    print(f"done: {dest.stat().st_size:,} bytes")
-
-
-def _stream_am_filter(
-    am_gz: Path, index: dict[tuple[str, str], str]
-) -> dict[str, float]:
-    # Streams the ~5 GB gzipped AM file line-by-line to avoid loading it into
-    # memory. Only rows whose (uniprot, protein_variant) key appears in index
-    # are kept; the rest are discarded immediately.
-    scores: dict[str, float] = {}
-    needed = len(index)
-    print(f"streaming {am_gz}, looking for {needed:,} (uniprot, variant) pairs")
-    with gzip.open(am_gz, "rt") as f:
-        header_skipped = False
-        for i, line in enumerate(f):
-            if i % 5_000_000 == 0 and i:
-                print(
-                    f"  read {i:,} rows, matched {len(scores):,}/{needed:,}",
-                    file=sys.stderr,
-                )
-            if not line or line.startswith("#"):
-                continue
-            if not header_skipped:
-                header_skipped = True
-                continue
-            parts = line.rstrip("\n").split("\t")
-            if len(parts) < 3:
-                continue
-            uniprot, pv, score_s = parts[0], parts[1], parts[2]
-            key = (uniprot, pv)
-            if key in index:
-                try:
-                    scores[index[key]] = float(score_s)
-                except ValueError:
-                    continue
-    return scores
 
 
 def main(
@@ -180,12 +59,14 @@ def main(
 
     am_file.parent.mkdir(parents=True, exist_ok=True)
 
-    g2u = _build_am_gene_uniprot_map()
+    with open(AM_MERGED_VALID_VARIANTS) as f:
+        merged_variants = json.load(f)
+    g2u = build_gene_uniprot_map(merged_variants)
     print(f"gene -> uniprot: {len(g2u):,} entries")
     with open(AM_PATHOGENICITY_VARIANTS) as f:
         variants = json.load(f)
     print(f"target variants: {len(variants):,}")
-    index, skipped_no_uniprot, skipped_key_collision = _build_am_lookup(variants, g2u)
+    index, skipped_no_uniprot, skipped_key_collision = build_lookup(variants, g2u)
     print(f"variants with UniProt mapping: {len(index):,}")
     if skipped_no_uniprot:
         print(
@@ -201,13 +82,12 @@ def main(
                 file=sys.stderr,
             )
             sys.exit(2)
-        _download_am(AM_URL, am_file)
+        download_am(AM_URL, am_file)
 
-    scores = _stream_am_filter(am_file, index)
+    scores = stream_am_filter(am_file, index)
     print(f"matched scores: {len(scores):,} / {len(index):,}")
 
-    with open(out, "w") as f:
-        json.dump(scores, f, indent=2, sort_keys=True)
+    atomic_write_json(out, scores, indent=2, sort_keys=True)
     print(f"wrote {out}")
 
 
