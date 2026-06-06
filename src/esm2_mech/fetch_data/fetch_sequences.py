@@ -75,8 +75,9 @@ def prefetch_sequences() -> None:
             if seq:
                 seq_cache[uid] = seq
             else:
-                # Definitive 404 (or empty FASTA body): no usable sequence exists
-                # at this accession. Record it so the next run does not re-fetch.
+                # Definitive 404: no sequence exists at this accession. Record it
+                # so the next run does not re-fetch. (An empty body from a non-404
+                # response raises TransientFetchError and is retried, not cached.)
                 not_found.add(uid)
         if (i + 1) % 50 == 0 or i == len(needed) - 1:
             atomic_write_json(SEQUENCES_JSON, seq_cache)

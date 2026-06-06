@@ -78,6 +78,14 @@ class TestFetchUniprotSequence:
             with pytest.raises(TransientFetchError):
                 fetch_uniprot_sequence("P12345", retries=1, delay=0)
 
+    def test_raises_transient_on_empty_body_non_404(self):
+        # A 200 response that parses to no sequence is an anomaly, not a
+        # definitive "not found" — it must raise (so the caller retries) rather
+        # than return None (which the caller would cache as permanently absent).
+        with patch("urllib.request.urlopen", return_value=_fasta_response("")):
+            with pytest.raises(TransientFetchError):
+                fetch_uniprot_sequence("P12345", retries=1, delay=0)
+
     def test_raises_transient_on_network_exception(self):
         with patch("urllib.request.urlopen", side_effect=OSError("timeout")):
             with pytest.raises(TransientFetchError):

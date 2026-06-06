@@ -413,8 +413,7 @@ def main_enzyme() -> None:
             fetch_errors += 1
             time.sleep(0.35)
             continue  # not cached — will be retried next run
-        with open(cache_file, "w") as f:
-            json.dump(entry, f)
+        _atomic_write_json(cache_file, entry)
         acc_to_data[acc] = entry
         fetched += 1
         time.sleep(0.35)

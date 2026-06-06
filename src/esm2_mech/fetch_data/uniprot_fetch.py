@@ -77,10 +77,14 @@ def fetch_uniprot_sequence(
     """Fetch canonical protein sequence from UniProt.
 
     Returns the sequence string on success, or None when the server definitively
-    reports that the accession does not exist (HTTP 404).
+    reports that the accession does not exist (HTTP 404) — a real result callers
+    may cache as "absent".
 
     Raises TransientFetchError when all retries are exhausted due to a transient
-    network or server error. Callers must not cache this outcome.
+    network or server error, OR when the server returns a non-404 response whose
+    body contains no sequence (an anomaly, not a definitive "not found"). Callers
+    must not cache this outcome — distinguishing it from a 404 prevents a
+    permanently-cached false negative from a one-off empty/garbled response.
     """
     fasta = fetch_with_retries(
         f"{UNIPROT_REST}/{uniprot_id}.fasta",
@@ -89,10 +93,14 @@ def fetch_uniprot_sequence(
         label=uniprot_id,
     )
     if fasta is None:
-        return None
+        return None  # genuine 404
     lines = fasta.strip().split("\n")
     seq = "".join(line for line in lines if not line.startswith(">"))
-    return seq.upper() if seq else None
+    if not seq:
+        # 200 response but no sequence parsed — treat as transient so the next
+        # run retries rather than recording a permanent "not found".
+        raise TransientFetchError(f"{uniprot_id}: empty sequence in non-404 response")
+    return seq.upper()
 
 
 
@@ -115,16 +123,26 @@ def fetch_pfam_families(variants: list[dict]) -> dict[str, str | None]:
     print(f"Fetching Pfam families for {len(unique_pairs)} genes...")
 
     transient_failures = 0
+    # A gene can appear with more than one uniprot_id; writing pfam_map[gene]
+    # blindly would let the last accession silently win. Track genes whose
+    # accessions yield *different* Pfam IDs so the collision is visible.
+    collisions: list[tuple[str, str | None, str | None]] = []
     for gene, uniprot_id in sorted(unique_pairs):
         url = f"{UNIPROT_REST}/{uniprot_id}.json"
         try:
             req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
             with urllib.request.urlopen(req, timeout=20) as resp:
                 data = json.loads(resp.read().decode())
-            pfam_map[gene] = parse_pfam_id(data)
+            pfam_id = parse_pfam_id(data)
+            if gene in pfam_map and pfam_map[gene] != pfam_id:
+                collisions.append((gene, pfam_map[gene], pfam_id))
+            else:
+                pfam_map[gene] = pfam_id
         except urllib.error.HTTPError as exc:
             if exc.code == 404:
-                pfam_map[gene] = None
+                # Don't clobber a real annotation from another accession of the
+                # same gene with a None from a 404'd accession.
+                pfam_map.setdefault(gene, None)
             else:
                 print(
                     f"  WARNING: transient HTTP {exc.code} for {uniprot_id} — skipping, will retry next run"
@@ -136,6 +154,12 @@ def fetch_pfam_families(variants: list[dict]) -> dict[str, str | None]:
             )
             transient_failures += 1
         time.sleep(0.3)
+
+    if collisions:
+        print(
+            f"  WARNING: {len(collisions)} genes had conflicting Pfam IDs across "
+            f"accessions; kept the first. Examples: {collisions[:5]}"
+        )
 
     if transient_failures:
         print(

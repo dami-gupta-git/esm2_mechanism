@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import functools
 import gzip
+import math
 import os
 import sys
 from pathlib import Path
@@ -95,6 +96,8 @@ def stream_am_filter(am_gz: Path, index: dict[tuple[str, str], str]) -> dict[str
     """Stream AlphaMissense bulk file and return scores for indexed variants."""
     scores: dict[str, float] = {}
     needed = len(index)
+    skipped_unparseable = 0
+    skipped_non_finite = 0
     print(f"streaming {am_gz}, looking for {needed:,} (uniprot, variant) pairs")
     with gzip.open(am_gz, "rt") as f:
         header_skipped = False
@@ -113,7 +116,19 @@ def stream_am_filter(am_gz: Path, index: dict[tuple[str, str], str]) -> dict[str
             key = (uniprot, pv)
             if key in index:
                 try:
-                    scores[index[key]] = float(score_s)
+                    score = float(score_s)
                 except ValueError:
+                    skipped_unparseable += 1
                     continue
+                # float() accepts "nan"/"inf" — a non-finite score is not a real
+                # observation; drop it rather than letting it enter the dataset.
+                if not math.isfinite(score):
+                    skipped_non_finite += 1
+                    continue
+                scores[index[key]] = score
+    if skipped_unparseable or skipped_non_finite:
+        print(
+            f"  skipped matched rows with bad scores: "
+            f"{skipped_unparseable} unparseable, {skipped_non_finite} non-finite"
+        )
     return scores

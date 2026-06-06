@@ -79,13 +79,27 @@ def _load_clinvar_gene_level(wb) -> tuple[dict[str, str], dict[str, str]]:
     ws = wb["ClinVar_gene_level"]
     uid_map: dict[str, str] = {}
     mech_raw: dict[str, list[str]] = {}
+    # A gene can span multiple rows; collect distinct non-empty UniProt IDs so a
+    # conflict is surfaced rather than silently resolved by last-write-wins.
+    uid_seen: dict[str, set[str]] = {}
     for row in ws.iter_rows(min_row=2, values_only=True):
         if len(row) < 10:
             continue
         gene, uid, mech = row[0], row[1], row[9]
         if gene:
-            uid_map[gene] = uid or ""
+            if uid:
+                uid_seen.setdefault(gene, set()).add(uid)
+            uid_map.setdefault(gene, uid or "")
+            if uid and not uid_map[gene]:
+                uid_map[gene] = uid  # backfill if the first row had no UniProt ID
             mech_raw.setdefault(gene, []).append(mech or "Unknown")
+    conflicts = {g: sorted(ids) for g, ids in uid_seen.items() if len(ids) > 1}
+    if conflicts:
+        examples = list(conflicts.items())[:5]
+        print(
+            f"WARNING: {len(conflicts)} genes map to multiple UniProt IDs in "
+            f"ClinVar_gene_level; kept the first. Examples: {examples}"
+        )
     mech_map: dict[str, str] = {
         gene: CV_MECH_MAP.get(Counter(mechs).most_common(1)[0][0], "Unknown")
         for gene, mechs in mech_raw.items()

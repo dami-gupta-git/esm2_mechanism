@@ -109,7 +109,18 @@ def main():
     merged = load_gene_universe()
     pfam = dict(zip(merged["gene"], merged["pfam_family"]))
 
-    # Join on gene symbol (case-sensitive exact match)
+    # Join on gene symbol (case-sensitive exact match). A duplicate gene symbol
+    # would make the index non-unique and crash the .map below
+    # (InvalidIndexError), so detect collisions explicitly, report them, and keep
+    # the first occurrence rather than letting pandas raise or silently guess.
+    dup_mask = bad["gene_badonyi"].duplicated(keep=False)
+    if dup_mask.any():
+        dup_genes = sorted(bad.loc[dup_mask, "gene_badonyi"].unique())
+        print(
+            f"WARNING: {len(dup_genes)} Badonyi gene symbols appear on multiple rows; "
+            f"keeping the first per gene. Examples: {dup_genes[:5]}"
+        )
+        bad = bad.drop_duplicates(subset="gene_badonyi", keep="first")
     bad_lookup = bad.set_index("gene_badonyi")[["pDN", "pGOF", "pLOF"]]
 
     result = merged[["gene"]].copy()

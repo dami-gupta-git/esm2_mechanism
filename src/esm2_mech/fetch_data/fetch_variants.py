@@ -162,8 +162,7 @@ def main_gerasimavicius() -> None:
     variants = parse_gerasimavicius_variants(XLSX_PATH)
     if not variants:
         raise ValueError("No variants parsed — check the Excel file and sheet name")
-    with open(GERAS_OUT, "w") as f:
-        json.dump(variants, f)
+    atomic_write_json(GERAS_OUT, variants)
     print(f"Written to {GERAS_OUT}")
 
 
@@ -654,8 +653,12 @@ def main_merge(pathogenic_only: bool = False) -> None:
         # wt_validated: "true" if aa_wt matched the reference sequence, "" if the
         # sequence was unavailable at fetch time (aa_wt unverified). Absent column
         # (older TSVs) -> None so consumers can tell it was never recorded.
+        # Absent column (older TSVs) or empty value (sequence unavailable at fetch
+        # time) both mean "never checked" -> None. Only a literal "true"/"false"
+        # is a real validation outcome; never collapse "" to False, which would
+        # fabricate a checked-and-failed result from missing data.
         wt_validated_raw = r.get("wt_validated")
-        if wt_validated_raw is None:
+        if wt_validated_raw is None or not wt_validated_raw.strip():
             wt_validated: Optional[bool] = None
         else:
             wt_validated = wt_validated_raw.strip().lower() == "true"
@@ -701,8 +704,7 @@ def main_merge(pathogenic_only: bool = False) -> None:
     print(f"Mechanism (3-class): {dict(mechs3)}")
     print(f"Sources: {dict(sources)}")
 
-    with open(MERGED_OUT, "w") as f:
-        json.dump(merged, f)
+    atomic_write_json(MERGED_OUT, merged)
     print(f"Written to {MERGED_OUT}")
 
 
