@@ -23,7 +23,6 @@ Outputs:
 """
 
 import functools
-import json
 import os
 import numpy as np
 from scipy.stats import spearmanr, pearsonr
@@ -31,16 +30,14 @@ from scipy.stats import spearmanr, pearsonr
 print = functools.partial(print, flush=True)
 from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
 
-from esm2_mech.experiments.stability.stability_data import load_stability_inputs
-from esm2_mech.experiments.stability.megascale_stability import run_regression_cv
-from esm2_mech.utils.metrics import auroc_at_median, mean_std_n
-from esm2_mech.utils.splits import random_split_cv, gene_split_cv, family_split_cv
-from esm2_mech.utils.paths import RESULTS_DIR as _RESULTS_DIR
-
-OUT = str(_RESULTS_DIR / "megascale_stability")
-
-N_SEEDS = 5
-N_FOLDS = 5
+from esm2_mech.experiments.stability.stability_data import (
+    load_stability_inputs,
+    stability_splits,
+)
+from esm2_mech.experiments.stability.megascale_stability import run_regression_cv, OUT
+from esm2_mech.utils.constants import N_SEEDS
+from esm2_mech.utils.io import atomic_write_json
+from esm2_mech.utils.metrics import auroc_at_median, mean_std_n, standardize
 
 os.makedirs(OUT, exist_ok=True)
 
@@ -85,11 +82,7 @@ def run_mlp_regression(
         n_val = max(1, int(0.15 * len(idx)))
         val_idx, fit_idx = idx[:n_val], idx[n_val:]
 
-        mu = X_tr[fit_idx].mean(0)
-        std = X_tr[fit_idx].std(0) + 1e-8
-        X_fit = (X_tr[fit_idx] - mu) / std
-        X_val = (X_tr[val_idx] - mu) / std
-        X_te_n = (X_te - mu) / std
+        X_fit, X_val, X_te_n = standardize(X_tr[fit_idx], X_tr[val_idx], X_te)
 
         layers = []
         prev = X_fit.shape[1]
@@ -175,12 +168,11 @@ def main(use_xgboost=False):
     X = inputs.delta_mean
     print(f"Embeddings: {X.shape}")
 
-    # The three CV schemes, built per-seed. Shared by every probe.
-    split_builders = [
-        ("random", lambda seed: random_split_cv(len(variants), N_FOLDS, seed)),
-        ("domain", lambda seed: gene_split_cv(proteins, n_folds=N_FOLDS, seed=seed)),
-        ("family", lambda seed: family_split_cv(proteins, family_map, n_folds=N_FOLDS, seed=seed)),
-    ]
+    # The three CV schemes, built per-seed via the shared stability_splits helper.
+    split_names = ("random", "domain", "family")
+    build_splits = lambda name, seed: stability_splits(
+        seed, len(variants), proteins, family_map
+    )[name]
 
     # Each probe maps (X, y, splits, seed) -> per-fold-aggregated dict. The MLP
     # uses its own torch runner; RF/GBM use run_regression_cv with a fresh
@@ -229,10 +221,10 @@ def main(use_xgboost=False):
     summary = {}
     for probe_name, run_probe in probe_runners:
         print(f"\n── {probe_name.upper()} ──")
-        for split_name, build_splits in split_builders:
+        for split_name in split_names:
             rhos, aurocs = [], []
             for seed in range(N_SEEDS):
-                res = run_probe(X, ddg, build_splits(seed), seed)
+                res = run_probe(X, ddg, build_splits(split_name, seed), seed)
                 if res:
                     rhos.append(res["spearman_mean"])
                     aurocs.append(res["auroc_mean"])
@@ -275,8 +267,7 @@ def main(use_xgboost=False):
     # Separate output file for the xgboost variant so it never overwrites the
     # default sklearn comparison (mlp_summary.json).
     out_name = "mlp_summary_xgb.json" if use_xgboost else "mlp_summary.json"
-    with open(os.path.join(OUT, out_name), "w") as f:
-        json.dump(summary, f, indent=2)
+    atomic_write_json(os.path.join(OUT, out_name), summary)
     print(f"\nResults written to {os.path.join(OUT, out_name)}")
 
 

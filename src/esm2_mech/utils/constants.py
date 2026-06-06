@@ -13,6 +13,10 @@ ESM3_MODEL = "esm3-sm-open-v1"
 # never hardcode 5 or [0, 1, 2, 3, 4] inline.
 N_SEEDS = 5
 
+# Number of CV folds for every multi-seed probe. Single source of truth — never
+# hardcode 5 inline.
+N_FOLDS = 5
+
 # ── Mechanism class label constants ──────────────────────────────────────────
 GOF = "GOF"
 DN = "DN"

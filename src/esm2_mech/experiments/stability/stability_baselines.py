@@ -33,18 +33,18 @@ import numpy as np
 from scipy.stats import spearmanr
 from sklearn.linear_model import RidgeCV
 from sklearn.cross_decomposition import PLSRegression
-from sklearn.preprocessing import StandardScaler
 
-from esm2_mech.experiments.stability.stability_data import load_stability_inputs
+from esm2_mech.experiments.stability.stability_data import (
+    load_stability_inputs,
+    stability_splits,
+)
 from esm2_mech.experiments.stability.megascale_stability import (
     run_ridge_with_auroc,
-    N_SEEDS,
-    N_FOLDS,
     OUT,
 )
+from esm2_mech.utils.constants import N_SEEDS
 from esm2_mech.utils.io import atomic_write_json
-from esm2_mech.utils.metrics import mean_std_n
-from esm2_mech.utils.splits import random_split_cv, gene_split_cv, family_split_cv
+from esm2_mech.utils.metrics import mean_std_n, standardize
 
 print = functools.partial(print, flush=True)
 
@@ -52,15 +52,6 @@ print = functools.partial(print, flush=True)
 ALPHA_GRID = (0.1, 1.0, 10.0, 100.0, 1000.0)
 # PLS component counts to sweep (exploratory dimensionality).
 PLS_COMPONENTS = (1, 2, 5, 10, 20, 50)
-
-
-def _splits_for(seed, n, proteins, family_map):
-    """The three CV schemes for one seed, as a name→splits dict."""
-    return {
-        "random": random_split_cv(n, N_FOLDS, seed),
-        "domain": gene_split_cv(proteins, n_folds=N_FOLDS, seed=seed),
-        "family": family_split_cv(proteins, family_map, n_folds=N_FOLDS, seed=seed),
-    }
 
 
 def _aggregate_over_seeds(per_seed):
@@ -78,7 +69,7 @@ def delta_norm_baseline(delta_mean, ddg, proteins, family_map):
     norms = np.linalg.norm(delta_mean, axis=1).reshape(-1, 1)
     per_seed = []
     for seed in range(N_SEEDS):
-        splits = _splits_for(seed, len(ddg), proteins, family_map)
+        splits = stability_splits(seed, len(ddg), proteins, family_map)
         per_seed.append(
             {name: run_ridge_with_auroc(norms, ddg, sp).get("spearman_mean", float("nan"))
              for name, sp in splits.items()}
@@ -95,14 +86,12 @@ def nested_alpha_ridge(delta_mean, ddg, proteins, family_map):
     """
     per_seed, chosen_alphas = [], []
     for seed in range(N_SEEDS):
-        splits = _splits_for(seed, len(ddg), proteins, family_map)
+        splits = stability_splits(seed, len(ddg), proteins, family_map)
         seed_rho = {}
         for name, sp in splits.items():
             rhos = []
             for tr, te in sp:
-                scaler = StandardScaler()
-                x_tr = scaler.fit_transform(delta_mean[tr])
-                x_te = scaler.transform(delta_mean[te])
+                x_tr, x_te = standardize(delta_mean[tr], delta_mean[te])
                 clf = RidgeCV(alphas=ALPHA_GRID)
                 clf.fit(x_tr, ddg[tr])
                 chosen_alphas.append(float(clf.alpha_))
@@ -123,7 +112,7 @@ def label_shuffle_null(delta_mean, ddg, proteins, family_map):
     for seed in range(N_SEEDS):
         rng = np.random.RandomState(seed)
         ddg_shuf = ddg[rng.permutation(len(ddg))]
-        splits = _splits_for(seed, len(ddg), proteins, family_map)
+        splits = stability_splits(seed, len(ddg), proteins, family_map)
         per_seed.append(
             {name: run_ridge_with_auroc(delta_mean, ddg_shuf, sp).get("spearman_mean", float("nan"))
              for name, sp in splits.items()}
@@ -137,7 +126,7 @@ def pls_component_sweep(delta_mean, ddg, proteins, family_map):
     Single seed (seed 0) per component count — this characterises dimensionality,
     not a headline number, so a multi-seed mean is unnecessary.
     """
-    splits = _splits_for(0, len(ddg), proteins, family_map)
+    splits = stability_splits(0, len(ddg), proteins, family_map)
     out = {}
     for split_name in ("random", "family"):
         sp = splits[split_name]
@@ -145,9 +134,7 @@ def pls_component_sweep(delta_mean, ddg, proteins, family_map):
         for n_components in PLS_COMPONENTS:
             rhos = []
             for tr, te in sp:
-                scaler = StandardScaler()
-                x_tr = scaler.fit_transform(delta_mean[tr])
-                x_te = scaler.transform(delta_mean[te])
+                x_tr, x_te = standardize(delta_mean[tr], delta_mean[te])
                 pls = PLSRegression(n_components=n_components)
                 pls.fit(x_tr, ddg[tr])
                 pred = pls.predict(x_te).ravel()

@@ -56,10 +56,14 @@ from sklearn.linear_model import Ridge
 from sklearn.preprocessing import StandardScaler
 
 from esm2_mech.experiments.mechanism.loaders import load_merged
-from esm2_mech.experiments.stability.stability_data import load_stability_inputs
+from esm2_mech.experiments.stability.stability_data import (
+    load_stability_inputs,
+    stability_splits,
+)
+from esm2_mech.utils.constants import N_SEEDS, N_FOLDS
 from esm2_mech.utils.io import atomic_write_json
-from esm2_mech.utils.metrics import auroc_at_median, mean_std_n
-from esm2_mech.utils.splits import random_split_cv, gene_split_cv, family_split_cv
+from esm2_mech.utils.metrics import auroc_at_median, mean_std_n, standardize
+from esm2_mech.utils.splits import family_split_cv
 from esm2_mech.utils.paths import (
     DATA_DIR as _DATA_DIR,
     RESULTS_DIR as _RESULTS_DIR,
@@ -71,9 +75,6 @@ from esm2_mech.utils.paths import (
 )
 
 OUT = str(_RESULTS_DIR / "megascale_stability")
-
-N_SEEDS = 5
-N_FOLDS = 5
 
 os.makedirs(OUT, exist_ok=True)
 os.makedirs(str(_DATA_DIR / "embeddings" / ESM2_MODEL), exist_ok=True)
@@ -94,9 +95,7 @@ def run_regression_cv(X, y, splits, clf_fn, with_pearson=True):
     """
     rhos, pearsons, aurocs = [], [], []
     for tr, te in splits:
-        scaler = StandardScaler()
-        Xtr = scaler.fit_transform(X[tr])
-        Xte = scaler.transform(X[te])
+        Xtr, Xte = standardize(X[tr], X[te])
         clf = clf_fn()
         clf.fit(Xtr, y[tr])
         pred = clf.predict(Xte)
@@ -149,9 +148,7 @@ def per_protein_spearman(X, y, proteins):
         te = np.where(mask)[0]
         if len(tr) < 10:
             continue
-        sc = StandardScaler()
-        Xtr = sc.fit_transform(X[tr])
-        Xte = sc.transform(X[te])
+        Xtr, Xte = standardize(X[tr], X[te])
         clf = Ridge(alpha=1.0)
         clf.fit(Xtr, y[tr])
         pred = clf.predict(Xte)
@@ -325,18 +322,12 @@ def main():
     for seed in range(N_SEEDS):
         print(f"\n── Seed {seed} ──")
 
-        splits_random = random_split_cv(len(variants), N_FOLDS, seed)
-        splits_domain = gene_split_cv(proteins, n_folds=N_FOLDS, seed=seed)
-        splits_family = family_split_cv(proteins, family_map, n_folds=N_FOLDS, seed=seed)
+        splits_by_name = stability_splits(seed, len(variants), proteins, family_map)
 
         seed_result = {"seed": seed}
 
         for feat_name, X in [("delta_mean", delta_mean), ("delta_pos", delta_pos)]:
-            for split_name, splits in [
-                ("random", splits_random),
-                ("domain", splits_domain),
-                ("family", splits_family),
-            ]:
+            for split_name, splits in splits_by_name.items():
                 key = f"{feat_name}_{split_name}"
                 res = run_ridge_with_auroc(X, ddg, splits)
                 seed_result[key] = res

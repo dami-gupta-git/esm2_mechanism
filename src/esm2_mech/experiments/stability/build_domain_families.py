@@ -18,7 +18,6 @@ Usage:
 """
 
 import functools
-import json
 import os
 import shutil
 import subprocess
@@ -26,6 +25,7 @@ import tempfile
 from collections import Counter, defaultdict
 
 from esm2_mech.experiments.stability.tsuboyama_loader import load_tsuboyama_variants
+from esm2_mech.utils.io import atomic_write_json
 from esm2_mech.utils.paths import (
     PFAM_A_HMM,
     MEGASCALE_DOMAIN_FAMILIES_JSON,
@@ -133,8 +133,7 @@ def build_family_map(variants=None, out_path=None):
 
     print_membership(wt_seqs, family_map, orphans)
 
-    with open(out_path, "w") as handle:
-        json.dump(family_map, handle, indent=2)
+    atomic_write_json(out_path, family_map, indent=2)
     print(f"\nWrote {len(family_map)} domain→Pfam assignments to {out_path}")
     if orphans:
         print(f"{len(orphans)} orphan domains (no Pfam) excluded from family-split")

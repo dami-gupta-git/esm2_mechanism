@@ -15,6 +15,8 @@ import numpy as np
 
 from esm2_mech.experiments.stability.tsuboyama_loader import load_tsuboyama_variants
 from esm2_mech.experiments.stability.build_domain_families import build_family_map
+from esm2_mech.utils.constants import N_FOLDS
+from esm2_mech.utils.splits import random_split_cv, gene_split_cv, family_split_cv
 from esm2_mech.utils.paths import (
     MEGASCALE_EMB_WT_MEAN,
     MEGASCALE_EMB_MUT_MEAN,
@@ -43,6 +45,20 @@ StabilityInputs = namedtuple(
 )
 
 
+def stability_splits(seed, n_variants, proteins, family_map, n_folds=N_FOLDS):
+    """The three CV schemes for one seed, as a name→splits dict.
+
+    random (in-distribution), domain-holdout (never train+test on the same
+    domain), family-holdout (never train+test on related Pfam families). Shared by
+    every stability probe so the scheme/arg triple lives in one place.
+    """
+    return {
+        "random": random_split_cv(n_variants, n_folds, seed),
+        "domain": gene_split_cv(proteins, n_folds=n_folds, seed=seed),
+        "family": family_split_cv(proteins, family_map, n_folds=n_folds, seed=seed),
+    }
+
+
 def _load_family_map(variants):
     """Domain → Pfam family map, from cache if present else built via HMMER.
 
@@ -50,8 +66,15 @@ def _load_family_map(variants):
     the family-split only.
     """
     if os.path.exists(MEGASCALE_DOMAIN_FAMILIES_JSON):
-        with open(MEGASCALE_DOMAIN_FAMILIES_JSON) as handle:
-            return json.load(handle)
+        try:
+            with open(MEGASCALE_DOMAIN_FAMILIES_JSON) as handle:
+                return json.load(handle)
+        except json.JSONDecodeError:
+            print(
+                f"WARNING: corrupt family-map cache {MEGASCALE_DOMAIN_FAMILIES_JSON}; "
+                "deleting and rebuilding."
+            )
+            os.remove(MEGASCALE_DOMAIN_FAMILIES_JSON)
     return build_family_map(variants=variants)
 
 
