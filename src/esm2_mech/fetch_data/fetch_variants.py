@@ -45,7 +45,7 @@ import openpyxl
 import requests
 
 from esm2_mech.utils.constants import SOURCE_CLINVAR_G2P, SOURCE_GERASIMAVICIUS
-from esm2_mech.utils.io import atomic_write_json, atomic_write_text
+from esm2_mech.utils.io import atomic_write_json, atomic_write_text, load_json_or_discard
 from esm2_mech.utils.paths import CACHE_DIR, DATA_DIR, GENE_LIST_TSV, VARIANTS_JSON
 
 print = functools.partial(print, flush=True)
@@ -289,12 +289,9 @@ def _parse_hgvsp(hgvs_p: str) -> Optional[tuple]:
 
 def fetch_uniprot_id(gene: str, prefilled: Optional[str]) -> Optional[str]:
     cache_file = UNIPROT_CACHE / f"{gene}.json"
-    if cache_file.exists():
-        try:
-            return json.loads(cache_file.read_text()).get("uniprot_id")
-        except json.JSONDecodeError:
-            print(f"  WARNING: corrupt UniProt cache for {gene} — re-fetching")
-            cache_file.unlink()
+    cached = load_json_or_discard(cache_file)
+    if cached is not None:
+        return cached.get("uniprot_id")
 
     if prefilled:
         atomic_write_json(cache_file, {"uniprot_id": prefilled})
@@ -368,12 +365,9 @@ def fetch_clinvar_variants(gene: str) -> tuple[list, bool]:
     retry on the next run.  A cached result is always complete by construction.
     """
     cache_file = CLINVAR_CACHE / f"{gene}.json"
-    if cache_file.exists():
-        try:
-            return json.loads(cache_file.read_text()), True
-        except json.JSONDecodeError:
-            print(f"  WARNING: corrupt ClinVar cache for {gene} — re-fetching")
-            cache_file.unlink()
+    cached = load_json_or_discard(cache_file)
+    if cached is not None:
+        return cached, True
 
     variants: list = []
     search_params = {

@@ -26,7 +26,7 @@ from esm2_mech.utils.paths import (
     SEQUENCES_NOT_FOUND_JSON,
     VARIANTS_JSON,
 )
-from esm2_mech.utils.io import atomic_write_json
+from esm2_mech.utils.io import atomic_write_json, load_json_or_discard
 from esm2_mech.fetch_data.sequences import fetch_uniprot_sequence, TransientFetchError
 
 print = functools.partial(print, flush=True)
@@ -46,27 +46,14 @@ def prefetch_sequences() -> None:
     all_uids = sorted({v["uniprot_id"] for v in variants if v.get("uniprot_id")})
     print(f"Unique UniProt IDs: {len(all_uids)}")
 
-    seq_cache: dict[str, str] = {}
-    if SEQUENCES_JSON.exists():
-        try:
-            with open(SEQUENCES_JSON) as f:
-                seq_cache = json.load(f)
-            print(f"Loaded {len(seq_cache)} sequences from existing cache")
-        except json.JSONDecodeError:
-            print(f"WARNING: corrupt cache at {SEQUENCES_JSON} — starting empty")
-            SEQUENCES_JSON.unlink()
+    seq_cache: dict[str, str] = load_json_or_discard(SEQUENCES_JSON) or {}
+    if seq_cache:
+        print(f"Loaded {len(seq_cache)} sequences from existing cache")
 
-    not_found: set[str] = set()
-    if SEQUENCES_NOT_FOUND_JSON.exists():
-        try:
-            with open(SEQUENCES_NOT_FOUND_JSON) as f:
-                not_found = set(json.load(f))
-            print(f"Loaded {len(not_found)} known-absent (404) accessions")
-        except json.JSONDecodeError:
-            print(
-                f"WARNING: corrupt not-found cache at {SEQUENCES_NOT_FOUND_JSON} — starting empty"
-            )
-            SEQUENCES_NOT_FOUND_JSON.unlink()
+    cached_not_found = load_json_or_discard(SEQUENCES_NOT_FOUND_JSON)
+    not_found: set[str] = set(cached_not_found) if cached_not_found else set()
+    if not_found:
+        print(f"Loaded {len(not_found)} known-absent (404) accessions")
 
     needed = [uid for uid in all_uids if uid not in seq_cache and uid not in not_found]
     print(f"Need to fetch: {len(needed)}")

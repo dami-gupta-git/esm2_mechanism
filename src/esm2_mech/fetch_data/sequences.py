@@ -4,12 +4,11 @@ from __future__ import annotations
 
 import functools
 import json
-import os
 import time
 import urllib.request
 
 from esm2_mech.utils.constants import UNIPROT_REST
-from esm2_mech.utils.io import atomic_write_json
+from esm2_mech.utils.io import atomic_write_json, load_json_or_discard
 from esm2_mech.utils.paths import PFAM_JSON
 
 print = functools.partial(print, flush=True)
@@ -67,13 +66,9 @@ def fetch_pfam_families(variants: list[dict]) -> dict[str, str | None]:
     import urllib.error
 
     cache_path = PFAM_JSON
-    if os.path.exists(cache_path):
-        try:
-            with open(cache_path, newline="") as f:
-                return json.load(f)
-        except json.JSONDecodeError:
-            print(f"WARNING: corrupt Pfam cache at {cache_path} — re-fetching")
-            os.remove(cache_path)
+    cached = load_json_or_discard(cache_path)
+    if cached is not None:
+        return cached
 
     pfam_map: dict[str, str | None] = {}
     unique_pairs = {
