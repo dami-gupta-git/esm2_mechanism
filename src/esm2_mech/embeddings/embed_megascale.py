@@ -31,7 +31,11 @@ import numpy as np
 print = functools.partial(print, flush=True)
 
 from esm2_mech.experiments.stability.tsuboyama_loader import load_tsuboyama_variants
-from esm2_mech.utils.embed import get_esm2_embeddings_for_pairs
+from esm2_mech.utils.embed import (
+    EMB_ARRAY_NAMES,
+    get_esm2_embeddings_for_pairs,
+    inspect_four_array_checkpoint,
+)
 from esm2_mech.utils.constants import (
     ESM2_MODEL as ESM2_MODEL_650M,
     ESM2_MODEL_3B,
@@ -46,13 +50,17 @@ from esm2_mech.utils.paths import (
 )
 
 # The shared helper's fixed checkpoint name → the megascale target path it is
-# promoted to once extraction is complete.
-_CKPT_TO_TARGET = {
-    "embeddings_wt_mean.npy": MEGASCALE_EMB_WT_MEAN,
-    "embeddings_mut_mean.npy": MEGASCALE_EMB_MUT_MEAN,
-    "embeddings_wt_pos.npy": MEGASCALE_EMB_WT_POS,
-    "embeddings_mut_pos.npy": MEGASCALE_EMB_MUT_POS,
-}
+# promoted to once extraction is complete. Keyed off EMB_ARRAY_NAMES (the same
+# tuple the helper writes) so the names cannot drift from the writer.
+_CKPT_TO_TARGET = dict(zip(
+    EMB_ARRAY_NAMES,
+    (
+        MEGASCALE_EMB_WT_MEAN,
+        MEGASCALE_EMB_MUT_MEAN,
+        MEGASCALE_EMB_WT_POS,
+        MEGASCALE_EMB_MUT_POS,
+    ),
+))
 
 
 def _build_pairs(variants):
@@ -115,25 +123,14 @@ def main():
     # Resume: if a full checkpoint already exists, skip extraction and just promote.
     ckpt_paths = [os.path.join(ckpt_dir, name) for name in _CKPT_TO_TARGET]
     resume_arrays, resume_start = None, 0
-    if all(os.path.exists(p) for p in ckpt_paths):
-        try:
-            row_counts = [np.load(p, mmap_mode="r").shape[0] for p in ckpt_paths]
-        except (ValueError, OSError, EOFError):
-            # A truncated/partially-written .npy fails to mmap with OSError/EOFError
-            # (bad header or data), not only ValueError.
-            print("WARNING: corrupt checkpoint — re-extracting")
-            row_counts = [-1]
-            for p in ckpt_paths:
-                if os.path.exists(p):
-                    os.remove(p)
-        if len(set(row_counts)) == 1 and row_counts[0] == len(wt_seqs):
-            print("Embeddings already complete — promoting checkpoint.")
-            _promote_checkpoint(ckpt_dir, len(wt_seqs))
-            return
-        if len(set(row_counts)) == 1 and 0 < row_counts[0] < len(wt_seqs):
-            resume_start = row_counts[0]
-            print(f"Partial checkpoint: {resume_start}/{len(wt_seqs)} rows — resuming")
-            resume_arrays = tuple(np.load(p) for p in ckpt_paths)
+    status, payload = inspect_four_array_checkpoint(ckpt_paths, len(wt_seqs))
+    if status == "complete":
+        print("Embeddings already complete — promoting checkpoint.")
+        _promote_checkpoint(ckpt_dir, len(wt_seqs))
+        return
+    if status == "resume":
+        resume_start, resume_arrays = payload
+        print(f"Partial checkpoint: {resume_start}/{len(wt_seqs)} rows — resuming")
 
     print(f"\nExtracting ESM-2 embeddings ({args.model})...")
     get_esm2_embeddings_for_pairs(

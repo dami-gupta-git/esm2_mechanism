@@ -17,6 +17,22 @@ def apply_missense(sequence: str, aa_pos: int, aa_wt: str, aa_mut: str) -> str |
     return "".join(seq_list)
 
 
+def build_windowed_pair(
+    sequence: str, aa_pos: int, aa_wt: str, aa_mut: str
+) -> tuple[str, str, int] | None:
+    """Window `sequence` around aa_pos and apply the missense substitution.
+
+    Returns (wt_window, mut_window, new_pos) where new_pos is the 1-indexed
+    mutation position within the window, or None if the WT residue does not match
+    the reference (apply_missense returns None) — i.e. the variant must be dropped.
+    """
+    wt_win, new_pos, _ = window_sequence(sequence, aa_pos)
+    mut_win = apply_missense(wt_win, new_pos, aa_wt, aa_mut)
+    if mut_win is None:
+        return None
+    return wt_win, mut_win, new_pos
+
+
 def window_sequence(
     sequence: str,
     aa_pos: int,

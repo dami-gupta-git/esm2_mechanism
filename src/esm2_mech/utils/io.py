@@ -16,11 +16,14 @@ def save_npy(path, arr: np.ndarray) -> None:
     os.replace(tmp, str(path))
 
 
-def atomic_write_json(path, data) -> None:
-    """Atomically write JSON: write to .tmp, fsync, then rename."""
+def atomic_write_json(path, data, **json_kwargs) -> None:
+    """Atomically write JSON: write to .tmp, fsync, then rename.
+
+    Extra keyword args (e.g. indent, sort_keys) are forwarded to json.dump.
+    """
     tmp = str(path) + ".tmp"
     with open(tmp, "w") as f:
-        json.dump(data, f)
+        json.dump(data, f, **json_kwargs)
         f.flush()
         os.fsync(f.fileno())
     os.replace(tmp, str(path))

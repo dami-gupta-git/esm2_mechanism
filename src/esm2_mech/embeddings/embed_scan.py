@@ -35,7 +35,7 @@ from esm2_mech.utils.paths import (
     SEQUENCES_JSON,
 )
 from esm2_mech.utils.embed import get_esm2_embeddings_for_pairs, load_esm2_model
-from esm2_mech.utils.sequences import window_sequence, apply_missense
+from esm2_mech.utils.sequences import build_windowed_pair
 from esm2_mech.utils.io import save_npy
 
 PROBE_CACHE = SCAN_PROBE_CACHE_JSON
@@ -79,11 +79,11 @@ def embed_scan(batch_size: int = 128) -> None:
     skipped_mismatch = 0
     for p in probes:
         seq = seqs[p["uniprot_id"]]
-        wt_win, new_pos, _ = window_sequence(seq, p["aa_pos"])
-        mut_win = apply_missense(wt_win, new_pos, p["aa_wt"], p["aa_mut"])
-        if mut_win is None:
+        pair = build_windowed_pair(seq, p["aa_pos"], p["aa_wt"], p["aa_mut"])
+        if pair is None:
             skipped_mismatch += 1
             continue
+        wt_win, mut_win, new_pos = pair
         wt_seqs.append(wt_win)
         mut_seqs.append(mut_win)
         positions.append(new_pos)

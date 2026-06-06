@@ -23,7 +23,6 @@ from __future__ import annotations
 import argparse
 import functools
 import json
-import os
 import sys
 from pathlib import Path
 
@@ -31,6 +30,7 @@ import numpy as np
 
 print = functools.partial(print, flush=True)
 
+from esm2_mech.utils.io import atomic_write_json
 from esm2_mech.utils.paths import DATA_DIR as DATA, VALID_VARIANTS_JSON
 from esm2_mech.utils.sequences import window_sequence
 
@@ -246,12 +246,7 @@ def main() -> int:
                     "per_ckpt": per_ckpt,
                     "ckpt_done": {c: list(ckpt_done[c]) for c in CHECKPOINTS},
                 }
-                ckpt_tmp = str(ckpt_path) + ".tmp"
-                with open(ckpt_tmp, "w") as _f:
-                    json.dump(ckpt_state, _f)
-                    _f.flush()
-                    os.fsync(_f.fileno())
-                os.replace(ckpt_tmp, ckpt_path)
+                atomic_write_json(ckpt_path, ckpt_state)
                 print(
                     f"  Checkpoint saved ({len(all_fully_done)} genes fully done)",
                     flush=True,
@@ -279,12 +274,7 @@ def main() -> int:
     n_scored = sum(1 for v in averaged.values() if not np.isnan(v))
     print(f"\nFinal: {n_scored:,}/{len(averaged):,} variants with finite ΔLL")
 
-    out_tmp = str(args.out) + ".tmp"
-    with open(out_tmp, "w") as f:
-        json.dump(averaged, f, indent=2, sort_keys=True)
-        f.flush()
-        os.fsync(f.fileno())
-    os.replace(out_tmp, args.out)
+    atomic_write_json(args.out, averaged, indent=2, sort_keys=True)
     print(f"Wrote {args.out}")
 
     if ckpt_path.exists():

@@ -14,6 +14,78 @@ from esm2_mech.utils.io import save_npy
 
 print = functools.partial(print, flush=True)
 
+# The four embedding arrays written by get_esm2_embeddings_for_pairs, in the
+# canonical order (wt_mean, mut_mean, wt_pos, mut_pos). Both the checkpoint
+# writer (_flush_checkpoint) and the resume readers (inspect_four_array_checkpoint
+# and the embed-step drivers) key off this single tuple so the filenames cannot
+# drift between writer and reader.
+EMB_ARRAY_NAMES = (
+    "embeddings_wt_mean.npy",
+    "embeddings_mut_mean.npy",
+    "embeddings_wt_pos.npy",
+    "embeddings_mut_pos.npy",
+)
+
+
+def inspect_four_array_checkpoint(ckpt_paths: list, n_expected: int):
+    """Inspect a four-array embedding checkpoint and decide how to proceed.
+
+    ckpt_paths is the list of the four .npy paths (order must match
+    EMB_ARRAY_NAMES). Returns one of:
+
+      ("complete", None)                  all four arrays present, equal length,
+                                          and == n_expected — nothing to extract.
+      ("resume", (start, arrays))         a consistent partial checkpoint of
+                                          `start` rows (0 < start < n_expected);
+                                          `arrays` is the four loaded np.ndarrays.
+      ("reextract", None)                 no checkpoint, or it is corrupt /
+                                          inconsistent / longer than expected —
+                                          any partial files have been deleted.
+
+    A truncated or partially-written .npy fails to mmap with OSError/EOFError
+    (bad header or data), not only ValueError, so all three are caught and
+    treated as a corrupt checkpoint to re-extract.
+    """
+    if not all(os.path.exists(p) for p in ckpt_paths):
+        return "reextract", None
+
+    try:
+        row_counts = [np.load(p, mmap_mode="r").shape[0] for p in ckpt_paths]
+    except (ValueError, OSError, EOFError):
+        print("WARNING: corrupt checkpoint — re-extracting", flush=True)
+        for p in ckpt_paths:
+            if os.path.exists(p):
+                os.remove(p)
+        return "reextract", None
+
+    if len(set(row_counts)) > 1:
+        print(
+            f"WARNING: checkpoint row counts inconsistent {row_counts} — re-extracting",
+            flush=True,
+        )
+        for p in ckpt_paths:
+            if os.path.exists(p):
+                os.remove(p)
+        return "reextract", None
+
+    n_on_disk = row_counts[0]
+    if n_on_disk == n_expected:
+        return "complete", None
+    if 0 < n_on_disk < n_expected:
+        arrays = tuple(np.load(p) for p in ckpt_paths)
+        return "resume", (n_on_disk, arrays)
+
+    # n_on_disk == 0, or n_on_disk > n_expected — either way the checkpoint
+    # cannot be trusted; delete and re-extract.
+    print(
+        f"WARNING: checkpoint row count {n_on_disk} != expected {n_expected} — re-extracting",
+        flush=True,
+    )
+    for p in ckpt_paths:
+        if os.path.exists(p):
+            os.remove(p)
+    return "reextract", None
+
 
 def _flush_checkpoint(
     out_dir: str,
@@ -40,14 +112,12 @@ def _flush_checkpoint(
     from build_valid_variants, this file becomes the authoritative row index and
     downstream loaders should read it instead of valid_variants.json.
     """
-    arrays = {
-        "embeddings_wt_mean": wt_mean_list,
-        "embeddings_mut_mean": mut_mean_list,
-        "embeddings_wt_pos": wt_pos_list,
-        "embeddings_mut_pos": mut_pos_list,
-    }
+    arrays = dict(zip(
+        EMB_ARRAY_NAMES,
+        (wt_mean_list, mut_mean_list, wt_pos_list, mut_pos_list),
+    ))
     for name, lst in arrays.items():
-        save_npy(os.path.join(out_dir, f"{name}.npy"), np.stack(lst))
+        save_npy(os.path.join(out_dir, name), np.stack(lst))
     valid_path = os.path.join(out_dir, "embedded_variants.json")
     tmp_valid = valid_path + ".tmp"
     with open(tmp_valid, "w") as f:

@@ -42,15 +42,15 @@ import functools
 import json
 import os
 from collections import Counter
-import numpy as np
 
 print = functools.partial(print, flush=True)
 
-from esm2_mech.utils.sequences import (
-    window_sequence,
-    apply_missense,
+from esm2_mech.utils.sequences import build_windowed_pair
+from esm2_mech.utils.embed import (
+    EMB_ARRAY_NAMES,
+    get_esm2_embeddings_for_pairs,
+    inspect_four_array_checkpoint,
 )
-from esm2_mech.utils.embed import get_esm2_embeddings_for_pairs
 from esm2_mech.utils.constants import ESM2_MODEL as ESM2_MODEL_650M, ESM2_MODEL_3B
 from esm2_mech.utils.paths import VALID_VARIANTS_JSON, SEQUENCES_JSON, DATA_DIR
 
@@ -76,10 +76,10 @@ def _build_valid_pairs(
             continue
         if uid not in seq_cache:
             continue
-        wt_win, new_pos, _ = window_sequence(seq_cache[uid], v["aa_pos"])
-        mut_win = apply_missense(wt_win, new_pos, v["aa_wt"], v["aa_mut"])
-        if mut_win is None:
+        pair = build_windowed_pair(seq_cache[uid], v["aa_pos"], v["aa_wt"], v["aa_mut"])
+        if pair is None:
             continue
+        wt_win, mut_win, new_pos = pair
         valid.append(v)
         wt_seqs.append(wt_win)
         mut_seqs.append(mut_win)
@@ -134,46 +134,16 @@ def main() -> None:
     out_dir = str(DATA_DIR / "embeddings" / args.model)
     os.makedirs(out_dir, exist_ok=True)
 
-    ckpt_wt_mean = os.path.join(out_dir, "embeddings_wt_mean.npy")
-    ckpt_mut_mean = os.path.join(out_dir, "embeddings_mut_mean.npy")
-    ckpt_wt_pos = os.path.join(out_dir, "embeddings_wt_pos.npy")
-    ckpt_mut_pos = os.path.join(out_dir, "embeddings_mut_pos.npy")
-
-    all_ckpts = [ckpt_wt_mean, ckpt_mut_mean, ckpt_wt_pos, ckpt_mut_pos]
+    all_ckpts = [os.path.join(out_dir, name) for name in EMB_ARRAY_NAMES]
     resume_arrays = None
     resume_start = 0
-    if all(os.path.exists(p) for p in all_ckpts):
-        try:
-            row_counts = [np.load(p, mmap_mode="r").shape[0] for p in all_ckpts]
-            if len(set(row_counts)) > 1:
-                print(f"WARNING: checkpoint row counts inconsistent {row_counts} — re-extracting")
-                for ckpt in all_ckpts:
-                    if os.path.exists(ckpt):
-                        os.remove(ckpt)
-            else:
-                n_on_disk = row_counts[0]
-                if n_on_disk == len(valid):
-                    print("Embeddings already complete — nothing to do.")
-                    return
-                if n_on_disk < len(valid):
-                    print(f"Partial checkpoint: {n_on_disk}/{len(valid)} rows — resuming")
-                    resume_arrays = (
-                        np.load(ckpt_wt_mean),
-                        np.load(ckpt_mut_mean),
-                        np.load(ckpt_wt_pos),
-                        np.load(ckpt_mut_pos),
-                    )
-                    resume_start = n_on_disk
-                else:
-                    print(f"WARNING: checkpoint row count mismatch (arrays={n_on_disk}, expected={len(valid)}) — re-extracting")
-                    for ckpt in all_ckpts:
-                        if os.path.exists(ckpt):
-                            os.remove(ckpt)
-        except ValueError:
-            print("WARNING: corrupt checkpoint — re-extracting")
-            for ckpt in all_ckpts:
-                if os.path.exists(ckpt):
-                    os.remove(ckpt)
+    status, payload = inspect_four_array_checkpoint(all_ckpts, len(valid))
+    if status == "complete":
+        print("Embeddings already complete — nothing to do.")
+        return
+    if status == "resume":
+        resume_start, resume_arrays = payload
+        print(f"Partial checkpoint: {resume_start}/{len(valid)} rows — resuming")
 
     print(f"\nExtracting ESM-2 embeddings ({args.model})...")
     wt_mean, mut_mean, wt_pos, mut_pos = get_esm2_embeddings_for_pairs(
