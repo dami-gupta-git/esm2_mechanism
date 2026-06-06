@@ -331,13 +331,13 @@ def _fetch_paralog_count_rest(gene: str, own_cache_dir: Path) -> Optional[int]:
         if not entries:
             err = "empty data payload (HTTP 200 but no entries)"
             print(f"  paralog fetch ambiguous for {gene}: {err}")
-            cache_file.write_text(json.dumps({"paralog_count": None, "error": err}))
+            atomic_write_json(cache_file, {"paralog_count": None, "error": err})
             return None
         homologies: list = []
         for entry in entries:
             homologies.extend(entry.get("homologies", []))
         count = sum(1 for h in homologies if "paralog" in h.get("type", "").lower())
-        cache_file.write_text(json.dumps({"paralog_count": count}))
+        atomic_write_json(cache_file, {"paralog_count": count})
         return count
     except Exception as e:
         print(
@@ -1051,7 +1051,7 @@ def main():
             "scaling": "NOT applied here — fit scaler on training fold during modelling",
         },
     }
-    OUT_COLS.write_text(json.dumps(col_metadata, indent=2))
+    atomic_write_json(OUT_COLS, col_metadata, indent=2)
     print(f"Wrote column metadata: {OUT_COLS}")
 
     # 8. Coverage summary
