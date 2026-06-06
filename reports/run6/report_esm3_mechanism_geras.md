@@ -38,8 +38,8 @@ every split and metric. Whether scale lifts the mechanism floor relative to ESM-
 answerable here — the ESM-2 baseline is on a different (merged) dataset, and 93 of these rows are
 contaminated; the merged ESM-3 run settles that comparison. Either way the question of how a
 mutation acts remains far from solved — 0.421 is still well below what practical mechanism
-prediction would need. Function tokens, the third ESM-3 modality, are not exposed by the open
-API and were not tested.
+prediction would need. Function tokens, the third ESM-3 modality, are supported by the open
+weights but were not implemented in this run.
 
 ---
 
@@ -168,9 +168,10 @@ mechanisms. Scale moved the floor; it did not solve the task.
 
 ## What this is and is not
 
-- **Not a test of function tokens.** ESM-3's third modality is not exposed by the open-weights
-  API and was dropped. The conclusion is limited to sequence and sequence-plus-structure; it is
-  possible, though untested, that function tokens behave differently.
+- **Not a test of function tokens.** ESM-3's third modality is supported by the open weights
+  (`ESMProtein` accepts a `function_annotations` track) but was not implemented in this run. The
+  conclusion is limited to sequence and sequence-plus-structure; it is possible, though untested,
+  that function tokens behave differently.
 - **Not a claim that structure is irrelevant to mechanism in general** — only that ESM-3's
   AlphaFold2 structure tokens, added to its sequence tokens, do not improve this delta-based
   mechanism probe. This echoes the family report's finding that the family-transferable signal

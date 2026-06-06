@@ -26,7 +26,7 @@ distinct ingredient. So the picture is scale, not structure: the bulk of the imp
 ESM-2 comes from the larger sequence model, and explicit AlphaFold2 structure contributes a
 marginal amount that does not change the conclusion. Mechanism remains far from solved — 0.45
 macro-F1 on three classes is well below what practical prediction would need. Function tokens,
-the third ESM-3 modality, are not exposed by the open API and were not tested.
+the third ESM-3 modality, are supported by the open weights but were not implemented in this run.
 
 This is the matched comparison. The earlier Gerasimavicius-only run
 ([`report_esm3_mechanism_geras.md`](report_esm3_mechanism_geras.md)) is superseded: it compared
@@ -151,8 +151,18 @@ solve the task.
 
 ## What this is and is not
 
-- **Not a test of function tokens.** ESM-3's third modality is not exposed by the open-weights
-  API and was dropped. The conclusion is limited to sequence and sequence-plus-structure.
+- **Not a test of function tokens — and that is a deliberate choice, not an oversight.** ESM-3's
+  third modality is supported by the open weights (`ESMProtein` accepts a `function_annotations`
+  track), so it could in principle be added. It was not, because under this probe's `mut − wt`
+  delta framing it cannot help: function annotations describe the whole protein, so they are
+  identical for the wildtype and the mutant and cancel in the subtraction — exactly the reason the
+  AlphaFold2 structure tokens, which also describe the whole protein, added almost nothing (M3).
+  A function-conditioned delta would therefore be expected to reproduce the structure result, and
+  a null would be uninterpretable: it would not distinguish "function carries no mechanism signal"
+  from "the subtraction erased it." A genuine test would have to leave the delta framing — probe
+  the absolute or concatenated function-conditioned embeddings instead — which is a different
+  experiment from the delta-based one used throughout. The conclusion here is therefore limited to
+  sequence and sequence-plus-structure by design.
 - **Not a claim that structure is irrelevant to mechanism in general** — only that ESM-3's
   AlphaFold2 structure tokens, added to its sequence tokens, do not add enough to this
   delta-based probe to clear the pre-registered bar. This echoes the family report's finding
