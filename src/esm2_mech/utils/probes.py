@@ -187,10 +187,14 @@ def auroc_for_clf(clf, X: np.ndarray, y: np.ndarray, pos_label=1) -> float:
     return float(roc_auc_score(y, proba))
 
 
-def run_logreg_binary_cv(
-    X: np.ndarray, y: np.ndarray, splits: list[tuple], seed: int = 42, pos_label=1
+def _run_binary_cv(
+    clf_fn, X: np.ndarray, y: np.ndarray, splits: list[tuple], seed: int, pos_label
 ) -> dict:
-    """Binary LogReg CV returning AUROC mean ± std."""
+    """Binary CV body: per-fold scale → fit clf_fn(seed) → AUROC, returning mean ± std.
+
+    Shared by run_logreg_binary_cv and run_mlp_binary_cv, which differ only in the
+    classifier. Returns {} when no fold had both classes in train and test.
+    """
     aurocs = []
     for tr, te in splits:
         sc = StandardScaler()
@@ -198,7 +202,7 @@ def run_logreg_binary_cv(
         X_te = sc.transform(X[te])
         if len(set(y[tr])) < 2 or len(set(y[te])) < 2:
             continue
-        clf = LogisticRegression(max_iter=1000, C=1.0, random_state=seed)
+        clf = clf_fn(seed)
         clf.fit(X_tr, y[tr])
         proba = clf.predict_proba(X_te)[:, _pos_class_col(clf.classes_, pos_label)]
         aurocs.append(float(roc_auc_score(y[te], proba)))
@@ -209,6 +213,16 @@ def run_logreg_binary_cv(
         "auroc_std": float(np.std(aurocs)),
         "n_folds": len(aurocs),
     }
+
+
+def run_logreg_binary_cv(
+    X: np.ndarray, y: np.ndarray, splits: list[tuple], seed: int = 42, pos_label=1
+) -> dict:
+    """Binary LogReg CV returning AUROC mean ± std."""
+    return _run_binary_cv(
+        lambda s: LogisticRegression(max_iter=1000, C=1.0, random_state=s),
+        X, y, splits, seed, pos_label,
+    )
 
 
 def run_mlp_cv(
@@ -311,30 +325,16 @@ def run_mlp_binary_cv(
     """Binary sklearn MLP CV returning AUROC mean ± std."""
     from sklearn.neural_network import MLPClassifier
 
-    aurocs = []
-    for tr, te in splits:
-        sc = StandardScaler()
-        X_tr = sc.fit_transform(X[tr])
-        X_te = sc.transform(X[te])
-        if len(set(y[tr])) < 2 or len(set(y[te])) < 2:
-            continue
-        clf = MLPClassifier(
+    return _run_binary_cv(
+        lambda s: MLPClassifier(
             hidden_layer_sizes=(256,),
             max_iter=300,
-            random_state=seed,
+            random_state=s,
             early_stopping=True,
             validation_fraction=0.1,
-        )
-        clf.fit(X_tr, y[tr])
-        proba = clf.predict_proba(X_te)[:, _pos_class_col(clf.classes_, pos_label)]
-        aurocs.append(float(roc_auc_score(y[te], proba)))
-    if not aurocs:
-        return {}
-    return {
-        "auroc_mean": float(np.mean(aurocs)),
-        "auroc_std": float(np.std(aurocs)),
-        "n_folds": len(aurocs),
-    }
+        ),
+        X, y, splits, seed, pos_label,
+    )
 
 
 def pca_reduce(X_tr: np.ndarray, X_te: np.ndarray, n_components: int = 50):
