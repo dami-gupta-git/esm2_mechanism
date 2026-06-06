@@ -1,5 +1,5 @@
 """
-Tests for esm2_mech.fetch_data.sequences.
+Tests for esm2_mech.fetch_data.uniprot_fetch.
 
 Network calls are mocked throughout — no real HTTP requests.
 
@@ -23,7 +23,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from esm2_mech.fetch_data.sequences import (
+from esm2_mech.fetch_data.uniprot_fetch import (
     TransientFetchError,
     fetch_pfam_families,
     fetch_uniprot_sequence,
@@ -117,21 +117,21 @@ class TestFetchPfamFamilies:
         return mock
 
     def test_returns_pfam_id(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("esm2_mech.fetch_data.sequences.PFAM_JSON", tmp_path / "pfam_families.json")
+        monkeypatch.setattr("esm2_mech.fetch_data.uniprot_fetch.PFAM_JSON", tmp_path / "pfam_families.json")
         variants = self._variants([("BRCA1", "P38398")])
         with patch("urllib.request.urlopen", return_value=self._uniprot_json_response("PF00001")):
             result = fetch_pfam_families(variants)
         assert result["BRCA1"] == "PF00001"
 
     def test_returns_none_when_no_pfam(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("esm2_mech.fetch_data.sequences.PFAM_JSON", tmp_path / "pfam_families.json")
+        monkeypatch.setattr("esm2_mech.fetch_data.uniprot_fetch.PFAM_JSON", tmp_path / "pfam_families.json")
         variants = self._variants([("TP53", "P04637")])
         with patch("urllib.request.urlopen", return_value=self._uniprot_json_response(None)):
             result = fetch_pfam_families(variants)
         assert result["TP53"] is None
 
     def test_404_maps_to_none(self, tmp_path, monkeypatch):
-        monkeypatch.setattr("esm2_mech.fetch_data.sequences.PFAM_JSON", tmp_path / "pfam_families.json")
+        monkeypatch.setattr("esm2_mech.fetch_data.uniprot_fetch.PFAM_JSON", tmp_path / "pfam_families.json")
         variants = self._variants([("GENE1", "P99999")])
         with patch("urllib.request.urlopen", side_effect=_http_error(404)):
             result = fetch_pfam_families(variants)
@@ -139,7 +139,7 @@ class TestFetchPfamFamilies:
 
     def test_uses_cached_result(self, tmp_path, monkeypatch):
         cache_path = tmp_path / "pfam_families.json"
-        monkeypatch.setattr("esm2_mech.fetch_data.sequences.PFAM_JSON", cache_path)
+        monkeypatch.setattr("esm2_mech.fetch_data.uniprot_fetch.PFAM_JSON", cache_path)
         cached = {"BRCA1": "PF00001"}
         cache_path.write_text(json.dumps(cached))
         with patch("urllib.request.urlopen") as mock_open:
@@ -149,7 +149,7 @@ class TestFetchPfamFamilies:
 
     def test_corrupted_cache_deleted_and_refetched(self, tmp_path, monkeypatch):
         cache_path = tmp_path / "pfam_families.json"
-        monkeypatch.setattr("esm2_mech.fetch_data.sequences.PFAM_JSON", cache_path)
+        monkeypatch.setattr("esm2_mech.fetch_data.uniprot_fetch.PFAM_JSON", cache_path)
         cache_path.write_text("not json{{{")
         variants = self._variants([("BRCA1", "P38398")])
         with patch("urllib.request.urlopen", return_value=self._uniprot_json_response("PF00002")):
@@ -158,7 +158,7 @@ class TestFetchPfamFamilies:
 
     def test_transient_failure_skips_cache_write(self, tmp_path, monkeypatch):
         cache_path = tmp_path / "pfam_families.json"
-        monkeypatch.setattr("esm2_mech.fetch_data.sequences.PFAM_JSON", cache_path)
+        monkeypatch.setattr("esm2_mech.fetch_data.uniprot_fetch.PFAM_JSON", cache_path)
         variants = self._variants([("GENE1", "P12345")])
         with patch("urllib.request.urlopen", side_effect=_http_error(503)):
             fetch_pfam_families(variants)

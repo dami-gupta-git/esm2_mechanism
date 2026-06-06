@@ -33,7 +33,6 @@ import functools
 import json
 import sys
 import time
-import urllib.error
 import urllib.request
 import urllib.parse
 from collections import defaultdict
@@ -51,7 +50,13 @@ from esm2_mech.utils.paths import (
     SEQUENCES_JSON,
     VARIANTS_JSON,
 )
+from esm2_mech.utils.constants import UNIPROT_REST
 from esm2_mech.utils.io import atomic_write_json as _atomic_write_json
+from esm2_mech.fetch_data.uniprot_fetch import (
+    TransientFetchError as _TransientFetchError,
+    fetch_with_retries,
+    parse_pfam_id,
+)
 
 print = functools.partial(print, flush=True)
 
@@ -67,13 +72,8 @@ ENZYME_OUT = DATA_DIR / "enzyme_labels.tsv"
 # ===========================================================================
 # Step 1 — Pfam families
 # ===========================================================================
-UNIPROT_REST = "https://rest.uniprot.org/uniprotkb"
 _PFAM_DELAY = 0.3
 _PFAM_RETRIES = 3
-
-
-class _TransientFetchError(Exception):
-    """Raised when a fetch fails due to a transient network/server error (not a 404)."""
 
 
 def fetch_pfam_for_uniprot(uniprot_id: str) -> Optional[str]:
@@ -81,29 +81,17 @@ def fetch_pfam_for_uniprot(uniprot_id: str) -> Optional[str]:
 
     Raises _TransientFetchError on network/server failure so callers can skip caching.
     """
-    url = f"{UNIPROT_REST}/{uniprot_id}.json"
-    last_exc: Exception = RuntimeError("no attempts made")
-    for attempt in range(_PFAM_RETRIES):
-        try:
-            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-            with urllib.request.urlopen(req, timeout=20) as resp:
-                data = json.loads(resp.read().decode())
-            for xref in data.get("uniProtKBCrossReferences", []):
-                if xref.get("database") == "Pfam":
-                    return xref.get("id")
-            return None  # genuine "no Pfam entry" — safe to cache
-        except urllib.error.HTTPError as e:
-            if e.code == 404:
-                return None  # genuine "not found" — safe to cache
-            last_exc = e
-        except Exception as e:
-            last_exc = e
-        if attempt < _PFAM_RETRIES - 1:
-            time.sleep(_PFAM_DELAY * (attempt + 1))
-    print(
-        f"  WARNING: failed to fetch {uniprot_id}: {last_exc} — not caching, will retry next run"
+    body = fetch_with_retries(
+        f"{UNIPROT_REST}/{uniprot_id}.json",
+        headers={"User-Agent": "Mozilla/5.0"},
+        timeout=20,
+        retries=_PFAM_RETRIES,
+        delay=_PFAM_DELAY,
+        label=uniprot_id,
     )
-    raise _TransientFetchError(str(last_exc))
+    if body is None:
+        return None  # genuine 404 — safe to cache
+    return parse_pfam_id(json.loads(body))
 
 
 def main_pfam(from_scratch: bool = False) -> None:
@@ -271,7 +259,6 @@ def main_uniprot(from_scratch: bool = False) -> None:
 # ===========================================================================
 # Step 3 — Enzyme labels
 # ===========================================================================
-_ENZYME_URL = "https://rest.uniprot.org/uniprotkb/{acc}?format=json"
 _ENZYME_RETRIES = 3
 _ENZYME_BACKOFF = 2.0
 ENZYME_4CLASS_PRIORITY = ["kinase", "protease", "oxidoreductase"]
@@ -282,31 +269,18 @@ def _fetch_uniprot_entry(acc: str) -> Optional[dict]:
 
     Raises _TransientFetchError on network/server failure so callers can skip caching.
     """
-    url = _ENZYME_URL.format(acc=acc)
-    last_exc: Exception = RuntimeError("no attempts made")
-    for attempt in range(_ENZYME_RETRIES):
-        try:
-            req = urllib.request.Request(
-                url,
-                headers={
-                    "User-Agent": "dami-mechanism-prediction/0.1 (academic research)",
-                    "Accept": "application/json",
-                },
-            )
-            with urllib.request.urlopen(req, timeout=30) as resp:
-                return json.loads(resp.read().decode())
-        except urllib.error.HTTPError as e:
-            if e.code == 404:
-                return None  # genuine "not found" — safe to cache
-            print(f"  HTTP {e.code} for {acc} (attempt {attempt+1})")
-            last_exc = e
-        except Exception as e:
-            print(f"  Error fetching {acc} (attempt {attempt+1}): {e}")
-            last_exc = e
-        if attempt < _ENZYME_RETRIES - 1:
-            time.sleep(_ENZYME_BACKOFF * (attempt + 1))
-    print(f"  WARNING: giving up on {acc} — not caching, will retry next run")
-    raise _TransientFetchError(str(last_exc))
+    body = fetch_with_retries(
+        f"{UNIPROT_REST}/{acc}?format=json",
+        headers={
+            "User-Agent": "dami-mechanism-prediction/0.1 (academic research)",
+            "Accept": "application/json",
+        },
+        timeout=30,
+        retries=_ENZYME_RETRIES,
+        delay=_ENZYME_BACKOFF,
+        label=acc,
+    )
+    return None if body is None else json.loads(body)
 
 
 def parse_ec_and_keywords(entry: dict) -> tuple:

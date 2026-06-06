@@ -1,10 +1,15 @@
-"""UniProt sequence and Pfam family fetching with resume-safe caching."""
+"""UniProt sequence and Pfam family fetching with resume-safe caching.
+
+Owns the shared urllib fetch helpers used across the fetch_data package:
+`TransientFetchError`, `fetch_with_retries`, and `parse_pfam_id`.
+"""
 
 from __future__ import annotations
 
 import functools
 import json
 import time
+import urllib.error
 import urllib.request
 
 from esm2_mech.utils.constants import UNIPROT_REST
@@ -19,6 +24,53 @@ class TransientFetchError(Exception):
     definitive 404). Callers must not cache the result — the next run should retry."""
 
 
+def fetch_with_retries(
+    url: str,
+    *,
+    headers: dict[str, str] | None = None,
+    timeout: int = 30,
+    retries: int = 3,
+    delay: float = 1.0,
+    label: str | None = None,
+) -> str | None:
+    """GET `url` with retry + linear backoff, returning the decoded body.
+
+    Returns the response text on success, or None when the server definitively
+    reports the resource does not exist (HTTP 404 — a real result, safe to cache).
+    Raises TransientFetchError when all retries are exhausted on a transient
+    network/server error; callers must not cache that outcome.
+
+    `delay` is scaled by (attempt + 1) so successive waits grow linearly. `label`
+    is used only in the warning message (defaults to the URL).
+    """
+    request = urllib.request.Request(url, headers=headers or {})
+    last_exc: Exception | None = None
+    for attempt in range(retries):
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as resp:
+                return resp.read().decode()
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:
+                return None
+            last_exc = exc
+        except Exception as exc:
+            last_exc = exc
+        if attempt < retries - 1:
+            time.sleep(delay * (attempt + 1))
+    print(
+        f"  WARNING: transient fetch failure for {label or url}: {last_exc} — will retry next run"
+    )
+    raise TransientFetchError(label or url) from last_exc
+
+
+def parse_pfam_id(entry: dict) -> str | None:
+    """Return the first Pfam cross-reference ID in a UniProt JSON entry, or None."""
+    for xref in entry.get("uniProtKBCrossReferences", []):
+        if xref.get("database") == "Pfam":
+            return xref.get("id")
+    return None
+
+
 def fetch_uniprot_sequence(
     uniprot_id: str, retries: int = 3, delay: float = 1.0
 ) -> str | None:
@@ -30,29 +82,17 @@ def fetch_uniprot_sequence(
     Raises TransientFetchError when all retries are exhausted due to a transient
     network or server error. Callers must not cache this outcome.
     """
-    import urllib.error
-
-    url = f"{UNIPROT_REST}/{uniprot_id}.fasta"
-    last_exc: Exception | None = None
-    for attempt in range(retries):
-        try:
-            with urllib.request.urlopen(url, timeout=30) as resp:
-                fasta = resp.read().decode()
-            lines = fasta.strip().split("\n")
-            seq = "".join(line for line in lines if not line.startswith(">"))
-            return seq.upper() if seq else None
-        except urllib.error.HTTPError as exc:
-            if exc.code == 404:
-                return None
-            last_exc = exc
-        except Exception as exc:
-            last_exc = exc
-        if attempt < retries - 1:
-            time.sleep(delay)
-    print(
-        f"  WARNING: transient fetch failure for {uniprot_id}: {last_exc} — will retry next run"
+    fasta = fetch_with_retries(
+        f"{UNIPROT_REST}/{uniprot_id}.fasta",
+        retries=retries,
+        delay=delay,
+        label=uniprot_id,
     )
-    raise TransientFetchError(uniprot_id) from last_exc
+    if fasta is None:
+        return None
+    lines = fasta.strip().split("\n")
+    seq = "".join(line for line in lines if not line.startswith(">"))
+    return seq.upper() if seq else None
 
 
 
@@ -63,8 +103,6 @@ def fetch_pfam_families(variants: list[dict]) -> dict[str, str | None]:
     Genes that fail with a transient network error are omitted from the returned dict
     and not written to cache, so the next run retries them.
     """
-    import urllib.error
-
     cache_path = PFAM_JSON
     cached = load_json_or_discard(cache_path)
     if cached is not None:
@@ -79,16 +117,11 @@ def fetch_pfam_families(variants: list[dict]) -> dict[str, str | None]:
     transient_failures = 0
     for gene, uniprot_id in sorted(unique_pairs):
         url = f"{UNIPROT_REST}/{uniprot_id}.json"
-        pfam_id = None
         try:
             req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
             with urllib.request.urlopen(req, timeout=20) as resp:
                 data = json.loads(resp.read().decode())
-            for xref in data.get("uniProtKBCrossReferences", []):
-                if xref.get("database") == "Pfam":
-                    pfam_id = xref.get("id")
-                    break
-            pfam_map[gene] = pfam_id
+            pfam_map[gene] = parse_pfam_id(data)
         except urllib.error.HTTPError as exc:
             if exc.code == 404:
                 pfam_map[gene] = None

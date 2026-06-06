@@ -27,7 +27,7 @@ from esm2_mech.utils.paths import (
     VARIANTS_JSON,
 )
 from esm2_mech.utils.io import atomic_write_json, load_json_or_discard
-from esm2_mech.fetch_data.sequences import fetch_uniprot_sequence, TransientFetchError
+from esm2_mech.fetch_data.uniprot_fetch import fetch_uniprot_sequence, TransientFetchError
 
 print = functools.partial(print, flush=True)
 
