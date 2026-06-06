@@ -129,8 +129,10 @@ def transfer_test(delta, y, groups, kind="linear", n_partitions=10, seed=0, min_
             pooled.append(auroc_for_clf(clf, Xs[te], y[te]))
 
     def agg(v):
+        # mean_std_n returns (nan, nan, 0) on empty — keep std consistent with
+        # mean rather than forcing a misleading 0.0 spread alongside a nan mean.
         mean, std, n = mean_std_n(v)
-        return (mean, std if n else 0.0, n)
+        return (mean, std, n)
 
     return {"transfer_auroc": agg(transfer), "pooled_auroc": agg(pooled)}
 
@@ -175,10 +177,22 @@ def load_stability(stability_dataset=DEFAULT_STABILITY_DATASET):
     with open(variants_json) as _f:
         v = json.load(_f)
     delta = np.load(mut_emb) - np.load(wt_emb)
-    n = min(len(v), len(delta))
-    v, delta = v[:n], delta[:n]
-    ddg = np.array([x["ddg"] for x in v], dtype=float)
+    if len(v) != len(delta):
+        raise ValueError(
+            f"row mismatch in {variants_json.name}: {len(delta)} embedding rows vs "
+            f"{len(v)} variants — not row-aligned."
+        )
+    # ddG missing/None/"nan" parses to NaN, poisons the median, and yields a
+    # wrong binary split. Restrict to the finite-ddG subset before the median.
+    ddg = np.array(
+        [x["ddg"] if x["ddg"] is not None else np.nan for x in v], dtype=float
+    )
     groups = np.array([x["protein"] for x in v])
+    finite = np.isfinite(ddg)
+    n_dropped = int((~finite).sum())
+    if n_dropped:
+        print(f"  Dropped {n_dropped}/{len(ddg)} variants with non-finite ddG")
+    delta, ddg, groups = delta[finite], ddg[finite], groups[finite]
     y = (ddg > np.median(ddg)).astype(int)  # median split
     return delta, y, groups
 

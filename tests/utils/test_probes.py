@@ -173,6 +173,26 @@ class TestRunMlpCv:
         y = np.array([GOF] * 10)
         assert "error" in run_mlp_cv(X, y, [], hidden=(16,))
 
+    def test_fold_with_rare_class_only_in_test_is_kept(self):
+        # A fold whose train split has exactly 2 of 3 classes (the rare class
+        # falls entirely in test) is still scorable — the runner must fit on it,
+        # not skip it. Pins the < 2 (not < n_classes) train-class skip condition.
+        rng = np.random.RandomState(0)
+        n = 180
+        y = np.array([GOF, DN] * 80 + [LOF] * 20)
+        X = rng.randn(n, 8) + np.array(
+            [MECHANISM_CLASSES.index(c) for c in y]
+        )[:, None] * 2.0
+        # One fold holds out every LOF row (so train has only GOF/DN) plus some
+        # GOF/DN so the test split has >= 2 classes.
+        lof_idx = np.where(y == LOF)[0]
+        extra = np.where(y != LOF)[0][:20]
+        test_idx = np.concatenate([lof_idx, extra])
+        train_idx = np.setdiff1d(np.arange(n), test_idx)
+        assert len(set(y[train_idx].tolist())) == 2  # rare class only in test
+        r = run_mlp_cv(X, y, [(train_idx, test_idx)], hidden=(16,))
+        assert r.get("n_folds") == 1  # fold kept, not skipped
+
 
 # ---------------------------------------------------------------------------
 # fold-skip condition (CLAUDE.md: < 2 classes in train must skip, valid folds must not)

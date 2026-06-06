@@ -39,6 +39,7 @@ import json
 
 import numpy as np
 
+from esm2_mech.utils.metrics import mean_std_n
 from esm2_mech.utils.paths import (
     FAMILY_CLUSTERING_JSON,
     LEAKAGE_FRACTION_JSON,
@@ -83,18 +84,26 @@ def leakage_fraction_per_feature(seeds, feature, chance):
     inflates that seed's ratio. Averaging the F1s first removes that artefact.
     Per-seed F1 spread is reported separately for context.
     """
+    # macro_f1_mean can be None (a seed where no fold scored) — use the
+    # None/NaN-filtering reducer rather than plain np.mean, which would crash
+    # (object dtype) or silently poison the average.
     gene_f1 = [s["gene_split"][feature]["macro_f1_mean"] for s in seeds]
     family_f1 = [s["family_split"][feature]["macro_f1_mean"] for s in seeds]
-    gene_mean = float(np.mean(gene_f1))
-    family_mean = float(np.mean(family_f1))
+    gene_mean, gene_std, gene_n = mean_std_n(gene_f1)
+    family_mean, family_std, _ = mean_std_n(family_f1)
 
     result = {
         "gene_macro_f1_mean": gene_mean,
-        "gene_macro_f1_std": float(np.std(gene_f1)),
+        "gene_macro_f1_std": gene_std,
         "family_macro_f1_mean": family_mean,
-        "family_macro_f1_std": float(np.std(family_f1)),
+        "family_macro_f1_std": family_std,
         "drop_mean": gene_mean - family_mean,
     }
+    if gene_n == 0:
+        # No scorable gene-split seed for this feature; LF undefined.
+        result["leakage_fraction"] = None
+        result["note"] = "no scorable gene-split seed; LF undefined"
+        return result
     denom = gene_mean - chance
     if denom > MIN_ABOVE_CHANCE:
         result["leakage_fraction"] = (gene_mean - family_mean) / denom

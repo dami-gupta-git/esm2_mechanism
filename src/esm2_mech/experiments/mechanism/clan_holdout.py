@@ -289,7 +289,9 @@ def aggregate(clan_results):
             float(np.nanmean(maj_f1s)) if maj_f1s else float("nan")
         ),
         "per_class_auroc_mean": {
-            cls: float(np.mean(vs)) for cls, vs in per_class.items() if vs
+            # np.nanmean for consistency with the macro-F1 reducers above (vs is
+            # already NaN-filtered, but siblings must use the same guard).
+            cls: float(np.nanmean(vs)) for cls, vs in per_class.items() if vs
         },
     }
 

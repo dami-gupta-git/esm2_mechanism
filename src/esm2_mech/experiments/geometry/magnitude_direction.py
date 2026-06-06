@@ -343,13 +343,29 @@ def run_biophysical_direction(seeds, stability_dataset=DEFAULT_STABILITY_DATASET
 
     with open(variants_json) as _f:
         variants = json.load(_f)
-    ddg = np.array([v["ddg"] for v in variants], dtype=np.float64)
+    # ddG is a scientific scalar: a missing/None/"nan" value would parse to NaN,
+    # poison the Spearman correlation, and label as stabilising via (nan > 0)==False.
+    # Keep None while building, then restrict to the finite-ddG subset — never
+    # let a non-finite value enter as a real observation.
+    ddg = np.array(
+        [v["ddg"] if v["ddg"] is not None else np.nan for v in variants],
+        dtype=np.float64,
+    )
     proteins = np.array([v["protein"] for v in variants])
     wt = np.load(wt_emb)
     mut = np.load(mut_emb)
     delta = mut - wt
-    n = min(len(delta), len(ddg), len(proteins))
-    delta, ddg, proteins = delta[:n], ddg[:n], proteins[:n]
+    if not (len(delta) == len(ddg) == len(proteins)):
+        raise ValueError(
+            f"row mismatch in {variants_json.name}: {len(delta)} embedding rows vs "
+            f"{len(ddg)} ddG values vs {len(proteins)} proteins — not row-aligned."
+        )
+    finite = np.isfinite(ddg)
+    n_dropped = int((~finite).sum())
+    if n_dropped:
+        print(f"  Dropped {n_dropped}/{len(ddg)} variants with non-finite ddG")
+    delta, ddg, proteins = delta[finite], ddg[finite], proteins[finite]
+    n = len(ddg)
     feats = decompose(delta)
     mag = feats["mag"].ravel()
 
@@ -395,6 +411,15 @@ def _best(path_block, split, metric_lr, metric_mlp):
 # ── Gates ────────────────────────────────────────────────────────────────────
 
 
+def _is_missing(x):
+    """True if a gate input is absent (None) or unscorable (NaN).
+
+    A gate built from such a value must report passed=None (SKIP), never a
+    real True/False — an all-NaN probe is missing data, not a genuine FAIL.
+    """
+    return x is None or (isinstance(x, float) and np.isnan(x))
+
+
 def evaluate_gates(path_res, mech_res, bio_res):
     gates = {}
 
@@ -404,7 +429,7 @@ def evaluate_gates(path_res, mech_res, bio_res):
         "desc": "magnitude-only pathogenicity AUROC >= 0.85 (family-split)",
         "value": p1_val,
         "threshold": P1_PATH_MAG_MIN,
-        "passed": bool(p1_val >= P1_PATH_MAG_MIN),
+        "passed": None if _is_missing(p1_val) else bool(p1_val >= P1_PATH_MAG_MIN),
     }
 
     # P2: direction-only pathogenicity AUROC <= 0.70 (family-split, best probe)
@@ -413,33 +438,35 @@ def evaluate_gates(path_res, mech_res, bio_res):
         "desc": "direction-only pathogenicity AUROC <= 0.70 (family-split)",
         "value": p2_val,
         "threshold": P2_PATH_DIR_MAX,
-        "passed": bool(p2_val <= P2_PATH_DIR_MAX),
+        "passed": None if _is_missing(p2_val) else bool(p2_val <= P2_PATH_DIR_MAX),
     }
 
     # P3: direction-only mechanism F1 <= chance_floor + 0.02 (family-split, MLP)
     floor = mech_res["chance_floor"]["family_split"]["mean"]
     p3_val = mech_res["dir"]["family_split"]["mlp_macro_f1"]["mean"]
-    p3_thr = floor + P3_MECH_MARGIN
+    p3_missing = _is_missing(floor) or _is_missing(p3_val)
+    p3_thr = None if _is_missing(floor) else floor + P3_MECH_MARGIN
     gates["P3"] = {
         "desc": "direction-only mechanism macro-F1 <= chance_floor + 0.02 (family-split)",
         "value": p3_val,
         "chance_floor": floor,
         "threshold": p3_thr,
-        "passed": bool(p3_val <= p3_thr),
+        "passed": None if p3_missing else bool(p3_val <= p3_thr),
     }
 
     # P4: S1724 sign(ddG) AUROC >= 0.65 AND Spearman(||d||,|ddG|) >= 0.30
     if bio_res is not None:
-        sign_auroc = max(
-            bio_res["c2_sign_auroc"]["full"]["mean"],
-            bio_res["c2_sign_auroc"]["dir"]["mean"],
-        )
+        full_mean = bio_res["c2_sign_auroc"]["full"]["mean"]
+        dir_mean = bio_res["c2_sign_auroc"]["dir"]["mean"]
+        scorable = [v for v in (full_mean, dir_mean) if not _is_missing(v)]
+        sign_auroc = max(scorable) if scorable else float("nan")
         rho = bio_res["c1_spearman_mag_absddg"]
+        p4_missing = _is_missing(sign_auroc) or _is_missing(rho)
         gates["P4"] = {
             "desc": "S1724 sign(ddG) AUROC >= 0.65 AND Spearman >= 0.30",
             "sign_auroc": sign_auroc,
             "spearman": rho,
-            "passed": bool(
+            "passed": None if p4_missing else bool(
                 sign_auroc >= P4_SIGN_AUROC_MIN and rho >= P4_MAG_SPEARMAN_MIN
             ),
         }

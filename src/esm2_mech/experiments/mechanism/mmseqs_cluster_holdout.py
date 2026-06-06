@@ -30,6 +30,7 @@ from pathlib import Path
 import numpy as np
 from sklearn.preprocessing import LabelEncoder
 from esm2_mech.utils.data import build_gene_to_row as _build_gene_to_row
+from esm2_mech.utils.metrics import mean_std_n
 from esm2_mech.utils.probes import run_mlp_cv, run_logreg_cv
 from esm2_mech.utils.paths import (
     DATA_DIR,
@@ -190,26 +191,22 @@ def run_seed(seed, n_folds, labels, genes, delta, X_prot, X_bad, gene_to_cluster
 
 def aggregate_seeds(all_res):
     out = {"n_seeds": len(all_res)}
+    # mean_std_n filters both None and NaN per-seed values, so a seed whose
+    # metric was unscorable (None) or NaN never poisons the across-seed mean/std.
     for key in ["V1", "V2", "V_bad", "V2_bad", "V_all"]:
         for metric in ["macro_f1_mean", "per_gene_f1_mean"]:
-            vals = [
-                r[key].get(metric)
-                for r in all_res
-                if key in r and r[key].get(metric) is not None
-            ]
+            vals = [r[key].get(metric) for r in all_res if key in r]
             stem = f"{key}_{metric.replace('_mean','')}"
-            if vals:
-                out[f"{stem}_mean"] = float(np.mean(vals))
-                out[f"{stem}_std"] = float(np.std(vals))
+            mean, std, n = mean_std_n(vals)
+            if n:
+                out[f"{stem}_mean"] = mean
+                out[f"{stem}_std"] = std
         for cls in CLASSES:
-            vals = [
-                r[key].get(f"auroc_{cls}_mean")
-                for r in all_res
-                if key in r and r[key].get(f"auroc_{cls}_mean") is not None
-            ]
-            if vals:
-                out[f"{key}_auroc_{cls}_mean"] = float(np.mean(vals))
-                out[f"{key}_auroc_{cls}_std"] = float(np.std(vals))
+            vals = [r[key].get(f"auroc_{cls}_mean") for r in all_res if key in r]
+            mean, std, n = mean_std_n(vals)
+            if n:
+                out[f"{key}_auroc_{cls}_mean"] = mean
+                out[f"{key}_auroc_{cls}_std"] = std
     return out
 
 

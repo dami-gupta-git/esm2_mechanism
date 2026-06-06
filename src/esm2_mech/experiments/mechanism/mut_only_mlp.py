@@ -21,40 +21,50 @@ delta_mean MLP family-split F1 = 0.364 / 0.352 published in result_7.
 
 Usage:
     python -m esm2_mech.experiments.mechanism.mut_only_mlp \\
-        --data_dir run_0/data \\
         --family_split \\
         --out run_0/mut_only_mlp_seed0.json
 """
 
 import argparse
+import functools
 import json
 import os
 
-
 import numpy as np
 
-# Reuse helpers from mlp.py to guarantee identical methodology
-import functools
+from esm2_mech.experiments.mechanism.loaders import _label_3class
+from esm2_mech.utils.splits import gene_split_cv, family_split_cv
+from esm2_mech.utils.probes import run_mlp_probe_cv
+from esm2_mech.utils.paths import (
+    EMB_MUT_MEAN,
+    EMB_WT_MEAN,
+    PFAM_JSON,
+    VALID_VARIANTS_JSON,
+)
 
 print = functools.partial(print, flush=True)
 
-from esm2_mech.experiments.mechanism.mlp import (
-    load_variants_and_labels,
-    gene_split_cv,
-    make_family_splits,
-)
-from esm2_mech.utils.probes import run_mlp_probe_cv
-from esm2_mech.utils.paths import DATA_DIR, EMB_MUT_MEAN, EMB_WT_MEAN, RESULTS_DIR
+
+def load_variants_and_labels(variants_file: str | None = None):
+    """Load the mechanism variants row-aligned to the embeddings.
+
+    Reads VALID_VARIANTS_JSON (the variant list the embeddings were extracted
+    from, same identity and order as the .npy rows) unless an explicit
+    variants_file is given. Labels are collapsed to GOF/DN/LOF via the shared
+    _label_3class (HI/AR -> LOF), so an unexpected mechanism raises rather than
+    being silently mislabeled. Returns (variants, labels, genes).
+    """
+    path = variants_file or VALID_VARIANTS_JSON
+    with open(path) as f:
+        variants = json.load(f)
+    labels = np.array([_label_3class(v) for v in variants])
+    genes = np.array([v["gene"] for v in variants])
+    print(f"Loaded {len(variants):,} variants, {len(set(genes))} genes")
+    return variants, labels, genes
 
 
 def load_wt_mut_mean_embeddings():
     """Load WT and mutant mean-pooled embeddings as separate arrays (not delta)."""
-    for path in [EMB_WT_MEAN, EMB_MUT_MEAN]:
-        if not os.path.exists(path):
-            raise FileNotFoundError(
-                f"Embedding file missing: {path}\n"
-                f"Run: python -m esm2_mech.embeddings.embed_variants"
-            )
     wt = np.load(EMB_WT_MEAN)
     mut = np.load(EMB_MUT_MEAN)
     print(f"  WT  embeddings: {wt.shape}")
@@ -124,10 +134,10 @@ def main():
     gene_splits = gene_split_cv(genes, seed=args.seed)
     family_splits = None
     if args.family_split:
-        pfam_path = args.pfam_map or str(DATA_DIR / "pfam_families.json")
+        pfam_path = args.pfam_map or PFAM_JSON
         with open(pfam_path) as f:
             pfam_map = json.load(f)
-        family_splits = make_family_splits(genes, pfam_map, seed=args.seed)
+        family_splits = family_split_cv(genes, pfam_map, seed=args.seed)
         n_fams = len(set(pfam_map.get(g) for g in set(genes) if pfam_map.get(g)))
         print(
             f"\nFamily-split: {len(family_splits)} folds, {n_fams} unique annotated families"
@@ -145,7 +155,6 @@ def main():
                 k: int(v) for k, v in zip(*np.unique(labels, return_counts=True))
             },
             "features_tested": list(feature_specs.keys()),
-            "data_dir": args.data_dir,
         }
     }
 

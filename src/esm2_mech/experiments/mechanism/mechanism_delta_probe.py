@@ -34,6 +34,7 @@ from sklearn.decomposition import PCA
 
 from esm2_mech.utils.splits import gene_split_cv, family_split_cv
 from esm2_mech.utils.probes import run_logreg_cv
+from esm2_mech.utils.io import save_npy
 from esm2_mech.utils.embed import unpack_run_data
 from esm2_mech.utils.sequences import (
     apply_missense,
@@ -91,7 +92,14 @@ def fit_stability_subspace_megascale(
     """
     if os.path.exists(STABILITY_SUBSPACE):
         print("Loading cached stability subspace...")
-        return np.load(STABILITY_SUBSPACE)
+        # A truncated/partially-written .npy fails to load with OSError/EOFError
+        # (bad header/data) or ValueError. Treat a corrupt cache as absent:
+        # warn, delete, and refit below.
+        try:
+            return np.load(STABILITY_SUBSPACE)
+        except (ValueError, OSError, EOFError) as exc:
+            print(f"WARNING: corrupt cache {STABILITY_SUBSPACE} ({exc}); deleting and refitting")
+            os.remove(STABILITY_SUBSPACE)
 
     if not (os.path.exists(MEGASCALE_DELTAS) and os.path.exists(MEGASCALE_DDG)):
         print(
@@ -120,7 +128,7 @@ def fit_stability_subspace_megascale(
     subspace = np.vstack([stability_dir.reshape(1, -1), pca.components_])
     subspace = subspace[:n_components]
 
-    np.save(STABILITY_SUBSPACE, subspace)
+    save_npy(STABILITY_SUBSPACE, subspace)
     return subspace
 
 

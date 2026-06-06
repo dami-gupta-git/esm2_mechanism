@@ -90,8 +90,16 @@ def extract_conservation(variants, seqs, batch_size=64, ckpt_every=2000):
     out = np.full((N, 3), np.nan, dtype=np.float32)
     done = 0
     if CONS_CACHE.exists():
-        cached = np.load(CONS_CACHE)
-        if len(cached) == N:
+        # A truncated/partially-written .npy (interrupt mid-checkpoint) fails to
+        # load with OSError/EOFError (bad header/data) or ValueError. Treat a
+        # corrupt cache as absent: warn, delete, and re-extract from scratch.
+        try:
+            cached = np.load(CONS_CACHE)
+        except (ValueError, OSError, EOFError) as exc:
+            print(f"WARNING: corrupt cache {CONS_CACHE} ({exc}); deleting and re-extracting")
+            CONS_CACHE.unlink()
+            cached = None
+        if cached is not None and len(cached) == N:
             out = cached
             done = int(np.isfinite(out[:, 0]).sum())
             print(f"Resuming: {done}/{N} variants already extracted")
@@ -196,8 +204,10 @@ def auroc_family_split(X, y, genes, pfam, seeds=range(5), n_jobs=-1):
         delayed(_auroc_one_seed)(X, y, genes, pfam, seed) for seed in seeds
     )
     vals = [v for seed_vals in per_seed for v in seed_vals]
+    # mean_std_n returns (nan, nan, 0) on empty — keep std consistent with mean
+    # (never force std to 0.0 while mean is nan, which reads as a real 0 spread).
     mean, std, _ = mean_std_n(vals)
-    return (mean, std if vals else 0.0)
+    return (mean, std)
 
 
 def analyse():

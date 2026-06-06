@@ -258,8 +258,12 @@ def run_mlp_cv(
         X_tr, X_te = X[tr], X[te]
         y_tr, y_te = y[tr], y[te]
 
-        if len(set(y_tr.tolist())) < n_classes:
-            print(f"    [{label}] Fold {fold_i+1}: skipped (missing class in train)")
+        # A classifier needs only two classes in train to fit; requiring all
+        # n_classes silently drops valid folds where a rare class falls entirely
+        # in the test split. align_proba backfills any class absent from the
+        # fitted model as a zero column.
+        if len(set(y_tr.tolist())) < 2:
+            print(f"    [{label}] Fold {fold_i+1}: skipped (< 2 classes in train)")
             continue
         if len(set(y_te.tolist())) < 2:
             print(f"    [{label}] Fold {fold_i+1}: skipped (< 2 classes in test)")

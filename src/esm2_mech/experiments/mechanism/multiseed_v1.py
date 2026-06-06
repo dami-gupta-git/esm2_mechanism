@@ -342,7 +342,11 @@ def summarise(all_seeds, out_dir):
     chance = 0.333
     leakage_fracs = []
     for gf, fs in zip(gf_vals, fs_vals):
-        if gf is not None and fs is not None and (gf - chance) > 0:
+        # A stored macro-F1 can be None or NaN (a seed where no fold scored);
+        # both must be excluded before the ratio and the np.mean/std below.
+        if gf is None or fs is None or np.isnan(gf) or np.isnan(fs):
+            continue
+        if (gf - chance) > 0:
             leakage_fracs.append((gf - fs) / (gf - chance))
     if leakage_fracs:
         print(
@@ -353,8 +357,9 @@ def summarise(all_seeds, out_dir):
     for s in summary["per_seed"].values():
         gv = s.get("pathogenicity_mlp_gene_auroc")
         fv = s.get("pathogenicity_mlp_family_auroc")
-        if gv is not None and fv is not None:
-            path_delta_vals.append(gv - fv)
+        if gv is None or fv is None or np.isnan(gv) or np.isnan(fv):
+            continue
+        path_delta_vals.append(gv - fv)
     if path_delta_vals:
         print(
             f"  Pathogenicity gene→family Δ:         {np.mean(path_delta_vals):.3f} ± {np.std(path_delta_vals):.3f}"
