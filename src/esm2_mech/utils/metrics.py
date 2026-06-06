@@ -21,6 +21,23 @@ def mean_std_n(values) -> tuple[float, float, int]:
     return float(np.mean(clean)), float(np.std(clean)), len(clean)
 
 
+def standardize(X_fit: np.ndarray, *others: np.ndarray) -> tuple[np.ndarray, ...]:
+    """Standardize feature columns using stats fit on X_fit; transform every array.
+
+    Computes per-column mean and std (with a 1e-8 floor to avoid divide-by-zero on a
+    constant column) on X_fit, then applies (X - mean) / std to X_fit and each array in
+    `others`. Returns the transformed arrays in the same order, so:
+
+        X_tr, X_te = standardize(X_tr, X_te)
+        X_fit, X_val, X_te = standardize(X_fit, X_val, X_te)
+
+    Replaces the manual mean(0) / (std(0) + 1e-8) blocks the probe runners inlined.
+    """
+    mean = X_fit.mean(0)
+    std = X_fit.std(0) + 1e-8
+    return tuple((arr - mean) / std for arr in (X_fit, *others))
+
+
 def auroc_at_median(y_true: np.ndarray, y_pred: np.ndarray) -> float:
     """Binary AUROC for a continuous target: above-median = positive class.
 

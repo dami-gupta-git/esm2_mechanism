@@ -10,7 +10,7 @@ from sklearn.metrics import roc_auc_score, f1_score
 from sklearn.preprocessing import StandardScaler
 
 from esm2_mech.utils.constants import MECHANISM_CLASSES
-from esm2_mech.utils.metrics import aggregate_folds, align_proba, compute_metrics
+from esm2_mech.utils.metrics import aggregate_folds, align_proba, compute_metrics, standardize
 
 print = functools.partial(print, flush=True)
 
@@ -389,8 +389,7 @@ def _run_sklearn_probe_impl(
         if len(set(y_tr)) < 2:
             continue
         if normalize or n_pca is not None:
-            mu, std = X_tr.mean(0), X_tr.std(0) + 1e-8
-            X_tr, X_te = (X_tr - mu) / std, (X_te - mu) / std
+            X_tr, X_te = standardize(X_tr, X_te)
         if n_pca is not None:
             from sklearn.decomposition import PCA
             pca = PCA(
@@ -502,11 +501,7 @@ def run_mlp_probe_cv(
         if len(X_fit) < 10 or len(X_val) < 5:
             continue
 
-        mu = X_fit.mean(0)
-        std = X_fit.std(0) + 1e-8
-        X_fit = (X_fit - mu) / std
-        X_val = (X_val - mu) / std
-        X_te_n = (X_te - mu) / std
+        X_fit, X_val, X_te_n = standardize(X_fit, X_val, X_te)
 
         # Class weights from full training fold to avoid weight explosion when a
         # rare class is absent from the fit subset.
