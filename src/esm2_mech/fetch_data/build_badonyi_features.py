@@ -17,6 +17,7 @@ import pandas as pd
 from pathlib import Path
 import functools
 
+from esm2_mech.utils.io import save_npy
 from esm2_mech.utils.paths import DATA_DIR, GENE_UNIVERSE, TABLE_S3_FILE
 
 print = functools.partial(print, flush=True)
@@ -169,7 +170,7 @@ def main():
         + ["is_singleton_family_badonyi"]
     )
     mat = result[numeric_cols].values.astype(np.float32)
-    np.save(OUT_NPY, mat)
+    save_npy(OUT_NPY, mat)
     print(f"Saved NPY: {OUT_NPY} shape={mat.shape}")
 
     # Column metadata

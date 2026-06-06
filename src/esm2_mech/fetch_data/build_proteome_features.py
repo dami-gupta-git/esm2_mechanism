@@ -54,7 +54,7 @@ from esm2_mech.utils.paths import (
     PROTEOME_PILOT_CACHE_DIR,
     S_HET_FILE,
 )
-from esm2_mech.utils.io import atomic_write_json
+from esm2_mech.utils.io import atomic_write_json, save_npy
 
 print = functools.partial(print, flush=True)
 
@@ -1033,7 +1033,7 @@ def main():
     # 6. Build aligned numpy matrix (median-imputed)
     print("=== Building aligned numpy matrix ===")
     X, num_cols = build_aligned_matrix(rows, col_names)
-    np.save(OUT_NPY, X)
+    save_npy(OUT_NPY, X)
     print(f"Wrote numpy matrix: {OUT_NPY} shape={X.shape} dtype={X.dtype}")
 
     # 7. Save column metadata
