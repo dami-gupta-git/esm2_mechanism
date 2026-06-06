@@ -30,6 +30,23 @@ def _per_gene_f1(y_true: np.ndarray, proba: np.ndarray, genes: np.ndarray) -> fl
     return float(f1_score(y_g, p_g, average="macro", zero_division=0))
 
 
+def _log_fold(label: str, fold_i: int, fm: dict, classes: list[str], pg_str: str) -> None:
+    """Print one per-fold line: macro-F1, optional per-gene F1, and per-class AUROC.
+
+    `fm` is a compute_metrics dict (has macro_f1 and per_class_auroc). Shared by
+    run_logreg_cv and run_mlp_cv, which logged this identically.
+    """
+    auroc_str = "  ".join(
+        (
+            f"{cls}={fm['per_class_auroc'].get(cls, float('nan')):.3f}"
+            if fm["per_class_auroc"].get(cls) is not None
+            else f"{cls}=NA"
+        )
+        for cls in classes
+    )
+    print(f"    [{label}] Fold {fold_i+1}: macro_f1={fm['macro_f1']:.3f}{pg_str}  " + auroc_str)
+
+
 class _OofCollector:
     """Accumulate per-fold out-of-fold test predictions for dependency-aware inference.
 
@@ -119,17 +136,7 @@ def run_logreg_cv(
             pg_f1s.append(pg)
             pg_str = f"  per_gene_f1={pg:.3f}"
 
-        print(
-            f"    [{label}] Fold {fold_i+1}: macro_f1={fm['macro_f1']:.3f}{pg_str}  "
-            + "  ".join(
-                (
-                    f"{cls}={fm['per_class_auroc'].get(cls, float('nan')):.3f}"
-                    if fm["per_class_auroc"].get(cls) is not None
-                    else f"{cls}=NA"
-                )
-                for cls in classes
-            )
-        )
+        _log_fold(label, fold_i, fm, classes, pg_str)
 
     agg = aggregate_folds(fold_results, classes)
     if pg_f1s:
@@ -275,17 +282,7 @@ def run_mlp_cv(
             pg_f1s.append(pg)
             pg_str = f"  per_gene_f1={pg:.3f}"
 
-        print(
-            f"    [{label}] Fold {fold_i+1}: macro_f1={fm['macro_f1']:.3f}{pg_str}  "
-            + "  ".join(
-                (
-                    f"{cls}={fm['per_class_auroc'].get(cls, float('nan')):.3f}"
-                    if fm["per_class_auroc"].get(cls) is not None
-                    else f"{cls}=NA"
-                )
-                for cls in classes
-            )
-        )
+        _log_fold(label, fold_i, fm, classes, pg_str)
 
     agg = aggregate_folds(fold_results, classes)
     if pg_f1s:
