@@ -17,7 +17,6 @@ from __future__ import annotations
 import argparse
 import functools
 import json
-import os
 import time
 from pathlib import Path
 
@@ -77,7 +76,6 @@ def prefetch_sequences() -> None:
         return
 
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    tmp_path = SEQUENCES_JSON.with_suffix(".json.tmp")
     transient_failures: list[str] = []
     for i, uid in enumerate(needed):
         if i % 50 == 0:
@@ -94,11 +92,7 @@ def prefetch_sequences() -> None:
                 # at this accession. Record it so the next run does not re-fetch.
                 not_found.add(uid)
         if (i + 1) % 50 == 0 or i == len(needed) - 1:
-            with open(tmp_path, "w") as f:
-                json.dump(seq_cache, f)
-                f.flush()
-                os.fsync(f.fileno())
-            os.replace(tmp_path, SEQUENCES_JSON)
+            atomic_write_json(SEQUENCES_JSON, seq_cache)
             atomic_write_json(SEQUENCES_NOT_FOUND_JSON, sorted(not_found))
         time.sleep(0.3)
 
