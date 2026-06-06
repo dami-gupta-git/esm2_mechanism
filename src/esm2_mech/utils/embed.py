@@ -301,6 +301,15 @@ def load_gene_delta(
         variants = json.load(f)
     wt_emb = np.load(wt_path)
     mut_emb = np.load(mut_path)
+    # The variant list and both embedding arrays must be row-aligned. Check
+    # explicitly: a silent mismatch would either drop trailing embedding rows
+    # (len(variants) < rows) or raise an opaque IndexError (len(variants) > rows),
+    # and a wt/mut shape mismatch would broadcast wrong instead of erroring.
+    if not (len(variants) == wt_emb.shape[0] == mut_emb.shape[0]):
+        raise ValueError(
+            f"row mismatch: {len(variants)} variants vs {wt_emb.shape[0]} wt "
+            f"vs {mut_emb.shape[0]} mut embedding rows — not row-aligned."
+        )
     delta = mut_emb - wt_emb
 
     gene_delta: dict[str, list[np.ndarray]] = defaultdict(list)

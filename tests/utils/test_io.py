@@ -8,6 +8,10 @@ Invariants:
 - atomic_write_json writes valid JSON readable by json.load
 - atomic_write_json is atomic: no .tmp file left on disk after success
 - atomic_write_json round-trips dicts, lists, and nested structures
+- load_json_or_discard returns None for a missing file
+- load_json_or_discard round-trips valid JSON
+- load_json_or_discard discards (deletes + returns None) a JSON-corrupt file
+- load_json_or_discard discards a file with invalid UTF-8 bytes (UnicodeDecodeError)
 """
 
 import json
@@ -16,7 +20,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from esm2_mech.utils.io import save_npy, atomic_write_json
+from esm2_mech.utils.io import save_npy, atomic_write_json, load_json_or_discard
 
 
 class TestSaveNpy:
@@ -92,3 +96,29 @@ class TestAtomicWriteJson:
         path = tmp_path / "out.json"
         atomic_write_json(path, data)
         assert json.loads(path.read_text()) == data
+
+
+class TestLoadJsonOrDiscard:
+
+    def test_missing_returns_none(self, tmp_path):
+        assert load_json_or_discard(tmp_path / "nope.json") is None
+
+    def test_valid_roundtrip(self, tmp_path):
+        path = tmp_path / "ok.json"
+        path.write_text(json.dumps({"a": 1}))
+        assert load_json_or_discard(path) == {"a": 1}
+
+    def test_json_corrupt_is_discarded(self, tmp_path):
+        path = tmp_path / "bad.json"
+        path.write_text('{"a": 1')  # truncated JSON
+        assert load_json_or_discard(path) is None
+        assert not path.exists()  # deleted so next run re-fetches
+
+    def test_invalid_utf8_is_discarded(self, tmp_path):
+        # A truncated write can leave invalid UTF-8, which raises
+        # UnicodeDecodeError (not JSONDecodeError) during the read. It must be
+        # treated as corruption: deleted + None, not propagated.
+        path = tmp_path / "bytes.json"
+        path.write_bytes(b'\xff\xfe{"a": 1')
+        assert load_json_or_discard(path) is None
+        assert not path.exists()

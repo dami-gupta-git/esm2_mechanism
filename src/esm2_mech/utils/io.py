@@ -49,7 +49,12 @@ def load_json_or_discard(path):
     try:
         with open(path) as f:
             return json.load(f)
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        # A truncated/partial write can leave invalid UTF-8 bytes, which raise
+        # UnicodeDecodeError during the read (a ValueError subclass, but NOT a
+        # JSONDecodeError) before parsing. Treat both as corruption: discard and
+        # report a miss so the caller re-fetches. Other errors (e.g. permission)
+        # still propagate so good data is never silently discarded.
         print(f"WARNING: corrupt JSON cache at {path} — discarding", flush=True)
         path.unlink()
         return None

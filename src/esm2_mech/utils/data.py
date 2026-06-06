@@ -55,14 +55,28 @@ def build_gene_to_row(gene_list_path: Path) -> dict[str, int]:
     Uses DictReader so column order changes in the TSV do not silently break the index.
     """
     seen: dict[str, int] = {}
+    duplicates: list[str] = []
     idx = 0
     with open(gene_list_path, newline="") as f:
         reader = csv.DictReader(f, delimiter="\t")
         for row in reader:
             gene = row["gene"].strip()
-            if gene and gene not in seen:
-                seen[gene] = idx
-                idx += 1
+            if not gene:
+                continue
+            if gene in seen:
+                # Keep-first by design (one row per gene expected). Surface any
+                # duplicate so a gene list with unexpected repeats is visible
+                # rather than silently collapsing later rows to the first index.
+                duplicates.append(gene)
+                continue
+            seen[gene] = idx
+            idx += 1
+    if duplicates:
+        print(
+            f"WARNING: {gene_list_path} has {len(duplicates)} duplicate gene rows; "
+            f"kept the first index per gene. Examples: {duplicates[:5]}",
+            flush=True,
+        )
     return seen
 
 

@@ -161,6 +161,16 @@ class TestLoadGeneDelta:
         np.testing.assert_allclose(result["B"][0], mut[1] - wt[1])
         np.testing.assert_allclose(result["A"][1], mut[2] - wt[2])
 
+    def test_row_mismatch_raises(self, tmp_path):
+        # More variants than embedding rows would silently IndexError mid-loop;
+        # fewer would silently drop trailing rows. Both must raise a clear error.
+        wt = np.array([[1.0], [2.0]], dtype=np.float32)
+        mut = np.array([[3.0], [5.0]], dtype=np.float32)
+        variants = [{"gene": "A"}, {"gene": "B"}, {"gene": "C"}]  # 3 vs 2 rows
+        vpath, wt_path, mut_path = self._setup(tmp_path, variants, wt, mut)
+        with pytest.raises(ValueError, match="row mismatch"):
+            load_gene_delta(vpath, wt_path, mut_path)
+
 
 # ---------------------------------------------------------------------------
 # _flush_checkpoint
