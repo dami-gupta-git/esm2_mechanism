@@ -33,6 +33,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import LabelEncoder
+from esm2_mech.utils.constants import MECHANISM_CLASSES
 from esm2_mech.utils.data import build_gene_to_row as _build_gene_to_row
 from esm2_mech.utils.splits import family_split_indices
 from esm2_mech.utils.probes import run_logreg_cv
@@ -60,7 +61,7 @@ BADONYI_RAW_COLS = [0, 1, 2]  # pDN, pGOF, pLOF
 MERGED_GENE_LIST = GENE_LIST_TSV
 PFAM_FAMILIES = DATA_DIR / "pfam_families.json"
 
-CLASSES = ["GOF", "DN", "LOF"]
+CLASSES = MECHANISM_CLASSES
 
 
 # ---------------------------------------------------------------------------

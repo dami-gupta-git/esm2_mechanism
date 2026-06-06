@@ -37,6 +37,7 @@ from sklearn.neighbors import KNeighborsClassifier
 import functools
 
 from esm2_mech.utils.io import load_variants_and_delta
+from esm2_mech.utils.metrics import majority_baseline_f1
 from esm2_mech.utils.paths import DATA_DIR, EMB_MUT_MEAN, EMB_WT_MEAN, RESULTS_DIR, VALID_VARIANTS_JSON
 
 print = functools.partial(print, flush=True)
@@ -216,9 +217,7 @@ def run_clan_holdout(delta, labels, genes, gene_clan, clan_names, le, seed=42):
             knn_f1 = float("nan")
 
         # Majority baseline
-        majority_class = Counter(y_tr).most_common(1)[0][0]
-        maj_pred = np.full(len(y_te), majority_class)
-        maj_f1 = float(f1_score(y_te, maj_pred, average="macro", zero_division=0))
+        maj_f1, _ = majority_baseline_f1(y_tr, y_te)
 
         print(
             f"    MLP F1={mlp_res.get('macro_f1', float('nan')):.3f}  "

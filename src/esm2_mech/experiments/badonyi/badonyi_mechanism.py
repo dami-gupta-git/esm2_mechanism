@@ -28,6 +28,7 @@ from collections import Counter
 from pathlib import Path
 
 import numpy as np
+from esm2_mech.utils.constants import MECHANISM_CLASSES
 from esm2_mech.utils.data import build_gene_to_row as _build_gene_to_row
 from esm2_mech.utils.splits import family_split_indices
 from esm2_mech.utils.probes import run_mlp_cv, run_logreg_cv
@@ -61,7 +62,7 @@ BADONYI_RAW_COLS = [0, 1, 2]  # pDN, pGOF, pLOF only
 MERGED_GENE_LIST = GENE_LIST_TSV
 PFAM_FAMILIES = DATA_DIR / "pfam_families.json"
 
-CLASSES = ["GOF", "DN", "LOF"]
+CLASSES = MECHANISM_CLASSES
 
 
 # ---------------------------------------------------------------------------
@@ -244,29 +245,24 @@ def run_seed(seed, n_folds, labels, genes, delta, X_prot, X_bad_raw, pfam_map) -
 
 def aggregate_seeds(all_results: list[dict]) -> dict:
     summary: dict = {"n_seeds": len(all_results)}
+
+    def pull(key, metric):
+        # Returns the per-seed metric or None; seed_metric_mean_std drops None+NaN.
+        return lambda r, k=key, m=metric: r[k].get(m) if k in r else None
+
     for key in ["V1", "V2", "V_bad", "V2_bad", "V1_bad", "V_all"]:
         for metric in ["macro_f1_mean", "per_gene_f1_mean"]:
-            vals = [
-                r[key][metric]
-                for r in all_results
-                if key in r and r[key].get(metric) is not None
-            ]
             stem = f"{key}_{metric.replace('_mean','')}"
-            if vals:
-                summary[f"{stem}_mean"] = float(np.mean(vals))
-                summary[f"{stem}_std"] = float(np.std(vals))
-            else:
-                summary[f"{stem}_mean"] = None
-                summary[f"{stem}_std"] = None
+            mean, std, n = seed_metric_mean_std(all_results, pull(key, metric))
+            summary[f"{stem}_mean"] = mean if n else None
+            summary[f"{stem}_std"] = std if n else None
         for cls in CLASSES:
-            vals = [
-                r[key].get(f"auroc_{cls}_mean")
-                for r in all_results
-                if key in r and r[key].get(f"auroc_{cls}_mean") is not None
-            ]
-            if vals:
-                summary[f"{key}_auroc_{cls}_mean"] = float(np.mean(vals))
-                summary[f"{key}_auroc_{cls}_std"] = float(np.std(vals))
+            mean, std, n = seed_metric_mean_std(
+                all_results, pull(key, f"auroc_{cls}_mean")
+            )
+            if n:
+                summary[f"{key}_auroc_{cls}_mean"] = mean
+                summary[f"{key}_auroc_{cls}_std"] = std
     return summary
 
 

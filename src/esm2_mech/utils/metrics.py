@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections import Counter
+
 import numpy as np
 from sklearn.metrics import f1_score, roc_auc_score
 
@@ -19,6 +21,29 @@ def mean_std_n(values) -> tuple[float, float, int]:
     if not clean:
         return float("nan"), float("nan"), 0
     return float(np.mean(clean)), float(np.std(clean)), len(clean)
+
+
+def majority_baseline_f1(
+    y_train: np.ndarray, y_test: np.ndarray
+) -> tuple[float, object]:
+    """Macro-F1 of always predicting y_train's most common class on y_test.
+
+    Returns (macro_f1, majority_class). The majority class is taken from y_train
+    (which may be the same array as y_test for an in-sample floor), and macro-F1 is
+    sklearn's standard `f1_score(average="macro", zero_division=0)` over all label
+    classes present in y_test. Empty y_test -> (nan, None).
+
+    Note: this uses sklearn's macro average over the classes appearing in y_test.
+    Callers that need a macro average restricted to a fixed class list (e.g. only
+    classes present in a family) must compute that separately — this is the
+    standard floor used by the holdout probes.
+    """
+    if len(y_test) == 0:
+        return float("nan"), None
+    majority_class = Counter(np.asarray(y_train).tolist()).most_common(1)[0][0]
+    pred = np.full(len(y_test), majority_class)
+    macro_f1 = float(f1_score(y_test, pred, average="macro", zero_division=0))
+    return macro_f1, majority_class
 
 
 def standardize(X_fit: np.ndarray, *others: np.ndarray) -> tuple[np.ndarray, ...]:

@@ -32,6 +32,7 @@ from sklearn.metrics import roc_auc_score, f1_score, precision_recall_curve, auc
 from sklearn.preprocessing import LabelEncoder
 from sklearn.decomposition import PCA
 
+from esm2_mech.utils.constants import MECHANISM_CLASSES
 from esm2_mech.utils.splits import gene_split_cv, family_split_cv
 from esm2_mech.utils.probes import run_logreg_cv
 from esm2_mech.utils.io import save_npy
@@ -65,7 +66,7 @@ warnings.filterwarnings("ignore")
 
 ESM2_MODEL_3B = "esm2_t36_3B_UR50D"
 
-CLASSES_3 = ["GOF", "DN", "LOF"]
+CLASSES_3 = MECHANISM_CLASSES
 
 # Pre-registered thresholds
 STABILITY_TRANSFER_RHO_THRESHOLD = (

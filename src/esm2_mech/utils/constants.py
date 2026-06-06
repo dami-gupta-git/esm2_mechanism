@@ -23,6 +23,14 @@ N_SEEDS = 5
 # hardcode 5 inline.
 N_FOLDS = 5
 
+# ── Numerical floors ──────────────────────────────────────────────────────────
+# Divide-by-zero / norm floor for ratios and projections. Single source of truth —
+# never inline 1e-10. (Distinct from STD_EPS below and from the tighter 1e-12 used
+# in the geometry probes, which is a deliberately different role.)
+NORM_EPS = 1e-10
+# Per-column standardization std floor (avoids divide-by-zero on a constant column).
+STD_EPS = 1e-8
+
 # ── Mechanism class label constants ──────────────────────────────────────────
 GOF = "GOF"
 DN = "DN"

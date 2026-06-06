@@ -55,6 +55,7 @@ from esm2_mech.utils.constants import (
     CHANCE_AUROC,
     GOF,
     MECHANISM_CLASSES,
+    N_FOLDS,
     N_SEEDS,
 )
 from esm2_mech.utils.data import load_variants
@@ -78,7 +79,6 @@ print = functools.partial(print, flush=True)
 
 MIN_GENES = 6
 MIN_CLASSES = 2
-N_FOLDS = 5
 
 # Within-family fold size guards. gene_split_cv's defaults (>=10 train / >=5
 # test) are tuned for the full 17k-variant dataset and would drop every fold of

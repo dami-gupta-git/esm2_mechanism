@@ -57,7 +57,7 @@ from esm2_mech.utils.paths import (
     VALID_VARIANTS_JSON,
 )
 from esm2_mech.utils.constants import (
-    DELTA_MEAN_FEATURE, N_SEEDS, SPLIT_FAMILY, nonlinear_key,
+    DELTA_MEAN_FEATURE, MECHANISM_CLASSES, N_FOLDS, N_SEEDS, SPLIT_FAMILY, nonlinear_key,
 )
 
 # The matched ESM-2 probe for the ESM-3 comparison: MLP, delta_mean, family-split.
@@ -104,7 +104,6 @@ def configure_dataset(dataset: str) -> None:
 
 
 # Probe config (matches the ESM-2 mechanism classifier exactly)
-N_FOLDS = 5
 SEEDS = list(range(N_SEEDS))
 
 # Decision rule margins (pre-registered in plan_esm3_mechanism.md)
@@ -669,7 +668,7 @@ def phase3_probes(seeds: list[int] = SEEDS) -> None:
 
     variants, genes, pfam_map = load_dataset()
     y_labels = np.array([v["mech3"] for v in variants])
-    label_set = ["GOF", "DN", "LOF"]
+    label_set = MECHANISM_CLASSES
     y_all = np.array([label_set.index(label) for label in y_labels])
     n_classes = len(label_set)
 

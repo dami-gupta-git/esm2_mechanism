@@ -29,6 +29,7 @@ from pathlib import Path
 
 import numpy as np
 from sklearn.preprocessing import LabelEncoder
+from esm2_mech.utils.constants import MECHANISM_CLASSES
 from esm2_mech.utils.data import build_gene_to_row as _build_gene_to_row
 from esm2_mech.utils.metrics import mean_std_n
 from esm2_mech.utils.io import load_variants_and_delta
@@ -59,7 +60,7 @@ BADONYI_RAW_COLS = [0, 1, 2]
 MERGED_GENE_LIST = GENE_LIST_TSV
 MMSEQS_CLUSTERS = DATA_DIR / "mmseqs_clusters.json"
 
-CLASSES = ["GOF", "DN", "LOF"]
+CLASSES = MECHANISM_CLASSES
 
 
 def load_data():

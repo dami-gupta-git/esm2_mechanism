@@ -65,6 +65,7 @@ from esm2_mech.utils.paths import (
     EMB_MUT_MEAN,
     GENE_LIST_TSV,
 )
+from esm2_mech.utils.constants import MECHANISM_CLASSES, N_FOLDS
 import functools
 
 print = functools.partial(print, flush=True)
@@ -81,8 +82,7 @@ PROTEOME_COLS = DATA_DIR / "proteome_feature_columns.json"
 MERGED_GENE_LIST = GENE_LIST_TSV
 PFAM_FAMILIES = DATA_DIR / "pfam_families.json"
 
-CLASSES = ["GOF", "DN", "LOF"]
-N_FOLDS = 5
+CLASSES = MECHANISM_CLASSES
 
 # ---------------------------------------------------------------------------
 # Feature class definitions for T4
@@ -142,6 +142,18 @@ def load_all():
 
     # Also load gene-level data (for V2 per-gene)
     gene_list_df = pd.read_csv(MERGED_GENE_LIST, sep="\t")
+    # AR handling — KNOWN DIVERGENCE FROM THE RUNBOOK PIPELINE.
+    # This proteome experiment maps AR -> None, i.e. AR (autosomal-recessive) variants
+    # are DROPPED from the 3-class task entirely. The runbook experiments
+    # (mechanism/loaders.py `_label_3class` and esm3/esm3_mechanism.py, used in
+    # RUNBOOK_4 Experiments 1/3/4) instead collapse AR -> LOF, keeping those variants
+    # in the LOF class. So the runbook pipeline and these proteome scripts train on
+    # DIFFERENT populations: AR variants are LOF examples there, absent here.
+    # This is deliberate and left as-is: the proteome_features experiments are NOT part
+    # of RUNBOOK_4 (they are older/exploratory), so they are not reconciled to the
+    # live pipeline's AR->LOF rule. If these scripts are ever promoted into the runbook,
+    # decide AR's fate once and route this through a single shared collapse helper in
+    # utils/constants.py rather than this local map.
     mech_map = {"LOF": "LOF", "HI": "LOF", "GOF": "GOF", "DN": "DN", "AR": None}
     gene_list_df["mech3"] = gene_list_df["mechanism"].map(mech_map)
     gene_level = gene_list_df[gene_list_df["mech3"].notna()].copy()

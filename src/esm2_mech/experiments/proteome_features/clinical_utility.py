@@ -56,14 +56,15 @@ import functools
 
 print = functools.partial(print, flush=True)
 
-OUT_DIR = RESULTS_DIR
-
 warnings.filterwarnings("ignore")
 
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
 from esm2_mech.utils.paths import DATA_DIR, RESULTS_DIR, GENE_LIST_TSV
+from esm2_mech.utils.constants import MECHANISM_CLASSES, N_FOLDS
+
+OUT_DIR = RESULTS_DIR
 
 MERGED_GENE_LIST = GENE_LIST_TSV
 PROTEOME_FEATURES = DATA_DIR / "proteome_features_aligned.npy"
@@ -73,9 +74,21 @@ GENE_FEATURES_TSV = DATA_DIR / "gene_proteome_features.tsv"
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
+# AR handling — KNOWN DIVERGENCE FROM THE RUNBOOK PIPELINE.
+# This proteome experiment maps AR -> None, i.e. AR (autosomal-recessive) variants
+# are DROPPED from the 3-class task entirely. The runbook experiments
+# (mechanism/loaders.py `_label_3class` and esm3/esm3_mechanism.py, used in
+# RUNBOOK_4 Experiments 1/3/4) instead collapse AR -> LOF, keeping those variants
+# in the LOF class. So the runbook pipeline and these proteome scripts train on
+# DIFFERENT populations: AR variants are LOF examples there, absent here.
+# This is deliberate and left as-is: the proteome_features experiments are NOT part
+# of RUNBOOK_4 (they are older/exploratory), so they are not reconciled to the
+# live pipeline's AR->LOF rule. If these scripts are ever promoted into the runbook,
+# decide AR's fate once and route this through a single shared collapse helper in
+# utils/constants.py rather than this local map. Treating AR as a zygosity/inheritance
+# descriptor rather than a clean molecular-mechanism call is the rationale for dropping it.
 MECH_MAP = {"LOF": "LOF", "HI": "LOF", "GOF": "GOF", "DN": "DN", "AR": None}
-CLASSES = ["GOF", "DN", "LOF"]
-N_FOLDS = 5
+CLASSES = MECHANISM_CLASSES
 N_BOOTSTRAP = 1000
 RANDOM_STATE = 42
 CONF_THRESHOLD = 0.4

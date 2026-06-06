@@ -39,7 +39,8 @@ from sklearn.neural_network import MLPClassifier
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.preprocessing import StandardScaler
 from esm2_mech.utils.splits import family_split_indices
-from esm2_mech.utils.metrics import compute_metrics
+from esm2_mech.utils.constants import MECHANISM_CLASSES
+from esm2_mech.utils.metrics import compute_metrics, mean_std_n
 from esm2_mech.utils.probes import run_mlp_cv, run_logreg_cv
 from esm2_mech.utils.io import load_variants_and_delta
 from esm2_mech.utils.paths import (
@@ -70,7 +71,7 @@ PROTEOME_COLS = DATA_DIR / "proteome_feature_columns.json"
 MERGED_GENE_LIST = GENE_LIST_TSV
 PFAM_FAMILIES = DATA_DIR / "pfam_families.json"
 
-CLASSES = ["GOF", "DN", "LOF"]
+CLASSES = MECHANISM_CLASSES
 
 # ---------------------------------------------------------------------------
 # Gene-split CV (from mlp.py / contrastive_mechanism.py)
@@ -229,10 +230,11 @@ def aggregate_fold_results(fold_list: list[dict]) -> dict:
         return {"error": "no folds"}
 
     out: dict = {}
-    # macro_f1
-    vals = [f["macro_f1"] for f in fold_list]
-    out["macro_f1_mean"] = float(np.mean(vals))
-    out["macro_f1_std"] = float(np.std(vals))
+    # macro_f1 — NaN-filtered so a single NaN fold (e.g. a degenerate split)
+    # does not poison the mean, matching the per-class AUROC guard below.
+    macro_mean, macro_std, _ = mean_std_n([f["macro_f1"] for f in fold_list])
+    out["macro_f1_mean"] = macro_mean
+    out["macro_f1_std"] = macro_std
 
     # per-class AUROC
     for cls in CLASSES:
