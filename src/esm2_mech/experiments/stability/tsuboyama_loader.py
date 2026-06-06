@@ -29,7 +29,6 @@ cached to MEGASCALE_TSUBOYAMA_VARIANTS_JSON.
 
 import csv
 import functools
-import json
 import math
 import os
 import re
@@ -41,7 +40,7 @@ from esm2_mech.utils.constants import (
     MEGASCALE_WT_MUT_TYPE,
     MEGASCALE_DDG_MISSING,
 )
-from esm2_mech.utils.io import atomic_write_json
+from esm2_mech.utils.io import atomic_write_json, load_json_or_discard
 from esm2_mech.utils.paths import (
     MEGASCALE_TSUBOYAMA_CSV,
     MEGASCALE_TSUBOYAMA_VARIANTS_JSON,
@@ -86,14 +85,11 @@ def load_tsuboyama_variants(csv_path=None, cache_path=None):
 
     if os.path.exists(cache_path):
         print(f"Loading cached Tsuboyama variants from {cache_path} ...")
-        try:
-            with open(cache_path) as handle:
-                return json.load(handle)
-        except json.JSONDecodeError:
-            # A run killed mid-write can leave a truncated cache. Delete and
-            # re-parse rather than crashing on the corrupt file.
-            print(f"  WARNING: cache {cache_path} is corrupt — deleting and re-parsing")
-            os.remove(cache_path)
+        # A run killed mid-write can leave a truncated cache; load_json_or_discard
+        # deletes it and returns None so we fall through and re-parse.
+        cached = load_json_or_discard(cache_path)
+        if cached is not None:
+            return cached
 
     # ── Pass 1: wild-type reference sequence per bare natural domain ──────────
     # If two "wt" rows give the SAME domain DIFFERENT sequences we cannot know

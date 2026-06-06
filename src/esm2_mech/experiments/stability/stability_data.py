@@ -7,8 +7,6 @@ once so the three probes do not each repeat the boilerplate.
 """
 
 import functools
-import json
-import os
 from collections import namedtuple
 
 import numpy as np
@@ -16,6 +14,7 @@ import numpy as np
 from esm2_mech.experiments.stability.tsuboyama_loader import load_tsuboyama_variants
 from esm2_mech.experiments.stability.build_domain_families import build_family_map
 from esm2_mech.utils.constants import N_FOLDS
+from esm2_mech.utils.io import load_json_or_discard
 from esm2_mech.utils.splits import random_split_cv, gene_split_cv, family_split_cv
 from esm2_mech.utils.paths import (
     MEGASCALE_EMB_WT_MEAN,
@@ -65,16 +64,9 @@ def _load_family_map(variants):
     Orphan domains (no Pfam hit) are absent from the map and so are excluded from
     the family-split only.
     """
-    if os.path.exists(MEGASCALE_DOMAIN_FAMILIES_JSON):
-        try:
-            with open(MEGASCALE_DOMAIN_FAMILIES_JSON) as handle:
-                return json.load(handle)
-        except json.JSONDecodeError:
-            print(
-                f"WARNING: corrupt family-map cache {MEGASCALE_DOMAIN_FAMILIES_JSON}; "
-                "deleting and rebuilding."
-            )
-            os.remove(MEGASCALE_DOMAIN_FAMILIES_JSON)
+    cached = load_json_or_discard(MEGASCALE_DOMAIN_FAMILIES_JSON)
+    if cached is not None:
+        return cached
     return build_family_map(variants=variants)
 
 
