@@ -30,6 +30,26 @@ def _per_gene_f1(y_true: np.ndarray, proba: np.ndarray, genes: np.ndarray) -> fl
     return float(f1_score(y_g, p_g, average="macro", zero_division=0))
 
 
+def _record_per_gene_f1(
+    pg_f1s: list, y_true: np.ndarray, proba: np.ndarray, genes_sub: np.ndarray
+) -> str:
+    """Compute the fold's per-gene macro-F1, append it to pg_f1s, return the log suffix.
+
+    `genes_sub` is the gene-id array for the test rows (already sliced). Shared by the
+    three multiclass runners, which each computed and accumulated this identically.
+    """
+    pg = _per_gene_f1(y_true, proba, genes_sub)
+    pg_f1s.append(pg)
+    return f"  per_gene_f1={pg:.3f}"
+
+
+def _add_per_gene_f1(agg: dict, pg_f1s: list) -> None:
+    """Add per_gene_f1 mean/std to `agg` in place when any per-gene F1 was recorded."""
+    if pg_f1s:
+        agg["per_gene_f1_mean"] = float(np.mean(pg_f1s))
+        agg["per_gene_f1_std"] = float(np.std(pg_f1s))
+
+
 def _log_fold(label: str, fold_i: int, fm: dict, classes: list[str], pg_str: str) -> None:
     """Print one per-fold line: macro-F1, optional per-gene F1, and per-class AUROC.
 
@@ -132,16 +152,12 @@ def run_logreg_cv(
 
         pg_str = ""
         if genes is not None:
-            pg = _per_gene_f1(y_te, proba, genes[te])
-            pg_f1s.append(pg)
-            pg_str = f"  per_gene_f1={pg:.3f}"
+            pg_str = _record_per_gene_f1(pg_f1s, y_te, proba, genes[te])
 
         _log_fold(label, fold_i, fm, classes, pg_str)
 
     agg = aggregate_folds(fold_results, classes)
-    if pg_f1s:
-        agg["per_gene_f1_mean"] = float(np.mean(pg_f1s))
-        agg["per_gene_f1_std"] = float(np.std(pg_f1s))
+    _add_per_gene_f1(agg, pg_f1s)
     if return_oof:
         return agg, oof.finalize()
     return agg
@@ -278,16 +294,12 @@ def run_mlp_cv(
 
         pg_str = ""
         if genes is not None:
-            pg = _per_gene_f1(y_te, proba, genes[te])
-            pg_f1s.append(pg)
-            pg_str = f"  per_gene_f1={pg:.3f}"
+            pg_str = _record_per_gene_f1(pg_f1s, y_te, proba, genes[te])
 
         _log_fold(label, fold_i, fm, classes, pg_str)
 
     agg = aggregate_folds(fold_results, classes)
-    if pg_f1s:
-        agg["per_gene_f1_mean"] = float(np.mean(pg_f1s))
-        agg["per_gene_f1_std"] = float(np.std(pg_f1s))
+    _add_per_gene_f1(agg, pg_f1s)
     if return_oof:
         return agg, oof.finalize()
     return agg
@@ -550,17 +562,13 @@ def run_mlp_probe_cv(
 
         pg_str = ""
         if genes is not None:
-            pg = _per_gene_f1(labels_te, proba, genes[test_idx])
-            pg_f1s.append(pg)
-            pg_str = f"  per_gene_f1={pg:.3f}"
+            pg_str = _record_per_gene_f1(pg_f1s, labels_te, proba, genes[test_idx])
         print(f"    [{label}] Fold {fold_i+1}: macro_f1={fm['macro_f1']:.3f}{pg_str}")
 
     if not fold_results:
         return {}
     agg = aggregate_fold_dicts(fold_results)
-    if pg_f1s:
-        agg["per_gene_f1_mean"] = float(np.mean(pg_f1s))
-        agg["per_gene_f1_std"] = float(np.std(pg_f1s))
+    _add_per_gene_f1(agg, pg_f1s)
     return agg
 
 
