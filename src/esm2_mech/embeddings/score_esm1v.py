@@ -30,6 +30,7 @@ import numpy as np
 
 print = functools.partial(print, flush=True)
 
+from esm2_mech.utils.eval import vkey
 from esm2_mech.utils.io import atomic_write_json
 from esm2_mech.utils.paths import DATA_DIR as DATA, VALID_VARIANTS_JSON
 from esm2_mech.utils.sequences import window_sequence
@@ -162,7 +163,7 @@ def main() -> int:
 
     gene_variants: dict[str, list[dict]] = defaultdict(list)
     for v in variants_raw:
-        key = f"{v['gene']}_{v['aa_pos']}_{v['aa_wt']}_{v['aa_mut']}"
+        key = vkey(v)
         gene_variants[v["gene"]].append(
             {
                 "key": key,
