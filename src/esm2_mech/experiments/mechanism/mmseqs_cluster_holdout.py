@@ -85,13 +85,22 @@ def build_gene_to_row():
 
 
 def broadcast(genes, matrix, gene_to_row):
+    """Align a per-gene feature matrix to the variant list.
+
+    Returns (X, observed) where observed[i] is True only if gene[i] had a real
+    feature row. Rows for genes with no feature data are left as NaN (not 0.0):
+    0.0 is a plausible real feature value, so imputing it would silently
+    contaminate the probe. Callers must restrict to `observed` before fitting.
+    """
     n, d = len(genes), matrix.shape[1]
-    X = np.zeros((n, d), dtype=np.float32)
+    X = np.full((n, d), np.nan, dtype=np.float32)
+    observed = np.zeros(n, dtype=bool)
     for i, g in enumerate(genes):
         r = gene_to_row.get(g)
         if r is not None and r < matrix.shape[0]:
             X[i] = matrix[r]
-    return X
+            observed[i] = True
+    return X, observed
 
 
 def cluster_split_indices(groups, n_folds, seed):
@@ -117,7 +126,18 @@ def run_mlp(X, y, genes, groups, hidden, n_folds, seed, label):
     return run_mlp_cv(X, y, splits, hidden=hidden, seed=seed, genes=genes, label=label)
 
 
-def run_seed(seed, n_folds, labels, genes, delta, X_prot, X_bad, gene_to_cluster):
+def run_seed(
+    seed,
+    n_folds,
+    labels,
+    genes,
+    delta,
+    X_prot,
+    X_bad,
+    prot_observed,
+    bad_observed,
+    gene_to_cluster,
+):
     print(f"\n{'='*72}\nSEED {seed}\n{'='*72}")
 
     # Use fixed mapping matching CLASSES order: GOF=0, DN=1, LOF=2
@@ -133,14 +153,22 @@ def run_seed(seed, n_folds, labels, genes, delta, X_prot, X_bad, gene_to_cluster
     X_delta_f = delta[idx]
     X_prot_f = X_prot[idx]
     X_bad_f = X_bad[idx]
-    X_v2bad = np.concatenate([X_prot_f, X_bad_f], axis=1)
-    X_v1bad = np.concatenate([X_delta_f, X_bad_f], axis=1)
-    X_vall = np.concatenate([X_delta_f, X_prot_f, X_bad_f], axis=1)
+    # Per-arm observed masks (subset of the cluster-filtered set). Proteome/Badonyi
+    # genes with no feature row are NaN here; restrict each feature arm to its own
+    # observed subset rather than imputing 0.0 (CLAUDE.md: no fillna on probe
+    # features; recompute splits on the observed subset).
+    prot_obs_f = prot_observed[idx]
+    bad_obs_f = bad_observed[idx]
 
     n_clusters = len(set(groups.tolist()))
     cd = {CLASSES[k]: int(v) for k, v in Counter(y_f.tolist()).items()}
     print(f"  Variants with cluster: {len(idx)}/{len(y)} ({n_clusters} clusters)")
     print(f"  Class dist: {cd}")
+    print(
+        f"  Feature-observed (within cluster set): "
+        f"proteome {int(prot_obs_f.sum())}/{len(idx)}, "
+        f"Badonyi {int(bad_obs_f.sum())}/{len(idx)}"
+    )
 
     res = {
         "seed": seed,
@@ -149,42 +177,62 @@ def run_seed(seed, n_folds, labels, genes, delta, X_prot, X_bad, gene_to_cluster
         "class_dist": cd,
     }
 
+    def report(key):
+        res_key = res[key]
+        print(
+            f"  {key} F1={res_key['macro_f1_mean']:.4f}±{res_key['macro_f1_std']:.4f}  "
+            f"pgF1={res_key.get('per_gene_f1_mean', float('nan')):.4f}"
+        )
+
+    # Each feature arm is restricted to the variants whose features are all
+    # observed (no NaN-imputed rows), and cluster splits are recomputed on that
+    # subset inside run_logreg/run_mlp. n_used records how many variants the arm
+    # actually saw, so a silently shrunk arm is visible in the output.
+    def subset(*masks):
+        keep = np.ones(len(idx), dtype=bool)
+        for mask in masks:
+            keep &= mask
+        return keep
+
     print(f"\n--- V1: ESM-2 delta MLP ---")
+    # delta (ESM-2) is always observed — no feature-row dropout.
     res["V1"] = run_mlp(X_delta_f, y_f, genes_f, groups, (256, 64), n_folds, seed, "V1")
-    print(
-        f"  V1 F1={res['V1']['macro_f1_mean']:.4f}±{res['V1']['macro_f1_std']:.4f}  "
-        f"pgF1={res['V1'].get('per_gene_f1_mean', float('nan')):.4f}"
-    )
+    res["V1"]["n_used"] = int(len(idx))
+    report("V1")
 
     print(f"\n--- V2: Proteome LogReg ---")
-    res["V2"] = run_logreg(X_prot_f, y_f, genes_f, groups, n_folds, seed, "V2")
-    print(
-        f"  V2 F1={res['V2']['macro_f1_mean']:.4f}±{res['V2']['macro_f1_std']:.4f}  "
-        f"pgF1={res['V2'].get('per_gene_f1_mean', float('nan')):.4f}"
+    keep = subset(prot_obs_f)
+    res["V2"] = run_logreg(
+        X_prot_f[keep], y_f[keep], genes_f[keep], groups[keep], n_folds, seed, "V2"
     )
+    res["V2"]["n_used"] = int(keep.sum())
+    report("V2")
 
     print(f"\n--- V_bad: Badonyi LogReg ---")
-    res["V_bad"] = run_logreg(X_bad_f, y_f, genes_f, groups, n_folds, seed, "V_bad")
-    print(
-        f"  V_bad F1={res['V_bad']['macro_f1_mean']:.4f}±{res['V_bad']['macro_f1_std']:.4f}  "
-        f"pgF1={res['V_bad'].get('per_gene_f1_mean', float('nan')):.4f}"
+    keep = subset(bad_obs_f)
+    res["V_bad"] = run_logreg(
+        X_bad_f[keep], y_f[keep], genes_f[keep], groups[keep], n_folds, seed, "V_bad"
     )
+    res["V_bad"]["n_used"] = int(keep.sum())
+    report("V_bad")
 
     print(f"\n--- V2+bad: Proteome+Badonyi LogReg ---")
-    res["V2_bad"] = run_logreg(X_v2bad, y_f, genes_f, groups, n_folds, seed, "V2+bad")
-    print(
-        f"  V2+bad F1={res['V2_bad']['macro_f1_mean']:.4f}±{res['V2_bad']['macro_f1_std']:.4f}  "
-        f"pgF1={res['V2_bad'].get('per_gene_f1_mean', float('nan')):.4f}"
+    keep = subset(prot_obs_f, bad_obs_f)
+    X_v2bad = np.concatenate([X_prot_f[keep], X_bad_f[keep]], axis=1)
+    res["V2_bad"] = run_logreg(
+        X_v2bad, y_f[keep], genes_f[keep], groups[keep], n_folds, seed, "V2+bad"
     )
+    res["V2_bad"]["n_used"] = int(keep.sum())
+    report("V2_bad")
 
     print(f"\n--- V_all: ESM-2+proteome+Badonyi MLP ---")
+    keep = subset(prot_obs_f, bad_obs_f)
+    X_vall = np.concatenate([X_delta_f[keep], X_prot_f[keep], X_bad_f[keep]], axis=1)
     res["V_all"] = run_mlp(
-        X_vall, y_f, genes_f, groups, (256, 64), n_folds, seed, "V_all"
+        X_vall, y_f[keep], genes_f[keep], groups[keep], (256, 64), n_folds, seed, "V_all"
     )
-    print(
-        f"  V_all F1={res['V_all']['macro_f1_mean']:.4f}±{res['V_all']['macro_f1_std']:.4f}  "
-        f"pgF1={res['V_all'].get('per_gene_f1_mean', float('nan')):.4f}"
-    )
+    res["V_all"]["n_used"] = int(keep.sum())
+    report("V_all")
 
     return res
 
@@ -272,14 +320,27 @@ def main():
     gene_to_row = build_gene_to_row()
     prot = np.load(PROTEOME_FEATURES).astype(np.float32)
     bad_full = np.load(BADONYI_FEATURES).astype(np.float32)
-    X_prot = broadcast(genes, prot, gene_to_row)
-    X_bad = broadcast(genes, bad_full[:, BADONYI_RAW_COLS], gene_to_row)
+    X_prot, prot_observed = broadcast(genes, prot, gene_to_row)
+    X_bad, bad_observed = broadcast(genes, bad_full[:, BADONYI_RAW_COLS], gene_to_row)
     print(f"  X_prot {X_prot.shape}  X_bad {X_bad.shape}")
+    print(
+        f"  Feature rows observed: proteome {int(prot_observed.sum())}/{len(genes)}, "
+        f"Badonyi {int(bad_observed.sum())}/{len(genes)}"
+    )
 
     all_res = []
     for s in seeds:
         res = run_seed(
-            s, args.n_folds, labels, genes, delta, X_prot, X_bad, gene_to_cluster
+            s,
+            args.n_folds,
+            labels,
+            genes,
+            delta,
+            X_prot,
+            X_bad,
+            prot_observed,
+            bad_observed,
+            gene_to_cluster,
         )
         all_res.append(res)
         path = OUT_DIR / f"cluster_seed{s}.json"
