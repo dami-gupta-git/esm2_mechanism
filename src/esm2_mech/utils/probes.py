@@ -30,6 +30,37 @@ def _per_gene_f1(y_true: np.ndarray, proba: np.ndarray, genes: np.ndarray) -> fl
     return float(f1_score(y_g, p_g, average="macro", zero_division=0))
 
 
+class _OofCollector:
+    """Accumulate per-fold out-of-fold test predictions for dependency-aware inference.
+
+    Shared by run_logreg_cv and run_mlp_cv, which both gather the same four aligned
+    arrays per fold (y_true, proba aligned to `classes`, gene ids, original row ids)
+    and concatenate them into one OOF dict, or None if no fold contributed.
+    """
+
+    def __init__(self) -> None:
+        self._y: list = []
+        self._proba: list = []
+        self._genes: list = []
+        self._rows: list = []
+
+    def add(self, y_te: np.ndarray, proba: np.ndarray, genes_te: np.ndarray, te: np.ndarray) -> None:
+        self._y.append(y_te)
+        self._proba.append(proba)
+        self._genes.append(genes_te)
+        self._rows.append(np.asarray(te))
+
+    def finalize(self) -> dict | None:
+        if not self._y:
+            return None
+        return {
+            "y_true": np.concatenate(self._y),
+            "proba": np.concatenate(self._proba),
+            "genes": np.concatenate(self._genes),
+            "row_ids": np.concatenate(self._rows),
+        }
+
+
 def run_logreg_cv(
     X: np.ndarray,
     y: np.ndarray,
@@ -60,7 +91,7 @@ def run_logreg_cv(
     n_classes = len(classes)
     min_train_classes = n_classes if min_train_classes is None else min_train_classes
     fold_results, pg_f1s = [], []
-    oof_y, oof_proba, oof_genes, oof_rows = [], [], [], []
+    oof = _OofCollector()
     for fold_i, (tr, te) in enumerate(splits):
         X_tr, X_te = X[tr], X[te]
         y_tr, y_te = y[tr], y[te]
@@ -80,10 +111,7 @@ def run_logreg_cv(
         fm = compute_metrics(y_te, pred, proba, classes)
         fold_results.append(fm)
         if return_oof and genes is not None:
-            oof_y.append(y_te)
-            oof_proba.append(proba)
-            oof_genes.append(genes[te])
-            oof_rows.append(np.asarray(te))
+            oof.add(y_te, proba, genes[te], te)
 
         pg_str = ""
         if genes is not None:
@@ -108,15 +136,7 @@ def run_logreg_cv(
         agg["per_gene_f1_mean"] = float(np.mean(pg_f1s))
         agg["per_gene_f1_std"] = float(np.std(pg_f1s))
     if return_oof:
-        oof = None
-        if oof_y:
-            oof = {
-                "y_true": np.concatenate(oof_y),
-                "proba": np.concatenate(oof_proba),
-                "genes": np.concatenate(oof_genes),
-                "row_ids": np.concatenate(oof_rows),
-            }
-        return agg, oof
+        return agg, oof.finalize()
     return agg
 
 
@@ -195,7 +215,7 @@ def run_mlp_cv(
     n_classes = len(classes)
     cls_to_idx = {cls: idx for idx, cls in enumerate(classes)}
     fold_results, pg_f1s = [], []
-    oof_y, oof_proba, oof_genes, oof_rows = [], [], [], []
+    oof = _OofCollector()
 
     for fold_i, (tr, te) in enumerate(splits):
         X_tr, X_te = X[tr], X[te]
@@ -247,10 +267,7 @@ def run_mlp_cv(
         fm = compute_metrics(y_te, pred, proba, classes)
         fold_results.append(fm)
         if return_oof and genes is not None:
-            oof_y.append(y_te)
-            oof_proba.append(proba)
-            oof_genes.append(genes[te])
-            oof_rows.append(np.asarray(te))
+            oof.add(y_te, proba, genes[te], te)
 
         pg_str = ""
         if genes is not None:
@@ -275,15 +292,7 @@ def run_mlp_cv(
         agg["per_gene_f1_mean"] = float(np.mean(pg_f1s))
         agg["per_gene_f1_std"] = float(np.std(pg_f1s))
     if return_oof:
-        oof = None
-        if oof_y:
-            oof = {
-                "y_true": np.concatenate(oof_y),
-                "proba": np.concatenate(oof_proba),
-                "genes": np.concatenate(oof_genes),
-                "row_ids": np.concatenate(oof_rows),
-            }
-        return agg, oof
+        return agg, oof.finalize()
     return agg
 
 
