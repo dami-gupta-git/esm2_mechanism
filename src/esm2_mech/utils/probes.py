@@ -551,12 +551,7 @@ def run_mlp_probe_cv(
 
     if not fold_results:
         return {}
-    agg: dict = {}
-    for key in set().union(*[set(f) for f in fold_results]):
-        vals = [f[key] for f in fold_results if key in f and not np.isnan(f[key])]
-        if vals:
-            agg[f"{key}_mean"] = float(np.mean(vals))
-            agg[f"{key}_std"] = float(np.std(vals))
+    agg = aggregate_fold_dicts(fold_results)
     if pg_f1s:
         agg["per_gene_f1_mean"] = float(np.mean(pg_f1s))
         agg["per_gene_f1_std"] = float(np.std(pg_f1s))
