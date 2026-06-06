@@ -54,15 +54,32 @@ def main():
         default=["all"],
         help="which probe(s) to run (default: all)",
     )
+    parser.add_argument(
+        "--stability-dataset",
+        choices=["none", "tsuboyama"],
+        default="none",
+        help=(
+            "dataset for the stability arm of the magnitude and transfer probes "
+            "(Probe C / P4 and the transfer-contrast stability row); default none = skip"
+        ),
+    )
     args = parser.parse_args()
     if args.seeds < 1:
         parser.error("--seeds must be >= 1")
 
     selected = list(PROBES) if "all" in args.probe else args.probe
-    print(f"=== geometry probes: {selected}  (seeds={args.seeds}) ===")
+    # Only these two probes have a stability arm; the rest take n_seeds only.
+    stability_aware = {"magnitude", "transfer"}
+    print(
+        f"=== geometry probes: {selected}  (seeds={args.seeds}, "
+        f"stability_dataset={args.stability_dataset}) ==="
+    )
     for name in selected:
         print(f"\n########## {name} ##########")
-        PROBES[name](n_seeds=args.seeds)
+        if name in stability_aware:
+            PROBES[name](n_seeds=args.seeds, stability_dataset=args.stability_dataset)
+        else:
+            PROBES[name](n_seeds=args.seeds)
     print(f"\n=== done: {selected} ===")
 
 

@@ -34,6 +34,7 @@ from esm2_mech.utils.paths import (
     GEOMETRY_RESULTS_DIR,
     TRANSFER_CONTRAST_JSON,
     MEGASCALE_VARIANTS_JSON,
+    MEGASCALE_TSUBOYAMA_VARIANTS_JSON,
     PATH_EMB_WT_MEAN,
     PATH_EMB_MUT_MEAN,
     PATHOGENICITY_CANONICAL_VARIANTS_JSON,
@@ -41,6 +42,18 @@ from esm2_mech.utils.paths import (
     MEGASCALE_EMB_WT_MEAN,
     MEGASCALE_EMB_MUT_MEAN,
 )
+
+# Stability transfer arm — configurable on dataset (default "none" = skip). See
+# magnitude_direction.STABILITY_DATASETS for the same mapping.
+STABILITY_DATASETS = {
+    "none": None,
+    "tsuboyama": (
+        MEGASCALE_TSUBOYAMA_VARIANTS_JSON,
+        MEGASCALE_EMB_WT_MEAN,
+        MEGASCALE_EMB_MUT_MEAN,
+    ),
+}
+DEFAULT_STABILITY_DATASET = "none"
 from esm2_mech.experiments.mechanism.loaders import load_mechanism_variants
 from esm2_mech.utils.constants import GOF, N_SEEDS
 from esm2_mech.utils.metrics import mean_std_n
@@ -152,19 +165,21 @@ def load_pathogenicity():
     return delta[m], y[m], groups[m]
 
 
-def load_stability():
-    if not MEGASCALE_VARIANTS_JSON.exists():
+def load_stability(stability_dataset=DEFAULT_STABILITY_DATASET):
+    cfg = STABILITY_DATASETS.get(stability_dataset)
+    if cfg is None:
         return None
-    with open(MEGASCALE_VARIANTS_JSON) as _f:
+    variants_json, wt_emb, mut_emb = cfg
+    if not (variants_json.exists() and wt_emb.exists() and mut_emb.exists()):
+        return None
+    with open(variants_json) as _f:
         v = json.load(_f)
-    delta = np.load(MEGASCALE_EMB_MUT_MEAN) - np.load(
-        MEGASCALE_EMB_WT_MEAN
-    )
+    delta = np.load(mut_emb) - np.load(wt_emb)
     n = min(len(v), len(delta))
     v, delta = v[:n], delta[:n]
     ddg = np.array([x["ddg"] for x in v], dtype=float)
     groups = np.array([x["protein"] for x in v])
-    y = (ddg > np.median(ddg)).astype(int)  # median split (matches result_21)
+    y = (ddg > np.median(ddg)).astype(int)  # median split
     return delta, y, groups
 
 
@@ -178,18 +193,20 @@ def load_mechanism_gof():
     return dm[m], y[m], groups[m]
 
 
-def run(n_seeds=N_SEEDS):
+def run(n_seeds=N_SEEDS, stability_dataset=DEFAULT_STABILITY_DATASET):
     """Run the transfer contrast across tasks. Each seed reshuffles the group
     half-splits; results are pooled over all n_seeds × partitions."""
     tasks = {}
     print("Loading tasks...")
     tasks["pathogenicity (path vs benign, family-split)"] = load_pathogenicity()
     tasks["mechanism (GOF vs rest, family-split)"] = load_mechanism_gof()
-    stab = load_stability()
+    stab = load_stability(stability_dataset=stability_dataset)
     if stab is not None:
         tasks["stability (ΔΔG>median, protein-split)"] = stab
     else:
-        print("  stability: S1724 embeddings not found — skipping")
+        print(
+            f"  stability: dataset='{stability_dataset}' not run — skipping"
+        )
 
     results = {}
     print("\n" + "=" * 86)
@@ -224,8 +241,14 @@ def main():
 
     ap = argparse.ArgumentParser()
     ap.add_argument("--seeds", type=int, default=N_SEEDS, help="number of seeds (>=1)")
+    ap.add_argument(
+        "--stability-dataset",
+        choices=list(STABILITY_DATASETS),
+        default=DEFAULT_STABILITY_DATASET,
+        help="dataset for the stability transfer arm (default: none = skip)",
+    )
     args = ap.parse_args()
-    run(n_seeds=args.seeds)
+    run(n_seeds=args.seeds, stability_dataset=args.stability_dataset)
     print("\nRead: 'pooled' = random-split (easy). 'transfer' = probe fit on one")
     print("group-half, scored on the disjoint half. linear vs gbm shows whether")
     print("nonlinearity recovers cross-group signal (result_21: it does for stability,")

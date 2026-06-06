@@ -24,8 +24,7 @@ Relevant columns:
   ddG_ML    ML-fit ΔΔG (mutation effect); "-" when the fit was unreliable
 
 Output: list of dicts {protein, mutation_code, wt_seq, mut_seq, var_pos, ddg},
-cached to MEGASCALE_TSUBOYAMA_VARIANTS_JSON. The dict shape matches the S1724
-loader so the downstream probe code is unchanged.
+cached to MEGASCALE_TSUBOYAMA_VARIANTS_JSON.
 """
 
 import csv

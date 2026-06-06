@@ -209,7 +209,7 @@ JSONs back to `results/<run_name>/magnitude_direction/`.
 | Step | Command | Description | Inputs | Outputs |
 |---|---|---|---|---|
 | 1 build | `python -m esm2_mech.experiments.geometry.build_canonical_pathogenicity` | Materialise the row-aligned canonical pathogenicity variant set (fingerprint-checked against the embeddings); no GPU | `clinvar_pathogenicity_variants.json`, `pathogenicity_{wt,mut}_mean.npy`, `pathogenicity_meta.json` | `data/pathogenicity_valid_variants_canonical.json` |
-| 2 probes (CPU) | `python -m esm2_mech.experiments.geometry.run_geometry --seeds 5` | Four CPU probes from one orchestrator (single `--seeds`): magnitude-vs-direction, rank/family-transfer geometry, transfer contrast (path/stability/mechanism), biochemical axis identity. `--probe …` runs a subset; stability rows skip if megascale S1724 embeddings absent | `pathogenicity_valid_variants_canonical.json`, `pathogenicity_{wt,mut}_mean.npy`, `valid_variants.json` + main `embeddings_*.npy` (mechanism), `pfam_families.json` | `results/<run_name>/magnitude_direction/{probe_results,geometry_results,transfer_contrast,probe4_axis_identity}.json` |
+| 2 probes (CPU) | `python -m esm2_mech.experiments.geometry.run_geometry --seeds 5` | Four CPU probes from one orchestrator (single `--seeds`): magnitude-vs-direction, rank/family-transfer geometry, transfer contrast (path/mechanism), biochemical axis identity. `--probe …` runs a subset. The optional stability arm (Probe C / P4 and the transfer-contrast stability row) is configurable via `--stability-dataset {none,tsuboyama}`, default `none` = skip (`P4` reports `passed: null`). Pass `--stability-dataset tsuboyama` to run it on the Experiment 7 embeddings (`megascale_tsuboyama_variants.json` + `megascale_{wt,mut}_mean.npy`). Stability is covered in full in Experiment 7 | `pathogenicity_valid_variants_canonical.json`, `pathogenicity_{wt,mut}_mean.npy`, `valid_variants.json` + main `embeddings_*.npy` (mechanism), `pfam_families.json` | `results/<run_name>/magnitude_direction/{probe_results,geometry_results,transfer_contrast,probe4_axis_identity}.json` |
 | 3 conservation extract (GPU) | `python -m esm2_mech.experiments.geometry.conservation_axis --extract` | Phase 1: mask each variant position, read masked-LM logP_wt/logP_mut/entropy | `pathogenicity_valid_variants_canonical.json`, `cache/sequences.json` | `data/conservation_pathogenicity.npy`, `..._meta.json` |
 | 4 conservation analysis (CPU) | `python -m esm2_mech.experiments.geometry.conservation_axis` | Phase 2: is the pathogenicity axis just conservation? | `conservation_pathogenicity.npy`, `pathogenicity_{wt,mut}_mean.npy`, `pathogenicity_valid_variants_canonical.json`, `pfam_families.json` | `results/<run_name>/magnitude_direction/conservation_axis.json` |
 
@@ -242,6 +242,39 @@ of genuine cross-family signal rather than leakage). Report written as
 
 ---
 
+## Experiment 7 — megascale stability positive control (report_stability)
+
+A second positive control with a purely physical label: measured folding stability (ΔΔG) from
+the Tsuboyama 2023 mega-scale dataset, which has no clinical curation. Tests whether the same
+ESM-2 delta encodes stability and, in particular, whether it transfers across held-out Pfam
+families. Stability lands between pathogenicity (family-robust) and mechanism (family-memorised)
+on the project's family-dependence gradient.
+
+Dataset: the natural-domain, single-point missense subset of Tsuboyama 2023 (~177k variants,
+~181 PDB domains; de novo designs excluded). Parsing/scope is in `tsuboyama_loader.py`; Pfam
+families are assigned by HMMER (`build_domain_families.py`). The S1724 benchmark used in the
+original result_21 is retired — this experiment is Tsuboyama only.
+
+Run the steps in order: build the Pfam family map (CPU, needs `hmmscan` + a hmmpress-ed Pfam-A),
+extract embeddings (GPU, RunPod), then the probes (CPU). Phase 2 needs a GPU; the rest are
+CPU-only.
+
+| Step | Command | Description | Inputs | Outputs |
+|---|---|---|---|---|
+| 1 families (CPU) | `python -m esm2_mech.experiments.stability.build_domain_families` | Assign each Tsuboyama natural domain to a Pfam family (`hmmscan --cut_ga` vs Pfam-A); domains with no hit are excluded from family-split only | `MEGASCALE_TSUBOYAMA_CSV` (Tsuboyama CSV, parsed via `tsuboyama_loader`), `PFAM_A_HMM` (hmmpress-ed) | `data/megascale_tsuboyama_variants.json`, `data/megascale_domain_families.json` |
+| 2 embed (GPU, RunPod) | `python -m esm2_mech.embeddings.embed_megascale --model esm2_t33_650M_UR50D --batch_size 32` | Extract ESM-2 mean- and position-pooled WT/mut embeddings, row-aligned to `megascale_tsuboyama_variants.json` | `megascale_tsuboyama_variants.json`, sequences from the parsed dataset | `data/embeddings/<model>/megascale_{wt,mut}_{mean,pos}.npy` |
+| 3 linear probe (CPU) | `python -m esm2_mech.experiments.stability.megascale_stability` | Pre-registered Ridge probe under random / domain / family CV (H1–H4); the H3 stability-projection-out-of-mechanism test | `megascale_tsuboyama_variants.json`, `megascale_domain_families.json`, `megascale_{wt,mut}_{mean,pos}.npy`, `valid_variants.json` + main `embeddings_*.npy` (for H3) | `results/<run_name>/megascale_stability/{summary,per_protein_spearman,h3_stability_projection}.json` |
+| 4 nonlinear probe (GPU) | `python -m esm2_mech.experiments.stability.megascale_mlp --xgboost` | Nonlinear probes (MLP pre-registered; RF/GBM/XGBoost exploratory) under the same three CV schemes | same as step 3 (no H3) | `results/<run_name>/megascale_stability/mlp_summary_xgb.json` (omit `--xgboost` → `mlp_summary.json`) |
+| 5 controls (CPU) | `python -m esm2_mech.experiments.stability.stability_baselines` | Non-pre-registered controls: label-shuffle null, ‖delta‖ baseline, nested-CV alpha, PLS dimensionality sweep | same as step 3 (no H3) | `results/<run_name>/megascale_stability/baselines.json` |
+
+Run steps 2 and 4 inside a `tmux` session on RunPod; `scp` the `megascale_stability/`
+result subdirectory back locally. `--seeds` is fixed at the `N_SEEDS` constant (5) for these
+modules. Headline: random-split ρ (H1, ≥0.5), the random→family ρ drop (H2 LEAKY threshold
+0.10), per-domain ρ std (H4), and the H3 mechanism-F1 change (≤+0.01). Report written as
+`reports/<run_name>/report_stability.md`.
+
+---
+
 ## Verification checklist
 
 - [ ] `data/embeddings/esm2_t33_650M_UR50D/embedded_variants.json` row count matches all four `.npy` arrays. (This file is a write-only provenance artifact — no code reads it; it is the row-aligned variant index for the `.npy` arrays and should equal `data/valid_variants.json`. See `utils/embed.py` `_flush_checkpoint`.)
@@ -251,4 +284,5 @@ of genuine cross-family signal rather than leakage). Report written as
 - [ ] result 6 (pathogenicity AUROC ~0.88) and result 7 (mechanism family-split floor ~0.35–0.39) reproduce their headline numbers — these are the pipeline spine and should not move.
 - [ ] report_esm3_mechanism: ESM-3 compared against ESM-2 only on `--dataset merged` (matched 17,826-variant set), not geras (see Experiment 4 comparison caveat). Both scored under the identical fold rule.
 - [ ] report_contrastive: family-split `contrastive_knn` macro_f1 clears the MLP `delta_mean` floor (read from `aggregate.json`), and its gene→family drop is no larger than the raw-kNN baseline's (else the lift is leakage, not cross-family signal).
+- [ ] report_stability: random-split ρ ≥ 0.5 (H1 passes — stability is encoded); `megascale_domain_families.json` assigned for the natural domains (a near-empty map means `hmmscan`/Pfam-A was not set up); `megascale_{wt,mut}_mean.npy` row count matches `megascale_tsuboyama_variants.json`.
 - [ ] `git status` clean; results committed.

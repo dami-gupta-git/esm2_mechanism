@@ -47,6 +47,7 @@ from esm2_mech.utils.paths import (
     MAGNITUDE_DIRECTION_JSON,
     NAIVE_BASELINE_JSON,
     MEGASCALE_VARIANTS_JSON,
+    MEGASCALE_TSUBOYAMA_VARIANTS_JSON,
     PATH_EMB_WT_MEAN,
     PATH_EMB_MUT_MEAN,
     PATHOGENICITY_CANONICAL_VARIANTS_JSON,
@@ -69,10 +70,21 @@ P3_MECH_MARGIN = 0.02  # direction-only mechanism F1 vs chance floor, family-spl
 P4_SIGN_AUROC_MIN = 0.65  # S1724 sign(ddG) AUROC
 P4_MAG_SPEARMAN_MIN = 0.30  # S1724 Spearman(||d||, |ddG|)
 
-# S1724 caches produced by megascale_stability.py (result_21)
-S1724_WT_EMB = MEGASCALE_EMB_WT_MEAN
-S1724_MUT_EMB = MEGASCALE_EMB_MUT_MEAN
-S1724_VARIANTS = MEGASCALE_VARIANTS_JSON
+# Stability biophysical-direction arm (Probe C / P4). Configurable on dataset:
+#   "none"      — skip (default; no stability variants JSON is built by the pipeline)
+#   "tsuboyama" — the Tsuboyama mega-scale set (megascale_stability.py / Experiment 7)
+# Each entry is (variants_json, wt_emb, mut_emb); the embeddings are row-aligned to
+# the JSON by their producing script. The mean .npy arrays are shared by name, so the
+# selected variants JSON is what pins the arm to a dataset.
+STABILITY_DATASETS = {
+    "none": None,
+    "tsuboyama": (
+        MEGASCALE_TSUBOYAMA_VARIANTS_JSON,
+        MEGASCALE_EMB_WT_MEAN,
+        MEGASCALE_EMB_MUT_MEAN,
+    ),
+}
+DEFAULT_STABILITY_DATASET = "none"
 
 # Canonical pathogenicity set (the one result_6's 0.884 family-split AUROC was
 # computed on — n=16,576).
@@ -306,29 +318,35 @@ def run_mechanism(pfam_map, seeds, n_jobs=-1):
 # ── Probe C: biophysical direction on S1724 signed ddG ───────────────────────
 
 
-def run_biophysical_direction(seeds):
-    if not (
-        S1724_WT_EMB.exists()
-        and S1724_MUT_EMB.exists()
-        and S1724_VARIANTS.exists()
-    ):
+def run_biophysical_direction(seeds, stability_dataset=DEFAULT_STABILITY_DATASET):
+    cfg = STABILITY_DATASETS.get(stability_dataset)
+    if cfg is None:
         print(
-            "\n[Probe C] S1724 embeddings not cached yet "
-            "(run megascale_stability.py / result_21 first) — skipping."
+            f"\n[Probe C] stability_dataset='{stability_dataset}' — skipping "
+            "biophysical-direction arm (no stability set selected)."
+        )
+        return None
+    variants_json, wt_emb, mut_emb = cfg
+    if not (wt_emb.exists() and mut_emb.exists() and variants_json.exists()):
+        print(
+            f"\n[Probe C] stability_dataset='{stability_dataset}' selected but its "
+            f"variants/embeddings are not present ({variants_json.name}) — skipping."
         )
         return None
 
     print("\n" + "=" * 60)
-    print("PROBE C  biophysical direction (S1724 signed ddG, protein-holdout)")
+    print(
+        f"PROBE C  biophysical direction ({stability_dataset} signed ddG, protein-holdout)"
+    )
     print("=" * 60)
     from scipy.stats import spearmanr
 
-    with open(S1724_VARIANTS) as _f:
+    with open(variants_json) as _f:
         variants = json.load(_f)
     ddg = np.array([v["ddg"] for v in variants], dtype=np.float64)
     proteins = np.array([v["protein"] for v in variants])
-    wt = np.load(S1724_WT_EMB)
-    mut = np.load(S1724_MUT_EMB)
+    wt = np.load(wt_emb)
+    mut = np.load(mut_emb)
     delta = mut - wt
     n = min(len(delta), len(ddg), len(proteins))
     delta, ddg, proteins = delta[:n], ddg[:n], proteins[:n]
@@ -426,32 +444,41 @@ def evaluate_gates(path_res, mech_res, bio_res):
             ),
         }
     else:
-        gates["P4"] = {"desc": "S1724 not cached — Probe C skipped", "passed": None}
+        gates["P4"] = {
+            "desc": "stability biophysical-direction arm not run — Probe C skipped",
+            "passed": None,
+        }
 
     return gates
 
 
-def run(n_seeds=N_SEEDS):
+def run(n_seeds=N_SEEDS, stability_dataset=DEFAULT_STABILITY_DATASET):
     """Run the magnitude/direction decomposition over range(n_seeds)."""
-    return _run_seeds(list(range(n_seeds)))
+    return _run_seeds(list(range(n_seeds)), stability_dataset=stability_dataset)
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--seeds", type=int, default=N_SEEDS, help="number of seeds (>=1)")
+    ap.add_argument(
+        "--stability-dataset",
+        choices=list(STABILITY_DATASETS),
+        default=DEFAULT_STABILITY_DATASET,
+        help="dataset for the Probe C biophysical-direction arm (default: none = skip)",
+    )
     args = ap.parse_args()
     if args.seeds < 1:
         ap.error("--seeds must be >= 1")
-    run(n_seeds=args.seeds)
+    run(n_seeds=args.seeds, stability_dataset=args.stability_dataset)
 
 
-def _run_seeds(seeds):
+def _run_seeds(seeds, stability_dataset=DEFAULT_STABILITY_DATASET):
     with open(PFAM_JSON) as _f:
         pfam_map = json.load(_f)
 
     path_res = run_pathogenicity(pfam_map, seeds)
     mech_res = run_mechanism(pfam_map, seeds)
-    bio_res = run_biophysical_direction(seeds)
+    bio_res = run_biophysical_direction(seeds, stability_dataset=stability_dataset)
 
     gates = evaluate_gates(path_res, mech_res, bio_res)
 

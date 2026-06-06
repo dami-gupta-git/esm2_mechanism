@@ -174,15 +174,15 @@ def run_h3_stability_projection(
     merged_labels,
     merged_proteins,
     pfam_map,
-    s1724_variants,
-    s1724_delta_mean,
-    s1724_ddg,
+    stability_variants,
+    stability_delta_mean,
+    stability_ddg,
     n_folds=5,
     n_seeds=5,
 ):
     """
     Pre-registered H3 protocol:
-      1. Train Ridge on S1724 (wt_mean, mut_mean) -> ΔΔG.
+      1. Train Ridge on the stability set (wt_mean, mut_mean) -> ΔΔG.
       2. Use that Ridge to predict a stability score for each merged-dataset variant
          from its delta_mean embedding.
       3. Project stability score out of merged delta_mean via OLS (one component):
@@ -197,11 +197,11 @@ def run_h3_stability_projection(
     from sklearn.preprocessing import LabelEncoder
     from sklearn.metrics import f1_score
 
-    # Fit stability Ridge on S1724
+    # Fit stability Ridge on the stability (Tsuboyama) set
     sc_s = StandardScaler()
-    X_s = sc_s.fit_transform(s1724_delta_mean)
+    X_s = sc_s.fit_transform(stability_delta_mean)
     ridge = Ridge(alpha=1.0)
-    ridge.fit(X_s, s1724_ddg)
+    ridge.fit(X_s, stability_ddg)
 
     # Stability projection vector: unit-normalised Ridge weights (in sc_s feature space)
     stability_weights = ridge.coef_  # shape (D,)
