@@ -24,7 +24,7 @@ from esm2_mech.utils.paths import (
 )
 
 OUT_DIR = RESULTS_DIR
-from esm2_mech.utils.sequences import window_sequence, apply_missense
+from esm2_mech.utils.sequences import window_sequence, apply_missense, build_wt_mut_onehot
 from esm2_mech.utils.constants import (
     seed_result_filename,
     MECHANISM_CLASSES,
@@ -43,10 +43,6 @@ import functools
 PCA_COMPONENTS = 256  # applied to embedding features (dim > PCA_COMPONENTS)
 
 print = functools.partial(print, flush=True)
-
-
-AA_ORDER = list("ACDEFGHIKLMNPQRSTVWY")
-AA_INDEX = {a: i for i, a in enumerate(AA_ORDER)}
 
 
 def run_probe_on_splits(X, y, splits, genes=None, seed=42):
@@ -109,17 +105,6 @@ def run_probe_on_splits(X, y, splits, genes=None, seed=42):
     return agg, oof
 
 
-def build_onehot(aa_wt_list, aa_mut_list):
-    n = len(aa_wt_list)
-    onehot = np.zeros((n, 40), dtype=np.float32)
-    for i, (wt, mut) in enumerate(zip(aa_wt_list, aa_mut_list)):
-        if wt.upper() in AA_INDEX:
-            onehot[i, AA_INDEX[wt.upper()]] = 1.0
-        if mut.upper() in AA_INDEX:
-            onehot[i, 20 + AA_INDEX[mut.upper()]] = 1.0
-    return onehot
-
-
 PERMUTATION_FEATURES = ("delta_mean", "wt_only_mean")  # headline features for the slow permutation test
 
 
@@ -178,7 +163,7 @@ def run(
         "delta_mean": deltas_mean_pca,
         "delta_per_residue": deltas_pos_pca,
         "wt_concat_mut": np.concatenate([emb_wt_mean_pca, emb_mut_mean_pca], axis=1),
-        "onehot_aa": build_onehot(aa_wt_list, aa_mut_list),
+        "onehot_aa": build_wt_mut_onehot(aa_wt_list, aa_mut_list),
     }
 
     # Masked baselines — rebuild splits on the observed subset so CV is valid

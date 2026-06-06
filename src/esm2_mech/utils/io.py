@@ -3,11 +3,74 @@
 import functools
 import json
 import os
+from collections import Counter
 from pathlib import Path
 
 import numpy as np
 
 print = functools.partial(print, flush=True)
+
+
+def load_variants_and_delta(
+    variants_path,
+    wt_mean_path,
+    mut_mean_path,
+    wt_pos_path=None,
+    mut_pos_path=None,
+    verbose: bool = True,
+):
+    """Load the mechanism variant list and its row-aligned ESM-2 delta embeddings.
+
+    Reads the variant JSON at ``variants_path`` (the list the embeddings were
+    extracted from, in the same identity and order as the .npy rows), extracts the
+    GOF/DN/LOF labels and gene symbols, and computes the mean-pooled delta
+    (mut - wt). When ``wt_pos_path``/``mut_pos_path`` are given it also computes the
+    per-residue delta_pos; otherwise that element of the returned tuple is None.
+
+    Embedding rows must match the variant count exactly. A mismatch raises
+    ValueError rather than silently slicing to the shorter length — a row-count
+    mismatch means the .npy is not aligned to the variant list and any downstream
+    label assignment would be wrong.
+
+    Returns ``(variants, labels, genes, delta_mean, delta_pos)`` where labels and
+    genes are string ndarrays, delta_mean is float32 (n, d), and delta_pos is
+    float32 (n, d) or None.
+    """
+    with open(variants_path) as f:
+        variants = json.load(f)
+
+    labels = np.array([v["label_3class"] for v in variants])
+    genes = np.array([v["gene"] for v in variants])
+    num_variants = len(variants)
+
+    wt_mean = np.load(wt_mean_path)
+    mut_mean = np.load(mut_mean_path)
+    if wt_mean.shape[0] != num_variants or mut_mean.shape[0] != num_variants:
+        raise ValueError(
+            f"embedding/variant row mismatch: wt_mean {wt_mean.shape[0]}, "
+            f"mut_mean {mut_mean.shape[0]} vs {num_variants} variants — "
+            f"{variants_path} is not row-aligned with the embeddings."
+        )
+    delta_mean = (mut_mean - wt_mean).astype(np.float32)
+
+    delta_pos = None
+    if wt_pos_path is not None and mut_pos_path is not None:
+        wt_pos = np.load(wt_pos_path)
+        mut_pos = np.load(mut_pos_path)
+        if wt_pos.shape[0] != num_variants or mut_pos.shape[0] != num_variants:
+            raise ValueError(
+                f"position-embedding/variant row mismatch: wt_pos {wt_pos.shape[0]}, "
+                f"mut_pos {mut_pos.shape[0]} vs {num_variants} variants — "
+                f"{variants_path} is not row-aligned with the embeddings."
+            )
+        delta_pos = (mut_pos - wt_pos).astype(np.float32)
+
+    if verbose:
+        print(f"Loaded {num_variants} variants, {len(set(genes.tolist()))} genes")
+        print(f"Class distribution: {dict(Counter(labels.tolist()))}")
+        print(f"Delta shape: {delta_mean.shape}")
+
+    return variants, labels, genes, delta_mean, delta_pos
 
 
 def save_npy(path, arr: np.ndarray) -> None:

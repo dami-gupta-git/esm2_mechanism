@@ -36,6 +36,7 @@ from sklearn.preprocessing import LabelEncoder
 from sklearn.neighbors import KNeighborsClassifier
 import functools
 
+from esm2_mech.utils.io import load_variants_and_delta
 from esm2_mech.utils.paths import DATA_DIR, EMB_MUT_MEAN, EMB_WT_MEAN, RESULTS_DIR, VALID_VARIANTS_JSON
 
 print = functools.partial(print, flush=True)
@@ -49,19 +50,9 @@ warnings.filterwarnings("ignore")
 
 
 def load_data(data_dir, emb_dir):
-    with open(VALID_VARIANTS_JSON) as f:
-        variants = json.load(f)
-
-    labels = np.array([v["label_3class"] for v in variants])
-    genes = np.array([v["gene"] for v in variants])
-
-    print(f"Loaded {len(variants)} variants, {len(set(genes))} genes")
-    print(f"Class distribution: {dict(Counter(labels))}")
-
-    wt_mean = np.load(EMB_WT_MEAN)
-    mut_mean = np.load(EMB_MUT_MEAN)
-    delta = (mut_mean - wt_mean).astype(np.float32)
-    print(f"Delta embeddings: {delta.shape}")
+    variants, labels, genes, delta, _ = load_variants_and_delta(
+        VALID_VARIANTS_JSON, EMB_WT_MEAN, EMB_MUT_MEAN
+    )
     return variants, labels, genes, delta
 
 

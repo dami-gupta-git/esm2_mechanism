@@ -7,6 +7,12 @@ ESM2_MODEL = "esm2_t33_650M_UR50D"
 ESM2_MODEL_3B = "esm2_t36_3B_UR50D"
 ESM3_MODEL = "esm3-sm-open-v1"
 
+# ── Amino acids ───────────────────────────────────────────────────────────────
+# Canonical 20 amino acids in fixed order. Single source of truth for any
+# AA->index encoding (e.g. WT/MUT one-hot). Never inline the literal string.
+AA_ORDER = "ACDEFGHIKLMNPQRSTVWY"
+AA_INDEX = {aa: i for i, aa in enumerate(AA_ORDER)}
+
 # ── Seeds ─────────────────────────────────────────────────────────────────────
 # Number of random seeds for every multi-seed probe. The `--seeds` CLI flag is a
 # COUNT (default N_SEEDS): seeds 0..N_SEEDS-1 are run. Single source of truth —

@@ -2,7 +2,29 @@
 
 from __future__ import annotations
 
-from esm2_mech.utils.constants import MAX_SEQ_LEN, WINDOW_HALF
+import numpy as np
+
+from esm2_mech.utils.constants import AA_INDEX, AA_ORDER, MAX_SEQ_LEN, WINDOW_HALF
+
+
+def build_wt_mut_onehot(aa_wt_list, aa_mut_list) -> np.ndarray:
+    """One-hot encode WT/MUT amino-acid pairs.
+
+    Returns an (n, 2*len(AA_ORDER)) float32 array: WT in the first block
+    [0, len(AA_ORDER)), MUT in the second [len(AA_ORDER), 2*len(AA_ORDER)).
+    Residues not in AA_ORDER (e.g. "X", gaps) leave their block all-zero
+    rather than landing in a real AA column. Case-insensitive.
+    """
+    n_aa = len(AA_ORDER)
+    onehot = np.zeros((len(aa_wt_list), 2 * n_aa), dtype=np.float32)
+    for i, (wt, mut) in enumerate(zip(aa_wt_list, aa_mut_list)):
+        wt_idx = AA_INDEX.get(wt.upper())
+        mut_idx = AA_INDEX.get(mut.upper())
+        if wt_idx is not None:
+            onehot[i, wt_idx] = 1.0
+        if mut_idx is not None:
+            onehot[i, n_aa + mut_idx] = 1.0
+    return onehot
 
 
 def apply_missense(sequence: str, aa_pos: int, aa_wt: str, aa_mut: str) -> str | None:

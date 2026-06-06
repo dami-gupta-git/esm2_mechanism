@@ -48,6 +48,7 @@ from esm2_mech.utils.paths import (
 from joblib import Parallel, delayed
 
 from esm2_mech.embeddings.embed_variants import ESM2_MODEL_650M
+from esm2_mech.utils.constants import AA_ORDER
 from esm2_mech.utils.metrics import mean_std_n
 from esm2_mech.utils.probes import auroc_for_clf
 from esm2_mech.utils.sequences import window_sequence
@@ -61,8 +62,6 @@ MUT_EMB = PATH_EMB_MUT_MEAN
 SEQS = SEQUENCES_JSON
 CONS_CACHE = CONSERVATION_PATHOGENICITY_NPY
 CONS_META = CONSERVATION_PATHOGENICITY_META_JSON
-
-AA_ORDER = "ACDEFGHIKLMNPQRSTVWY"
 
 # Pre-registered thresholds
 K1_CONS_MIN = 0.85

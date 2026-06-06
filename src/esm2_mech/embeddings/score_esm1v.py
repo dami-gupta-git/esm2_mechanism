@@ -30,6 +30,7 @@ import numpy as np
 
 print = functools.partial(print, flush=True)
 
+from esm2_mech.utils.constants import AA_ORDER
 from esm2_mech.utils.eval import vkey
 from esm2_mech.utils.io import atomic_write_json
 from esm2_mech.utils.paths import DATA_DIR as DATA, VALID_VARIANTS_JSON
@@ -72,7 +73,7 @@ def score_variants_single_model(
     import torch
 
     batch_converter = alphabet.get_batch_converter()
-    aa_to_idx = {aa: alphabet.get_idx(aa) for aa in "ACDEFGHIKLMNPQRSTVWY"}
+    aa_to_idx = {aa: alphabet.get_idx(aa) for aa in AA_ORDER}
 
     scores: dict[str, float] = {}
     genes_without_sequence: set[str] = set()

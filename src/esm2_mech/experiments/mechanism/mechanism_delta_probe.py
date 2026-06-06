@@ -38,6 +38,7 @@ from esm2_mech.utils.io import save_npy
 from esm2_mech.utils.embed import unpack_run_data
 from esm2_mech.utils.sequences import (
     apply_missense,
+    build_wt_mut_onehot,
     window_sequence,
 )
 from esm2_mech.utils.paths import (
@@ -375,18 +376,7 @@ def run_baselines(
 ):
     """Run four baselines under gene-split CV."""
     splits = gene_split_cv(genes, seed=seed)
-    AA_ORDER = list("ACDEFGHIKLMNPQRSTVWY")
-    aa_index = {a: i for i, a in enumerate(AA_ORDER)}
-
-    n = len(aa_wt_list)
-    onehot = np.zeros((n, 40), dtype=np.float32)
-    for i, (wt, mut) in enumerate(zip(aa_wt_list, aa_mut_list)):
-        wt_idx = aa_index.get(wt.upper())
-        mut_idx = aa_index.get(mut.upper())
-        if wt_idx is not None:
-            onehot[i, wt_idx] = 1.0
-        if mut_idx is not None:
-            onehot[i, 20 + mut_idx] = 1.0
+    onehot = build_wt_mut_onehot(aa_wt_list, aa_mut_list)
 
     # FoldX and AlphaMissense baselines are restricted to variants with observed values.
     # Missing values are not imputed — a variant with no FoldX ΔΔG is excluded from

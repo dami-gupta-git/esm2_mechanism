@@ -31,6 +31,7 @@ import numpy as np
 from sklearn.preprocessing import LabelEncoder
 from esm2_mech.utils.data import build_gene_to_row as _build_gene_to_row
 from esm2_mech.utils.metrics import mean_std_n
+from esm2_mech.utils.io import load_variants_and_delta
 from esm2_mech.utils.probes import run_mlp_cv, run_logreg_cv
 from esm2_mech.utils.paths import (
     DATA_DIR,
@@ -62,15 +63,9 @@ CLASSES = ["GOF", "DN", "LOF"]
 
 
 def load_data():
-    with open(MERGED_VALID_VARIANTS) as f:
-        variants = json.load(f)
-    labels = np.array([v["label_3class"] for v in variants])
-    genes = np.array([v["gene"] for v in variants])
-    n = len(variants)
-    wt = np.load(MERGED_WT_MEAN)[:n]
-    mut = np.load(MERGED_MUT_MEAN)[:n]
-    delta = (mut - wt).astype(np.float32)
-    print(f"Loaded {n} variants, {len(set(genes.tolist()))} genes")
+    _variants, labels, genes, delta, _ = load_variants_and_delta(
+        MERGED_VALID_VARIANTS, MERGED_WT_MEAN, MERGED_MUT_MEAN
+    )
     return labels, genes, delta
 
 

@@ -21,7 +21,6 @@ Features:
 import argparse
 import functools
 import json
-import os
 from pathlib import Path
 
 import numpy as np
@@ -38,7 +37,7 @@ from esm2_mech.utils.paths import (
     EMB_MUT_MEAN, EMB_MUT_POS, EMB_WT_MEAN, EMB_WT_POS,
     PFAM_JSON, RESULTS_DIR, VALID_VARIANTS_JSON,
 )
-from esm2_mech.utils.io import atomic_write_json
+from esm2_mech.utils.io import atomic_write_json, load_variants_and_delta
 from esm2_mech.utils.probes import run_mlp_probe_cv, run_sklearn_probe_pca, run_sklearn_probe
 from esm2_mech.utils.splits import gene_split_cv, family_split_cv
 
@@ -48,22 +47,9 @@ OUT_DIR = RESULTS_DIR
 
 
 def load_data():
-    with open(VALID_VARIANTS_JSON) as f:
-        variants = json.load(f)
-    labels = np.array([v["label_3class"] for v in variants])
-    genes = np.array([v["gene"] for v in variants])
-    print(f"Loaded {len(variants):,} variants, {len(set(genes))} genes")
-
-    for path in [EMB_WT_MEAN, EMB_MUT_MEAN, EMB_WT_POS, EMB_MUT_POS]:
-        if not os.path.exists(path):
-            raise FileNotFoundError(f"Embedding file missing: {path}")
-    delta_mean = np.load(EMB_MUT_MEAN) - np.load(EMB_WT_MEAN)
-    delta_pos = np.load(EMB_MUT_POS) - np.load(EMB_WT_POS)
-    print(f"delta_mean: {delta_mean.shape}  delta_pos: {delta_pos.shape}")
-    if delta_mean.shape[0] != len(variants):
-        raise ValueError(
-            f"Embedding row count {delta_mean.shape[0]} != variant count {len(variants)}."
-        )
+    _variants, labels, genes, delta_mean, delta_pos = load_variants_and_delta(
+        VALID_VARIANTS_JSON, EMB_WT_MEAN, EMB_MUT_MEAN, EMB_WT_POS, EMB_MUT_POS
+    )
 
     with open(PFAM_JSON) as f:
         pfam_map = json.load(f)

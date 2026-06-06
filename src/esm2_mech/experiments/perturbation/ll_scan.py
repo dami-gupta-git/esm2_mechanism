@@ -32,6 +32,7 @@ from collections import defaultdict
 from pathlib import Path
 
 from esm2_mech.utils.paths import EMB_MUT_MEAN, EMB_WT_MEAN, LL_CKPT_JSON, RESULTS_DIR as _RESULTS_DIR, SCAN_PROBE_CACHE_JSON, SEQUENCES_EXTENDED_JSON, SEQUENCES_JSON, VALID_VARIANTS_JSON
+from esm2_mech.utils.constants import AA_ORDER
 from esm2_mech.utils.embed import load_gene_delta
 from esm2_mech.utils.probes import run_logreg_cv
 
@@ -130,7 +131,7 @@ def extract_ll_scores(covered_genes, gene_positions, seqs, batch_size=32):
     mask_idx = alphabet.mask_idx
 
     # Map AA char → token index
-    aa_to_idx = {aa: alphabet.get_idx(aa) for aa in "ACDEFGHIKLMNPQRSTVWY"}
+    aa_to_idx = {aa: alphabet.get_idx(aa) for aa in AA_ORDER}
     probe_aas = ["A", "D", "W"]
 
     remaining = [g for g in covered_genes if g not in done_genes]
@@ -185,7 +186,7 @@ def extract_ll_scores(covered_genes, gene_positions, seqs, batch_size=32):
                 ll_trp = float(log_probs[aa_to_idx["W"]])
 
                 # Full 20-AA distribution for entropy computation
-                aa_order = "ACDEFGHIKLMNPQRSTVWY"
+                aa_order = AA_ORDER
                 full_probs = [
                     float(np.exp(log_probs[aa_to_idx[aa]])) for aa in aa_order
                 ]
@@ -237,7 +238,7 @@ def compute_ll_features(covered_genes, all_scores):
     ]
 
     gene_list, X = [], []
-    aa_order = "ACDEFGHIKLMNPQRSTVWY"
+    aa_order = AA_ORDER
 
     for gene in covered_genes:
         scores = all_scores.get(gene, [])

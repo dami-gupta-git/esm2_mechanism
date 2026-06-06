@@ -12,8 +12,14 @@ Invariants:
 - window_sequence: position at sequence start/end handled without clipping error
 """
 
+import numpy as np
 import pytest
-from esm2_mech.utils.sequences import apply_missense, window_sequence
+from esm2_mech.utils.constants import AA_INDEX, AA_ORDER
+from esm2_mech.utils.sequences import (
+    apply_missense,
+    build_wt_mut_onehot,
+    window_sequence,
+)
 
 
 class TestApplyMissense:
@@ -116,3 +122,43 @@ class TestWindowSequence:
         for pos in [1, 100, 2500, 4900, 5000]:
             window, _, start = window_sequence(seq, pos, window_half=511, max_len=1022)
             assert seq[start : start + len(window)] == window, f"pos={pos}"
+
+
+class TestBuildWtMutOnehot:
+    # WT goes in columns [0, n_aa); MUT in [n_aa, 2*n_aa). The fixed offset and
+    # WT/MUT split are exactly where a silent encoding bug would corrupt the
+    # one-hot baseline without crashing.
+    N_AA = len(AA_ORDER)
+
+    def test_wt_and_mut_in_correct_blocks(self):
+        onehot = build_wt_mut_onehot(["A", "Y"], ["C", "W"])
+        assert onehot.shape == (2, 2 * self.N_AA)
+        assert onehot[0, AA_INDEX["A"]] == 1.0
+        assert onehot[0, self.N_AA + AA_INDEX["C"]] == 1.0
+        assert onehot[0].sum() == 2.0
+        assert onehot[1, AA_INDEX["Y"]] == 1.0
+        assert onehot[1, self.N_AA + AA_INDEX["W"]] == 1.0
+
+    def test_wt_and_mut_not_swapped(self):
+        forward = build_wt_mut_onehot(["A"], ["C"])
+        reverse = build_wt_mut_onehot(["C"], ["A"])
+        assert not np.array_equal(forward, reverse)
+        assert forward[0, AA_INDEX["A"]] == 1.0
+        assert reverse[0, AA_INDEX["C"]] == 1.0
+
+    def test_case_insensitive(self):
+        assert np.array_equal(
+            build_wt_mut_onehot(["a"], ["c"]), build_wt_mut_onehot(["A"], ["C"])
+        )
+
+    def test_unknown_aa_leaves_block_zero(self):
+        # Unknown residues ("X", gap) must not raise and must leave a zero block.
+        onehot = build_wt_mut_onehot(["X"], ["-"])
+        assert onehot.shape == (1, 2 * self.N_AA)
+        assert onehot.sum() == 0.0
+
+    def test_column_layout_matches_aa_order(self):
+        onehot = build_wt_mut_onehot(list(AA_ORDER), list(AA_ORDER))
+        for i in range(self.N_AA):
+            assert onehot[i, i] == 1.0
+            assert onehot[i, self.N_AA + i] == 1.0

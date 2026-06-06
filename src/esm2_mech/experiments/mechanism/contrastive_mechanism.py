@@ -32,7 +32,7 @@ import numpy as np
 from sklearn.metrics import roc_auc_score, f1_score
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.preprocessing import LabelEncoder
-from esm2_mech.utils.io import atomic_write_json
+from esm2_mech.utils.io import atomic_write_json, load_variants_and_delta
 from esm2_mech.utils.metrics import align_proba
 from esm2_mech.utils.splits import gene_split_cv, family_split_cv
 from esm2_mech.utils.paths import (
@@ -73,22 +73,9 @@ warnings.filterwarnings("ignore")
 
 def load_data():
     """Load the merged Gerasimavicius + G2P variants and their delta embeddings."""
-    with open(VALID_VARIANTS_JSON) as f:
-        variants = json.load(f)
-    print(f"Loaded {len(variants)} merged variants (Gerasimavicius + G2P)")
-
-    labels = np.array([v["label_3class"] for v in variants])
-    genes = np.array([v["gene"] for v in variants])
-    n = len(variants)
-
-    print(f"Class distribution: {dict(Counter(labels))}")
-    print(f"Unique genes: {len(set(genes))}")
-
-    wt_mean = np.load(EMB_WT_MEAN)[:n]
-    mut_mean = np.load(EMB_MUT_MEAN)[:n]
-    delta_mean = (mut_mean - wt_mean).astype(np.float32)
-
-    print(f"Delta embeddings: {delta_mean.shape}")
+    variants, labels, genes, delta_mean, _ = load_variants_and_delta(
+        VALID_VARIANTS_JSON, EMB_WT_MEAN, EMB_MUT_MEAN
+    )
     return variants, labels, genes, delta_mean
 
 

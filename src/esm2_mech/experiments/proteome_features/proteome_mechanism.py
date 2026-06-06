@@ -31,7 +31,6 @@ import json
 import os
 import sys
 import warnings
-from collections import Counter
 from pathlib import Path
 
 import numpy as np
@@ -42,6 +41,7 @@ from sklearn.preprocessing import StandardScaler
 from esm2_mech.utils.splits import family_split_indices
 from esm2_mech.utils.metrics import compute_metrics
 from esm2_mech.utils.probes import run_mlp_cv, run_logreg_cv
+from esm2_mech.utils.io import load_variants_and_delta
 from esm2_mech.utils.paths import (
     DATA_DIR,
     RESULTS_DIR,
@@ -165,20 +165,9 @@ def load_data() -> tuple[list[dict], np.ndarray, np.ndarray, np.ndarray]:
         genes     : (n,) string array of gene symbols
         delta     : (n, 1280) float32 ESM-2 delta embeddings
     """
-    with open(MERGED_VALID_VARIANTS) as f:
-        variants = json.load(f)
-
-    labels = np.array([v["label_3class"] for v in variants])
-    genes = np.array([v["gene"] for v in variants])
-    n = len(variants)
-
-    wt_mean = np.load(MERGED_WT_MEAN)[:n]
-    mut_mean = np.load(MERGED_MUT_MEAN)[:n]
-    delta = (mut_mean - wt_mean).astype(np.float32)
-
-    print(f"Loaded {n} variants, {len(set(genes.tolist()))} unique genes")
-    print(f"Class distribution: {dict(Counter(labels.tolist()))}")
-    print(f"Delta shape: {delta.shape}")
+    variants, labels, genes, delta, _ = load_variants_and_delta(
+        MERGED_VALID_VARIANTS, MERGED_WT_MEAN, MERGED_MUT_MEAN
+    )
     return variants, labels, genes, delta
 
 

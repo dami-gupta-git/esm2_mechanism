@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import functools
-import json
 
 import numpy as np
 
+from esm2_mech.utils.io import load_variants_and_delta
 from esm2_mech.utils.paths import (
     VALID_VARIANTS_JSON,
     EMB_WT_MEAN,
@@ -48,25 +48,15 @@ def load_mechanism_variants(
 
     Returns (delta_mean, delta_pos, labels, genes). pfam_map is accepted for
     backward-compatible call sites but is unused (labels come from the variants).
+
+    Labels are taken from each variant's existing "label_3class" when present,
+    falling back to _label_3class for variants that only carry a raw "mechanism".
     """
-    with open(VALID_VARIANTS_JSON) as f:
-        variants = json.load(f)
-
+    variants, _labels, genes, delta_mean, delta_pos = load_variants_and_delta(
+        VALID_VARIANTS_JSON, EMB_WT_MEAN, EMB_MUT_MEAN, EMB_WT_POS, EMB_MUT_POS,
+        verbose=False,
+    )
     labels = np.array([_label_3class(v) for v in variants])
-    genes = np.array([v["gene"] for v in variants])
-
-    wt = np.load(EMB_WT_MEAN)
-    mut = np.load(EMB_MUT_MEAN)
-    delta_mean = mut - wt
-    wt_p = np.load(EMB_WT_POS)
-    mut_p = np.load(EMB_MUT_POS)
-    delta_pos = mut_p - wt_p
-
-    if len(delta_mean) != len(labels):
-        raise ValueError(
-            f"embedding/variant row mismatch: {len(delta_mean)} embedding rows vs "
-            f"{len(labels)} variants — {VALID_VARIANTS_JSON.name} is not row-aligned."
-        )
     print(f"  Mechanism set: {len(variants)} variants, {len(set(genes))} genes")
     return delta_mean, delta_pos, labels, genes
 

@@ -43,6 +43,7 @@ from sklearn.metrics import roc_auc_score
 
 print = functools.partial(print, flush=True)
 
+from esm2_mech.utils.constants import AA_ORDER
 from esm2_mech.utils.paths import PROTEINGYM_CACHE_DIR, RESULTS_DIR as _RESULTS_DIR
 
 PG_DIR = PROTEINGYM_CACHE_DIR
@@ -220,7 +221,7 @@ def phase2_extract_ll(
     model = model.to(device).eval()
     batch_converter = alphabet.get_batch_converter()
     mask_idx = alphabet.mask_idx
-    aa_to_idx = {aa: alphabet.get_idx(aa) for aa in "ACDEFGHIKLMNPQRSTVWY"}
+    aa_to_idx = {aa: alphabet.get_idx(aa) for aa in AA_ORDER}
 
     CKPT = PG_DIR / "esm2_ll_ckpt.json"
     done_ids: set[str] = set()
