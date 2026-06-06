@@ -45,7 +45,7 @@ import openpyxl
 import requests
 
 from esm2_mech.utils.constants import SOURCE_CLINVAR_G2P, SOURCE_GERASIMAVICIUS
-from esm2_mech.utils.io import atomic_write_json
+from esm2_mech.utils.io import atomic_write_json, atomic_write_text
 from esm2_mech.utils.paths import CACHE_DIR, DATA_DIR, GENE_LIST_TSV, VARIANTS_JSON
 
 print = functools.partial(print, flush=True)
@@ -355,9 +355,7 @@ def fetch_protein_sequence(uniprot_id: str) -> Optional[str]:
         return None
     lines = text.strip().splitlines()
     seq = "".join(line for line in lines if not line.startswith(">"))
-    tmp = seq_file.with_suffix(".tmp")
-    tmp.write_text(seq)
-    os.replace(tmp, seq_file)
+    atomic_write_text(seq_file, seq)
     _seq_cache[uniprot_id] = seq
     return seq
 

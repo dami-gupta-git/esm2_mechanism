@@ -27,3 +27,13 @@ def atomic_write_json(path, data, **json_kwargs) -> None:
         f.flush()
         os.fsync(f.fileno())
     os.replace(tmp, str(path))
+
+
+def atomic_write_text(path, text: str) -> None:
+    """Atomically write a text string: write to .tmp, fsync, then rename."""
+    tmp = str(path) + ".tmp"
+    with open(tmp, "w") as f:
+        f.write(text)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, str(path))
