@@ -73,6 +73,9 @@ def run_family_split_eval(
     labels = np.array([row[0] for row in rows])
     scores = np.array([row[1] for row in rows])
 
+    # NOTE: labels are assumed to be exactly {0, 1}. n_neg = (1 - labels).sum()
+    # and n_pos = labels.sum() are only correct under that encoding — a {-1, 1} or
+    # multi-class encoding would silently miscount. Callers must pass 0/1 labels.
     overall = {
         "n": int(labels.size),
         "n_pos": int(labels.sum()),

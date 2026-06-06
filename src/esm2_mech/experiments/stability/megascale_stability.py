@@ -16,7 +16,9 @@ Pre-registered hypotheses (docs/plans/plan_megascale_stability.md):
       family-split mechanism F1 on the merged mechanism dataset.
       Protocol: train Ridge on stability → predict stability score for merged
       variants → compute residuals of delta_mean ⊥ predicted stability
-      (OLS projection-out, one component) → re-run family-split logreg.
+      (OLS projection-out, one component) → re-run family-split logreg on the
+      residuals vs. on the unprojected features, both in the single stability
+      (sc_s) standardisation space so the projection is the only difference.
   H4: Per-domain ρ std ≤ 0.10 (tight per-stratum distribution)
 
 Decision table — ordered by informativeness, not by prior probability.
@@ -186,7 +188,13 @@ def run_h3_stability_projection(
          residuals = delta_mean - (delta_mean @ v) * v  where v is the unit vector
          of the stability Ridge weights (normalised).
       4. Re-run family-split logistic regression on residuals, 5 seeds.
-      5. Compare to baseline family-split F1 on raw delta_mean.
+      5. Compare to baseline family-split F1 on the unprojected features. Both arms
+         live in the single sc_s standardisation space (the space the projection
+         vector is defined in) and are NOT re-standardised per task or per fold —
+         re-standardising would reintroduce variance along the removed direction
+         and defeat the test (see the note at the projection step). The baseline is
+         therefore the sc_s-standardised features, not raw delta_mean; the only
+         difference between the two arms is the rank-1 projection.
 
     Returns dict with baseline_f1, projected_f1, delta_f1, and per-seed values.
     """

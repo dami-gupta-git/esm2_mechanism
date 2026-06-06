@@ -246,25 +246,28 @@ def fetch_phase(max_per_gene_per_class=20, seed=42):
 def _build_valid_pairs_indexed(variants, seq_cache):
     """Filter to embeddable variants; return original indices for re-alignment."""
     valid_indices, valid, wt_seqs, mut_seqs, positions = [], [], [], [], []
-    skipped_no_uid = 0
+    skipped = {"no_uid": 0, "uid_not_in_seq_cache": 0, "apply_missense_none": 0}
     for idx, v in enumerate(variants):
         uid = v.get("uniprot_id")
         if not uid:
-            skipped_no_uid += 1
+            skipped["no_uid"] += 1
             continue
         if uid not in seq_cache:
+            skipped["uid_not_in_seq_cache"] += 1
             continue
         wt_win, new_pos, _ = window_sequence(seq_cache[uid], v["aa_pos"])
         mut_win = apply_missense(wt_win, new_pos, v["aa_wt"], v["aa_mut"])
         if mut_win is None:
+            skipped["apply_missense_none"] += 1
             continue
         valid_indices.append(idx)
         valid.append(v)
         wt_seqs.append(wt_win)
         mut_seqs.append(mut_win)
         positions.append(new_pos)
-    if skipped_no_uid:
-        print(f"  WARNING: skipped {skipped_no_uid} variants with no uniprot_id")
+    for bucket, count in skipped.items():
+        if count:
+            print(f"  WARNING: skipped {count} variants ({bucket})")
     print(f"  Valid variant pairs: {len(valid)}")
     return valid_indices, valid, wt_seqs, mut_seqs, positions
 
@@ -401,21 +404,33 @@ def probe_phase(variants, n_seeds, n_jobs=-1):
             delayed(_run_cell)(*c) for c in cells
         )
 
+        # Keep NaN (undefined AUROC: a cell with no valid fold) out of the JSON.
+        # json.dump emits the bare token `NaN`, which is invalid JSON; store null
+        # so absent data round-trips as None.
         seed_result = {}
         for fname, pname, split_name, auroc in outcomes:
-            seed_result[f"{fname}_{pname}_{split_name}"] = auroc
-        with open(seed_path, "w") as f:
-            json.dump(seed_result, f, indent=2)
+            seed_result[f"{fname}_{pname}_{split_name}"] = (
+                None if np.isnan(auroc) else auroc
+            )
+        atomic_write_json(seed_path, seed_result, indent=2)
         summary = "  ".join(
-            f"{k}={v:.3f}" for k, v in seed_result.items() if "mlp" in k
+            f"{k}={v:.3f}" for k, v in seed_result.items() if "mlp" in k and v is not None
         )
         print(f"  seed {seed} done -> {seed_path.name}   {summary}")
 
     # Aggregate per-seed files into the final mean ± std result.
     per_cell = defaultdict(list)
     for seed in range(n_seeds):
-        with open(PATHOGENICITY_CONTROL_SEED_JSON.format(seed=seed)) as f:
-            seed_result = json.load(f)
+        seed_path = Path(PATHOGENICITY_CONTROL_SEED_JSON.format(seed=seed))
+        try:
+            with open(seed_path) as f:
+                seed_result = json.load(f)
+        except json.JSONDecodeError:
+            # Partial write on interrupt. Delete so the next run recomputes this
+            # seed rather than aggregating a truncated file.
+            print(f"  WARNING: corrupt {seed_path.name} — deleting; re-run to recompute this seed")
+            seed_path.unlink()
+            raise
         for key, auroc in seed_result.items():
             per_cell[key].append(auroc)
 
@@ -432,17 +447,16 @@ def probe_phase(variants, n_seeds, n_jobs=-1):
         for pname in probes:
             for split_name in ("gene", "family"):
                 key = f"{fname}_{pname}_{split_name}"
-                vals = [v for v in per_cell[key] if not np.isnan(v)]
-                mean = float(np.mean(vals)) if vals else float("nan")
-                std = float(np.std(vals)) if vals else float("nan")
+                vals = [v for v in per_cell[key] if v is not None]
+                mean = float(np.mean(vals)) if vals else None
+                std = float(np.std(vals)) if vals else None
                 results["by_feature"][fname][f"{pname}_{split_name}"] = {
                     "auroc_mean": mean,
                     "auroc_std": std,
                     "per_seed": per_cell[key],
                 }
 
-    with open(PATHOGENICITY_CONTROL_JSON, "w") as f:
-        json.dump(results, f, indent=2)
+    atomic_write_json(PATHOGENICITY_CONTROL_JSON, results, indent=2)
     print(f"  Aggregated results written to {PATHOGENICITY_CONTROL_JSON}")
     return results
 
@@ -459,11 +473,17 @@ def _print_headline(results):
     for feature in ("delta_mean", "wt_only"):
         for key in ("logreg_gene", "logreg_family", "mlp_gene", "mlp_family"):
             mean, std = cell(feature, key)
-            print(f"  {feature:11s} {key:14s} AUROC = {mean:.3f} ± {std:.3f}")
+            if mean is None:
+                print(f"  {feature:11s} {key:14s} AUROC = undefined (no valid fold)")
+            else:
+                print(f"  {feature:11s} {key:14s} AUROC = {mean:.3f} ± {std:.3f}")
         print()
 
     d_mean, _ = cell("delta_mean", "mlp_gene")
     d_fam, _ = cell("delta_mean", "mlp_family")
+    if d_mean is None or d_fam is None:
+        print("  delta_mean MLP gene/family AUROC is undefined — cannot evaluate the control.")
+        return
     print(f"  delta_mean MLP gene→family Δ = {d_mean - d_fam:+.3f}")
     if d_mean >= 0.85:
         print("  ⇒ Pipeline PASSES positive control (delta MLP AUROC ≥ 0.85).")
