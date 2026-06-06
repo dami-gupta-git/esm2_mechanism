@@ -326,12 +326,36 @@ def pca_reduce(X_tr: np.ndarray, X_te: np.ndarray, n_components: int = 50):
     return pca.fit_transform(X_tr), pca.transform(X_te)
 
 
-def run_sklearn_probe(
+def aggregate_fold_dicts(fold_results: list[dict]) -> dict:
+    """Aggregate flat per-fold metric dicts into {key}_mean / {key}_std.
+
+    Each fold dict maps a metric name to a scalar (e.g. {"macro_f1": .., "auroc_GOF": ..}).
+    Metrics absent from a fold, or NaN on a fold, are skipped for that metric only;
+    a metric present on no fold is omitted entirely. Used by the sklearn/MLP probe
+    runners that emit flat metric dicts (distinct from metrics.aggregate_folds,
+    which aggregates the nested per_class_auroc shape from compute_metrics).
+    """
+    keys = set().union(*[set(f) for f in fold_results]) if fold_results else set()
+    agg: dict = {}
+    for key in keys:
+        vals = [f[key] for f in fold_results if key in f and not np.isnan(f[key])]
+        if vals:
+            agg[f"{key}_mean"] = float(np.mean(vals))
+            agg[f"{key}_std"] = float(np.std(vals))
+    return agg
+
+
+def _run_sklearn_probe_impl(
     clf_fn, X: np.ndarray, labels: np.ndarray, genes: np.ndarray,
-    n_folds: int = 5, seed: int = 42, normalize: bool = False,
-    splits: list | None = None,
+    n_folds: int, seed: int, splits: list | None,
+    normalize: bool, n_pca: int | None,
 ) -> dict:
-    """Generic gene-split CV runner for any sklearn classifier."""
+    """Shared gene-split CV body for run_sklearn_probe / run_sklearn_probe_pca.
+
+    normalize : standardize each feature on the train fold (mean 0, std 1).
+    n_pca     : if not None, fit per-fold PCA after normalizing (which is forced
+                on when n_pca is set, matching the original run_sklearn_probe_pca).
+    """
     from sklearn.preprocessing import LabelEncoder
     le = LabelEncoder()
     y = le.fit_transform(labels)
@@ -346,9 +370,16 @@ def run_sklearn_probe(
         y_tr, y_te = y[train_idx], y[test_idx]
         if len(set(y_tr)) < 2:
             continue
-        if normalize:
+        if normalize or n_pca is not None:
             mu, std = X_tr.mean(0), X_tr.std(0) + 1e-8
             X_tr, X_te = (X_tr - mu) / std, (X_te - mu) / std
+        if n_pca is not None:
+            from sklearn.decomposition import PCA
+            pca = PCA(
+                n_components=min(n_pca, X_tr.shape[1], X_tr.shape[0] - 1),
+                random_state=seed,
+            )
+            X_tr, X_te = pca.fit_transform(X_tr), pca.transform(X_te)
         clf = clf_fn(seed)
         clf.fit(X_tr, y_tr)
         pred = clf.predict(X_te)
@@ -364,13 +395,19 @@ def run_sklearn_probe(
 
     if not fold_results:
         return {"error": "insufficient data"}
-    agg = {}
-    for key in fold_results[0]:
-        vals = [f[key] for f in fold_results if key in f and not np.isnan(f[key])]
-        if vals:
-            agg[f"{key}_mean"] = float(np.mean(vals))
-            agg[f"{key}_std"] = float(np.std(vals))
-    return agg
+    return aggregate_fold_dicts(fold_results)
+
+
+def run_sklearn_probe(
+    clf_fn, X: np.ndarray, labels: np.ndarray, genes: np.ndarray,
+    n_folds: int = 5, seed: int = 42, normalize: bool = False,
+    splits: list | None = None,
+) -> dict:
+    """Generic gene-split CV runner for any sklearn classifier."""
+    return _run_sklearn_probe_impl(
+        clf_fn, X, labels, genes, n_folds, seed, splits,
+        normalize=normalize, n_pca=None,
+    )
 
 
 def run_sklearn_probe_pca(
@@ -379,47 +416,10 @@ def run_sklearn_probe_pca(
     splits: list | None = None,
 ) -> dict:
     """Gene-split CV with per-fold PCA reduction and normalization."""
-    from sklearn.decomposition import PCA
-    from sklearn.preprocessing import LabelEncoder
-    le = LabelEncoder()
-    y = le.fit_transform(labels)
-    classes = le.classes_
-    if splits is None:
-        from esm2_mech.utils.splits import gene_split_cv
-        splits = gene_split_cv(genes, n_folds=n_folds, seed=seed)
-
-    fold_results = []
-    for fold_i, (train_idx, test_idx) in enumerate(splits):
-        X_tr, X_te = X[train_idx].astype(np.float32), X[test_idx].astype(np.float32)
-        y_tr, y_te = y[train_idx], y[test_idx]
-        if len(set(y_tr)) < 2:
-            continue
-        mu, std = X_tr.mean(0), X_tr.std(0) + 1e-8
-        X_tr, X_te = (X_tr - mu) / std, (X_te - mu) / std
-        pca = PCA(n_components=min(n_pca, X_tr.shape[1], X_tr.shape[0] - 1), random_state=seed)
-        X_tr, X_te = pca.fit_transform(X_tr), pca.transform(X_te)
-        clf = clf_fn(seed)
-        clf.fit(X_tr, y_tr)
-        pred = clf.predict(X_te)
-        fm = {"macro_f1": float(f1_score(y_te, pred, average="macro", zero_division=0))}
-        if hasattr(clf, "predict_proba"):
-            proba = clf.predict_proba(X_te)
-            for i, cls in enumerate(classes):
-                y_bin = (y_te == i).astype(int)
-                if y_bin.sum() > 0 and (1 - y_bin).sum() > 0:
-                    fm[f"auroc_{cls}"] = float(roc_auc_score(y_bin, proba[:, i]))
-        fold_results.append(fm)
-        print(f"  Fold {fold_i+1}: macro_f1={fm['macro_f1']:.3f}")
-
-    if not fold_results:
-        return {"error": "insufficient data"}
-    agg = {}
-    for key in fold_results[0]:
-        vals = [f[key] for f in fold_results if key in f and not np.isnan(f[key])]
-        if vals:
-            agg[f"{key}_mean"] = float(np.mean(vals))
-            agg[f"{key}_std"] = float(np.std(vals))
-    return agg
+    return _run_sklearn_probe_impl(
+        clf_fn, X, labels, genes, n_folds, seed, splits,
+        normalize=True, n_pca=n_pca,
+    )
 
 
 def run_mlp_probe_cv(
