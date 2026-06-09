@@ -25,6 +25,7 @@ from sklearn.metrics import f1_score, roc_auc_score
 
 from esm2_mech.utils.constants import (
     BOOTSTRAP_CI_LEVEL,
+    BOOTSTRAP_MIN_VALID_FRAC,
     BOOTSTRAP_N_RESAMPLES,
     MECHANISM_CLASSES,
     PERMUTATION_N_RESAMPLES,
@@ -87,12 +88,36 @@ def _cluster_to_rows(clusters: np.ndarray) -> tuple[np.ndarray, list[np.ndarray]
     return unique, rows
 
 
+def _bootstrap_resample_value(
+    metric_fn: Callable[[np.ndarray], float | None],
+    cluster_rows: list[np.ndarray],
+    n_clusters: int,
+    child_seed: int,
+) -> float | None:
+    """Draw one cluster resample with an independent seeded RNG, return the metric.
+
+    Each call gets its own `RandomState(child_seed)` so the resamples are reproducible
+    and order-independent — a requirement for running them in parallel, where the
+    sequential RNG state of a single shared generator cannot be relied on. Mirrors
+    `_permutation_null_value`.
+    """
+    rng = np.random.RandomState(child_seed)
+    drawn = rng.randint(0, n_clusters, size=n_clusters)
+    rows = np.concatenate([cluster_rows[i] for i in drawn])
+    value = metric_fn(rows)
+    if value is not None and np.isfinite(value):
+        return float(value)
+    return None
+
+
 def cluster_bootstrap_ci(
     clusters: np.ndarray,
     metric_fn: Callable[[np.ndarray], float | None],
     n_resamples: int = BOOTSTRAP_N_RESAMPLES,
     ci_level: float = BOOTSTRAP_CI_LEVEL,
+    min_valid_frac: float = BOOTSTRAP_MIN_VALID_FRAC,
     seed: int = 0,
+    n_jobs: int = -1,
 ) -> dict:
     """Percentile CI for a metric via a cluster bootstrap.
 
@@ -103,39 +128,57 @@ def cluster_bootstrap_ci(
     metric on those rows, or None/NaN when undefined on a resample (e.g. a class
     absent). Undefined resamples are dropped from the percentile, not imputed.
 
+    A metric that is undefined on many resamples (e.g. one-vs-rest AUROC for a rare
+    class that is frequently absent) yields a CI built on a thinned, biased subset.
+    When the surviving fraction falls below `min_valid_frac`, no CI is returned
+    (ci_low/ci_high = None) and `ci_suppressed` is set, so the dropout is visible
+    rather than silently narrowing the interval.
+
     The point estimate is metric_fn over all rows. Returns point, ci_low, ci_high,
-    n_resamples (the count that contributed), n_clusters.
+    n_resamples (the count that contributed), n_resamples_total, valid_frac,
+    ci_suppressed, n_clusters.
+
+    The n_resamples draws are independent and run across cores via joblib
+    (n_jobs=-1 = all cores). Each resample draws from its own RNG seeded by a
+    SeedSequence spawned from `seed`, so the CI is identical to a serial run
+    regardless of how the work is scheduled.
     """
     unique, cluster_rows = _cluster_to_rows(np.asarray(clusters))
     n_clusters = len(unique)
     all_rows = np.arange(len(clusters))
     point = metric_fn(all_rows)
 
-    rng = np.random.RandomState(seed)
-    stats: list[float] = []
-    for _ in range(n_resamples):
-        drawn = rng.randint(0, n_clusters, size=n_clusters)
-        rows = np.concatenate([cluster_rows[i] for i in drawn])
-        value = metric_fn(rows)
-        if value is not None and np.isfinite(value):
-            stats.append(float(value))
+    # Spawn one independent child seed per resample up front. SeedSequence.spawn
+    # guarantees statistically independent, reproducible streams without relying on
+    # a single generator's sequential state (which parallel execution would break).
+    child_seqs = np.random.SeedSequence(seed).spawn(n_resamples)
+    child_seeds = [int(s.generate_state(1)[0]) for s in child_seqs]
 
-    if not stats:
-        return {
-            "point": float(point) if point is not None and np.isfinite(point) else None,
-            "ci_low": None,
-            "ci_high": None,
-            "n_resamples": 0,
-            "n_clusters": int(n_clusters),
-        }
+    values = Parallel(n_jobs=n_jobs)(
+        delayed(_bootstrap_resample_value)(
+            metric_fn, cluster_rows, n_clusters, child_seed
+        )
+        for child_seed in child_seeds
+    )
+    stats = [value for value in values if value is not None]
+
+    valid_frac = len(stats) / n_resamples if n_resamples else 0.0
+    base = {
+        "point": float(point) if point is not None and np.isfinite(point) else None,
+        "n_resamples": len(stats),
+        "n_resamples_total": int(n_resamples),
+        "valid_frac": float(valid_frac),
+        "n_clusters": int(n_clusters),
+    }
+    if not stats or valid_frac < min_valid_frac:
+        return {**base, "ci_low": None, "ci_high": None, "ci_suppressed": True}
     lo_pct = (1.0 - ci_level) / 2.0 * 100.0
     hi_pct = (1.0 + ci_level) / 2.0 * 100.0
     return {
-        "point": float(point) if point is not None and np.isfinite(point) else None,
+        **base,
         "ci_low": float(np.percentile(stats, lo_pct)),
         "ci_high": float(np.percentile(stats, hi_pct)),
-        "n_resamples": len(stats),
-        "n_clusters": int(n_clusters),
+        "ci_suppressed": False,
     }
 
 
@@ -177,6 +220,15 @@ def bootstrap_mechanism_metrics(
         out[f"auroc_{cls}"] = cluster_bootstrap_ci(
             clusters, _auroc, n_resamples=n_resamples, ci_level=ci_level, seed=seed
         )
+
+    for metric_name, ci in out.items():
+        if ci.get("ci_suppressed"):
+            print(
+                f"  [bootstrap] {metric_name}: CI suppressed — only "
+                f"{ci['n_resamples']}/{ci['n_resamples_total']} resamples valid "
+                f"({ci['valid_frac']:.0%}); the metric was undefined on the rest "
+                f"(rare class absent on a resample). No CI reported for this metric."
+            )
     return out
 
 

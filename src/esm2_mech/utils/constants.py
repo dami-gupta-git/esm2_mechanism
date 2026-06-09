@@ -133,6 +133,12 @@ MEGASCALE_DDG_MISSING = "-"
 BOOTSTRAP_N_RESAMPLES = 1000
 BOOTSTRAP_CI_LEVEL = 0.95
 PERMUTATION_N_RESAMPLES = 1000
+# A cluster-bootstrap metric can be undefined on a resample (e.g. a rare class is
+# absent, so one-vs-rest AUROC is undefined) and is dropped from the percentile. If
+# too few resamples survive, the CI is built on a biased, thinned subset and must not
+# be trusted. Below this surviving fraction, cluster_bootstrap_ci returns no CI and
+# flags it so the dropout is visible instead of silently narrowing the interval.
+BOOTSTRAP_MIN_VALID_FRAC = 0.8
 # No-signal reference for a one-vs-rest AUROC (ranking metric): a CI clearing this
 # from above, or a permutation p-value against it, marks above-chance separation.
 CHANCE_AUROC = 0.5

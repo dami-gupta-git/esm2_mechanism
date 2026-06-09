@@ -197,9 +197,13 @@ def main() -> None:
     results["most_frequent_floor_ci"] = floor_ci
     for split_name in ("gene", "family"):
         cell = floor_ci[split_name]
+        point_str = f"{cell['point']:.3f}" if cell["point"] is not None else "n/a"
+        if cell["ci_low"] is not None and cell["ci_high"] is not None:
+            ci_str = f"95% CI [{cell['ci_low']:.3f}, {cell['ci_high']:.3f}]"
+        else:
+            ci_str = "95% CI suppressed (too few valid resamples)"
         print(
-            f"  {split_name:7} point {cell['point']:.3f}  "
-            f"95% CI [{cell['ci_low']:.3f}, {cell['ci_high']:.3f}]  "
+            f"  {split_name:7} point {point_str}  {ci_str}  "
             f"(n_clusters {cell['n_clusters']})"
         )
 

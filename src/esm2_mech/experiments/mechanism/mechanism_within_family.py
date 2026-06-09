@@ -416,9 +416,12 @@ def pooled_gof_test(
             )
         out[probe_name] = probe_res
         ci = probe_res.get("ci", {})
+        if ci.get("ci_low") is not None and ci.get("ci_high") is not None:
+            ci_str = f"95% CI [{ci['ci_low']:.3f}, {ci['ci_high']:.3f}]"
+        else:
+            ci_str = "95% CI suppressed (too few valid resamples)"
         print(
-            f"  {probe_name}: GOF AUROC = {point:.3f}  "
-            f"95% CI [{ci.get('ci_low')}, {ci.get('ci_high')}]  "
+            f"  {probe_name}: GOF AUROC = {point:.3f}  {ci_str}  "
             f"(n={probe_res['n_genes']} genes, {probe_res['n_gof_variants']} GOF variants)"
         )
 

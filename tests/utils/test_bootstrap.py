@@ -8,7 +8,8 @@ Invariants:
 - average_oof_over_seeds: y_true and gene are carried through per row
 - cluster_bootstrap_ci: point matches metric_fn on all rows; CI brackets the point
 - cluster_bootstrap_ci: resamples whole clusters (n_clusters == #unique), not rows
-- cluster_bootstrap_ci: undefined resamples are dropped, not imputed
+- cluster_bootstrap_ci: a few undefined resamples are dropped, not imputed
+- cluster_bootstrap_ci: too many undefined resamples -> CI suppressed (not thinned)
 - cluster_bootstrap_ci: all-undefined metric -> ci_low/ci_high None
 - bootstrap_mechanism_metrics: returns macro_f1 + one CI per class; recovers GOF signal
 - label_permutation_pvalue: null centers on chance; planted signal -> small p
@@ -169,25 +170,45 @@ class TestClusterBootstrapCI:
         assert 2 not in seen_sizes
         assert seen_sizes  # metric was actually called
 
-    def test_undefined_resamples_dropped(self):
+    def test_few_undefined_resamples_dropped_ci_still_built(self):
         clusters = np.array([f"G{i % 4}" for i in range(20)])
         calls = {"n": 0}
 
         def metric(rows):
             calls["n"] += 1
-            # Return None on every other call to simulate an undefined resample.
+            # Undefined on 1-in-10 draws: 90% valid, above the 0.8 threshold.
+            return None if calls["n"] % 10 == 0 else 0.7
+
+        out = cluster_bootstrap_ci(clusters, metric, n_resamples=100)
+        # n_resamples counts only the contributing (non-None) draws.
+        assert out["n_resamples"] < 100
+        assert out["valid_frac"] >= 0.8
+        assert out["ci_suppressed"] is False
+        assert out["ci_low"] is not None
+
+    def test_ci_suppressed_when_too_many_undefined(self):
+        clusters = np.array([f"G{i % 4}" for i in range(20)])
+        calls = {"n": 0}
+
+        def metric(rows):
+            calls["n"] += 1
+            # Undefined on every other draw: 50% valid, below the 0.8 threshold.
             return None if calls["n"] % 2 == 0 else 0.7
 
         out = cluster_bootstrap_ci(clusters, metric, n_resamples=100)
-        # n_resamples in the result counts only the contributing (non-None) draws.
-        assert out["n_resamples"] < 100
-        assert out["ci_low"] is not None
+        assert out["valid_frac"] < 0.8
+        assert out["ci_suppressed"] is True
+        assert out["ci_low"] is None and out["ci_high"] is None
+        # The point estimate (over all rows) is still reported.
+        assert out["point"] == 0.7
 
     def test_all_undefined_gives_none_ci(self):
         clusters = np.array([f"G{i % 4}" for i in range(20)])
         out = cluster_bootstrap_ci(clusters, lambda rows: None, n_resamples=50)
         assert out["ci_low"] is None and out["ci_high"] is None
+        assert out["ci_suppressed"] is True
         assert out["n_resamples"] == 0
+        assert out["valid_frac"] == 0.0
 
     def test_deterministic_for_fixed_seed(self):
         clusters = np.array([f"G{i % 5}" for i in range(50)])
@@ -222,9 +243,10 @@ class TestBootstrapMechanismMetrics:
         assert "macro_f1" in out
         for cls in MECHANISM_CLASSES:
             assert f"auroc_{cls}" in out
-            assert {"point", "ci_low", "ci_high", "n_resamples", "n_clusters"} <= set(
-                out[f"auroc_{cls}"]
-            )
+            assert {
+                "point", "ci_low", "ci_high", "n_resamples", "n_resamples_total",
+                "valid_frac", "ci_suppressed", "n_clusters",
+            } <= set(out[f"auroc_{cls}"])
 
     def test_recovers_gof_signal_above_chance(self):
         y, proba, genes = self._signal_data()
