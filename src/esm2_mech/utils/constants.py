@@ -41,6 +41,21 @@ MECHANISM_CLASSES = [GOF, DN, LOF]
 SOURCE_GERASIMAVICIUS = "gerasimavicius"
 SOURCE_CLINVAR_G2P = "clinvar_g2p"
 
+# ── LLM-judge mechanism eval ──────────────────────────────────────────────────
+# Model and batch parameters for the Langfuse-traced LLM-as-judge that predicts
+# label_3class per variant. Single source of truth — never inline these.
+LLM_JUDGE_MODEL = "claude-haiku-4-5"
+LLM_JUDGE_MAX_TOKENS = 1024
+LLM_JUDGE_TOOL_NAME = "report_mechanism"
+# Concurrency for the batched judge run. Deliberately set to exercise the
+# provider's rate limits under load.
+LLM_JUDGE_CONCURRENCY = 8
+# Linear-backoff retry budget for transient provider errors (429 / 5xx / overloaded).
+LLM_JUDGE_MAX_RETRIES = 5
+LLM_JUDGE_BACKOFF_SECONDS = 2.0
+# The field in valid_variants.json / variants.json holding the ground-truth class.
+LABEL_3CLASS_FIELD = "label_3class"
+
 # ── ESM-2 sequence limits ─────────────────────────────────────────────────────
 MAX_SEQ_LEN = 1022          # ESM-2 token limit: 1024 - <cls> - <eos>
 WINDOW_HALF = MAX_SEQ_LEN // 2  # 511: centre variant with full budget used

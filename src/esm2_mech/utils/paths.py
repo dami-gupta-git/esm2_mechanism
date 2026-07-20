@@ -16,6 +16,14 @@ REPORTS_DIR = PROJECT_ROOT / "reports"
 RUN_REPORTS_DIR = REPORTS_DIR / RUN_NAME
 FIGURES_DIR = RUN_REPORTS_DIR / "figures"
 
+# ── LLM-judge mechanism eval (Langfuse-traced agent) ─────────────────────────
+# An LLM-as-judge predicts label_3class per variant; predictions are scored
+# against ground truth and every model call is traced to Langfuse. Lives in its
+# own subdir so it never clobbers the probe seed files under RESULTS_DIR.
+LLM_JUDGE_DIR = RESULTS_DIR / "llm_judge"
+LLM_JUDGE_PREDICTIONS_JSONL = LLM_JUDGE_DIR / "predictions.jsonl"
+LLM_JUDGE_SUMMARY_JSON = LLM_JUDGE_DIR / "summary.json"
+
 # ── Result files written under RESULTS_DIR ───────────────────────────────────
 MECHANISM_AGGREGATE_JSON = RESULTS_DIR / "aggregate.json"
 FAMILY_CLUSTERING_JSON = RESULTS_DIR / "family_clustering.json"
