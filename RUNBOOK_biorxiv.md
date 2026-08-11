@@ -1,10 +1,10 @@
-# Run runbook 5 — run7, inferential statistics
+# Run runbook 5 — run_biorxiv, inferential statistics
 
-Purpose: produce `run7` end-to-end with dependency-aware confidence intervals, permutation
+Purpose: produce `run_biorxiv` end-to-end with dependency-aware confidence intervals, permutation
 p-values, and tested difference claims, so every report carries inferential statistics rather
 than 5-seed fold-jitter error bars.
 
-Supersedes `RUNBOOK_4.md` (run6). The experiments, gates, and hypotheses are unchanged — run7
+Supersedes `RUNBOOK_4.md` (run6). The experiments, gates, and hypotheses are unchanged — run_biorxiv
 re-scores the same science with correct error bars. Statistical methodology is
 [`reports/run6/STATS_PLAN.md`](reports/run6/STATS_PLAN.md); the change list is
 [`PLAN_2026-07-20.md`](PLAN_2026-07-20.md).
@@ -22,7 +22,7 @@ ssh -i ~/.ssh/id_runpod_2 root@<pod-ip> -p <pod-port>
 
 ## Embeddings are NOT re-extracted
 
-Nothing upstream of the probes changed between run6 and run7, so every GPU embedding step is
+Nothing upstream of the probes changed between run6 and run_biorxiv, so every GPU embedding step is
 skipped and the existing arrays are reused as-is. **Do not re-run `embed_variants`,
 `embed_megascale`, `embed_scan`, or `esm3_mechanism --phase 2`.**
 
@@ -32,8 +32,8 @@ This is safe and requires no copying: embedding paths are keyed by *model*, not 
 The arrays are ~10 GB and are gitignored; duplicating them per run would cost 10 GB for no
 provenance gain, since the model directory already identifies them unambiguously.
 
-Recorded consequence: **run7 result files are scored on embeddings extracted during run6.**
-That is intentional. Each run7 result JSON records the array fingerprint (the existing
+Recorded consequence: **run_biorxiv result files are scored on embeddings extracted during run6.**
+That is intentional. Each run_biorxiv result JSON records the array fingerprint (the existing
 fingerprint check used by Experiments 2 and 5), so the reuse is recorded in the output rather
 than only in this runbook.
 
@@ -49,7 +49,7 @@ GPU is still required for three steps, which are computed rather than cached:
 
 ## Stage 0 — preconditions
 
-Run7 must not start until all of these hold. 0a/0a-bis/0b are the substance of the run,
+run_biorxiv must not start until all of these hold. 0a/0a-bis/0b are the substance of the run,
 0b-bis fixes how its results may be read, and 0c–0e protect its provenance.
 
 ### 0a. Stats machinery wired and verified
@@ -57,7 +57,7 @@ Run7 must not start until all of these hold. 0a/0a-bis/0b are the substance of t
 `utils/bootstrap.py` (`cluster_bootstrap_ci`, `bootstrap_mechanism_metrics`,
 `label_permutation_pvalue`) is built, but as of run6 only three modules import it
 (`naive_baseline`, `mechanism_delta_family_split`, `mechanism_within_family`). Seven more must be
-wired before the replay, or run7 reproduces run6's CI-less result files and the run is wasted.
+wired before the replay, or run_biorxiv reproduces run6's CI-less result files and the run is wasted.
 
 | Module | Experiment |
 |---|---|
@@ -101,7 +101,7 @@ them wrong means re-running, not just re-reporting.
 ### 0b. Paired cluster bootstrap implemented
 
 `paired_cluster_bootstrap_diff(...)` in `utils/bootstrap.py`, plus unit tests. This is the only
-genuinely new statistical primitive in run7. Six claims rest on comparing two point estimates with
+genuinely new statistical primitive in run_biorxiv. Six claims rest on comparing two point estimates with
 separated error bars, and the thinnest margins are smaller than a seed of spread:
 
 | Claim | Margin | Report |
@@ -141,7 +141,7 @@ implemented as the same-fold path and is wrong.
 
 ### 0b-bis. Pre-registered decision rules written into EXPERIMENT.md
 
-Two documents must exist **before** run7 executes, or the run produces intervals with no stated
+Two documents must exist **before** run_biorxiv executes, or the run produces intervals with no stated
 reading and any interpretation chosen afterwards is retro-fitted:
 
 1. **CI decision rule for every confirmatory gate.** A gate is affirmed only if its point estimate
@@ -154,7 +154,7 @@ reading and any interpretation chosen afterwards is retro-fitted:
    adjusted. Everything else is labelled exploratory and is not corrected.
 
 Both go into `docs/EXPERIMENT.md` with the run6 point estimates recorded, so the rules cannot be
-tuned to the run7 intervals.
+tuned to the run_biorxiv intervals.
 
 ### 0c. Green CI and a pinned environment
 
@@ -168,10 +168,10 @@ tuned to the run7 intervals.
 
 ### 0d. Configuration
 
-- `RUN_NAME = "run6"` → `"run7"` in [`utils/paths.py:11`](src/esm2_mech/utils/paths.py#L11). One
+- `RUN_NAME = "run6"` → `"run_biorxiv"` in [`utils/paths.py:11`](src/esm2_mech/utils/paths.py#L11). One
   line; `RESULTS_DIR`, `RUN_REPORTS_DIR`, and `FIGURES_DIR` all derive from it. **Flip this only
   after 0a and 0b pass their gates** — flipping first means the replay writes CI-less files into
-  `results/run7/`, and fixing them later either overwrites run7 provenance or forces a run8.
+  `results/run_biorxiv/`, and fixing them later either overwrites run_biorxiv provenance or forces a run8.
 - Widen `PERMUTATION_FEATURES` at
   [`mechanism_delta_family_split.py:108`](src/esm2_mech/experiments/mechanism/mechanism_delta_family_split.py#L108)
   from `("delta_mean", "wt_only_mean")` to also include `wt_concat_mut` and `mut_only_mean` —
@@ -185,7 +185,7 @@ tuned to the run7 intervals.
 
 ### 0e. Working tree clean
 
-`git status` must be clean before the run7 branch point, or run6 and run7 provenance become
+`git status` must be clean before the run_biorxiv branch point, or run6 and run_biorxiv provenance become
 impossible to separate. Commit or set aside everything, including the report and plan edits
 outstanding at the time of writing.
 
@@ -239,7 +239,7 @@ are NOT re-extracted*). Verify before proceeding: all four `.npy` arrays are `(1
 | `python -m esm2_mech.experiments.mechanism.naive_baseline` | `results/<run>/naive_baseline.json` |
 | `python -m esm2_mech.experiments.mechanism.leakage_fraction` | `results/<run>/leakage_fraction.json` |
 
-`family_clustering` gains `--seeds` in run7: run6 reported the family-probe accuracy at seed 0
+`family_clustering` gains `--seeds` in run_biorxiv: run6 reported the family-probe accuracy at seed 0
 only, and `STATS_PLAN.md` requires a spread to match the other reports.
 
 `leakage_fraction` reads only the result JSONs above (no model inference), so it runs last. It
@@ -249,7 +249,7 @@ is quoted in the intro report as a headline.
 **Stats flags.** `classify_by_mechanism`, `single_source_mechanism`, and
 `mechanism_delta_family_split` accept:
 
-- `--no_ci` — skip cluster-bootstrap CIs (faster; not for the run7 replay).
+- `--no_ci` — skip cluster-bootstrap CIs (faster; not for the run_biorxiv replay).
 - `--n_boot N` — bootstrap resamples, default 1000.
 - `--n_permutations N` — label-permutation p-value against chance, default 0 = off.
 
@@ -265,7 +265,7 @@ python -m esm2_mech.experiments.mechanism.classify_by_mechanism --seeds 1 --n_pe
 ```
 
 **Seed 0 only, deliberately.** A permutation test constructs its own null by shuffling labels;
-running it across 5 seeds mostly re-measures fold jitter, which is precisely what run7 exists to
+running it across 5 seeds mostly re-measures fold jitter, which is precisely what run_biorxiv exists to
 replace. Seed 0 cuts this 5× at no inferential cost.
 
 **Budget split by probe.** The headline claim — `delta_mean` sits at the chance floor — is a
@@ -281,7 +281,7 @@ expensive tail:
 **Before launching either, time a single refit on the pod.** At 4 features × 2 splits × 1,000
 permutations this is 8,000 refits and the per-refit cost has never been measured. It determines
 whether this step is hours or days, whether it needs joblib parallelism across the pod's cores,
-and what N the MLP tail gets. This is the run's main schedule risk — everything else in run7 is
+and what N the MLP tail gets. This is the run's main schedule risk — everything else in run_biorxiv is
 cheap.
 
 **This step does NOT cover the split gap.** That is a paired-bootstrap quantity (Stage 0b), not a
@@ -300,7 +300,7 @@ python -m esm2_mech.experiments.mechanism.single_source_mechanism --seeds 5
 **Output:** `results/<run>/single_source_gerasimavicius/{family_split_baselines_seed{0..4}.json,
 aggregate.json, naive_baseline.json}`
 
-The run7 question is narrower than run6's: not whether `delta_mean` sits at the floor, but
+The run_biorxiv question is narrower than run6's: not whether `delta_mean` sits at the floor, but
 whether its **interval still straddles the floor**, and what the CI on `wt_only`'s
 gene-minus-family gap (0.612 → 0.445) looks like.
 
@@ -360,10 +360,10 @@ python -m esm2_mech.experiments.esm3.esm3_mechanism --phase 3 --dataset merged -
 exactly (same `valid_variants.json`), so it is the only apples-to-apples comparison for a scale
 claim. The geras run is not a matched baseline and must not be used for it.
 
-Gates M1/M2/M3 are unchanged. The run7 addition is the **paired cluster bootstrap** on `seq` −
+Gates M1/M2/M3 are unchanged. The run_biorxiv addition is the **paired cluster bootstrap** on `seq` −
 ESM-2 delta and on `seq_struct` − `seq`, over genes on the shared variant set. M2 clears its
 threshold by 0.008, so the current claim is a point-estimate comparison at a margin thinner than
-one seed of spread; run7 either supports it with a tested gap or does not.
+one seed of spread; run_biorxiv either supports it with a tested gap or does not.
 
 ---
 
@@ -380,7 +380,7 @@ Step 3 is one of the three genuine GPU steps: it masks each variant position and
 masked-LM `logP_wt` / `logP_mut` / entropy. It can share a pod session with the Step 3b
 permutation work.
 
-Run7 additions: gene-cluster CIs on each pathogenicity AUROC (effective N ≈ 1,929 genes, not
+run_biorxiv additions: gene-cluster CIs on each pathogenicity AUROC (effective N ≈ 1,929 genes, not
 37,218 variants), and a **paired cluster bootstrap on the two load-bearing gaps** — conservation
 (0.891) versus embedding delta (0.859), and the conservation-plus-delta increment (+0.002, which
 is the entire basis for gate K2). Also attach a paired CI to the task transfer contrast
@@ -397,7 +397,7 @@ python -m esm2_mech.experiments.mechanism.contrastive_mechanism --seeds 5
 GPU-resident but small — ~2 minutes for 5 seeds. Reads the MLP floor live from `aggregate.json`;
 never hardcode it.
 
-Run7 additions: paired cluster bootstrap over genes on the contrastive-vs-raw-kNN gap (+0.041);
+run_biorxiv additions: paired cluster bootstrap over genes on the contrastive-vs-raw-kNN gap (+0.041);
 a permutation test for the contrastive macro-F1 against **both** the 0.288 MLP floor and the
 raw-kNN baseline; and gene-cluster CIs on the per-class AUROCs, so run6's honest caveat — that
 the gain is class balance rather than per-class separability, with DN unmoved — is reported as a
@@ -443,13 +443,13 @@ Machinery exists for all of these; none was implemented in run6.
 
 ## Stage 3 — regenerate reports
 
-All 13 reports in `reports/run6/` are rewritten against run7 result files into
-`reports/run7/`. None of the run6 reports cites a confidence interval, including
+All 13 reports in `reports/run6/` are rewritten against run_biorxiv result files into
+`reports/run_biorxiv/`. None of the run6 reports cites a confidence interval, including
 `report_classifier.md` (the headline) and `report_leakage_fraction.md` (no interval on the ~40%
 figure).
 
 Per the project report rules: a result file and its report share the same `RUN_NAME`, and every
-number traces to a file under `results/run7/` cited in Provenance. Where a run7 report cites a
+number traces to a file under `results/run_biorxiv/` cited in Provenance. Where a run_biorxiv report cites a
 quantity computed on the reused embeddings, Provenance says so.
 
 ---
@@ -462,11 +462,11 @@ Data and alignment:
       arrays (17,826). This file is a write-only provenance artifact — no code reads it.
 - [ ] `data/pfam_families.json` has entries for ≥ 1,900 genes.
 - [ ] `data/alphamissense_scores_full.json` covers > 90% of `valid_variants.json`.
-- [ ] Embedding fingerprints recorded in the run7 result files match the run6 arrays.
+- [ ] Embedding fingerprints recorded in the run_biorxiv result files match the run6 arrays.
 
 Statistics — the point of this run:
 
-- [ ] Every result file under `results/run7/` that reports a macro-F1 or AUROC carries a CI key.
+- [ ] Every result file under `results/run_biorxiv/` that reports a macro-F1 or AUROC carries a CI key.
       Zero CI-less headline files.
 - [ ] **Family-split CIs resample families, gene-split CIs resample genes.** Effective cluster
       count is emitted alongside every family-split interval. Family-split intervals are wider
@@ -491,7 +491,7 @@ Statistics — the point of this run:
       through zero.
 - [ ] BH-FDR applied across the six confirmatory claims, raw and adjusted values both shown.
       Exploratory tables are labelled, not corrected.
-- [ ] `scripts/compare_runs.py run6 run7` run, its output archived as the delta note, and every
+- [ ] `scripts/compare_runs.py run6 run_biorxiv` run, its output archived as the delta note, and every
       material movement explained.
 
 Science — the spine, which should not move:
@@ -501,7 +501,7 @@ Science — the spine, which should not move:
       collapses under family-split.
 - [ ] Stability H1 random-split ρ ≥ 0.5.
 - [ ] ESM-3 compared against ESM-2 only on `--dataset merged`.
-- [ ] Any run7 number that moves materially from run6 is explained, not silently adopted.
+- [ ] Any run_biorxiv number that moves materially from run6 is explained, not silently adopted.
 
 - [ ] Environment pinned and recorded in Provenance; CI green on the commit that produced the run.
 - [ ] `git status` clean; results committed.

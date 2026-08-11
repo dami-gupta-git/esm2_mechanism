@@ -279,14 +279,14 @@ The central hypothesis — that ESM-2 delta-embeddings encode gene-level dominan
 
 # Run 7 pre-registration — inferential statistics (added 2026-07-22)
 
-**Written before run7 executes.** Everything above this line is the original (run0-era)
-pre-registration and its outcomes; the sections below govern run7 only. Run7 re-scores run6's
+**Written before run_biorxiv executes.** Everything above this line is the original (run0-era)
+pre-registration and its outcomes; the sections below govern run_biorxiv only. run_biorxiv re-scores run6's
 science with dependency-aware error bars — the experiments, hypotheses, and gates are unchanged.
 
-These rules exist because run7 will attach confidence intervals to gates that currently pass or
+These rules exist because run_biorxiv will attach confidence intervals to gates that currently pass or
 fail on point estimates alone. Without a reading fixed in advance, an interval that lands
 awkwardly invites a framing chosen after the fact. The run6 point estimates are recorded here so
-the rules cannot be retro-fitted to the run7 intervals.
+the rules cannot be retro-fitted to the run_biorxiv intervals.
 
 Methodology: `reports/run6/STATS_PLAN.md`. Change list: `PLAN_2026-07-20.md`. Execution:
 `RUNBOOK_5.md`.
@@ -412,7 +412,7 @@ for a bounded metric near its boundary with few clusters.
   a measurement. The run6 `wt_only_mean` p = 0.0099 at 200 permutations is exactly this case and is
   not carried forward.
 - Seed 0 only: a permutation test constructs its own null by shuffling, so running it across five
-  seeds mostly re-measures the fold jitter run7 exists to replace.
+  seeds mostly re-measures the fold jitter run_biorxiv exists to replace.
 
 ## R7.6 — Calibration
 
@@ -436,6 +436,6 @@ rather than an expectation:
 - **C6 overturned** if the mechanism null does not hold under clan or MMseqs2 partitions — the
   result would be an artifact of the Pfam family definition.
 
-Run7 changes error bars, not point estimates. Any point estimate that moves materially from run6
+run_biorxiv changes error bars, not point estimates. Any point estimate that moves materially from run6
 is either a bug introduced by the wiring or a finding that needs explaining; `scripts/compare_runs.py`
 flags these, and each flagged movement is explained rather than silently adopted.
