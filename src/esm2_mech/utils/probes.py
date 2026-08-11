@@ -700,6 +700,12 @@ def run_mlp_probe_cv(
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         cw = torch.tensor(1.0 / (class_counts + 1e-8)).to(device)
 
+        # Seed torch's global RNG before the model is built: weight init and
+        # dropout masks draw from it, so without this the same seed gives a
+        # different result on every run and the across-seed std understates the
+        # true spread.
+        torch.manual_seed(seed + fold_i)
+
         layers: list = []
         prev = X_fit.shape[1]
         for h in hidden:
@@ -711,7 +717,12 @@ def run_mlp_probe_cv(
         crit = nn.CrossEntropyLoss(weight=cw)
 
         ds = TensorDataset(torch.tensor(X_fit), torch.tensor(y_fit, dtype=torch.long))
-        loader = DataLoader(ds, batch_size=batch_size, shuffle=True)
+        # Explicit generator: DataLoader shuffling otherwise uses the global RNG,
+        # whose state depends on how much training ran before this fold.
+        shuffle_gen = torch.Generator().manual_seed(seed + fold_i)
+        loader = DataLoader(
+            ds, batch_size=batch_size, shuffle=True, generator=shuffle_gen
+        )
         best_val, patience_cnt, best_state = float("inf"), 0, None
         for _epoch in range(max_epochs):
             model.train()

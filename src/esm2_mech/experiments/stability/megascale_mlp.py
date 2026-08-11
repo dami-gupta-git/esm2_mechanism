@@ -84,6 +84,10 @@ def run_mlp_regression(
 
         X_fit, X_val, X_te_n = standardize(X_tr[fit_idx], X_tr[val_idx], X_te)
 
+        # Seed torch before the model is built: weight init, dropout masks and
+        # the per-epoch permutation below all draw from the global RNG.
+        torch.manual_seed(seed + fold_i)
+
         layers = []
         prev = X_fit.shape[1]
         for h in hidden:

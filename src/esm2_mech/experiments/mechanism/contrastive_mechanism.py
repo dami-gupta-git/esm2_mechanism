@@ -230,6 +230,11 @@ def train_projection_head(
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+    # Seed torch before the head is built: weight init and dropout masks draw
+    # from the global RNG (the epoch-shuffle generator below covers only the
+    # permutation), so without this the same seed is not reproducible.
+    torch.manual_seed(seed)
+
     # Build MLP projection head
     layers = []
     prev = X_norm.shape[1]

@@ -560,6 +560,10 @@ def train_projection_head_v4(
     if len(anchors) < 20:
         print(f"      WARNING: only {len(anchors)} triplets; V4 may be unreliable")
 
+    # Seed torch before the head is built: weight init and the DataLoader
+    # shuffle draw from the global RNG, so an unseeded run is irreproducible.
+    torch.manual_seed(seed)
+
     in_dim = X_norm.shape[1]
     proj = nn.Sequential(
         nn.Linear(in_dim, 256),
@@ -576,7 +580,8 @@ def train_projection_head_v4(
     neg_t = torch.tensor(negatives, dtype=torch.long)
 
     ds = TensorDataset(anc_t, pos_t, neg_t)
-    loader = DataLoader(ds, batch_size=512, shuffle=True)
+    shuffle_gen = torch.Generator().manual_seed(seed)
+    loader = DataLoader(ds, batch_size=512, shuffle=True, generator=shuffle_gen)
 
     proj.train()
     for epoch in range(n_epochs):

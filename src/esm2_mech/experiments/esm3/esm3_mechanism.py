@@ -19,7 +19,8 @@ Decision rules (pre-registered in plan_esm3_mechanism.md):
   M2: ESM-3 seq-only   family-split F1       > ESM-2 floor + 0.05  (scale alone rescues)
   M3: seq_struct − seq > 0.03  (structure adds signal beyond scale)
 The ESM-2 floor is read at runtime from the matched MLP delta_mean family-split result
-(nonlinear_results_seed*.json), not hardcoded — see esm2_family_floor().
+for every seed (nonlinear_results_seed*.json), never hardcoded or defaulted — a missing
+or partial baseline raises rather than moving the gate. See esm2_family_floor().
 
 Phases (each takes --dataset; outputs go to per-dataset subdirectories):
   --phase 1   CPU: download AF2 structures, cache coordinates
@@ -37,6 +38,7 @@ from __future__ import annotations
 import argparse
 import functools
 import json
+import math
 import sys
 from pathlib import Path
 
@@ -135,31 +137,35 @@ SEEDS = list(range(N_SEEDS))
 M1_MARGIN = 0.05  # ESM-3 must beat the ESM-2 family-split floor by this much
 M3_THRESHOLD = 0.03  # seq_struct − seq gap that counts as "structure adds signal"
 
-# Fallback ESM-2 family-split floor, used only if the matched result file is absent.
-# The live floor is read from NONLINEAR_RESULTS_SEED_JSON at runtime (esm2_family_floor).
-ESM2_FLOOR_FALLBACK = 0.299
-
-
 def esm2_family_floor(seeds: list[int] = SEEDS) -> tuple[float, str]:
     """Return (floor, source) for the ESM-2 family-split macro-F1 baseline.
 
-    Reads the 5-seed mean of mlp_delta_mean_family from the run's nonlinear-probe
-    result files — the matched ESM-2 probe (MLP, delta_mean, family-split) on the
-    merged set, the like-for-like comparison to ESM-3 seq. Falls back to the
-    pre-registered constant if no seed files are present (e.g. a geras-only checkout).
+    Reads the mean of mlp_delta_mean_family over ALL of `seeds` from the run's
+    nonlinear-probe result files — the matched ESM-2 probe (MLP, delta_mean,
+    family-split) on the merged set, the like-for-like comparison to ESM-3 seq.
+    The M1/M2 thresholds are this floor plus a margin, so a floor averaged over a
+    different seed set than the ESM-3 arm uses, or a floor substituted from any
+    other source, silently moves the gate. Every requested seed must be present
+    with a finite value; otherwise this raises.
     """
     values = []
     for seed in seeds:
         path = Path(NONLINEAR_RESULTS_SEED_JSON.format(seed=seed))
-        if not path.exists():
-            continue
-        data = json.loads(path.read_text())
+        with open(path) as fh:
+            data = json.load(fh)
         entry = data.get(MLP_DELTA_MEAN_FAMILY)
-        if entry and "macro_f1_mean" in entry:
-            values.append(entry["macro_f1_mean"])
-    if values:
-        return float(np.mean(values)), f"nonlinear_results ({MLP_DELTA_MEAN_FAMILY}, {len(values)}-seed mean)"
-    return ESM2_FLOOR_FALLBACK, "fallback constant (no nonlinear_results files found)"
+        if not entry or "macro_f1_mean" not in entry:
+            raise KeyError(f"{MLP_DELTA_MEAN_FAMILY}.macro_f1_mean missing from {path}")
+        value = entry["macro_f1_mean"]
+        if value is None or not math.isfinite(value):
+            raise ValueError(
+                f"{MLP_DELTA_MEAN_FAMILY}.macro_f1_mean is {value!r} in {path}"
+            )
+        values.append(float(value))
+    return float(np.mean(values)), (
+        f"nonlinear_results ({MLP_DELTA_MEAN_FAMILY}, {len(values)}-seed mean, "
+        f"seeds={list(seeds)})"
+    )
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
