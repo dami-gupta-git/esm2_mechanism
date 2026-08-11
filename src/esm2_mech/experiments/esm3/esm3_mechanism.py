@@ -49,6 +49,8 @@ print = functools.partial(print, flush=True)
 from esm2_mech.utils.paths import (
     CACHE_DIR,
     DATA_DIR as DATA,
+    EMB_MUT_MEAN,
+    EMB_WT_MEAN,
     ESM3_EMB_DIR,
     ESM3_MODEL,
     ESM3_STRUCT_TOKENS_JSON,
@@ -67,6 +69,7 @@ from esm2_mech.utils.bootstrap import (
     average_oof_over_seeds,
     bootstrap_mechanism_metrics,
     family_or_gene_clusters,
+    paired_cluster_bootstrap_diff,
 )
 
 # The matched ESM-2 probe for the ESM-3 comparison: MLP, delta_mean, family-split.
@@ -136,6 +139,134 @@ SEEDS = list(range(N_SEEDS))
 # Decision rule margins (pre-registered in plan_esm3_mechanism.md)
 M1_MARGIN = 0.05  # ESM-3 must beat the ESM-2 family-split floor by this much
 M3_THRESHOLD = 0.03  # seq_struct − seq gap that counts as "structure adds signal"
+
+# The matched ESM-2 arm, run inside this module on the ESM-3 variant subset under the
+# same folds and seeds. Distinct from `esm2_family_floor`, which is the pre-registered
+# full-merged-set floor the M1/M2 thresholds are pinned to.
+ESM2_COND = "esm2_delta_mean"
+
+
+def esm2_matched_delta(n_variants: int, valid_idx: np.ndarray | None) -> np.ndarray:
+    """ESM-2 delta_mean rows for the ESM-3 variant subset, for the paired arms.
+
+    Only defined for --dataset merged: there load_dataset() reads VALID_VARIANTS_JSON,
+    the same file and row order the ESM-2 embeddings were extracted from, so `valid_idx`
+    (phase 2's index into that variant list) selects the matching embedding rows. The
+    geras variant list has its own ordering and cannot be indexed this way.
+    """
+    if DATASET != "merged":
+        raise ValueError(
+            f"ESM-2 matched arm requires --dataset merged; got {DATASET!r} "
+            "(the geras variant list is not row-aligned to the ESM-2 embeddings)"
+        )
+    wt = np.load(str(EMB_WT_MEAN))
+    mut = np.load(str(EMB_MUT_MEAN))
+    if wt.shape != mut.shape:
+        raise RuntimeError(
+            f"ESM-2 embeddings shape mismatch: wt {wt.shape} vs mut {mut.shape}"
+        )
+    if wt.shape[0] != n_variants:
+        raise RuntimeError(
+            f"ESM-2 embeddings have {wt.shape[0]} rows but the variant list has "
+            f"{n_variants} — the ESM-2 arm would not be row-aligned to the ESM-3 arms"
+        )
+    delta = mut - wt
+    return delta if valid_idx is None else delta[valid_idx]
+
+
+def paired_family_split_diff(
+    oof_a: dict | None,
+    oof_b: dict | None,
+    pfam_map: dict,
+    n_boot: int,
+    label: str,
+) -> dict | None:
+    """Paired family-cluster bootstrap CI on macro-F1(A) − macro-F1(B).
+
+    Both arms were scored under the same family-split folds over the same variants, so
+    the difference is a same-fold paired statistic: one family resample per replicate,
+    the identical drawn rows handed to both arms. Rows scored in only one arm (a fold
+    skipped there but not here) are dropped, since the pairing is undefined on them.
+    """
+    from sklearn.metrics import f1_score
+
+    if oof_a is None or oof_b is None:
+        print(f"  [paired] {label}: skipped — an arm has no combined OOF")
+        return None
+
+    rows_a = {int(row): pos for pos, row in enumerate(oof_a["row_ids"])}
+    rows_b = {int(row): pos for pos, row in enumerate(oof_b["row_ids"])}
+    shared = sorted(set(rows_a) & set(rows_b))
+    if not shared:
+        print(f"  [paired] {label}: skipped — the arms share no scored variants")
+        return None
+    dropped = (len(rows_a) - len(shared)) + (len(rows_b) - len(shared))
+    if dropped:
+        print(
+            f"  [paired] {label}: {len(shared)} shared variants, "
+            f"{dropped} arm-specific rows dropped"
+        )
+
+    idx_a = np.array([rows_a[row] for row in shared], dtype=int)
+    idx_b = np.array([rows_b[row] for row in shared], dtype=int)
+
+    y_a = np.asarray(oof_a["y_true"])[idx_a]
+    y_b = np.asarray(oof_b["y_true"])[idx_b]
+    if not np.array_equal(y_a, y_b):
+        raise RuntimeError(
+            f"{label}: the two arms disagree on the label of a shared variant — "
+            "the OOF row spaces are not the same variants"
+        )
+
+    def _predictions(oof: dict, idx: np.ndarray) -> np.ndarray:
+        proba = np.asarray(oof["proba"])[idx]
+        return np.array([MECHANISM_CLASSES[col] for col in proba.argmax(axis=1)])
+
+    pred_a = _predictions(oof_a, idx_a)
+    pred_b = _predictions(oof_b, idx_b)
+
+    def _macro_f1(pred: np.ndarray):
+        def _fn(rows: np.ndarray) -> float:
+            return float(
+                f1_score(y_a[rows], pred[rows], average="macro", zero_division=0)
+            )
+        return _fn
+
+    clusters = family_or_gene_clusters(
+        np.asarray(oof_a["genes"], dtype=object)[idx_a], pfam_map, is_family_split=True
+    )
+    out = paired_cluster_bootstrap_diff(
+        clusters,
+        _macro_f1(pred_a),
+        _macro_f1(pred_b),
+        n_resamples=n_boot,
+        seed=0,
+    )
+    out["n_shared"] = len(shared)
+    out["n_dropped"] = dropped
+    return out
+
+
+def adjudicate_diff(passed: bool | None, diff_ci: dict | None, threshold: float) -> str:
+    """R7.1 verdict for a gate, reading its point estimate against its paired CI.
+
+    The point estimate decides pass/fail; the CI decides whether that reading is
+    established or underpowered. A pass whose CI spans zero is reported as consistent
+    in direction but not distinguishable, never as an established effect.
+    """
+    if passed is None:
+        return "not adjudicated (no point estimate)"
+    if diff_ci is None or diff_ci.get("ci_suppressed") or diff_ci.get("ci_low") is None:
+        return f"{'pass' if passed else 'fail'}, no CI"
+    ci_low, ci_high = diff_ci["ci_low"], diff_ci["ci_high"]
+    if passed:
+        if ci_low > 0:
+            return "pass, established (CI excludes zero)"
+        return "pass on point estimate, not distinguishable (CI spans zero)"
+    if ci_high > threshold:
+        return "fail, underpowered (CI spans the pre-registered threshold)"
+    return "fail, established (CI excludes the pre-registered threshold)"
+
 
 def esm2_family_floor(seeds: list[int] = SEEDS) -> tuple[float, str]:
     """Return (floor, source) for the ESM-2 family-split macro-F1 baseline.
@@ -693,6 +824,7 @@ def phase3_probes(
         y = y_all
         labels_valid = y_labels
         genes_valid = genes
+        valid_idx = None
         print("No valid index file found — assuming all variants embedded")
 
     conditions = {
@@ -700,21 +832,31 @@ def phase3_probes(
         "seq_struct": EMB_SEQ_STRUCT,
     }
 
-    for cond, path in conditions.items():
-        if path.exists():
-            arr = np.load(str(path))
-            print(
-                f"  {cond}: {arr.shape[0]} variants embedded (of {len(variants)} total)"
-            )
-
-    results = {}
-
+    cond_arrays: dict[str, np.ndarray] = {}
     for cond, path in conditions.items():
         if not path.exists():
             print(f"  SKIP {cond}: {path} not found")
             continue
+        arr = np.load(str(path))
+        print(f"  {cond}: {arr.shape[0]} variants embedded (of {len(variants)} total)")
+        cond_arrays[cond] = arr
 
-        delta = np.load(str(path))
+    # The ESM-2 arm the scale claim is a difference against, run here on the same
+    # variants, folds, seeds and probe as the ESM-3 arms so M1/M2/M3 can be tested as
+    # paired differences rather than two independently-scored point estimates.
+    if DATASET == "merged":
+        cond_arrays[ESM2_COND] = esm2_matched_delta(len(y_all), valid_idx)
+        print(f"  {ESM2_COND}: {cond_arrays[ESM2_COND].shape[0]} variants (matched ESM-2)")
+    else:
+        print(
+            f"  SKIP {ESM2_COND}: --dataset {DATASET} is not row-aligned to the ESM-2 "
+            "embeddings; M1/M2 have no paired arm on this dataset"
+        )
+
+    results = {}
+    oof_by_arm: dict[tuple[str, str], dict] = {}
+
+    for cond, delta in cond_arrays.items():
         if delta.shape[0] != len(y):
             raise RuntimeError(
                 f"{cond}: delta rows {delta.shape[0]} != labels {len(y)} — valid index mismatch"
@@ -800,6 +942,7 @@ def phase3_probes(
                 # then the cluster bootstrap runs once over that combined OOF.
                 combined_oof = average_oof_over_seeds(seed_oof_list)
                 if combined_oof is not None:
+                    oof_by_arm[(cond, cv_name)] = combined_oof
                     clusters = family_or_gene_clusters(
                         combined_oof["genes"], pfam_map,
                         is_family_split=(cv_name == "family_split"),
@@ -831,6 +974,30 @@ def phase3_probes(
     ss_f1 = get_f1("seq_struct", "family_split")
     seq_f1 = get_f1("seq", "family_split")
 
+    # The matched ESM-2 arm scores the same variants the ESM-3 arms do; the gate's
+    # floor is the full merged set. They are two populations, so a divergence beyond
+    # the matched arm's own seed spread means the gate and its CI are not describing
+    # the same comparison, and the summary records the flag rather than reconciling it.
+    matched_f1 = get_f1(ESM2_COND, "family_split")
+    matched_std = (
+        results.get(ESM2_COND, {}).get("family_split", {}).get("mlp_f1_std", float("nan"))
+    )
+    baseline_divergence = None
+    if not np.isnan(matched_f1):
+        baseline_divergence = float(matched_f1 - esm2_floor)
+        print(
+            f"  ESM-2 matched-subset floor = {matched_f1:.3f}±{matched_std:.3f}  "
+            f"(gate uses the full-set floor {esm2_floor:.3f}; "
+            f"difference {baseline_divergence:+.3f})"
+        )
+        if not np.isnan(matched_std) and abs(baseline_divergence) > matched_std:
+            print(
+                "  WARNING: the matched-subset ESM-2 floor differs from the "
+                "pre-registered full-set floor by more than one seed of spread. The "
+                "M1/M2 thresholds are pinned to the full set while the paired CIs are "
+                "computed on the subset."
+            )
+
     m1 = ss_f1 > m1_threshold if not np.isnan(ss_f1) else None
     m2 = seq_f1 > m1_threshold if not np.isnan(seq_f1) else None
     m3 = (
@@ -858,6 +1025,46 @@ def phase3_probes(
         f"  M3: seq_struct − seq > {M3_THRESHOLD:.3f}                 → {fmt(gap, m3)}"
     )
 
+    # ── paired differences (C5's instrument, and the same for M1/M3) ────────
+    diffs: dict[str, dict] = {}
+    if compute_ci:
+        print("\n=== PAIRED DIFFERENCES (family-split, family-cluster bootstrap) ===")
+        contrasts = [
+            ("M1", "seq_struct", ESM2_COND, M1_MARGIN),
+            ("M2", "seq", ESM2_COND, M1_MARGIN),
+            ("M3", "seq_struct", "seq", M3_THRESHOLD),
+        ]
+        for gate, arm_a, arm_b, threshold in contrasts:
+            label = f"{gate}: {arm_a} − {arm_b}"
+            diff = paired_family_split_diff(
+                oof_by_arm.get((arm_a, "family_split")),
+                oof_by_arm.get((arm_b, "family_split")),
+                pfam_map,
+                n_boot,
+                label,
+            )
+            if diff is None:
+                continue
+            diffs[gate] = diff
+            if diff.get("ci_low") is None:
+                print(f"  {label}: diff={diff['point_diff']:+.4f}  CI suppressed")
+            else:
+                print(
+                    f"  {label}: diff={diff['point_diff']:+.4f}  "
+                    f"[{diff['ci_low']:+.4f}, {diff['ci_high']:+.4f}]  "
+                    f"(threshold {threshold:.3f}, {diff['n_clusters']} families)"
+                )
+    else:
+        print("\n  Paired differences skipped (--no_ci)")
+
+    verdicts = {
+        "M1": adjudicate_diff(m1, diffs.get("M1"), M1_MARGIN),
+        "M2": adjudicate_diff(m2, diffs.get("M2"), M1_MARGIN),
+        "M3": adjudicate_diff(m3, diffs.get("M3"), M3_THRESHOLD),
+    }
+    for gate, verdict in verdicts.items():
+        print(f"  {gate} verdict: {verdict}")
+
     if m1 is False:
         print(
             "\n  Interpretation: NULL CONFIRMED — mechanism not recoverable from ESM-3 "
@@ -881,6 +1088,10 @@ def phase3_probes(
     summary = {
         "esm2_baseline_family_split_f1": esm2_floor,
         "esm2_baseline_source": floor_source,
+        "esm2_matched_subset_family_split_f1": (
+            float(matched_f1) if not np.isnan(matched_f1) else None
+        ),
+        "esm2_matched_minus_full_set_floor": baseline_divergence,
         "m1_threshold": m1_threshold,
         "conditions": "seq, seq_struct (function tokens not implemented)",
         "structure_coverage": struct_meta,
@@ -890,16 +1101,28 @@ def phase3_probes(
                 "criterion": f"seq_struct family-split F1 > {m1_threshold:.3f}",
                 "value": ss_f1,
                 "passed": m1,
+                "paired_diff": diffs.get("M1"),
+                "paired_diff_arms": f"seq_struct − {ESM2_COND}",
+                "paired_threshold": M1_MARGIN,
+                "verdict": verdicts["M1"],
             },
             "M2": {
                 "criterion": f"seq family-split F1 > {m1_threshold:.3f}",
                 "value": seq_f1,
                 "passed": m2,
+                "paired_diff": diffs.get("M2"),
+                "paired_diff_arms": f"seq − {ESM2_COND}",
+                "paired_threshold": M1_MARGIN,
+                "verdict": verdicts["M2"],
             },
             "M3": {
                 "criterion": f"seq_struct − seq > {M3_THRESHOLD:.3f}",
                 "value": float(gap) if not np.isnan(gap) else None,
                 "passed": m3,
+                "paired_diff": diffs.get("M3"),
+                "paired_diff_arms": "seq_struct − seq",
+                "paired_threshold": M3_THRESHOLD,
+                "verdict": verdicts["M3"],
             },
         },
         "model": ESM3_MODEL,

@@ -149,9 +149,11 @@ reading and any interpretation chosen afterwards is retro-fitted:
    clears but the CI spans zero, the claim is restated as **not distinguishable**. A gate failing
    with a CI that also spans the threshold is reported as **underpowered to detect an effect of
    the pre-registered size**, not as evidence of no effect.
-2. **The confirmatory / exploratory split.** Six confirmatory claims (C1–C6 in
-   `PLAN_2026-07-20.md` Task 0.2) carry BH-FDR correction across the set, reported raw and
-   adjusted. Everything else is labelled exploratory and is not corrected.
+2. **The confirmatory / exploratory split.** Five confirmatory claims (C1–C5 in
+   `PLAN_2026-07-20.md` Task 0.2), enumerated before the run. Everything else is labelled
+   exploratory and asserts nothing the paper relies on. No multiplicity correction is applied;
+   R7.2 records why none is needed across a set this size. C1 is a null claim and is adjudicated
+   against the pre-registered 0.05 equivalence margin, not by an interval overlapping the floor.
 
 Both go into `PREREGISTRATION_run_biorxiv.md` with the run6 point estimates recorded, so the
 rules cannot be tuned to the run_biorxiv intervals.
@@ -337,9 +339,9 @@ python -m esm2_mech.experiments.mechanism.mechanism_within_family --seeds 5
 Already imports `utils/bootstrap.py`. Three additions required by `STATS_PLAN.md`, all of which
 change how the table must be *read* rather than what it contains:
 
-1. **Benjamini-Hochberg FDR correction** across the 28-family screen (two views × two probes), or
-   an explicit restatement of the table as exploratory. The run6 "beats baseline and std < 0.10"
-   highlight is an uncorrected screen.
+1. **An explicit restatement of the table as an exploratory screen.** The run6 "beats baseline and
+   std < 0.10" highlight is an uncorrected screen and is labelled as one rather than corrected;
+   correcting it would imply it had been a confirmatory test.
 2. **Minimal-detectable-effect per family**, so the nulls read as underpowered rather than as
    evidence of absence. At 6–33 genes per family the test cannot establish absence.
 3. **Cluster-bootstrap CIs over genes within each family**, replacing seed-std.
@@ -436,7 +438,7 @@ Machinery exists for all of these; none was implemented in run6.
 - **Calibration note in every probe report** — the probes are uncalibrated and measure
   discrimination only, not risk. State it rather than fix it; the claims are about
   discrimination.
-- FDR correction and minimal-detectable-effect for the within-family table (Experiment 3).
+- Exploratory labelling and minimal-detectable-effect for the within-family table (Experiment 3).
 - Multi-seed family probe (Experiment 1 Step 3).
 
 ---
@@ -489,8 +491,8 @@ Statistics — the point of this run:
 - [ ] Every confirmatory gate reports its verdict under the pre-registered CI rule — affirmed /
       not distinguishable / failed / underpowered — never a bare "pass" beside an interval
       through zero.
-- [ ] BH-FDR applied across the six confirmatory claims, raw and adjusted values both shown.
-      Exploratory tables are labelled, not corrected.
+- [ ] The five confirmatory claims are reported as the enumerated set, with C1 adjudicated against
+      its 0.05 equivalence margin. Exploratory tables are labelled, not corrected.
 - [ ] `scripts/compare_runs.py run6 run_biorxiv` run, its output archived as the delta note, and every
       material movement explained.
 

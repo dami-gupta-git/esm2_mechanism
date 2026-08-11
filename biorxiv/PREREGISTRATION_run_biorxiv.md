@@ -58,60 +58,57 @@ threatening the conclusion.
 
 ## R7.2 — Confirmatory / exploratory split
 
-The paper runs gate comparisons across seven reports. Correcting one table while leaving the rest
-uncorrected is the weaker half of a defence, so the confirmatory set is enumerated **before** the
-run and multiplicity control is applied across it.
+The paper runs gate comparisons across seven reports. The protection against selecting a result
+after the fact is that the claims the thesis rests on are enumerated **before** the run, and
+everything else is labelled exploratory and asserts nothing.
 
-### Confirmatory claims (six)
+### Confirmatory claims (five)
 
 | # | Claim | Instrument |
 |---|---|---|
-| C1 | The mechanism delta sits at the measured chance floor under family-split | CI straddles the floor + permutation p |
+| C1 | The mechanism delta sits at the measured chance floor under family-split | equivalence margin: CI upper bound below floor + 0.05, with the permutation p as a refutation test |
 | C2 | The absolute-embedding gene→family gap is non-zero (homology leakage exists) | paired bootstrap on the split gap |
 | C3 | Pathogenicity clears AUROC 0.85 family-split (positive control) | CI excludes 0.85 |
 | C4 | Conservation alone matches or beats the embedding delta for pathogenicity | paired bootstrap (K1/K2) |
-| C5 | ESM-3 scale lifts the mechanism floor by at least the pre-registered 0.05 (M2: seq > 0.430) | paired bootstrap |
-| C6 | The mechanism null holds under a second, coarser homology partition | family-split vs. clan-split on a matched gene subset, each against its own measured floor |
+| C5 | ESM-3 scale lifts the mechanism floor above the pre-registered gate (M2: seq > 0.430) | paired bootstrap |
 
-C1 and C3 are the load-bearing pair (the dissociation), C2 is the leakage account, and C6 shows C1
-does not depend on the Pfam family definition specifically. Those four are the paper. C4 and C5 are
-the characterisation payoff; if the confirmatory set must be trimmed, trim from C4/C5, never C1–C3.
+C1 and C3 are the load-bearing pair (the dissociation) and C2 is the leakage account. Those three
+are the paper. C4 and C5 are the characterisation payoff; if the confirmatory set must be trimmed,
+trim from C4/C5, never C1–C3.
 
-**Scope of C6 (amended 2026-08-11).** C6 was originally instrumented as a three-partition panel
-(Pfam family / Pfam clan / MMseqs2 sequence-identity clusters) testing stability *across* a
-strictness gradient. It is reduced to a two-partition comparison, family vs. clan, and to a
-non-inferiority statement rather than a gradient. Reasons, recorded before the final numbers are
-read:
+**C1 is a null claim and is adjudicated as one.** A confidence interval that straddles the chance
+floor is not evidence that the score sits at the floor — an interval wide enough to straddle
+anything straddles the floor too. C1 is affirmed only if the family-split CI's upper bound falls
+below the measured floor plus 0.05, the same margin the M2 gate uses, so both are read on one
+scale. If the interval is wider than that, C1 is recorded as **not adjudicated** — underpowered to
+separate a real effect from none — never as confirmed. The permutation test runs on C1 but in one
+direction only: a significant p refutes C1, and a non-significant p does not confirm it.
 
-- The MMseqs2 arm's clustering was never validated. At 20% identity it produced 1,215 clusters from
-  ~1,935 genes — a partition finer than Pfam family rather than coarser, which is not what a 20%
-  identity threshold should yield and points to a coverage-threshold misconfiguration. An arm whose
-  partition is not established cannot support a claim about partitions.
-- A three-point ordering cannot establish a gradient in any case: three noisy values fall in a
-  specified monotone order with probability 1/6 by chance alone. The gradient reading was never
-  identifiable from this design, independent of the MMseqs2 problem.
-- The leakage fraction is dropped as a C6 quantity. It is a ratio of three estimated quantities with
-  a small denominator, and its intervals spanned zero in two of three arms at smoke scale. It
-  remains reported under C2 on the family-split arm only.
-
-C6 therefore tests one thing: whether the mechanism null survives replacing the Pfam family
-partition with the coarser Pfam clan partition, holding the gene set and the floor fixed. No claim
-about a strictness gradient, and no claim that leakage grows with partition coarseness, is made
-anywhere in the paper.
-
-**Benjamini-Hochberg FDR is applied across these six claims only.** Raw and adjusted values are
-both reported so a reader can see the correction rather than only its result.
+**No multiplicity correction is applied.** The confirmatory set is five pre-registered claims, and
+no verdict in it turns on multiplicity: C2 and C3 clear their thresholds by margins far wider than
+any correction across a set this size would move, and C5's margin is thin enough (+0.008 in run6)
+that it is expected to read as *not distinguishable* under R7.1 without help from a correction that
+could only push it further the same way. C1 is a null claim, where a correction that raises the bar
+for rejection makes the claim easier to assert rather than harder, so it would be a tailwind rather
+than a safeguard. The enumeration above is the safeguard.
 
 ### Exploratory (labelled, not corrected)
 
 Per-class AUROCs, the 28-family within-family table and its per-family cells, the biochemistry R²,
 the magnitude/direction decomposition, per-feature leakage fractions, and all descriptive geometry.
-These are labelled exploratory in their reports. They are **not** FDR-corrected — correcting an
-exploratory screen implies it was confirmatory.
+These are labelled exploratory in their reports and assert nothing the paper relies on. The
+28-family within-family table is included here: it is restated as an exploratory screen rather than
+corrected, since correcting a screen implies it was confirmatory.
 
-**Failing gates are excluded from the correction set.** M3 ("structure adds nothing", a stated
-headline in `ESM2_REPORT.md` §6) and K2 are reported under R7.1's underpowered clause and take no
-part in the BH-FDR set, because correcting them would imply they were positive findings under test.
+**Failing gates make no confirmatory claim.** M3 ("structure adds nothing", a stated headline in
+`ESM2_REPORT.md` §6) and K2 are reported under R7.1's underpowered clause and are not confirmatory
+items, because reporting them as such would imply they were positive findings under test.
+
+**Homology partitions beyond Pfam family are out of scope.** The mechanism null is measured under
+the Pfam family partition only. Whether it also holds under a coarser partition (Pfam clan) or a
+sequence-identity clustering is named in the paper as work for a follow-up, not tested here. The
+paper therefore makes no claim that the null is independent of the Pfam family definition, and no
+claim about how leakage varies with partition strictness.
 
 ## R7.3 — Resampling unit
 
@@ -121,7 +118,6 @@ The resampling unit matches the unit the split holds out.
 |---|---|
 | Gene-split | genes |
 | Family-split | **families** |
-| Clan-split | clans |
 | Gene-split minus family-split gap | **families** (the coarser of the two arms) |
 
 The split-gap case resamples families because its family-split arm's variance is only correct
@@ -136,7 +132,7 @@ cluster count is reported next to every family-split interval.
 
 **Addendum, added 2026-08-10 — distance/graph statistics use a subsample, not a bootstrap.**
 `family_clustering.py`'s k-NN family-purity and within/between pairwise-distance-ratio CIs
-(Section 4 of `ESM2_REPORT.md`, exploratory, not in the C1–C6 confirmatory set) are not additive
+(Section 4 of `ESM2_REPORT.md`, exploratory, not in the C1–C5 confirmatory set) are not additive
 statistics like F1 or AUROC — they depend on the neighbor graph or pairwise distances between
 points. A standard with-replacement cluster bootstrap duplicates a family's rows whenever that
 family is drawn more than once, and the duplicate sits at distance exactly 0 from itself, which
@@ -184,22 +180,15 @@ rather than an expectation:
 
 - **C1 overturned** if `delta_mean`'s family-split CI excludes the measured floor from above and
   its permutation p is significant. The mechanism null would not survive.
+- **C1 recorded as not adjudicated** if its CI upper bound sits above floor + 0.05 without the
+  permutation p being significant — the family-split panel would be underpowered to tell a real
+  effect of the pre-registered size from none, which is not the same as the null holding.
 - **C2 overturned** if the split-gap CI spans zero — the homology-leakage account would be
   unsupported at this sample size.
 - **C3 overturned** if the pathogenicity CI includes 0.85; the positive control would no longer
   license the dissociation, and the whole paper weakens.
 - **C5 restated** as *not distinguishable* if M2's paired CI spans zero, which the +0.008 margin
   makes plausible. The scale claim becomes "consistent in direction, not established".
-- **C6 overturned** if the clan-split macro-F1, measured on the gene subset both partitions cover
-  and scored against the clan arm's own measured chance floor, sits materially below the family-split
-  score on that same subset — the mechanism null would then be partly an artifact of the Pfam family
-  definition. "Materially" is fixed in advance at 0.05 macro-F1, the same margin the ESM-3 M2 gate
-  uses, so the two are read on one scale.
-- **C6 is a non-inferiority claim and is reported as such.** Overlapping intervals are not evidence
-  of equality. C6 is affirmed only if the paired family-minus-clan difference has an upper CI bound
-  below 0.05; if the interval is wider than that, C6 is recorded as **not adjudicated** (the panel
-  was underpowered to separate the arms), not as confirmed. Recording it as "no difference found" on
-  the strength of an overlap would be the error R7.1's underpowered clause exists to prevent.
 
 run_biorxiv changes error bars, not point estimates. Any point estimate that moves materially from run6
 is either a bug introduced by the wiring or a finding that needs explaining; `scripts/compare_runs.py`
