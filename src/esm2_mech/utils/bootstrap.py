@@ -1,15 +1,12 @@
 """Dependency-aware inference: cluster bootstrap and label-permutation tests.
 
 Mechanism labels are gene-level and variants cluster within genes (genes within
-families), so observations are not independent and the effective sample size is the
-cluster count, not the variant count. Seed-to-seed spread only reshuffles CV folds on
-fixed data and understates the true uncertainty. These helpers replace it with:
+families), so the effective sample size is the cluster count, not the variant count.
 
-  - cluster_bootstrap_ci: a confidence interval that resamples whole clusters
-    (genes, or families) with replacement and recomputes the metric on each resample.
-  - label_permutation_pvalue: a p-value against chance from shuffling the labels and
-    recomputing the metric; the shuffle is cluster-aware (one label per cluster) so it
-    respects the gene-level label structure.
+  - cluster_bootstrap_ci: CI that resamples whole clusters with replacement.
+  - paired_cluster_bootstrap_diff / _cross_partition: CI on the DIFFERENCE between
+    two metrics on a shared resample.
+  - label_permutation_pvalue: p-value from cluster-aware label shuffling.
 
 See reports/run6/STATS_PLAN.md for the full rationale.
 """
@@ -38,10 +35,8 @@ def average_oof_over_seeds(oof_list: list[dict | None]) -> dict | None:
     """Collapse per-seed out-of-fold predictions to one proba-per-variant.
 
     Each entry is a probe's OOF dict {"y_true", "proba", "genes", "row_ids"} from one
-    seed, where row_ids index a fixed per-row array (e.g. a family's variant rows). A
-    variant appears once per seed's CV; averaging its proba across seeds gives a single
-    de-duplicated prediction per variant, so a downstream gene-cluster bootstrap counts
-    each variant once instead of n_seeds times (which would falsely narrow the CI).
+    seed. Averaging proba across seeds gives one de-duplicated prediction per variant,
+    so a downstream gene-cluster bootstrap counts each variant once, not n_seeds times.
 
     None entries (seeds with no scorable fold) are skipped. Returns a single OOF dict
     keyed back to unique row_ids (sorted), or None if no entry had data.
@@ -64,7 +59,6 @@ def average_oof_over_seeds(oof_list: list[dict | None]) -> dict | None:
             else:
                 proba_sum[row] = vec.copy()
                 proba_count[row] = 1
-            # y_true and gene are constant per row across seeds; record once.
             y_by_row.setdefault(row, oof["y_true"][pos])
             gene_by_row.setdefault(row, oof["genes"][pos])
 
@@ -96,10 +90,8 @@ def _bootstrap_resample_value(
 ) -> float | None:
     """Draw one cluster resample with an independent seeded RNG, return the metric.
 
-    Each call gets its own `RandomState(child_seed)` so the resamples are reproducible
-    and order-independent — a requirement for running them in parallel, where the
-    sequential RNG state of a single shared generator cannot be relied on. Mirrors
-    `_permutation_null_value`.
+    Each call gets its own `RandomState(child_seed)` for reproducible,
+    order-independent resamples under parallel execution.
     """
     rng = np.random.RandomState(child_seed)
     drawn = rng.randint(0, n_clusters, size=n_clusters)
@@ -122,14 +114,11 @@ def cluster_bootstrap_ci(
     """Percentile CI for a metric via a cluster bootstrap.
 
     `clusters` is a per-row array of cluster ids (e.g. gene or Pfam family). Each
-    resample draws len(unique clusters) clusters with replacement, gathers all rows
-    of the drawn clusters (a cluster drawn k times contributes its rows k times), and
-    calls `metric_fn(row_indices)` — a closure over the held data that returns the
-    metric on those rows, or None/NaN when undefined on a resample (e.g. a class
-    absent). Undefined resamples are dropped from the percentile, not imputed.
+    resample draws len(unique clusters) clusters with replacement, gathers all their
+    rows, and calls `metric_fn(row_indices)`, which returns the metric on those rows
+    or None/NaN when undefined (e.g. a class absent). Undefined resamples are dropped,
+    not imputed.
 
-    A metric that is undefined on many resamples (e.g. one-vs-rest AUROC for a rare
-    class that is frequently absent) yields a CI built on a thinned, biased subset.
     When the surviving fraction falls below `min_valid_frac`, no CI is returned
     (ci_low/ci_high = None) and `ci_suppressed` is set, so the dropout is visible
     rather than silently narrowing the interval.
@@ -138,19 +127,14 @@ def cluster_bootstrap_ci(
     n_resamples (the count that contributed), n_resamples_total, valid_frac,
     ci_suppressed, n_clusters.
 
-    The n_resamples draws are independent and run across cores via joblib
-    (n_jobs=-1 = all cores). Each resample draws from its own RNG seeded by a
-    SeedSequence spawned from `seed`, so the CI is identical to a serial run
-    regardless of how the work is scheduled.
+    Resamples run in parallel across cores via joblib (n_jobs=-1 = all cores); each
+    draws from its own SeedSequence-spawned RNG, so the CI matches a serial run.
     """
     unique, cluster_rows = _cluster_to_rows(np.asarray(clusters))
     n_clusters = len(unique)
     all_rows = np.arange(len(clusters))
     point = metric_fn(all_rows)
 
-    # Spawn one independent child seed per resample up front. SeedSequence.spawn
-    # guarantees statistically independent, reproducible streams without relying on
-    # a single generator's sequential state (which parallel execution would break).
     child_seqs = np.random.SeedSequence(seed).spawn(n_resamples)
     child_seeds = [int(s.generate_state(1)[0]) for s in child_seqs]
 
@@ -180,6 +164,198 @@ def cluster_bootstrap_ci(
         "ci_high": float(np.percentile(stats, hi_pct)),
         "ci_suppressed": False,
     }
+
+
+def _paired_bootstrap_resample_values(
+    metric_fn_a: Callable[[np.ndarray], float | None],
+    metric_fn_b: Callable[[np.ndarray], float | None],
+    cluster_rows: list[np.ndarray],
+    n_clusters: int,
+    child_seed: int,
+) -> tuple[float | None, float | None]:
+    """Draw one cluster resample and score BOTH arms on the identical drawn rows.
+
+    The single `rng.randint` draw is the pairing: both metric_fn_a and metric_fn_b
+    see the same resampled row-index array, so the difference is a paired statistic,
+    not two independently-resampled ones.
+    """
+    rng = np.random.RandomState(child_seed)
+    drawn = rng.randint(0, n_clusters, size=n_clusters)
+    rows = np.concatenate([cluster_rows[i] for i in drawn])
+    value_a = metric_fn_a(rows)
+    value_b = metric_fn_b(rows)
+    value_a = float(value_a) if value_a is not None and np.isfinite(value_a) else None
+    value_b = float(value_b) if value_b is not None and np.isfinite(value_b) else None
+    return value_a, value_b
+
+
+def _paired_cluster_bootstrap_diff_ci(
+    resample_clusters: np.ndarray,
+    metric_fn_a: Callable[[np.ndarray], float | None],
+    metric_fn_b: Callable[[np.ndarray], float | None],
+    n_resamples: int,
+    ci_level: float,
+    min_valid_frac: float,
+    seed: int,
+    n_jobs: int,
+) -> dict:
+    """Shared resampling machinery for both pairing modes.
+
+    `resample_clusters` is the resampling unit (row-aligned cluster ids); the two
+    public functions differ only in what that unit means (a shared fold assignment
+    for same-fold pairing, or the coarser of two CV partitions for cross-partition
+    pairing) and what `metric_fn_a`/`metric_fn_b` do with the row-index array each
+    replicate.
+    """
+    unique, cluster_rows = _cluster_to_rows(np.asarray(resample_clusters))
+    n_clusters = len(unique)
+    all_rows = np.arange(len(resample_clusters))
+    point_a = metric_fn_a(all_rows)
+    point_b = metric_fn_b(all_rows)
+    point_a = float(point_a) if point_a is not None and np.isfinite(point_a) else None
+    point_b = float(point_b) if point_b is not None and np.isfinite(point_b) else None
+    point_diff = point_a - point_b if point_a is not None and point_b is not None else None
+
+    child_seqs = np.random.SeedSequence(seed).spawn(n_resamples)
+    child_seeds = [int(seq.generate_state(1)[0]) for seq in child_seqs]
+
+    paired_values = Parallel(n_jobs=n_jobs)(
+        delayed(_paired_bootstrap_resample_values)(
+            metric_fn_a, metric_fn_b, cluster_rows, n_clusters, child_seed
+        )
+        for child_seed in child_seeds
+    )
+    # A replicate contributes only if BOTH arms were defined on it.
+    diffs = [
+        value_a - value_b
+        for value_a, value_b in paired_values
+        if value_a is not None and value_b is not None
+    ]
+
+    valid_frac = len(diffs) / n_resamples if n_resamples else 0.0
+    base = {
+        "point_a": point_a,
+        "point_b": point_b,
+        "point_diff": point_diff,
+        "n_resamples": len(diffs),
+        "n_resamples_total": int(n_resamples),
+        "valid_frac": float(valid_frac),
+        "n_clusters": int(n_clusters),
+    }
+    if not diffs or valid_frac < min_valid_frac:
+        return {**base, "ci_low": None, "ci_high": None, "ci_suppressed": True}
+    lo_pct = (1.0 - ci_level) / 2.0 * 100.0
+    hi_pct = (1.0 + ci_level) / 2.0 * 100.0
+    return {
+        **base,
+        "ci_low": float(np.percentile(diffs, lo_pct)),
+        "ci_high": float(np.percentile(diffs, hi_pct)),
+        "ci_suppressed": False,
+    }
+
+
+def paired_cluster_bootstrap_diff(
+    clusters: np.ndarray,
+    metric_fn_a: Callable[[np.ndarray], float | None],
+    metric_fn_b: Callable[[np.ndarray], float | None],
+    n_resamples: int = BOOTSTRAP_N_RESAMPLES,
+    ci_level: float = BOOTSTRAP_CI_LEVEL,
+    min_valid_frac: float = BOOTSTRAP_MIN_VALID_FRAC,
+    seed: int = 0,
+    n_jobs: int = -1,
+) -> dict:
+    """Percentile CI on the difference between two metrics under one shared fold.
+
+    Same-fold pairing mode: both arms are already scored under one fold assignment
+    (e.g. ESM-3 seq-track vs ESM-2 delta_mean on the same family-split folds).
+    `clusters` is that fold assignment's cluster id per row; `metric_fn_a` and
+    `metric_fn_b` are closures over each arm's fixed predictions, called with the
+    SAME resampled row-index array on every replicate, making the difference a
+    paired statistic. `clusters` must already be restricted to rows present in both
+    arms — this function does not intersect the arms itself.
+
+    For the gene-split-minus-family-split gap (two different CV partitions), use
+    `paired_cluster_bootstrap_diff_cross_partition` instead.
+
+    Returns point_a, point_b, point_diff (= point_a - point_b, over all rows),
+    ci_low, ci_high (percentile CI on the diff), n_resamples (contributing
+    replicates), n_resamples_total, valid_frac, ci_suppressed, n_clusters. A
+    replicate is dropped when either arm is undefined on it; below `min_valid_frac`
+    surviving, no CI is returned and `ci_suppressed` is set.
+    """
+    return _paired_cluster_bootstrap_diff_ci(
+        clusters,
+        metric_fn_a,
+        metric_fn_b,
+        n_resamples=n_resamples,
+        ci_level=ci_level,
+        min_valid_frac=min_valid_frac,
+        seed=seed,
+        n_jobs=n_jobs,
+    )
+
+
+def paired_cluster_bootstrap_diff_cross_partition(
+    resample_clusters: np.ndarray,
+    metric_fn_a: Callable[[np.ndarray], float | None],
+    metric_fn_b: Callable[[np.ndarray], float | None],
+    sensitivity_clusters: np.ndarray | None = None,
+    n_resamples: int = BOOTSTRAP_N_RESAMPLES,
+    ci_level: float = BOOTSTRAP_CI_LEVEL,
+    min_valid_frac: float = BOOTSTRAP_MIN_VALID_FRAC,
+    seed: int = 0,
+    n_jobs: int = -1,
+) -> dict:
+    """Percentile CI on a difference between two arms scored under DIFFERENT partitions.
+
+    Cross-partition pairing mode: for the gene-split-minus-family-split gap, arm A
+    and arm B are not evaluated under a shared fold assignment — gene-split and
+    family-split are different CV partitions of the same rows. `metric_fn_a` and
+    `metric_fn_b` must each be self-contained closures that recompute their OWN
+    arm's metric under their OWN partition given a row-index array.
+
+    The pairing is still preserved: `resample_clusters` is resampled ONCE per
+    replicate and the identical drawn row-index array is handed to both metric fns.
+
+    `resample_clusters` must be the COARSER of the two arms' units — for the split
+    gap this is the family, never the gene: the family-split arm's variance is only
+    correct under family resampling, and a family resample induces a valid gene
+    resample but not the reverse. Passing gene clusters here silently understates
+    the family-split arm's true variance.
+
+    `resample_clusters` (and `sensitivity_clusters`, if given) must already be
+    restricted to rows present in both arms — this function does not intersect the
+    arms itself.
+
+    If `sensitivity_clusters` (the finer unit, e.g. gene) is given, a second CI is
+    computed at that finer granularity and returned under `gene_resampled_sensitivity`
+    — a labelled sensitivity check, never the primary result (R7.3).
+
+    Return shape matches `paired_cluster_bootstrap_diff`, plus
+    `gene_resampled_sensitivity` when requested.
+    """
+    primary = _paired_cluster_bootstrap_diff_ci(
+        resample_clusters,
+        metric_fn_a,
+        metric_fn_b,
+        n_resamples=n_resamples,
+        ci_level=ci_level,
+        min_valid_frac=min_valid_frac,
+        seed=seed,
+        n_jobs=n_jobs,
+    )
+    if sensitivity_clusters is not None:
+        primary["gene_resampled_sensitivity"] = _paired_cluster_bootstrap_diff_ci(
+            sensitivity_clusters,
+            metric_fn_a,
+            metric_fn_b,
+            n_resamples=n_resamples,
+            ci_level=ci_level,
+            min_valid_frac=min_valid_frac,
+            seed=seed,
+            n_jobs=n_jobs,
+        )
+    return primary
 
 
 def bootstrap_mechanism_metrics(
@@ -238,8 +414,8 @@ def _permute_labels(
     """Permute labels. With `groups`, shuffle one label per group then broadcast back.
 
     Mechanism labels are constant within a gene, so a variant-level shuffle would break
-    that structure and build an unrealistically easy null. Passing groups=genes shuffles
-    at the gene level: each gene keeps a single (permuted) label across its variants.
+    that structure and build an unrealistically easy null; groups=genes shuffles at the
+    gene level instead, so each gene keeps a single (permuted) label across its variants.
     """
     if groups is None:
         return rng.permutation(labels)
@@ -257,12 +433,7 @@ def _permutation_null_value(
     groups: np.ndarray | None,
     child_seed: int,
 ) -> float | None:
-    """Shuffle labels with an independent seeded RNG, then recompute the metric.
-
-    Each call gets its own `RandomState(child_seed)` so the permutations are
-    reproducible and order-independent — a requirement for running them in parallel,
-    where the sequential RNG state of a single shared generator cannot be relied on.
-    """
+    """Shuffle labels with an independent seeded RNG, then recompute the metric."""
     rng = np.random.RandomState(child_seed)
     permuted = _permute_labels(np.asarray(labels), groups, rng)
     value = run_metric_fn(permuted)
@@ -283,21 +454,16 @@ def label_permutation_pvalue(
     """One-sided permutation p-value for a metric against the label-shuffled null.
 
     `run_metric_fn(labels)` must recompute the FULL cross-validated metric for a label
-    vector — i.e. it refits the probe. The labels are permuted before each refit, so
-    this cannot be computed from fixed out-of-fold predictions. Pass groups=genes for a
-    gene-level shuffle (the correct null when labels are gene-level). The p-value is
-    (1 + #{null >= observed}) / (1 + n) for alternative="greater".
+    vector — i.e. it refits the probe — since this can't be computed from fixed
+    out-of-fold predictions. Pass groups=genes for a gene-level shuffle (the correct
+    null when labels are gene-level). The p-value is (1 + #{null >= observed}) / (1 + n)
+    for alternative="greater".
 
-    The n_permutations refits are independent and run across cores via joblib
-    (n_jobs=-1 = all cores). Each permutation draws from its own RNG seeded by a
-    SeedSequence spawned from `seed`, so the null distribution is identical to a
-    serial run regardless of how the work is scheduled.
+    Permutations run in parallel across cores via joblib (n_jobs=-1 = all cores); each
+    draws from its own SeedSequence-spawned RNG, so the null matches a serial run.
     """
     observed = run_metric_fn(labels)
 
-    # Spawn one independent child seed per permutation up front. SeedSequence.spawn
-    # guarantees statistically independent, reproducible streams without relying on
-    # a single generator's sequential state (which parallel execution would break).
     child_seqs = np.random.SeedSequence(seed).spawn(n_permutations)
     child_seeds = [int(s.generate_state(1)[0]) for s in child_seqs]
 

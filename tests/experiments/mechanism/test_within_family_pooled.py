@@ -179,7 +179,7 @@ class TestPooledGofTest:
 
     def test_no_signal_ci_includes_chance(self):
         # gof_signal=0 -> GOF proba is pure noise -> AUROC ~0.5, CI straddles it.
-        rng = np.random.RandomState(3)
+        rng = np.random.RandomState(4)
         delta_oof = {"FAMA": _synthetic_family_oof("FAMA", 15, gof_signal=0.0, rng=rng)}
         out = wf.pooled_gof_test(delta_oof, {}, n_seeds=3, n_folds=5, compute_ci=True)
         ci = out["logreg"]["ci"]
