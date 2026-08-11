@@ -93,32 +93,24 @@ def run_seed(seed, args, labels, genes, delta_mean, delta_pos, pfam_map):
         from sklearn.neighbors import KNeighborsClassifier
         return KNeighborsClassifier(n_neighbors=10, metric="cosine")
 
+    TREE_KNN_MODELS = [
+        ("gbm", "GBM", gbm_fn, run_sklearn_probe_pca, {}),
+        ("rf", "RF", rf_fn, run_sklearn_probe_pca, {}),
+        ("knn", "kNN", knn_fn, run_sklearn_probe, {"normalize": True}),
+    ]
+
     def run_tree_knn(feat_name, X, split_name, splits, results):
         """Run GBM/RF/kNN for one feature under one split, storing into results.
         Keys are symmetric with the MLP keys: <model>_<feat>_<split>."""
-        print(f"\n=== GBM {split_name}-split: {feat_name} (PCA-50) ===")
-        key = nonlinear_key("gbm", feat_name, split_name)
-        agg, oof = run_sklearn_probe_pca(
-            gbm_fn, X, labels, genes, seed=seed, splits=splits, return_oof=True
-        )
-        results[key] = _attach_ci(agg, oof, split_name)
-        print(f"  macro_f1={results[key].get('macro_f1_mean', float('nan')):.3f}")
-
-        print(f"\n=== RF {split_name}-split: {feat_name} (PCA-50) ===")
-        key = nonlinear_key("rf", feat_name, split_name)
-        agg, oof = run_sklearn_probe_pca(
-            rf_fn, X, labels, genes, seed=seed, splits=splits, return_oof=True
-        )
-        results[key] = _attach_ci(agg, oof, split_name)
-        print(f"  macro_f1={results[key].get('macro_f1_mean', float('nan')):.3f}")
-
-        print(f"\n=== kNN {split_name}-split: {feat_name} ===")
-        key = nonlinear_key("knn", feat_name, split_name)
-        agg, oof = run_sklearn_probe(
-            knn_fn, X, labels, genes, seed=seed, normalize=True, splits=splits, return_oof=True
-        )
-        results[key] = _attach_ci(agg, oof, split_name)
-        print(f"  macro_f1={results[key].get('macro_f1_mean', float('nan')):.3f}")
+        for model_key, model_label, clf_fn, probe_fn, extra_kwargs in TREE_KNN_MODELS:
+            print(f"\n=== {model_label} {split_name}-split: {feat_name} ===")
+            key = nonlinear_key(model_key, feat_name, split_name)
+            agg, oof = probe_fn(
+                clf_fn, X, labels, genes, seed=seed, splits=splits, return_oof=True,
+                **extra_kwargs,
+            )
+            results[key] = _attach_ci(agg, oof, split_name)
+            print(f"  macro_f1={results[key].get('macro_f1_mean', float('nan')):.3f}")
 
     out_path = out_dir / f"nonlinear_results_seed{seed}.json"
 
@@ -128,8 +120,6 @@ def run_seed(seed, args, labels, genes, delta_mean, delta_pos, pfam_map):
     # Merge mode: compute only the new GBM/RF/kNN family-split arms and fold them
     # into the existing result file, leaving every existing key untouched.
     if args.only_new_family_arms:
-        if not out_path.exists():
-            raise FileNotFoundError(out_path)
         with open(out_path) as f:
             existing = json.load(f)
         new_arms = {}
@@ -173,7 +163,7 @@ def run_seed(seed, args, labels, genes, delta_mean, delta_pos, pfam_map):
 
 
 def main():
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(allow_abbrev=False)
     parser.add_argument("--seeds", type=int, default=N_SEEDS,
                         help="number of seeds to run; runs 0..seeds-1 (>=1)")
     parser.add_argument("--max_epochs", type=int, default=100)
