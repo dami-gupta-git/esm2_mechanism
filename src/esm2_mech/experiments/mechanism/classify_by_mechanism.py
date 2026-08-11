@@ -10,7 +10,6 @@ Reads from paths.py constants. Writes results to RESULTS_DIR/<run_name>/.
 
 import argparse
 import functools
-import json
 import os
 
 import numpy as np
@@ -30,11 +29,10 @@ from esm2_mech.utils.paths import (
     EMB_MUT_MEAN,
     EMB_WT_POS,
     EMB_MUT_POS,
+    MECHANISM_AGGREGATE_JSON,
     RESULTS_DIR,
-    SEQUENCES_JSON,
-    VARIANTS_JSON,
+    VALID_VARIANTS_JSON,
 )
-from esm2_mech.utils.sequences import apply_missense, window_sequence
 
 print = functools.partial(print, flush=True)
 
@@ -43,50 +41,16 @@ OUT_DIR = RESULTS_DIR
 
 def load_data() -> dict:
     """Load and return all shared data needed by the probe experiments."""
-    print("\n=== Loading variants ===")
-    if not VARIANTS_JSON.exists():
-        raise FileNotFoundError(
-            f"{VARIANTS_JSON} not found — run fetch_data/fetch_variants.py --step merge first"
-        )
-    variants = load_variants(VARIANTS_JSON)
-
-    print("\n=== Loading sequences ===")
-    if not SEQUENCES_JSON.exists():
-        raise FileNotFoundError(
-            f"{SEQUENCES_JSON} not found — run fetch_data/fetch_sequences first"
-        )
-    with open(SEQUENCES_JSON) as f:
-        seq_cache = json.load(f)
-
-    # Filter to variants with a valid sequence and a viable WT/mut window.
-    # Variants missing a UniProt ID or sequence are skipped with a warning.
-    valid_variants = []
-    skipped_no_uid = 0
-    skipped_no_seq = 0
-    for v in variants:
-        uid = v.get("uniprot_id")
-        if not uid:
-            skipped_no_uid += 1
-            continue
-        if uid not in seq_cache:
-            skipped_no_seq += 1
-            continue
-        # Window the sequence around the mutation site (ESM-2 has a 1022-token limit).
-        wt_win, new_pos, _ = window_sequence(seq_cache[uid], v["aa_pos"])
-        mut_win = apply_missense(wt_win, new_pos, v["aa_wt"], v["aa_mut"])
-        if mut_win is None:
-            continue
-        valid_variants.append(v)
-
-    if skipped_no_uid:
-        print(f"WARNING: {skipped_no_uid} variants skipped — missing UniProt ID")
-    if skipped_no_seq:
-        print(f"WARNING: {skipped_no_seq} variants skipped — UniProt ID not in sequence cache")
+    print("\n=== Loading valid variants ===")
+    valid_variants = load_variants(VALID_VARIANTS_JSON)
     print(f"Valid variant pairs: {len(valid_variants)}")
     if len(valid_variants) < 50:
         print("WARNING: Very few valid variants. Results may not be reliable.")
 
-    # Four embedding arrays, all aligned by row to valid_variants.
+    # Four embedding arrays, all aligned by row to VALID_VARIANTS_JSON (the same
+    # filtered variant list the embed step re-applies — see paths.py). A row-count
+    # mismatch means the two are no longer aligned and every downstream label
+    # assignment would be silently wrong, so this must raise rather than proceed.
     print("\n=== Loading embeddings ===")
     for path in [EMB_WT_MEAN, EMB_MUT_MEAN, EMB_WT_POS, EMB_MUT_POS]:
         if not os.path.exists(path):
@@ -95,6 +59,20 @@ def load_data() -> dict:
     emb_mut_mean = np.load(EMB_MUT_MEAN)
     emb_wt_pos = np.load(EMB_WT_POS)
     emb_mut_pos = np.load(EMB_MUT_POS)
+
+    num_variants = len(valid_variants)
+    for name, arr in [
+        ("EMB_WT_MEAN", emb_wt_mean),
+        ("EMB_MUT_MEAN", emb_mut_mean),
+        ("EMB_WT_POS", emb_wt_pos),
+        ("EMB_MUT_POS", emb_mut_pos),
+    ]:
+        if arr.shape[0] != num_variants:
+            raise ValueError(
+                f"embedding/variant row mismatch: {name} has {arr.shape[0]} rows "
+                f"vs {num_variants} valid_variants — {VALID_VARIANTS_JSON} is not "
+                f"row-aligned with the embeddings."
+            )
 
     # Build label and metadata arrays aligned to valid_variants.
     labels_3class = np.array([v["label_3class"] for v in valid_variants])
@@ -168,9 +146,8 @@ def main():
         print(f"  {filename}")
 
     aggregated = aggregate_across_seeds(seed_results)
-    aggregate_path = OUT_DIR / "aggregate.json"
     atomic_write_json(
-        aggregate_path,
+        MECHANISM_AGGREGATE_JSON,
         {
             "n_seeds": len(seed_results),
             "seed_files": [filename for filename, _result in seed_results],
@@ -178,7 +155,7 @@ def main():
         },
     )
     print_table(aggregated)
-    print(f"\nWrote {aggregate_path}")
+    print(f"\nWrote {MECHANISM_AGGREGATE_JSON}")
 
 
 if __name__ == "__main__":

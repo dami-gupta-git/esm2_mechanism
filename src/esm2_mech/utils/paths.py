@@ -33,6 +33,11 @@ LEAKAGE_FRACTION_JSON = RESULTS_DIR / "leakage_fraction.json"
 # Per-seed probe outputs, written as each seed completes (resume + progress).
 # Format with .format(seed=N).
 PATHOGENICITY_CONTROL_SEED_JSON = str(RESULTS_DIR / "pathogenicity_control_seed{seed}.json")
+# Seed-0 gene-split/family-split OOF cache (row_ids, y_true, pred, genes) for the
+# PERMUTATION_FEATURES headline features, written by mechanism_delta_family_split.run
+# so leakage_fraction.py can bootstrap the leakage-fraction RATIO jointly (shared
+# resample across both arms) instead of combining two separately-computed CIs.
+MECHANISM_OOF_CACHE_SEED_JSON = str(RESULTS_DIR / "mechanism_oof_cache_seed{seed}.json")
 WITHIN_FAMILY_MECHANISM_JSON = RESULTS_DIR / "within_family_mechanism.json"
 # Per-seed ESM-2 nonlinear-probe results (MLP/GBM/RF/kNN on delta features). Format
 # with .format(seed=N). The ESM-3 experiment reads mlp_delta_mean_family from these to

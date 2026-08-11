@@ -33,17 +33,24 @@ Usage:
 
 from __future__ import annotations
 
+import argparse
 import functools
 import glob
 import json
+import os
 
 import numpy as np
+from sklearn.metrics import f1_score
 
+from esm2_mech.utils.bootstrap import cluster_bootstrap_ci
+from esm2_mech.utils.constants import BOOTSTRAP_N_RESAMPLES
 from esm2_mech.utils.metrics import mean_std_n
 from esm2_mech.utils.paths import (
     FAMILY_CLUSTERING_JSON,
     LEAKAGE_FRACTION_JSON,
+    MECHANISM_OOF_CACHE_SEED_JSON,
     NAIVE_BASELINE_JSON,
+    PFAM_JSON,
     RESULTS_DIR,
 )
 
@@ -115,7 +122,64 @@ def leakage_fraction_per_feature(seeds, feature, chance):
     return result
 
 
-def main() -> None:
+def leakage_fraction_ci(oof_cache_entry, pfam_map, chance, n_resamples, seed=0):
+    """Cluster-bootstrap CI on the leakage-fraction RATIO, resampled once per
+    replicate and shared across both arms.
+
+    The ratio's numerator and denominator both depend on the gene-split macro-F1,
+    so combining two separately-computed CIs (one on gene_f1, one on family_f1)
+    would ignore that dependence. Instead this draws ONE resample of the shared
+    row set per replicate and recomputes gene_f1, family_f1, and the ratio
+    together on that resample — gene-split and family-split are different CV
+    partitions of the same underlying variants, so this is the cross-partition
+    case (Task 1 / R7.3): the resampling unit is family, the coarser of the two
+    arms' units, not gene.
+
+    `oof_cache_entry` is {"gene_split": {...}, "family_split": {...}} as written
+    by mechanism_delta_family_split.run's seed-0 OOF cache (row_ids, y_true,
+    pred, genes for each arm). Restricted to the intersection of row_ids present
+    in both arms before resampling, per Task 1's shared-subset requirement.
+    """
+    gene_arm = oof_cache_entry["gene_split"]
+    family_arm = oof_cache_entry["family_split"]
+
+    gene_pos_by_row = {row: pos for pos, row in enumerate(gene_arm["row_ids"])}
+    family_pos_by_row = {row: pos for pos, row in enumerate(family_arm["row_ids"])}
+    shared_rows = sorted(set(gene_pos_by_row) & set(family_pos_by_row))
+    if not shared_rows:
+        return None
+
+    gene_y_true = np.array(gene_arm["y_true"])
+    gene_pred = np.array(gene_arm["pred"])
+    family_y_true = np.array(family_arm["y_true"])
+    family_pred = np.array(family_arm["pred"])
+    gene_names = np.array(gene_arm["genes"])
+
+    gene_positions = np.array([gene_pos_by_row[row] for row in shared_rows])
+    family_positions = np.array([family_pos_by_row[row] for row in shared_rows])
+    # Cluster on Pfam family (the coarser unit) per shared row; a gene with no
+    # Pfam annotation falls back to its own gene id as a singleton cluster.
+    row_genes = gene_names[gene_positions]
+    clusters = np.array([pfam_map.get(g) or f"__orphan__{g}" for g in row_genes])
+
+    def _ratio(rows):
+        g_idx = gene_positions[rows]
+        f_idx = family_positions[rows]
+        gene_f1 = float(
+            f1_score(gene_y_true[g_idx], gene_pred[g_idx], average="macro", zero_division=0)
+        )
+        family_f1 = float(
+            f1_score(family_y_true[f_idx], family_pred[f_idx], average="macro", zero_division=0)
+        )
+        denom = gene_f1 - chance
+        if denom <= MIN_ABOVE_CHANCE:
+            return None
+        return (gene_f1 - family_f1) / denom
+
+    return cluster_bootstrap_ci(clusters, _ratio, n_resamples=n_resamples, seed=seed)
+
+
+def main(compute_ci: bool = True, n_boot: int = BOOTSTRAP_N_RESAMPLES) -> None:
     seeds = _load_seed_baselines()
     chance = _measured_chance()
     features = list(seeds[0]["gene_split"].keys())
@@ -139,6 +203,23 @@ def main() -> None:
             fc["by_view"]["wt_mean"].get("frac_gene_mech_matches_family_majority")
         )
 
+    # Seed-0 OOF cache (delta_mean, wt_only_mean) for the joint ratio bootstrap.
+    # Optional: absent when mechanism_delta_family_split was run with --no_ci or
+    # before this cache existed, in which case the LF ratio CI is simply omitted.
+    oof_cache_path = MECHANISM_OOF_CACHE_SEED_JSON.format(seed=0)
+    oof_cache = None
+    pfam_map = None
+    if compute_ci and os.path.exists(oof_cache_path):
+        with open(oof_cache_path) as fh:
+            oof_cache = json.load(fh)
+        with open(PFAM_JSON) as fh:
+            pfam_map = json.load(fh)
+    elif compute_ci:
+        print(
+            f"  NOTE: {oof_cache_path} not found — leakage-fraction CI skipped "
+            "for all features (re-run mechanism_delta_family_split seed 0 with CIs on)."
+        )
+
     print(f"n={results['n_variants']} variants, {results['n_genes']} genes, "
           f"{results['n_families']} families, {results['n_seeds']} seeds")
     print(f"chance macro-F1 (measured majority-class floor) = {chance:.3f}\n")
@@ -146,6 +227,10 @@ def main() -> None:
 
     for feature in features:
         cell = leakage_fraction_per_feature(seeds, feature, chance)
+        if oof_cache is not None and feature in oof_cache:
+            ci = leakage_fraction_ci(oof_cache[feature], pfam_map, chance, n_boot, seed=0)
+            if ci is not None:
+                cell["ci"] = ci
         results["by_feature"][feature] = cell
         lf = cell["leakage_fraction"]
         lf_str = f"{lf:.1%}" if lf is not None else "undefined (at floor)"
@@ -160,5 +245,13 @@ def main() -> None:
     print(f"\nResults written to {LEAKAGE_FRACTION_JSON}")
 
 
+def _cli():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--no_ci", action="store_true", help="skip the leakage-fraction ratio CI")
+    parser.add_argument("--n_boot", type=int, default=BOOTSTRAP_N_RESAMPLES)
+    args = parser.parse_args()
+    main(compute_ci=not args.no_ci, n_boot=args.n_boot)
+
+
 if __name__ == "__main__":
-    main()
+    _cli()

@@ -58,7 +58,7 @@ class TestRunKnn:
         labels = np.array([GOF, DN, LOF] * 8)
         X = np.array([centers[lab] for lab in labels]) + rng.normal(0, 0.1, (24, 2))
         y = le.transform(labels)
-        fm = run_knn(X, X, y, y, le, k=3)
+        fm, _proba = run_knn(X, X, y, y, le, k=3)
         assert "macro_f1" in fm
         assert np.isfinite(fm["macro_f1"])
         # Separable clusters classified against themselves → perfect macro_f1.
@@ -73,7 +73,7 @@ class TestRunKnn:
             np.tile([0.0, 10.0], (10, 1)),
         ]).astype(float)
         y = le.transform(labels)
-        fm = run_knn(X, X, y, y, le, k=3)
+        fm, _proba = run_knn(X, X, y, y, le, k=3)
         assert fm[f"auroc_{GOF}"] == pytest.approx(1.0)
         assert fm[f"auroc_{DN}"] == pytest.approx(1.0)
 
@@ -92,7 +92,7 @@ class TestRunKnn:
         X_test = np.array([[10.0, 0.0], [0.0, 10.0], [-10.0, -10.0]], dtype=float)
         y_test = le.transform(test_labels)
 
-        fm = run_knn(X_train, X_test, y_train, y_test, le, k=3)
+        fm, _proba = run_knn(X_train, X_test, y_train, y_test, le, k=3)
         # LOF is never a training class, so knn never votes for it: its proba
         # column is all zeros (constant). The AUROC is therefore undefined and
         # must be recorded by name, never silently emitted as a number.
@@ -116,7 +116,7 @@ class TestRunKnn:
         X_test = np.array([[5.0, 0.0], [5.0, 0.0], [0.0, 5.0], [0.0, 5.0]])
         y_test = le.transform(labels_test)
 
-        fm = run_knn(X_train, X_test, y_train, y_test, le, k=3)
+        fm, _proba = run_knn(X_train, X_test, y_train, y_test, le, k=3)
         assert "auroc_skipped" in fm
         assert fm["auroc_skipped"].get(LOF) == "class_absent_in_test"
 

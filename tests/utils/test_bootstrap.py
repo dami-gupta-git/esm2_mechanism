@@ -37,6 +37,7 @@ from esm2_mech.utils.bootstrap import (
     average_oof_over_seeds,
     bootstrap_mechanism_metrics,
     cluster_bootstrap_ci,
+    cluster_subsample_ci,
     label_permutation_pvalue,
     paired_cluster_bootstrap_diff,
     paired_cluster_bootstrap_diff_cross_partition,
@@ -239,6 +240,112 @@ class TestClusterBootstrapCI:
         fn = lambda rows: float(values[rows].mean())
         a = cluster_bootstrap_ci(clusters, fn, n_resamples=100, seed=3)
         b = cluster_bootstrap_ci(clusters, fn, n_resamples=100, seed=3)
+        assert a == b
+
+
+# ---------------------------------------------------------------------------
+# cluster_subsample_ci (m-out-of-n, without replacement)
+# ---------------------------------------------------------------------------
+
+class TestClusterSubsampleCI:
+    def _genes_with_rows(self, n_genes=30, rows_per_gene=4):
+        clusters = np.array(
+            [f"G{i}" for i in range(n_genes) for _ in range(rows_per_gene)]
+        )
+        return clusters, n_genes
+
+    def test_no_cluster_repeated_within_a_replicate(self):
+        # The point of the subsample: every drawn cluster contributes its rows
+        # exactly once per replicate, so no row is ever duplicated.
+        clusters, _ = self._genes_with_rows()
+
+        def metric(rows):
+            values, counts = np.unique(rows, return_counts=True)
+            assert counts.max() == 1, "a row was drawn more than once in one replicate"
+            return float(len(rows))
+
+        cluster_subsample_ci(clusters, metric, n_resamples=100, seed=0, n_jobs=1)
+
+    def test_subsample_size_matches_fraction(self):
+        clusters, n_genes = self._genes_with_rows()
+        rows_per_gene = 4
+        seen_sizes = set()
+
+        def metric(rows):
+            seen_sizes.add(len(rows))
+            return float(len(rows))
+
+        out = cluster_subsample_ci(
+            clusters, metric, n_resamples=50, subsample_frac=0.632, seed=0, n_jobs=1
+        )
+        expected_clusters = round(0.632 * n_genes)
+        assert out["subsample_size"] == expected_clusters
+        # One call sees all rows (the point estimate); every other call is a
+        # replicate, and every replicate draws the same NUMBER of clusters
+        # (without replacement), so every replicate has exactly the same row
+        # count.
+        assert seen_sizes == {len(clusters), expected_clusters * rows_per_gene}
+
+    def test_point_uses_all_rows_not_a_subsample(self):
+        clusters, _ = self._genes_with_rows()
+        values = np.arange(len(clusters), dtype=float)
+        out = cluster_subsample_ci(
+            clusters, lambda rows: float(values[rows].mean()), n_resamples=20
+        )
+        assert out["point"] == pytest.approx(values.mean())
+
+    def test_removes_duplicate_point_bias_a_bootstrap_would_have(self):
+        # Construct exactly the failure mode this function exists to fix: a
+        # "purity-like" metric that is inflated whenever a cluster's rows are
+        # duplicated within a replicate (as a WITH-replacement bootstrap does).
+        # Two genes per "family": one point per gene, both genes of a family
+        # placed at identical coordinates in a 1-D "embedding" so a family
+        # drawn twice under a with-replacement bootstrap creates an exact
+        # distance-0 duplicate pair that inflates same-family adjacency.
+        n_families = 20
+        clusters = np.array([f"F{i}" for i in range(n_families) for _ in range(2)])
+
+        def same_family_adjacent_fraction(rows):
+            # Fraction of rows whose immediate duplicate (by row content, not
+            # position) is also present in this replicate — a stand-in for
+            # "does this replicate contain an exact-duplicate pair," which is
+            # exactly what corrupts a kNN/pairwise-distance statistic.
+            values, counts = np.unique(rows, return_counts=True)
+            return float((counts >= 2).sum()) / len(values)
+
+        subsample_out = cluster_subsample_ci(
+            clusters, same_family_adjacent_fraction, n_resamples=200, seed=0
+        )
+        bootstrap_out = cluster_bootstrap_ci(
+            clusters, same_family_adjacent_fraction, n_resamples=200, seed=0
+        )
+        # The subsample never duplicates a row, so the metric is always 0.
+        assert subsample_out["point"] == pytest.approx(0.0)
+        assert subsample_out["ci_low"] == pytest.approx(0.0)
+        assert subsample_out["ci_high"] == pytest.approx(0.0)
+        # The ordinary with-replacement bootstrap does duplicate rows (a
+        # cluster drawn >=2 times), so its interval sits strictly above zero —
+        # this is the artifact cluster_subsample_ci exists to remove.
+        assert bootstrap_out["ci_high"] > 0.0
+
+    def test_ci_suppressed_when_too_many_undefined(self):
+        clusters, _ = self._genes_with_rows()
+        sentinel_rows = set(np.where(clusters == "G0")[0].tolist())
+
+        def metric(rows):
+            return 0.7 if set(rows.tolist()) & sentinel_rows else None
+
+        out = cluster_subsample_ci(clusters, metric, n_resamples=200, seed=0)
+        assert out["valid_frac"] < 0.8
+        assert out["ci_suppressed"] is True
+        assert out["ci_low"] is None and out["ci_high"] is None
+
+    def test_deterministic_for_fixed_seed(self):
+        clusters, _ = self._genes_with_rows()
+        values = np.arange(len(clusters), dtype=float)
+        fn = lambda rows: float(values[rows].mean())
+        a = cluster_subsample_ci(clusters, fn, n_resamples=100, seed=5)
+        b = cluster_subsample_ci(clusters, fn, n_resamples=100, seed=5)
         assert a == b
 
 

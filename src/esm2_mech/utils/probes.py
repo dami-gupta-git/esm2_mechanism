@@ -188,14 +188,21 @@ def auroc_for_clf(clf, X: np.ndarray, y: np.ndarray, pos_label=1) -> float:
 
 
 def _run_binary_cv(
-    clf_fn, X: np.ndarray, y: np.ndarray, splits: list[tuple], seed: int, pos_label
-) -> dict:
+    clf_fn, X: np.ndarray, y: np.ndarray, splits: list[tuple], seed: int, pos_label,
+    genes: np.ndarray | None = None, return_oof: bool = False,
+):
     """Binary CV body: per-fold scale → fit clf_fn(seed) → AUROC, returning mean ± std.
 
     Shared by run_logreg_binary_cv and run_mlp_binary_cv, which differ only in the
     classifier. Returns {} when no fold had both classes in train and test.
+    return_oof : if True, return (agg, oof) with out-of-fold test predictions
+        {"y_true", "proba" (positive-class probability, 1-D), "genes", "row_ids"}
+        for dependency-aware inference, or None if no fold was scorable. `genes`
+        must be provided for oof to carry gene ids. Default False keeps the
+        bare-`agg` return for existing callers.
     """
     aurocs = []
+    oof_y, oof_proba, oof_genes, oof_rows = [], [], [], []
     for tr, te in splits:
         sc = StandardScaler()
         X_tr = sc.fit_transform(X[tr])
@@ -206,22 +213,41 @@ def _run_binary_cv(
         clf.fit(X_tr, y[tr])
         proba = clf.predict_proba(X_te)[:, _pos_class_col(clf.classes_, pos_label)]
         aurocs.append(float(roc_auc_score(y[te], proba)))
+        if return_oof and genes is not None:
+            oof_y.append(y[te])
+            oof_proba.append(proba)
+            oof_genes.append(genes[te])
+            oof_rows.append(np.asarray(te))
+
     if not aurocs:
-        return {}
-    return {
-        "auroc_mean": float(np.mean(aurocs)),
-        "auroc_std": float(np.std(aurocs)),
-        "n_folds": len(aurocs),
-    }
+        agg = {}
+    else:
+        agg = {
+            "auroc_mean": float(np.mean(aurocs)),
+            "auroc_std": float(np.std(aurocs)),
+            "n_folds": len(aurocs),
+        }
+    if not return_oof:
+        return agg
+    oof = None
+    if oof_y:
+        oof = {
+            "y_true": np.concatenate(oof_y),
+            "proba": np.concatenate(oof_proba),
+            "genes": np.concatenate(oof_genes),
+            "row_ids": np.concatenate(oof_rows),
+        }
+    return agg, oof
 
 
 def run_logreg_binary_cv(
-    X: np.ndarray, y: np.ndarray, splits: list[tuple], seed: int = 42, pos_label=1
-) -> dict:
+    X: np.ndarray, y: np.ndarray, splits: list[tuple], seed: int = 42, pos_label=1,
+    genes: np.ndarray | None = None, return_oof: bool = False,
+):
     """Binary LogReg CV returning AUROC mean ± std."""
     return _run_binary_cv(
         lambda s: LogisticRegression(max_iter=1000, C=1.0, random_state=s),
-        X, y, splits, seed, pos_label,
+        X, y, splits, seed, pos_label, genes=genes, return_oof=return_oof,
     )
 
 
@@ -324,8 +350,9 @@ def run_mlp_cv(
 
 
 def run_mlp_binary_cv(
-    X: np.ndarray, y: np.ndarray, splits: list[tuple], seed: int = 42, pos_label=1
-) -> dict:
+    X: np.ndarray, y: np.ndarray, splits: list[tuple], seed: int = 42, pos_label=1,
+    genes: np.ndarray | None = None, return_oof: bool = False,
+):
     """Binary sklearn MLP CV returning AUROC mean ± std."""
     from sklearn.neural_network import MLPClassifier
 
@@ -337,7 +364,7 @@ def run_mlp_binary_cv(
             early_stopping=True,
             validation_fraction=0.1,
         ),
-        X, y, splits, seed, pos_label,
+        X, y, splits, seed, pos_label, genes=genes, return_oof=return_oof,
     )
 
 
@@ -370,13 +397,18 @@ def aggregate_fold_dicts(fold_results: list[dict]) -> dict:
 def _run_sklearn_probe_impl(
     clf_fn, X: np.ndarray, labels: np.ndarray, genes: np.ndarray,
     n_folds: int, seed: int, splits: list | None,
-    normalize: bool, n_pca: int | None,
-) -> dict:
+    normalize: bool, n_pca: int | None, return_oof: bool,
+):
     """Shared gene-split CV body for run_sklearn_probe / run_sklearn_probe_pca.
 
     normalize : standardize each feature on the train fold (mean 0, std 1).
     n_pca     : if not None, fit per-fold PCA after normalizing (which is forced
                 on when n_pca is set, matching the original run_sklearn_probe_pca).
+    return_oof : if True, return (agg, oof) with out-of-fold test predictions
+        {"y_true", "proba" (aligned to MECHANISM_CLASSES), "genes", "row_ids"} for
+        dependency-aware inference (cluster bootstrap), or None if no fold had
+        `predict_proba`. Default False keeps the bare-`agg` return for existing
+        callers.
     """
     from sklearn.preprocessing import LabelEncoder
     le = LabelEncoder()
@@ -387,6 +419,7 @@ def _run_sklearn_probe_impl(
         splits = gene_split_cv(genes, n_folds=n_folds, seed=seed)
 
     fold_results = []
+    oof = _OofCollector()
     for fold_i, (train_idx, test_idx) in enumerate(splits):
         X_tr, X_te = X[train_idx].astype(np.float32), X[test_idx].astype(np.float32)
         y_tr, y_te = y[train_idx], y[test_idx]
@@ -411,35 +444,48 @@ def _run_sklearn_probe_impl(
                 y_bin = (y_te == i).astype(int)
                 if y_bin.sum() > 0 and (1 - y_bin).sum() > 0:
                     fm[f"auroc_{cls}"] = float(roc_auc_score(y_bin, proba[:, i]))
+            if return_oof and genes is not None:
+                # clf.classes_ are the integer-encoded labels actually present in
+                # this fold's train split (a class missing from train is absent
+                # here, not merely a zero column) — map each back to its string
+                # label before aligning, rather than assuming every column of
+                # `classes` was fit.
+                clf_classes_str = np.array([classes[idx] for idx in clf.classes_])
+                proba_aligned = align_proba(proba, clf_classes_str, MECHANISM_CLASSES)
+                oof.add(labels[test_idx], proba_aligned, genes[test_idx], test_idx)
         fold_results.append(fm)
         print(f"  Fold {fold_i+1}: macro_f1={fm['macro_f1']:.3f}")
 
     if not fold_results:
-        return {"error": "insufficient data"}
-    return aggregate_fold_dicts(fold_results)
+        agg = {"error": "insufficient data"}
+    else:
+        agg = aggregate_fold_dicts(fold_results)
+    if return_oof:
+        return agg, oof.finalize()
+    return agg
 
 
 def run_sklearn_probe(
     clf_fn, X: np.ndarray, labels: np.ndarray, genes: np.ndarray,
     n_folds: int = 5, seed: int = 42, normalize: bool = False,
-    splits: list | None = None,
-) -> dict:
+    splits: list | None = None, return_oof: bool = False,
+):
     """Generic gene-split CV runner for any sklearn classifier."""
     return _run_sklearn_probe_impl(
         clf_fn, X, labels, genes, n_folds, seed, splits,
-        normalize=normalize, n_pca=None,
+        normalize=normalize, n_pca=None, return_oof=return_oof,
     )
 
 
 def run_sklearn_probe_pca(
     clf_fn, X: np.ndarray, labels: np.ndarray, genes: np.ndarray,
     n_folds: int = 5, seed: int = 42, n_pca: int = 50,
-    splits: list | None = None,
-) -> dict:
+    splits: list | None = None, return_oof: bool = False,
+):
     """Gene-split CV with per-fold PCA reduction and normalization."""
     return _run_sklearn_probe_impl(
         clf_fn, X, labels, genes, n_folds, seed, splits,
-        normalize=True, n_pca=n_pca,
+        normalize=True, n_pca=n_pca, return_oof=return_oof,
     )
 
 
@@ -456,12 +502,18 @@ def run_mlp_probe_cv(
     batch_size: int = 256,
     genes: np.ndarray | None = None,
     label: str = "",
-) -> dict:
+    return_oof: bool = False,
+):
     """PyTorch MLP multi-class CV returning macro-F1 and per-class AUROC mean ± std.
 
     genes : if provided, the 15% validation split is gene-disjoint (recommended);
             otherwise 15% of samples are held out randomly.
     label : prefix for per-fold log lines.
+    return_oof : if True, return (agg, oof) with out-of-fold test predictions
+        {"y_true", "proba" (aligned to MECHANISM_CLASSES), "genes", "row_ids"} for
+        dependency-aware inference, or None if no fold was scorable. `genes` must
+        be provided for oof to carry gene ids. Default False keeps the bare-`agg`
+        return for existing callers.
     """
     import torch
     import torch.nn as nn
@@ -473,6 +525,7 @@ def run_mlp_probe_cv(
     cls_to_idx = {cls: idx for idx, cls in enumerate(classes)}
     y = np.array([cls_to_idx[lab] for lab in labels])
     fold_results, pg_f1s = [], []
+    oof = _OofCollector()
 
     for fold_i, (train_idx, test_idx) in enumerate(splits):
         X_tr = X[train_idx].astype(np.float32)
@@ -558,6 +611,8 @@ def run_mlp_probe_cv(
             if y_bin.sum() > 0 and (1 - y_bin).sum() > 0:
                 fm[f"auroc_{cls}"] = float(roc_auc_score(y_bin, proba[:, col_idx]))
         fold_results.append(fm)
+        if return_oof and genes is not None:
+            oof.add(labels_te, proba, genes[test_idx], test_idx)
 
         pg_str = ""
         if genes is not None:
@@ -565,9 +620,12 @@ def run_mlp_probe_cv(
         print(f"    [{label}] Fold {fold_i+1}: macro_f1={fm['macro_f1']:.3f}{pg_str}")
 
     if not fold_results:
-        return {}
-    agg = aggregate_fold_dicts(fold_results)
-    _add_per_gene_f1(agg, pg_f1s)
+        agg = {}
+    else:
+        agg = aggregate_fold_dicts(fold_results)
+        _add_per_gene_f1(agg, pg_f1s)
+    if return_oof:
+        return agg, oof.finalize()
     return agg
 
 

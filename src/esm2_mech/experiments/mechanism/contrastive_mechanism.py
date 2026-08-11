@@ -44,7 +44,9 @@ from esm2_mech.utils.paths import (
     PFAM_JSON,
     VALID_VARIANTS_JSON,
 )
+from esm2_mech.utils.bootstrap import bootstrap_mechanism_metrics, family_or_gene_clusters
 from esm2_mech.utils.constants import (
+    BOOTSTRAP_N_RESAMPLES,
     CONTRASTIVE_SEED_RESULT_GLOB,
     DELTA_MEAN_FEATURE,
     DN,
@@ -354,6 +356,11 @@ def project_test(proj, X_test, mu, std):
 
 
 def run_knn(Z_train, Z_test, y_train, y_test, le, k=10):
+    """Returns (fm, proba_mechanism_order): fm is the per-fold metric dict; the
+    second value is predict_proba aligned to MECHANISM_CLASSES order (not
+    `le.classes_`'s alphabetical order) for downstream cluster-bootstrap CIs,
+    which key their proba columns to MECHANISM_CLASSES.
+    """
     # Clamp k to training set size
     k_eff = min(k, len(Z_train) - 1)
     knn = KNeighborsClassifier(n_neighbors=k_eff, metric="cosine")
@@ -367,6 +374,7 @@ def run_knn(Z_train, Z_test, y_train, y_test, le, k=10):
     all_classes = list(le.classes_)  # string names in canonical order
     train_cls_str = le.classes_[np.asarray(knn.classes_)]
     proba = align_proba(raw_proba, train_cls_str, all_classes)
+    proba_mechanism_order = align_proba(raw_proba, train_cls_str, MECHANISM_CLASSES)
 
     fm = {"macro_f1": float(f1_score(y_test, pred, average="macro", zero_division=0))}
     # A class whose AUROC is undefined on this fold (absent from test, or all-equal
@@ -384,7 +392,7 @@ def run_knn(Z_train, Z_test, y_train, y_test, le, k=10):
             fm[f"auroc_{cls_str}"] = float(roc_auc_score(y_bin, proba[:, all_i]))
     if auroc_skipped:
         fm["auroc_skipped"] = auroc_skipped
-    return fm
+    return fm, proba_mechanism_order
 
 
 # ---------------------------------------------------------------------------
@@ -408,12 +416,15 @@ def run_cv(
     y = le.transform(labels)
     fold_results_contrastive = []
     fold_results_raw_knn = []
+    oof_contrastive = {"y_true": [], "proba": [], "genes": []}
+    oof_raw_knn = {"y_true": [], "proba": [], "genes": []}
 
     for fold_i, (train_idx, test_idx) in enumerate(splits):
         X_tr, X_te = X[train_idx], X[test_idx]
         y_tr, y_te = y[train_idx], y[test_idx]
-        labels_tr = labels[train_idx]
+        labels_tr, labels_te = labels[train_idx], labels[test_idx]
         gene_pfam_tr = gene_pfam[train_idx]
+        genes_te = genes[test_idx]
 
         # fold_i is the split index (position in `splits`); it advances even when
         # a split is skipped, so the seed offset (seed + fold_i) stays stable. The
@@ -436,8 +447,11 @@ def run_cv(
         std_raw = X_tr.std(0) + 1e-8
         Z_tr_raw = (X_tr - mu_raw) / std_raw
         Z_te_raw = (X_te - mu_raw) / std_raw
-        raw_fm = run_knn(Z_tr_raw, Z_te_raw, y_tr, y_te, le, k=10)
+        raw_fm, raw_proba = run_knn(Z_tr_raw, Z_te_raw, y_tr, y_te, le, k=10)
         fold_results_raw_knn.append(raw_fm)
+        oof_raw_knn["y_true"].append(labels_te)
+        oof_raw_knn["proba"].append(raw_proba)
+        oof_raw_knn["genes"].append(genes_te)
         print(
             f"    raw k-NN:      macro_f1={raw_fm['macro_f1']:.3f}  "
             f"{GOF}={raw_fm.get(f'auroc_{GOF}', float('nan')):.3f}  "
@@ -457,8 +471,11 @@ def run_cv(
         )
         Z_te_proj = project_test(proj, X_te, mu, std)
 
-        cont_fm = run_knn(Z_tr_proj, Z_te_proj, y_tr, y_te, le, k=10)
+        cont_fm, cont_proba = run_knn(Z_tr_proj, Z_te_proj, y_tr, y_te, le, k=10)
         fold_results_contrastive.append(cont_fm)
+        oof_contrastive["y_true"].append(labels_te)
+        oof_contrastive["proba"].append(cont_proba)
+        oof_contrastive["genes"].append(genes_te)
         print(
             f"    contrastive:   macro_f1={cont_fm['macro_f1']:.3f}  "
             f"{GOF}={cont_fm.get(f'auroc_{GOF}', float('nan')):.3f}  "
@@ -504,7 +521,21 @@ def run_cv(
         out["n_folds"] = len(fold_list)
         return out
 
-    return agg(fold_results_contrastive), agg(fold_results_raw_knn)
+    def _finalize_oof(oof):
+        if not oof["y_true"]:
+            return None
+        return {
+            "y_true": np.concatenate(oof["y_true"]),
+            "proba": np.concatenate(oof["proba"]),
+            "genes": np.concatenate(oof["genes"]),
+        }
+
+    return (
+        agg(fold_results_contrastive),
+        agg(fold_results_raw_knn),
+        _finalize_oof(oof_contrastive),
+        _finalize_oof(oof_raw_knn),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -512,7 +543,10 @@ def run_cv(
 # ---------------------------------------------------------------------------
 
 
-def run(data, out_dir, seed, n_folds=5, proj_dim=64, batch_size=512):
+def run(
+    data, out_dir, seed, n_folds=5, proj_dim=64, batch_size=512,
+    compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES,
+):
     """Run gene-split and family-split contrastive CV for one seed.
 
     `data` is the preloaded dict from load_all_data() (loaded once and shared
@@ -538,7 +572,7 @@ def run(data, out_dir, seed, n_folds=5, proj_dim=64, batch_size=512):
     print("\n\n" + "=" * 60)
     print(f"GENE-SPLIT CV (seed {seed})")
     print("=" * 60)
-    gene_cont, gene_raw = run_cv(
+    gene_cont, gene_raw, gene_cont_oof, gene_raw_oof = run_cv(
         delta_mean, labels, genes, gene_pfam, pfam_map, le, gene_splits,
         "gene-split", hidden=hidden, seed=seed, batch_size=batch_size,
     )
@@ -546,10 +580,24 @@ def run(data, out_dir, seed, n_folds=5, proj_dim=64, batch_size=512):
     print("\n\n" + "=" * 60)
     print(f"FAMILY-SPLIT CV (seed {seed})")
     print("=" * 60)
-    fam_cont, fam_raw = run_cv(
+    fam_cont, fam_raw, fam_cont_oof, fam_raw_oof = run_cv(
         delta_mean, labels, genes, gene_pfam, pfam_map, le, fam_splits,
         "family-split", hidden=hidden, seed=seed, batch_size=batch_size,
     )
+
+    if compute_ci:
+        for agg, oof, is_family_split in (
+            (gene_cont, gene_cont_oof, False), (gene_raw, gene_raw_oof, False),
+            (fam_cont, fam_cont_oof, True), (fam_raw, fam_raw_oof, True),
+        ):
+            if oof is not None:
+                clusters = family_or_gene_clusters(
+                    oof["genes"], pfam_map, is_family_split=is_family_split
+                )
+                agg["ci"] = bootstrap_mechanism_metrics(
+                    oof["y_true"], oof["proba"], clusters,
+                    n_resamples=n_boot, seed=seed,
+                )
 
     results = {
         "description": (
@@ -692,6 +740,8 @@ def main():
         help="Batch size for triplet training. With the feature matrix resident "
         "on-device, large batches are cheap; default 16384 (lower for tiny GPUs).",
     )
+    parser.add_argument("--no_ci", action="store_true", help="skip cluster-bootstrap CIs")
+    parser.add_argument("--n_boot", type=int, default=BOOTSTRAP_N_RESAMPLES)
     args = parser.parse_args()
 
     out_dir = str(CONTRASTIVE_RESULTS_DIR)
@@ -705,6 +755,7 @@ def main():
         run(
             data, out_dir, seed,
             n_folds=args.n_folds, proj_dim=args.proj_dim, batch_size=args.batch_size,
+            compute_ci=not args.no_ci, n_boot=args.n_boot,
         )
 
     if args.seed is not None:

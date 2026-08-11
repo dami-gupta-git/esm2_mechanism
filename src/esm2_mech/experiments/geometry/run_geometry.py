@@ -31,7 +31,7 @@ from esm2_mech.experiments.geometry import (
     transfer_contrast,
     probe4_axis_identity,
 )
-from esm2_mech.utils.constants import N_SEEDS
+from esm2_mech.utils.constants import BOOTSTRAP_N_RESAMPLES, N_SEEDS
 
 print = functools.partial(print, flush=True)
 
@@ -63,6 +63,12 @@ def main():
             "(Probe C / P4 and the transfer-contrast stability row); default none = skip"
         ),
     )
+    parser.add_argument(
+        "--no_ci", action="store_true",
+        help="skip cluster-bootstrap CIs (magnitude probe only — the others are "
+        "rank/correlation probes with no cluster-bootstrap CI wired)",
+    )
+    parser.add_argument("--n_boot", type=int, default=BOOTSTRAP_N_RESAMPLES)
     args = parser.parse_args()
     if args.seeds < 1:
         parser.error("--seeds must be >= 1")
@@ -70,16 +76,23 @@ def main():
     selected = list(PROBES) if "all" in args.probe else args.probe
     # Only these two probes have a stability arm; the rest take n_seeds only.
     stability_aware = {"magnitude", "transfer"}
+    # Only the magnitude probe (pathogenicity/mechanism classifier gates P1-P3)
+    # has cluster-bootstrap CIs wired; geometry/transfer/biochem are rank and
+    # correlation probes with no bootstrap_mechanism_metrics-shaped output.
+    ci_aware = {"magnitude"}
     print(
         f"=== geometry probes: {selected}  (seeds={args.seeds}, "
         f"stability_dataset={args.stability_dataset}) ==="
     )
     for name in selected:
         print(f"\n########## {name} ##########")
+        kwargs = {"n_seeds": args.seeds}
         if name in stability_aware:
-            PROBES[name](n_seeds=args.seeds, stability_dataset=args.stability_dataset)
-        else:
-            PROBES[name](n_seeds=args.seeds)
+            kwargs["stability_dataset"] = args.stability_dataset
+        if name in ci_aware:
+            kwargs["compute_ci"] = not args.no_ci
+            kwargs["n_boot"] = args.n_boot
+        PROBES[name](**kwargs)
     print(f"\n=== done: {selected} ===")
 
 

@@ -52,7 +52,8 @@ from pathlib import Path
 import numpy as np
 from joblib import Parallel, delayed
 
-from esm2_mech.utils.constants import N_SEEDS
+from esm2_mech.utils.bootstrap import binary_auroc_cluster_bootstrap_ci, family_or_gene_clusters
+from esm2_mech.utils.constants import BOOTSTRAP_N_RESAMPLES, N_SEEDS
 from esm2_mech.utils.data import load_variants, variants_fingerprint
 from esm2_mech.utils.embed import get_esm2_embeddings_for_pairs
 from esm2_mech.utils.io import atomic_write_json, save_npy
@@ -339,7 +340,7 @@ def embed_phase(variants, model, batch_size):
 # ===========================================================================
 # Phase 3 — 5-seed probes
 # ===========================================================================
-def probe_phase(variants, n_seeds, n_jobs=-1):
+def probe_phase(variants, n_seeds, n_jobs=-1, compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES):
     """Phase 3. 5-seed logreg + MLP probes on delta_mean and wt_only."""
     print("\n=== Phase 3: probes ===")
     with open(PATH_EMB_META) as f:
@@ -397,8 +398,24 @@ def probe_phase(variants, n_seeds, n_jobs=-1):
         ]
 
         def _run_cell(fname, pname, split_name, splits, seed=seed):
-            res = probes[pname](features[fname], y, splits, seed=seed)
-            return (fname, pname, split_name, res.get("auroc_mean", float("nan")))
+            res, oof = probes[pname](
+                features[fname], y, splits, seed=seed, genes=genes, return_oof=True
+            )
+            # CI from seed 0's OOF only: each seed reshuffles the CV fold
+            # assignment, and the aggregation step below only ever keeps seed
+            # 0's CI (matching megascale_stability.py / magnitude_direction.py's
+            # R7.5 "seed 0" convention) — computing it for every seed would be
+            # pure waste, since seeds 1..n-1's bootstrap runs are discarded.
+            if compute_ci and oof is not None and seed == 0:
+                clusters = family_or_gene_clusters(
+                    oof["genes"], pfam_map, is_family_split=(split_name == "family")
+                )
+                ci = binary_auroc_cluster_bootstrap_ci(
+                    oof, n_resamples=n_boot, seed=seed, clusters=clusters
+                )
+            else:
+                ci = None
+            return (fname, pname, split_name, res.get("auroc_mean", float("nan")), ci)
 
         outcomes = Parallel(n_jobs=n_jobs)(
             delayed(_run_cell)(*c) for c in cells
@@ -408,10 +425,10 @@ def probe_phase(variants, n_seeds, n_jobs=-1):
         # json.dump emits the bare token `NaN`, which is invalid JSON; store null
         # so absent data round-trips as None.
         seed_result = {}
-        for fname, pname, split_name, auroc in outcomes:
-            seed_result[f"{fname}_{pname}_{split_name}"] = (
-                None if np.isnan(auroc) else auroc
-            )
+        for fname, pname, split_name, auroc, ci in outcomes:
+            key = f"{fname}_{pname}_{split_name}"
+            seed_result[key] = None if np.isnan(auroc) else auroc
+            seed_result[f"{key}_ci"] = ci
         atomic_write_json(seed_path, seed_result, indent=2)
         summary = "  ".join(
             f"{k}={v:.3f}" for k, v in seed_result.items() if "mlp" in k and v is not None
@@ -420,6 +437,7 @@ def probe_phase(variants, n_seeds, n_jobs=-1):
 
     # Aggregate per-seed files into the final mean ± std result.
     per_cell = defaultdict(list)
+    seed0_ci = {}
     for seed in range(n_seeds):
         seed_path = Path(PATHOGENICITY_CONTROL_SEED_JSON.format(seed=seed))
         try:
@@ -431,8 +449,12 @@ def probe_phase(variants, n_seeds, n_jobs=-1):
             print(f"  WARNING: corrupt {seed_path.name} — deleting; re-run to recompute this seed")
             seed_path.unlink()
             raise
-        for key, auroc in seed_result.items():
-            per_cell[key].append(auroc)
+        for key, value in seed_result.items():
+            if key.endswith("_ci"):
+                if seed == 0:
+                    seed0_ci[key[: -len("_ci")]] = value
+                continue
+            per_cell[key].append(value)
 
     results = {
         "n_variants": int(len(valid)),
@@ -450,11 +472,18 @@ def probe_phase(variants, n_seeds, n_jobs=-1):
                 vals = [v for v in per_cell[key] if v is not None]
                 mean = float(np.mean(vals)) if vals else None
                 std = float(np.std(vals)) if vals else None
-                results["by_feature"][fname][f"{pname}_{split_name}"] = {
+                cell = {
                     "auroc_mean": mean,
                     "auroc_std": std,
                     "per_seed": per_cell[key],
                 }
+                # Cluster-bootstrap CI from seed 0's OOF only (R7.5's "seed 0"
+                # convention): each seed reshuffles the CV fold assignment, so a
+                # single seed's CI is the coherent unit rather than merging OOF
+                # across seeds' differing folds.
+                if compute_ci and key in seed0_ci:
+                    cell["ci"] = seed0_ci[key]
+                results["by_feature"][fname][f"{pname}_{split_name}"] = cell
 
     atomic_write_json(PATHOGENICITY_CONTROL_JSON, results, indent=2)
     print(f"  Aggregated results written to {PATHOGENICITY_CONTROL_JSON}")
@@ -502,6 +531,8 @@ def main():
     parser.add_argument("--max_per_gene_per_class", type=int, default=20)
     parser.add_argument("--fetch_seed", type=int, default=42)
     parser.add_argument("--n_jobs", type=int, default=-1, help="parallel jobs for probes (-1 = all cores)")
+    parser.add_argument("--no_ci", action="store_true", help="skip cluster-bootstrap CIs")
+    parser.add_argument("--n_boot", type=int, default=BOOTSTRAP_N_RESAMPLES)
     args = parser.parse_args()
 
     if args.seeds < 1:
@@ -511,7 +542,10 @@ def main():
         max_per_gene_per_class=args.max_per_gene_per_class, seed=args.fetch_seed
     )
     embed_phase(variants, model=args.model, batch_size=args.batch_size)
-    results = probe_phase(variants, n_seeds=args.seeds, n_jobs=args.n_jobs)
+    results = probe_phase(
+        variants, n_seeds=args.seeds, n_jobs=args.n_jobs,
+        compute_ci=not args.no_ci, n_boot=args.n_boot,
+    )
     _print_headline(results)
 
 

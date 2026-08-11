@@ -47,6 +47,7 @@ Outputs:
   results/<run>/megascale_stability/h3_stability_projection.json
 """
 
+import argparse
 import functools
 import json
 import os
@@ -62,7 +63,8 @@ from esm2_mech.experiments.stability.stability_data import (
     load_stability_inputs,
     stability_splits,
 )
-from esm2_mech.utils.constants import N_SEEDS, N_FOLDS
+from esm2_mech.utils.bootstrap import cluster_bootstrap_ci
+from esm2_mech.utils.constants import BOOTSTRAP_N_RESAMPLES, N_SEEDS, N_FOLDS
 from esm2_mech.utils.io import atomic_write_json
 from esm2_mech.utils.metrics import auroc_at_median, mean_std_n, standardize
 from esm2_mech.utils.splits import family_split_cv
@@ -87,15 +89,21 @@ os.makedirs(str(_DATA_DIR / "embeddings" / ESM2_MODEL), exist_ok=True)
 # ---------------------------------------------------------------------------
 
 
-def run_regression_cv(X, y, splits, clf_fn, with_pearson=True):
+def run_regression_cv(X, y, splits, clf_fn, with_pearson=True, clusters=None, return_oof=False):
     """Standardise-fit-predict a regressor over CV folds; return ρ/AUROC (+Pearson).
 
     Generic over the estimator (clf_fn returns a fresh estimator per fold) so the
     Ridge linear probe here and the RF/GBM/XGBoost probes in megascale_mlp.py share
     one implementation. Pearson r is only meaningful for the linear probe, so the
     nonlinear callers pass with_pearson=False.
+    return_oof : if True, return (agg, oof) with out-of-fold test predictions
+        {"y_true", "pred", "clusters"} for dependency-aware inference (cluster
+        bootstrap on Spearman ρ), or None if no fold was scorable. `clusters`
+        (e.g. protein/domain ids) must be provided for oof to carry cluster ids.
+        Default False keeps the bare-`agg` return for existing callers.
     """
     rhos, pearsons, aurocs = [], [], []
+    oof_y, oof_pred, oof_clusters = [], [], []
     for tr, te in splits:
         Xtr, Xte = standardize(X[tr], X[te])
         clf = clf_fn()
@@ -107,27 +115,58 @@ def run_regression_cv(X, y, splits, clf_fn, with_pearson=True):
         if with_pearson:
             pearson, _ = pearsonr(y[te], pred)
             pearsons.append(float(pearson))
+        if return_oof and clusters is not None:
+            oof_y.append(y[te])
+            oof_pred.append(pred)
+            oof_clusters.append(clusters[te])
     if not rhos:
-        return {}
-    rho_mean, rho_std, n_rho = mean_std_n(rhos)
-    au_mean, au_std, _ = mean_std_n(aurocs)
-    out = {
-        "spearman_mean": rho_mean,
-        "spearman_std": rho_std,
-        "auroc_mean": au_mean,
-        "auroc_std": au_std,
-        "n_folds": n_rho,
-    }
-    if with_pearson:
-        pearson_mean, pearson_std, _ = mean_std_n(pearsons)
-        out["pearson_mean"] = pearson_mean
-        out["pearson_std"] = pearson_std
-    return out
+        out = {}
+    else:
+        rho_mean, rho_std, n_rho = mean_std_n(rhos)
+        au_mean, au_std, _ = mean_std_n(aurocs)
+        out = {
+            "spearman_mean": rho_mean,
+            "spearman_std": rho_std,
+            "auroc_mean": au_mean,
+            "auroc_std": au_std,
+            "n_folds": n_rho,
+        }
+        if with_pearson:
+            pearson_mean, pearson_std, _ = mean_std_n(pearsons)
+            out["pearson_mean"] = pearson_mean
+            out["pearson_std"] = pearson_std
+    if not return_oof:
+        return out
+    oof = None
+    if oof_y:
+        oof = {
+            "y_true": np.concatenate(oof_y),
+            "pred": np.concatenate(oof_pred),
+            "clusters": np.concatenate(oof_clusters),
+        }
+    return out, oof
 
 
-def run_ridge_with_auroc(X, y, splits):
+def run_ridge_with_auroc(X, y, splits, clusters=None, return_oof=False):
     """Linear (Ridge, alpha=1.0) stability probe — thin wrapper over run_regression_cv."""
-    return run_regression_cv(X, y, splits, lambda: Ridge(alpha=1.0), with_pearson=True)
+    return run_regression_cv(
+        X, y, splits, lambda: Ridge(alpha=1.0), with_pearson=True,
+        clusters=clusters, return_oof=return_oof,
+    )
+
+
+def spearman_cluster_bootstrap_ci(oof, n_resamples=BOOTSTRAP_N_RESAMPLES, seed=0):
+    """Cluster-bootstrap CI on Spearman ρ from an OOF dict {"y_true","pred","clusters"}."""
+    y_true = oof["y_true"]
+    pred = oof["pred"]
+
+    def _rho(rows):
+        if len(set(rows.tolist())) < 2:
+            return None
+        rho, _ = spearmanr(y_true[rows], pred[rows])
+        return float(rho) if np.isfinite(rho) else None
+
+    return cluster_bootstrap_ci(oof["clusters"], _rho, n_resamples=n_resamples, seed=seed)
 
 
 # ---------------------------------------------------------------------------
@@ -308,7 +347,7 @@ def apply_decision_rule(random_rho, protein_rho, per_prot_std):
 # ---------------------------------------------------------------------------
 
 
-def main():
+def main(compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES):
     # ── 1. Shared inputs: variants, ΔΔG, Pfam family map, embedding deltas ─────
     # The linear probe needs the per-residue delta too (include_pos=True). Orphan
     # domains (no Pfam hit) are absent from family_map → excluded from family-split.
@@ -337,7 +376,35 @@ def main():
         for feat_name, X in [("delta_mean", delta_mean), ("delta_pos", delta_pos)]:
             for split_name, splits in splits_by_name.items():
                 key = f"{feat_name}_{split_name}"
-                res = run_ridge_with_auroc(X, ddg, splits)
+                # CI from seed 0's OOF only: each seed reshuffles the CV fold
+                # assignment, so seed 0 is the coherent unit for a cluster
+                # bootstrap rather than merging predictions across seeds (R7.5's
+                # "seed 0" convention; H2 is a descriptive gate, not confirmatory).
+                if compute_ci and seed == 0:
+                    # R7.3: the CI resampling unit matches the unit the split
+                    # holds out — random/domain splits hold out domains
+                    # (proteins), so they resample proteins; the family split
+                    # holds out whole Pfam families, so it must resample
+                    # families instead. Orphan domains (absent from family_map)
+                    # never appear in a family-split fold (family_split_cv
+                    # excludes them), so the sentinel value for them is never
+                    # actually selected into that split's OOF.
+                    ci_clusters = (
+                        np.array(
+                            [family_map.get(p, f"__orphan__{p}") for p in proteins]
+                        )
+                        if split_name == "family"
+                        else proteins
+                    )
+                    res, oof = run_ridge_with_auroc(
+                        X, ddg, splits, clusters=ci_clusters, return_oof=True
+                    )
+                    if oof is not None:
+                        res["ci"] = spearman_cluster_bootstrap_ci(
+                            oof, n_resamples=n_boot, seed=seed
+                        )
+                else:
+                    res = run_ridge_with_auroc(X, ddg, splits)
                 seed_result[key] = res
                 if res:
                     print(
@@ -394,6 +461,11 @@ def main():
             "auroc_std": au_std,
             "n_seeds": n_seeds_used,
         }
+        # Seed 0's cluster-bootstrap CI on Spearman ρ (see the compute_ci branch
+        # above) carried through to the cross-seed summary — the file reports read.
+        seed0_ci = results_by_seed[0].get(key, {}).get("ci") if results_by_seed else None
+        if seed0_ci is not None:
+            summary[key]["ci"] = seed0_ci
 
     summary["per_protein"] = {
         "spearman_mean": per_prot_mean,
@@ -473,5 +545,13 @@ def main():
     print(f"\nResults written to {OUT}/")
 
 
+def _cli():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--no_ci", action="store_true", help="skip cluster-bootstrap CIs")
+    parser.add_argument("--n_boot", type=int, default=BOOTSTRAP_N_RESAMPLES)
+    args = parser.parse_args()
+    main(compute_ci=not args.no_ci, n_boot=args.n_boot)
+
+
 if __name__ == "__main__":
-    main()
+    _cli()

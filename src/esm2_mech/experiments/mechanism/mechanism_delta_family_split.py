@@ -21,6 +21,7 @@ import numpy as np
 from esm2_mech.utils.paths import (
     EMB_WT_MEAN, EMB_MUT_MEAN, EMB_WT_POS, EMB_MUT_POS,
     SEQUENCES_JSON, VARIANTS_JSON, RESULTS_DIR, PFAM_JSON,
+    MECHANISM_OOF_CACHE_SEED_JSON,
 )
 
 OUT_DIR = RESULTS_DIR
@@ -32,8 +33,13 @@ from esm2_mech.utils.constants import (
 )
 from esm2_mech.utils.splits import gene_split_cv, family_split_cv
 from esm2_mech.utils.embed import unpack_run_data
+from esm2_mech.utils.io import atomic_write_json
 from esm2_mech.utils.metrics import align_proba
-from esm2_mech.utils.bootstrap import bootstrap_mechanism_metrics, label_permutation_pvalue
+from esm2_mech.utils.bootstrap import (
+    bootstrap_mechanism_metrics,
+    family_or_gene_clusters,
+    label_permutation_pvalue,
+)
 
 from sklearn.decomposition import PCA
 from sklearn.linear_model import LogisticRegression
@@ -50,11 +56,14 @@ def run_probe_on_splits(X, y, splits, genes=None, seed=42):
 
     Returns (agg, oof). `agg` is the per-fold mean ± std metric dict (unchanged).
     `oof` collects the out-of-fold test predictions for dependency-aware inference:
-    {"y_true", "proba" (aligned to MECHANISM_CLASSES), "genes"}, or None when `genes`
-    is not supplied or no fold ran. Each variant appears once (one held-out fold).
+    {"y_true", "proba" (aligned to MECHANISM_CLASSES), "genes", "row_ids"}, or None
+    when `genes` is not supplied or no fold ran. Each variant appears once (one
+    held-out fold). `row_ids` (the original row index into X/y) lets a downstream
+    consumer align this split's OOF against another split scheme's OOF over the
+    same underlying rows (e.g. leakage_fraction.py's joint gene/family bootstrap).
     """
     fold_results = []
-    oof_y, oof_proba, oof_genes = [], [], []
+    oof_y, oof_proba, oof_genes, oof_rows = [], [], [], []
     for train_idx, test_idx in splits:
         X_train, X_test = X[train_idx], X[test_idx]
         y_train, y_test = y[train_idx], y[test_idx]
@@ -82,6 +91,7 @@ def run_probe_on_splits(X, y, splits, genes=None, seed=42):
             oof_y.append(y_test)
             oof_proba.append(align_proba(proba, clf.classes_, MECHANISM_CLASSES))
             oof_genes.append(genes[test_idx])
+            oof_rows.append(np.asarray(test_idx))
 
     if not fold_results:
         return {"error": "insufficient data"}, None
@@ -101,6 +111,7 @@ def run_probe_on_splits(X, y, splits, genes=None, seed=42):
             "y_true": np.concatenate(oof_y),
             "proba": np.concatenate(oof_proba),
             "genes": np.concatenate(oof_genes),
+            "row_ids": np.concatenate(oof_rows),
         }
     return agg, oof
 
@@ -211,6 +222,13 @@ def run(
         "family_split": {},
     }
 
+    # Seed-0 gene-split/family-split OOF cache for leakage_fraction.py's joint
+    # bootstrap on the leakage-fraction RATIO. Restricted to the unmasked
+    # PERMUTATION_FEATURES (delta_mean, wt_only_mean): masked baselines (FoldX,
+    # AlphaMissense) run their splits over a row-subset with its own local row
+    # numbering, so their row_ids are not comparable across the two split schemes.
+    oof_cache: dict = {}
+
     for name, entry in features.items():
         # Masked baselines carry their own subset labels/genes; others use full arrays
         if isinstance(entry, tuple):
@@ -244,8 +262,11 @@ def run(
         if feat_family_splits:
             fs, fs_oof = run_probe_on_splits(X, feat_labels, feat_family_splits, feat_genes, seed=seed)
             if compute_ci and fs_oof is not None:
+                fs_clusters = family_or_gene_clusters(
+                    fs_oof["genes"], pfam_map, is_family_split=True
+                )
                 fs["ci"] = bootstrap_mechanism_metrics(
-                    fs_oof["y_true"], fs_oof["proba"], fs_oof["genes"],
+                    fs_oof["y_true"], fs_oof["proba"], fs_clusters,
                     n_resamples=n_boot, seed=seed,
                 )
             if n_permutations > 0 and name in PERMUTATION_FEATURES:
@@ -262,6 +283,24 @@ def run(
                     f"(observed {fs['permutation'].get('observed')}, "
                     f"null mean {fs['permutation'].get('null_mean')})"
                 )
+            if (
+                compute_ci and seed == 0 and name in PERMUTATION_FEATURES
+                and not isinstance(entry, tuple) and gs_oof is not None and fs_oof is not None
+            ):
+                def _cache_arm(oof):
+                    pred = [MECHANISM_CLASSES[col] for col in oof["proba"].argmax(axis=1)]
+                    return {
+                        "row_ids": oof["row_ids"].tolist(),
+                        "y_true": oof["y_true"].tolist(),
+                        "pred": pred,
+                        "genes": oof["genes"].tolist(),
+                    }
+
+                oof_cache[name] = {
+                    "gene_split": _cache_arm(gs_oof),
+                    "family_split": _cache_arm(fs_oof),
+                }
+
             results["family_split"][name] = fs
             delta_macro = gs.get("macro_f1_mean", float("nan")) - fs.get(
                 "macro_f1_mean", float("nan")
@@ -285,6 +324,12 @@ def run(
     with open(out_path, "w") as f:
         json.dump(results, f, indent=2)
     print(f"\nResults written to {out_path}")
+
+    if oof_cache:
+        oof_cache_path = MECHANISM_OOF_CACHE_SEED_JSON.format(seed=seed)
+        atomic_write_json(oof_cache_path, oof_cache)
+        print(f"OOF cache written to {oof_cache_path}")
+
     return results
 
 

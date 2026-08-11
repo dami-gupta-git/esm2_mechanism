@@ -57,7 +57,13 @@ from esm2_mech.utils.paths import (
     VALID_VARIANTS_JSON,
 )
 from esm2_mech.utils.constants import (
+    BOOTSTRAP_N_RESAMPLES,
     DELTA_MEAN_FEATURE, MECHANISM_CLASSES, N_FOLDS, N_SEEDS, SPLIT_FAMILY, nonlinear_key,
+)
+from esm2_mech.utils.bootstrap import (
+    average_oof_over_seeds,
+    bootstrap_mechanism_metrics,
+    family_or_gene_clusters,
 )
 
 # The matched ESM-2 probe for the ESM-3 comparison: MLP, delta_mean, family-split.
@@ -557,18 +563,21 @@ def _run_mlp(
     n_classes: int,
     seed: int,
     genes: np.ndarray = None,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
     PyTorch MLP (256→64) with class-weighted cross-entropy and early stopping.
     Matches result_7's run_mlp_probe exactly.
-    Returns (all_pred, all_true, all_proba) concatenated across folds.
+    Returns (all_pred, all_true, all_proba, all_genes, all_rows) concatenated
+    across folds — all_genes/all_rows (test-fold gene ids and original row
+    indices) are for dependency-aware inference (cluster bootstrap); empty
+    arrays when `genes` is None.
     """
     import torch
     import torch.nn as nn
     from torch.utils.data import DataLoader, TensorDataset
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    all_pred, all_true, all_proba = [], [], []
+    all_pred, all_true, all_proba, all_genes, all_rows = [], [], [], [], []
 
     for fold_i, (tr, te) in enumerate(splits):
         X_tr, X_te = X[tr].astype(np.float32), X[te].astype(np.float32)
@@ -652,13 +661,26 @@ def _run_mlp(
         all_pred.append(pred)
         all_true.append(y_te)
         all_proba.append(proba)
+        if genes is not None:
+            all_genes.append(genes[te])
+            all_rows.append(np.asarray(te))
 
     if not all_pred:
-        return np.array([]), np.array([]), np.array([])
-    return np.concatenate(all_pred), np.concatenate(all_true), np.vstack(all_proba)
+        return np.array([]), np.array([]), np.array([]), np.array([]), np.array([])
+    return (
+        np.concatenate(all_pred),
+        np.concatenate(all_true),
+        np.vstack(all_proba),
+        np.concatenate(all_genes) if all_genes else np.array([]),
+        np.concatenate(all_rows) if all_rows else np.array([]),
+    )
 
 
-def phase3_probes(seeds: list[int] = SEEDS) -> None:
+def phase3_probes(
+    seeds: list[int] = SEEDS,
+    compute_ci: bool = True,
+    n_boot: int = BOOTSTRAP_N_RESAMPLES,
+) -> None:
     from esm2_mech.utils.splits import gene_split_cv, family_split_cv
     from sklearn.linear_model import LogisticRegression
     from sklearn.preprocessing import StandardScaler
@@ -722,6 +744,7 @@ def phase3_probes(seeds: list[int] = SEEDS) -> None:
         ]:
             mlp_f1s, mlp_gof, mlp_dn, mlp_lof = [], [], [], []
             lr_f1s = []
+            seed_oof_list = []
 
             for seed in seeds:
                 splits = get_splits(seed)
@@ -735,11 +758,18 @@ def phase3_probes(seeds: list[int] = SEEDS) -> None:
                 )
 
                 # PyTorch MLP — matches result_7
-                pred, true, proba = _run_mlp(
+                pred, true, proba, oof_genes, oof_rows = _run_mlp(
                     delta, y_cond, splits, n_classes, seed, genes=genes_cond
                 )
                 if len(pred) == 0:
                     continue
+                if compute_ci:
+                    seed_oof_list.append({
+                        "y_true": np.array([label_set[i] for i in true]),
+                        "proba": proba,
+                        "genes": oof_genes,
+                        "row_ids": oof_rows,
+                    })
                 mlp_f1s.append(f1_score(true, pred, average="macro"))
                 mlp_gof.append(
                     roc_auc_score(
@@ -796,6 +826,22 @@ def phase3_probes(seeds: list[int] = SEEDS) -> None:
                 "lr_f1_std": float(np.std(lr_f1s)),
                 "n_seeds": len(mlp_f1s),
             }
+            if compute_ci:
+                # Each seed reshuffles the CV fold assignment, so its OOF cannot be
+                # bootstrapped directly against another seed's — average_oof_over_seeds
+                # collapses the per-seed OOF predictions to one proba-per-variant
+                # first (matching classify_by_mechanism's cross-seed CI convention),
+                # then the cluster bootstrap runs once over that combined OOF.
+                combined_oof = average_oof_over_seeds(seed_oof_list)
+                if combined_oof is not None:
+                    clusters = family_or_gene_clusters(
+                        combined_oof["genes"], pfam_map,
+                        is_family_split=(cv_name == "family_split"),
+                    )
+                    r["ci"] = bootstrap_mechanism_metrics(
+                        combined_oof["y_true"], combined_oof["proba"],
+                        clusters, n_resamples=n_boot, seed=0,
+                    )
             cond_results[cv_name] = r
             print(
                 f"  {cv_name}: MLP F1={r['mlp_f1_mean']:.3f}±{r['mlp_f1_std']:.3f}  "
@@ -921,6 +967,9 @@ def main() -> None:
     )
     ap.add_argument("--seeds", type=int, default=N_SEEDS,
                     help="number of probe seeds for phase 3; runs 0..seeds-1 (>=1)")
+    ap.add_argument("--no_ci", action="store_true",
+                    help="phase 3 only: skip cluster-bootstrap CIs")
+    ap.add_argument("--n_boot", type=int, default=BOOTSTRAP_N_RESAMPLES)
     args = ap.parse_args()
     if args.seeds < 1:
         ap.error("--seeds must be >= 1")
@@ -936,7 +985,10 @@ def main() -> None:
         phase2_extract_embeddings(batch_size=args.batch_size)
     elif args.phase == "3":
         print("=== Phase 3: probes + decision rules ===")
-        phase3_probes(seeds=list(range(args.seeds)))
+        phase3_probes(
+            seeds=list(range(args.seeds)),
+            compute_ci=not args.no_ci, n_boot=args.n_boot,
+        )
 
 
 if __name__ == "__main__":

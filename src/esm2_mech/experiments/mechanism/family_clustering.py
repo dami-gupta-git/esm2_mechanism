@@ -38,7 +38,10 @@ from sklearn.metrics import accuracy_score, f1_score, silhouette_score
 from sklearn.model_selection import StratifiedKFold
 from sklearn.neighbors import NearestNeighbors
 
+from esm2_mech.utils.bootstrap import cluster_bootstrap_ci, cluster_subsample_ci
+from esm2_mech.utils.constants import BOOTSTRAP_N_RESAMPLES, N_SEEDS
 from esm2_mech.utils.data import load_variants
+from esm2_mech.utils.metrics import mean_std_n
 from esm2_mech.utils.paths import (
     EMB_MUT_MEAN,
     EMB_WT_MEAN,
@@ -99,6 +102,54 @@ def knn_family_purity(emb, families, k=5, n_shuffles=20, seed=42):
     return real_purity, null_mean, float(z)
 
 
+def _knn_purity_bootstrap_metric(emb, families, k):
+    """Metric closure for cluster_bootstrap_ci: k-NN purity, rebuilt on the
+    resampled row subset. Unlike knn_family_purity's null-shuffle (which fixes
+    the neighbor graph and only permutes labels — cheap, many repeats), a
+    cluster-bootstrap resample changes row membership itself (with repeats), so
+    the neighbor graph must be rebuilt per replicate.
+    """
+    families = np.asarray(families)
+
+    def _metric(rows):
+        sub_emb, sub_fam = emb[rows], families[rows]
+        n = len(sub_emb)
+        if n <= k:
+            return None
+        nn = NearestNeighbors(n_neighbors=k + 1, metric="cosine").fit(sub_emb)
+        _, idx = nn.kneighbors(sub_emb)
+        neighbor_idx = idx[:, 1 : k + 1]
+        purities = [
+            sum(1 for j in neighbor_idx[i] if sub_fam[j] == sub_fam[i]) / k
+            for i in range(n)
+        ]
+        return float(np.mean(purities))
+
+    return _metric
+
+
+def _within_between_bootstrap_metric(emb, families):
+    """Metric closure for cluster_bootstrap_ci: within/between ratio, rebuilt on
+    the resampled row subset (pairwise distances depend on which rows are drawn).
+    """
+    families = np.asarray(families)
+
+    def _metric(rows):
+        sub_emb, sub_fam = emb[rows], families[rows]
+        n = len(sub_emb)
+        D = cdist(sub_emb, sub_emb, metric="cosine")
+        iu = np.triu_indices(n, k=1)
+        fam_pair_same = np.array([sub_fam[i] == sub_fam[j] for i, j in zip(*iu)])
+        d = D[iu]
+        if fam_pair_same.sum() < 5 or (~fam_pair_same).sum() < 5:
+            return None
+        within = float(d[fam_pair_same].mean())
+        between = float(d[~fam_pair_same].mean())
+        return within / (between + 1e-10)
+
+    return _metric
+
+
 def within_between_ratio(emb, families, n_shuffles=20, seed=42):
     """Mean within-family cosine distance / mean between-family cosine distance."""
     D = cdist(emb, emb, metric="cosine")
@@ -132,18 +183,24 @@ def within_between_ratio(emb, families, n_shuffles=20, seed=42):
 
 
 def family_probe(
-    gene_emb, gene_families, seed=42, min_family_size=MIN_FAMILY_SIZE_PROBE, n_folds=5
+    gene_emb, gene_families, seed=42, min_family_size=MIN_FAMILY_SIZE_PROBE,
+    n_folds=5, return_oof=False,
 ):
     """Linear probe predicting Pfam family from gene-level embedding.
 
     Uses stratified k-fold CV so every fold sees each kept family in proportion,
     which a plain random split can fail to do for small families.
+    return_oof : if True, return (result, oof) with out-of-fold test predictions
+        {"y_true", "pred", "families"} (families == y_true here — the resampling
+        unit for a downstream cluster bootstrap over the family probe's own
+        accuracy/macro-F1), or None if no fold was scorable.
     """
     fam_counts = Counter(gene_families)
     kept = [f for f, c in fam_counts.items() if c >= min_family_size]
     mask = np.array([f in kept for f in gene_families])
     if mask.sum() < 30 or len(set(np.array(gene_families)[mask])) < 5:
-        return {"note": "not enough families with min size"}
+        result = {"note": "not enough families with min size"}
+        return (result, None) if return_oof else result
     X = gene_emb[mask]
     y = np.array(gene_families)[mask]
 
@@ -151,12 +208,14 @@ def family_probe(
     min_kept_size = min(c for f, c in fam_counts.items() if f in kept)
     n_splits = min(n_folds, min_kept_size)
     if n_splits < 2:
-        return {"note": "smallest kept family too small for CV"}
+        result = {"note": "smallest kept family too small for CV"}
+        return (result, None) if return_oof else result
 
     majority_overall = Counter(y).most_common(1)[0][0]
     skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=seed)
 
     accs, f1s, baseline_accs = [], [], []
+    oof_y, oof_pred = [], []
     for train_idx, test_idx in skf.split(X, y):
         if len(set(y[train_idx])) < 2:
             continue
@@ -169,10 +228,14 @@ def family_probe(
             float(f1_score(y[test_idx], pred, average="macro", zero_division=0))
         )
         baseline_accs.append(float(accuracy_score(y[test_idx], baseline_pred)))
+        if return_oof:
+            oof_y.append(y[test_idx])
+            oof_pred.append(pred)
 
     if not accs:
-        return {"note": "all folds failed"}
-    return {
+        result = {"note": "all folds failed"}
+        return (result, None) if return_oof else result
+    result = {
         "accuracy": float(np.mean(accs)),
         "accuracy_std": float(np.std(accs)),
         "macro_f1": float(np.mean(f1s)),
@@ -181,12 +244,49 @@ def family_probe(
         "n_genes": int(mask.sum()),
         "n_families": int(len(set(y))),
     }
+    if not return_oof:
+        return result
+    oof = None
+    if oof_y:
+        y_true = np.concatenate(oof_y)
+        oof = {"y_true": y_true, "pred": np.concatenate(oof_pred), "families": y_true}
+    return result, oof
+
+
+def _family_probe_bootstrap_ci(oof, n_resamples, seed):
+    """Cluster-bootstrap CI (resampled at the family level) on the family probe's
+    accuracy and macro-F1, from its OOF predictions."""
+    y_true, pred = oof["y_true"], oof["pred"]
+
+    def _accuracy(rows):
+        return float(accuracy_score(y_true[rows], pred[rows]))
+
+    def _macro_f1(rows):
+        return float(f1_score(y_true[rows], pred[rows], average="macro", zero_division=0))
+
+    return {
+        "accuracy": cluster_bootstrap_ci(
+            oof["families"], _accuracy, n_resamples=n_resamples, seed=seed
+        ),
+        "macro_f1": cluster_bootstrap_ci(
+            oof["families"], _macro_f1, n_resamples=n_resamples, seed=seed
+        ),
+    }
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument(
+        "--seeds", type=int, default=N_SEEDS,
+        help="number of seeds for the k-NN purity / within-between / family-probe "
+        "null-shuffles and CV folds; runs 0..seeds-1 (>=1)",
+    )
+    parser.add_argument("--no_ci", action="store_true", help="skip cluster-bootstrap CIs")
+    parser.add_argument("--n_boot", type=int, default=BOOTSTRAP_N_RESAMPLES)
     args = parser.parse_args()
+    if args.seeds < 1:
+        parser.error("--seeds must be >= 1")
+    compute_ci = not args.no_ci
 
     # Load the pre-filtered variant list (the same row-aligned set the embeddings
     # were extracted from), so no rebuild/refilter is needed here.
@@ -268,7 +368,7 @@ def main():
 
         view_res = {}
 
-        # 1. Silhouette
+        # 1. Silhouette (seed-independent — computed once)
         if len(set(gf)) >= 2 and len(ge) >= 5:
             try:
                 sil = float(silhouette_score(ge, gf, metric="cosine"))
@@ -280,33 +380,93 @@ def main():
             # signals. Reported for completeness only.
             print(f"  silhouette by family (cosine): {sil:.3f}  (unreliable here — see kNN purity)")
 
-        # 2. kNN purity
+        # 2. kNN purity — multi-seed (the null-shuffle is seeded), plus a
+        # cluster-bootstrap CI (resampled at the family level) computed once on
+        # the fixed embeddings (the CI's own resampling has its own seed and does
+        # not depend on the null-shuffle data-seed loop below).
         for k in (5, 10):
             if len(ge) > k:
-                p, null, z = knn_family_purity(ge, gf, k=k, seed=args.seed)
-                view_res[f"knn{k}_purity"] = p
-                view_res[f"knn{k}_purity_null"] = null
-                view_res[f"knn{k}_purity_z"] = z
-                print(f"  k={k} family purity: {p:.3f}  null {null:.3f}  z={z:+.1f}")
+                per_seed_p, per_seed_null, per_seed_z = [], [], []
+                for seed in range(args.seeds):
+                    p, null, z = knn_family_purity(ge, gf, k=k, seed=seed)
+                    per_seed_p.append(p)
+                    per_seed_null.append(null)
+                    per_seed_z.append(z)
+                p_mean, p_std, _ = mean_std_n(per_seed_p)
+                null_mean, _, _ = mean_std_n(per_seed_null)
+                z_mean, _, _ = mean_std_n(per_seed_z)
+                view_res[f"knn{k}_purity"] = p_mean
+                view_res[f"knn{k}_purity_std"] = p_std
+                view_res[f"knn{k}_purity_null"] = null_mean
+                view_res[f"knn{k}_purity_z"] = z_mean
+                print(f"  k={k} family purity: {p_mean:.3f}±{p_std:.3f}  null {null_mean:.3f}  z={z_mean:+.1f}")
+                if compute_ci:
+                    # A distance/neighbor statistic, not an additive one — a
+                    # with-replacement bootstrap would duplicate points and
+                    # inflate purity (see cluster_subsample_ci's docstring).
+                    view_res[f"knn{k}_purity_ci"] = cluster_subsample_ci(
+                        gf, _knn_purity_bootstrap_metric(ge, gf, k),
+                        n_resamples=args.n_boot, seed=0,
+                    )
 
-        # 3. Within/between
-        ratio, null, z = within_between_ratio(ge, gf, seed=args.seed)
-        view_res["within_between_ratio"] = ratio
-        view_res["within_between_ratio_null"] = null
-        view_res["within_between_ratio_z"] = z
+        # 3. Within/between — multi-seed null-shuffle + cluster-bootstrap CI.
+        per_seed_ratio, per_seed_null, per_seed_z = [], [], []
+        for seed in range(args.seeds):
+            ratio, null, z = within_between_ratio(ge, gf, seed=seed)
+            per_seed_ratio.append(ratio)
+            per_seed_null.append(null)
+            per_seed_z.append(z)
+        ratio_mean, ratio_std, _ = mean_std_n(per_seed_ratio)
+        null_mean, _, _ = mean_std_n(per_seed_null)
+        z_mean, _, _ = mean_std_n(per_seed_z)
+        view_res["within_between_ratio"] = ratio_mean
+        view_res["within_between_ratio_std"] = ratio_std
+        view_res["within_between_ratio_null"] = null_mean
+        view_res["within_between_ratio_z"] = z_mean
         print(
-            f"  within/between cosine dist ratio: {ratio:.3f}  "
-            f"null {null:.3f}  z={z:+.1f}  (<1 ⇒ within tighter than between)"
+            f"  within/between cosine dist ratio: {ratio_mean:.3f}±{ratio_std:.3f}  "
+            f"null {null_mean:.3f}  z={z_mean:+.1f}  (<1 ⇒ within tighter than between)"
         )
+        if compute_ci:
+            # Pairwise-distance statistic — same duplicate-point problem as the
+            # purity CI above, same fix.
+            view_res["within_between_ratio_ci"] = cluster_subsample_ci(
+                gf, _within_between_bootstrap_metric(ge, gf),
+                n_resamples=args.n_boot, seed=0,
+            )
 
-        # 4. Family probe (gene-level)
-        probe = family_probe(
-            gene_emb[annotated_mask],
-            gene_families[annotated_mask].tolist(),
-            seed=args.seed,
-        )
+        # 4. Family probe (gene-level) — multi-seed accuracy/macro-F1, plus a
+        # cluster-bootstrap CI (resampled at the family level) from seed 0's OOF.
+        per_seed_acc, per_seed_f1 = [], []
+        probe = None
+        probe_oof = None
+        for seed in range(args.seeds):
+            seed_probe, seed_oof = family_probe(
+                gene_emb[annotated_mask],
+                gene_families[annotated_mask].tolist(),
+                seed=seed,
+                return_oof=True,
+            )
+            if seed == 0:
+                probe, probe_oof = seed_probe, seed_oof
+            if "accuracy" in seed_probe:
+                per_seed_acc.append(seed_probe["accuracy"])
+                per_seed_f1.append(seed_probe["macro_f1"])
+        if per_seed_acc:
+            acc_mean, acc_std, n_seeds_used = mean_std_n(per_seed_acc)
+            f1_mean, f1_std, _ = mean_std_n(per_seed_f1)
+            probe = {
+                **probe,
+                "accuracy": acc_mean,
+                "accuracy_std": acc_std,
+                "macro_f1": f1_mean,
+                "macro_f1_std": f1_std,
+                "n_seeds": n_seeds_used,
+            }
+            if compute_ci and probe_oof is not None:
+                probe["ci"] = _family_probe_bootstrap_ci(probe_oof, args.n_boot, seed=0)
         view_res["family_probe"] = probe
-        if "accuracy" in probe:
+        if probe and "accuracy" in probe:
             print(
                 f"  family probe accuracy: {probe['accuracy']:.3f}  "
                 f"(majority baseline {probe['majority_baseline_acc']:.3f}, "

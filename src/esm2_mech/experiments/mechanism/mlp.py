@@ -26,6 +26,7 @@ from pathlib import Path
 import numpy as np
 
 from esm2_mech.utils.constants import (
+    BOOTSTRAP_N_RESAMPLES,
     DELTA_MEAN_FEATURE,
     DELTA_POS_FEATURE,
     N_SEEDS,
@@ -37,6 +38,7 @@ from esm2_mech.utils.paths import (
     EMB_MUT_MEAN, EMB_MUT_POS, EMB_WT_MEAN, EMB_WT_POS,
     PFAM_JSON, RESULTS_DIR, VALID_VARIANTS_JSON,
 )
+from esm2_mech.utils.bootstrap import bootstrap_mechanism_metrics, family_or_gene_clusters
 from esm2_mech.utils.io import atomic_write_json, load_variants_and_delta
 from esm2_mech.utils.probes import run_mlp_probe_cv, run_sklearn_probe_pca, run_sklearn_probe
 from esm2_mech.utils.splits import gene_split_cv, family_split_cv
@@ -61,6 +63,19 @@ def run_seed(seed, args, labels, genes, delta_mean, delta_pos, pfam_map):
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     np.random.seed(seed)
+    compute_ci = not args.no_ci
+    n_boot = args.n_boot
+
+    def _attach_ci(agg, oof, split_name):
+        if compute_ci and oof is not None:
+            clusters = family_or_gene_clusters(
+                oof["genes"], pfam_map, is_family_split=(split_name == SPLIT_FAMILY)
+            )
+            agg["ci"] = bootstrap_mechanism_metrics(
+                oof["y_true"], oof["proba"], clusters,
+                n_resamples=n_boot, seed=seed,
+            )
+        return agg
 
     gene_splits = gene_split_cv(genes, seed=seed)
     family_splits = family_split_cv(genes, pfam_map, seed=seed)
@@ -83,17 +98,26 @@ def run_seed(seed, args, labels, genes, delta_mean, delta_pos, pfam_map):
         Keys are symmetric with the MLP keys: <model>_<feat>_<split>."""
         print(f"\n=== GBM {split_name}-split: {feat_name} (PCA-50) ===")
         key = nonlinear_key("gbm", feat_name, split_name)
-        results[key] = run_sklearn_probe_pca(gbm_fn, X, labels, genes, seed=seed, splits=splits)
+        agg, oof = run_sklearn_probe_pca(
+            gbm_fn, X, labels, genes, seed=seed, splits=splits, return_oof=True
+        )
+        results[key] = _attach_ci(agg, oof, split_name)
         print(f"  macro_f1={results[key].get('macro_f1_mean', float('nan')):.3f}")
 
         print(f"\n=== RF {split_name}-split: {feat_name} (PCA-50) ===")
         key = nonlinear_key("rf", feat_name, split_name)
-        results[key] = run_sklearn_probe_pca(rf_fn, X, labels, genes, seed=seed, splits=splits)
+        agg, oof = run_sklearn_probe_pca(
+            rf_fn, X, labels, genes, seed=seed, splits=splits, return_oof=True
+        )
+        results[key] = _attach_ci(agg, oof, split_name)
         print(f"  macro_f1={results[key].get('macro_f1_mean', float('nan')):.3f}")
 
         print(f"\n=== kNN {split_name}-split: {feat_name} ===")
         key = nonlinear_key("knn", feat_name, split_name)
-        results[key] = run_sklearn_probe(knn_fn, X, labels, genes, seed=seed, normalize=True, splits=splits)
+        agg, oof = run_sklearn_probe(
+            knn_fn, X, labels, genes, seed=seed, normalize=True, splits=splits, return_oof=True
+        )
+        results[key] = _attach_ci(agg, oof, split_name)
         print(f"  macro_f1={results[key].get('macro_f1_mean', float('nan')):.3f}")
 
     out_path = out_dir / f"nonlinear_results_seed{seed}.json"
@@ -126,10 +150,12 @@ def run_seed(seed, args, labels, genes, delta_mean, delta_pos, pfam_map):
         for split_name, splits in splits_by_name:
             key = nonlinear_key("mlp", feat_name, split_name)
             print(f"\n=== MLP {split_name}-split: {feat_name} ===")
-            results[key] = run_mlp_probe_cv(
+            agg, oof = run_mlp_probe_cv(
                 X, labels, splits, seed=seed, genes=genes,
                 max_epochs=args.max_epochs, patience=args.patience, label=key,
+                return_oof=True,
             )
+            results[key] = _attach_ci(agg, oof, split_name)
             print(f"  macro_f1={results[key].get('macro_f1_mean', float('nan')):.3f}")
 
         # GBM/RF/kNN under both gene-split and family-split.
@@ -158,6 +184,8 @@ def main():
                         help="Compute ONLY the GBM/RF/kNN family-split arms (gbm/rf/knn_<feat>_family) "
                              "and merge them into the existing nonlinear_results_seed{seed}.json in "
                              "out_dir, preserving all existing keys. Skips MLP and all gene-split work.")
+    parser.add_argument("--no_ci", action="store_true", help="skip cluster-bootstrap CIs")
+    parser.add_argument("--n_boot", type=int, default=BOOTSTRAP_N_RESAMPLES)
     args = parser.parse_args()
     if args.seeds < 1:
         parser.error("--seeds must be >= 1")

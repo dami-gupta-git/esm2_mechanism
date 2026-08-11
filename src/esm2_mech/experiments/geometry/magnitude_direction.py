@@ -40,7 +40,11 @@ print = functools.partial(print, flush=True)
 
 from joblib import Parallel, delayed
 
-from esm2_mech.utils.constants import N_SEEDS
+from esm2_mech.utils.bootstrap import (
+    average_oof_over_seeds, binary_auroc_cluster_bootstrap_ci, bootstrap_mechanism_metrics,
+    family_or_gene_clusters,
+)
+from esm2_mech.utils.constants import BOOTSTRAP_N_RESAMPLES, N_SEEDS
 from esm2_mech.utils.io import atomic_write_json
 from esm2_mech.utils.paths import (
     GEOMETRY_RESULTS_DIR,
@@ -152,8 +156,11 @@ def decompose(delta):
 MIN_TRAIN_CLASSES = 2
 
 
-def run_logreg_multi(X, labels, splits, seed=42):
-    return run_logreg_cv(X, labels, splits, seed=seed, min_train_classes=MIN_TRAIN_CLASSES)
+def run_logreg_multi(X, labels, splits, seed=42, genes=None, return_oof=False):
+    return run_logreg_cv(
+        X, labels, splits, seed=seed, min_train_classes=MIN_TRAIN_CLASSES,
+        genes=genes, return_oof=return_oof,
+    )
 
 
 def _read_chance_floor(strategy="most_frequent"):
@@ -193,18 +200,26 @@ def agg_seeds(per_seed_vals):
 
 
 def _pathogenicity_one_seed(seed, feats, y, genes, pfam_map):
-    """All feature × split × probe AUROCs for one seed. Independent across seeds,
-    so seeds are dispatched in parallel. Returns {(fname, split, probe): auroc}."""
+    """All feature × split × probe AUROCs (+ OOF) for one seed. Independent across
+    seeds, so seeds are dispatched in parallel. Returns
+    {(fname, split, probe): (auroc, oof)}; oof is {"y_true","proba","genes"} for
+    dependency-aware inference, or None if no fold was scorable."""
     print(f"  [pathogenicity] seed {seed} started", flush=True)
     gs = gene_split_cv(genes, seed=seed)
     fs = family_split_cv(genes, pfam_map, seed=seed)
     res = {}
     for fname, X in feats.items():
         for split_name, splits in [("gene_split", gs), ("family_split", fs)]:
-            lr = run_logreg_binary_cv(X, y, splits, seed=seed).get("auroc_mean")
-            res[(fname, split_name, "logreg")] = lr
-            mlp = run_mlp_binary_cv(X, y, splits, seed=seed).get("auroc_mean")
-            res[(fname, split_name, "mlp")] = mlp
+            lr_agg, lr_oof = run_logreg_binary_cv(
+                X, y, splits, seed=seed, genes=genes, return_oof=True
+            )
+            lr = lr_agg.get("auroc_mean")
+            res[(fname, split_name, "logreg")] = (lr, lr_oof)
+            mlp_agg, mlp_oof = run_mlp_binary_cv(
+                X, y, splits, seed=seed, genes=genes, return_oof=True
+            )
+            mlp = mlp_agg.get("auroc_mean")
+            res[(fname, split_name, "mlp")] = (mlp, mlp_oof)
             print(
                 f"    [pathogenicity seed {seed}] {fname:4s} {split_name:12s} "
                 f"logreg={_f(lr)} mlp={_f(mlp)}",
@@ -214,7 +229,7 @@ def _pathogenicity_one_seed(seed, feats, y, genes, pfam_map):
     return res
 
 
-def run_pathogenicity(pfam_map, seeds, n_jobs=-1):
+def run_pathogenicity(pfam_map, seeds, n_jobs=-1, compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES):
     print("\n" + "=" * 60)
     print("PATHOGENICITY  (binary, variant-level, delta_mean)")
     print("=" * 60)
@@ -230,9 +245,12 @@ def run_pathogenicity(pfam_map, seeds, n_jobs=-1):
     )
 
     collect = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
+    oof_collect = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
     for seed, res in zip(seeds, per_seed):
-        for (fname, split_name, probe), auroc in res.items():
+        for (fname, split_name, probe), (auroc, oof) in res.items():
             collect[fname][split_name][probe].append(auroc)
+            if oof is not None:
+                oof_collect[fname][split_name][probe].append(oof)
             print(f"  seed{seed} {fname:4s} {split_name:12s} {probe}={_f(auroc)}")
 
     out = {}
@@ -243,6 +261,24 @@ def run_pathogenicity(pfam_map, seeds, n_jobs=-1):
                 "logreg_auroc": agg_seeds(collect[fname][split_name]["logreg"]),
                 "mlp_auroc": agg_seeds(collect[fname][split_name]["mlp"]),
             }
+            if compute_ci:
+                for probe in ("logreg", "mlp"):
+                    # Each seed reshuffles the CV fold assignment, so per-seed OOF
+                    # is first collapsed to one proba-per-variant (matching
+                    # classify_by_mechanism's cross-seed CI convention) before the
+                    # cluster bootstrap runs once over the combined OOF.
+                    combined = average_oof_over_seeds(oof_collect[fname][split_name][probe])
+                    if combined is not None:
+                        clusters = family_or_gene_clusters(
+                            combined["genes"], pfam_map,
+                            is_family_split=(split_name == "family_split"),
+                        )
+                        out[fname][split_name][f"{probe}_auroc"]["ci"] = (
+                            binary_auroc_cluster_bootstrap_ci(
+                                combined, n_resamples=n_boot, seed=0,
+                                clusters=clusters,
+                            )
+                        )
     return out
 
 
@@ -250,20 +286,26 @@ def run_pathogenicity(pfam_map, seeds, n_jobs=-1):
 
 
 def _mechanism_one_seed(seed, feats, labels, genes, pfam_map):
-    """All feature × split probe results for one seed (parallel)."""
+    """All feature × split probe results (+ OOF) for one seed (parallel)."""
     print(f"  [mechanism] seed {seed} started", flush=True)
     gs = gene_split_cv(genes, seed=seed)
     fs = family_split_cv(genes, pfam_map, seed=seed)
     res = {}
     for fname, X in feats.items():
         for split_name, splits in [("gene_split", gs), ("family_split", fs)]:
-            lr = run_logreg_multi(X, labels, splits, seed=seed)
-            mlp = run_mlp_probe_cv(X, labels, splits, seed=seed)
+            lr, lr_oof = run_logreg_multi(
+                X, labels, splits, seed=seed, genes=genes, return_oof=True
+            )
+            mlp, mlp_oof = run_mlp_probe_cv(
+                X, labels, splits, seed=seed, genes=genes, return_oof=True
+            )
             res[(fname, split_name)] = {
                 "logreg_f1": lr.get("macro_f1_mean"),
                 "mlp_f1": mlp.get("macro_f1_mean"),
                 "logreg_gof": lr.get("auroc_GOF_mean"),
                 "mlp_gof": mlp.get("auroc_GOF_mean"),
+                "logreg_oof": lr_oof,
+                "mlp_oof": mlp_oof,
             }
             print(
                 f"    [mechanism seed {seed}] {fname:4s} {split_name:12s} "
@@ -274,7 +316,7 @@ def _mechanism_one_seed(seed, feats, labels, genes, pfam_map):
     return res
 
 
-def run_mechanism(pfam_map, seeds, n_jobs=-1):
+def run_mechanism(pfam_map, seeds, n_jobs=-1, compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES):
     print("\n" + "=" * 60)
     print("MECHANISM  (3-class GOF/LOF/DN, variant-level Gerasimavicius, delta_mean)")
     print("=" * 60)
@@ -287,10 +329,15 @@ def run_mechanism(pfam_map, seeds, n_jobs=-1):
     )
 
     collect = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
+    oof_collect = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
     for seed, res in zip(seeds, per_seed):
         for (fname, split_name), cell in res.items():
-            for key, val in cell.items():
-                collect[fname][split_name][key].append(val)
+            for key in ("logreg_f1", "mlp_f1", "logreg_gof", "mlp_gof"):
+                collect[fname][split_name][key].append(cell[key])
+            if cell["logreg_oof"] is not None:
+                oof_collect[fname][split_name]["logreg"].append(cell["logreg_oof"])
+            if cell["mlp_oof"] is not None:
+                oof_collect[fname][split_name]["mlp"].append(cell["mlp_oof"])
             print(
                 f"  seed{seed} {fname:4s} {split_name:12s} "
                 f"F1(lr={_f(cell['logreg_f1'])} mlp={_f(cell['mlp_f1'])})"
@@ -306,12 +353,28 @@ def run_mechanism(pfam_map, seeds, n_jobs=-1):
         out[fname] = {}
         for split_name in ("gene_split", "family_split"):
             c = collect[fname][split_name]
-            out[fname][split_name] = {
+            cell = {
                 "logreg_macro_f1": agg_seeds(c["logreg_f1"]),
                 "mlp_macro_f1": agg_seeds(c["mlp_f1"]),
                 "logreg_gof_auroc": agg_seeds(c["logreg_gof"]),
                 "mlp_gof_auroc": agg_seeds(c["mlp_gof"]),
             }
+            if compute_ci:
+                for probe, out_key in (("logreg", "logreg_macro_f1"), ("mlp", "mlp_macro_f1")):
+                    # Per-seed OOF is collapsed to one proba-per-variant first
+                    # (each seed reshuffles the fold assignment), then the cluster
+                    # bootstrap runs once over the combined OOF.
+                    combined = average_oof_over_seeds(oof_collect[fname][split_name][probe])
+                    if combined is not None:
+                        clusters = family_or_gene_clusters(
+                            combined["genes"], pfam_map,
+                            is_family_split=(split_name == "family_split"),
+                        )
+                        cell[out_key]["ci"] = bootstrap_mechanism_metrics(
+                            combined["y_true"], combined["proba"], clusters,
+                            n_resamples=n_boot, seed=0,
+                        )
+            out[fname][split_name] = cell
     return out
 
 
@@ -479,9 +542,15 @@ def evaluate_gates(path_res, mech_res, bio_res):
     return gates
 
 
-def run(n_seeds=N_SEEDS, stability_dataset=DEFAULT_STABILITY_DATASET):
+def run(
+    n_seeds=N_SEEDS, stability_dataset=DEFAULT_STABILITY_DATASET,
+    compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES,
+):
     """Run the magnitude/direction decomposition over range(n_seeds)."""
-    return _run_seeds(list(range(n_seeds)), stability_dataset=stability_dataset)
+    return _run_seeds(
+        list(range(n_seeds)), stability_dataset=stability_dataset,
+        compute_ci=compute_ci, n_boot=n_boot,
+    )
 
 
 def main():
@@ -493,18 +562,26 @@ def main():
         default=DEFAULT_STABILITY_DATASET,
         help="dataset for the Probe C biophysical-direction arm (default: none = skip)",
     )
+    ap.add_argument("--no_ci", action="store_true", help="skip cluster-bootstrap CIs")
+    ap.add_argument("--n_boot", type=int, default=BOOTSTRAP_N_RESAMPLES)
     args = ap.parse_args()
     if args.seeds < 1:
         ap.error("--seeds must be >= 1")
-    run(n_seeds=args.seeds, stability_dataset=args.stability_dataset)
+    run(
+        n_seeds=args.seeds, stability_dataset=args.stability_dataset,
+        compute_ci=not args.no_ci, n_boot=args.n_boot,
+    )
 
 
-def _run_seeds(seeds, stability_dataset=DEFAULT_STABILITY_DATASET):
+def _run_seeds(
+    seeds, stability_dataset=DEFAULT_STABILITY_DATASET,
+    compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES,
+):
     with open(PFAM_JSON) as _f:
         pfam_map = json.load(_f)
 
-    path_res = run_pathogenicity(pfam_map, seeds)
-    mech_res = run_mechanism(pfam_map, seeds)
+    path_res = run_pathogenicity(pfam_map, seeds, compute_ci=compute_ci, n_boot=n_boot)
+    mech_res = run_mechanism(pfam_map, seeds, compute_ci=compute_ci, n_boot=n_boot)
     bio_res = run_biophysical_direction(seeds, stability_dataset=stability_dataset)
 
     gates = evaluate_gates(path_res, mech_res, bio_res)

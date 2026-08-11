@@ -166,6 +166,102 @@ def cluster_bootstrap_ci(
     }
 
 
+def _subsample_resample_value(
+    metric_fn: Callable[[np.ndarray], float | None],
+    cluster_rows: list[np.ndarray],
+    n_clusters: int,
+    subsample_size: int,
+    child_seed: int,
+) -> float | None:
+    """Draw one cluster SUBSAMPLE (without replacement) with an independent
+    seeded RNG, return the metric. Mirrors `_bootstrap_resample_value` but
+    draws `subsample_size` distinct clusters instead of `n_clusters` with
+    replacement, so no cluster's rows are ever duplicated within a replicate.
+    """
+    rng = np.random.RandomState(child_seed)
+    drawn = rng.choice(n_clusters, size=subsample_size, replace=False)
+    rows = np.concatenate([cluster_rows[i] for i in drawn])
+    value = metric_fn(rows)
+    if value is not None and np.isfinite(value):
+        return float(value)
+    return None
+
+
+def cluster_subsample_ci(
+    clusters: np.ndarray,
+    metric_fn: Callable[[np.ndarray], float | None],
+    n_resamples: int = BOOTSTRAP_N_RESAMPLES,
+    subsample_frac: float = 0.632,
+    ci_level: float = BOOTSTRAP_CI_LEVEL,
+    min_valid_frac: float = BOOTSTRAP_MIN_VALID_FRAC,
+    seed: int = 0,
+    n_jobs: int = -1,
+) -> dict:
+    """Percentile CI via an m-out-of-n cluster SUBSAMPLE (without replacement).
+
+    Use this instead of `cluster_bootstrap_ci` for statistics that break under
+    literal duplicate points — nearest-neighbor purity, pairwise-distance
+    ratios, or any other distance/graph statistic where "this observation
+    counts twice" has no coherent meaning. A standard with-replacement cluster
+    bootstrap puts the SAME rows into a replicate more than once whenever a
+    cluster is drawn more than once; for a k-NN or pairwise-distance metric
+    those duplicate points sit at distance exactly 0 from each other, which
+    inflates same-cluster neighbor purity and deflates within-cluster mean
+    distance. Subsampling `subsample_frac` of clusters WITHOUT replacement
+    never duplicates a point, so that artifact cannot occur. (Metrics that are
+    additive over rows — F1, AUROC, macro_f1, Spearman rho — do not have this
+    problem and should keep using `cluster_bootstrap_ci`, where draw
+    multiplicity is a meaningful, correct resampling weight.)
+
+    `subsample_frac` defaults to 0.632 (~ 1 - 1/e), the expected fraction of
+    distinct clusters included in a same-size with-replacement bootstrap —
+    the standard choice for an m-out-of-n subsample meant to approximate a
+    bootstrap's resampling variability without its duplication.
+
+    Still resamples whole clusters, never splits one, same as
+    `cluster_bootstrap_ci`. Returns the same keys (point, ci_low, ci_high,
+    n_resamples, n_resamples_total, valid_frac, ci_suppressed, n_clusters)
+    plus `subsample_size` (the number of clusters actually drawn per
+    replicate, since it differs from `n_clusters`).
+    """
+    unique, cluster_rows = _cluster_to_rows(np.asarray(clusters))
+    n_clusters = len(unique)
+    subsample_size = max(1, round(subsample_frac * n_clusters))
+    all_rows = np.arange(len(clusters))
+    point = metric_fn(all_rows)
+
+    child_seqs = np.random.SeedSequence(seed).spawn(n_resamples)
+    child_seeds = [int(s.generate_state(1)[0]) for s in child_seqs]
+
+    values = Parallel(n_jobs=n_jobs)(
+        delayed(_subsample_resample_value)(
+            metric_fn, cluster_rows, n_clusters, subsample_size, child_seed
+        )
+        for child_seed in child_seeds
+    )
+    stats = [value for value in values if value is not None]
+
+    valid_frac = len(stats) / n_resamples if n_resamples else 0.0
+    base = {
+        "point": float(point) if point is not None and np.isfinite(point) else None,
+        "n_resamples": len(stats),
+        "n_resamples_total": int(n_resamples),
+        "valid_frac": float(valid_frac),
+        "n_clusters": int(n_clusters),
+        "subsample_size": int(subsample_size),
+    }
+    if not stats or valid_frac < min_valid_frac:
+        return {**base, "ci_low": None, "ci_high": None, "ci_suppressed": True}
+    lo_pct = (1.0 - ci_level) / 2.0 * 100.0
+    hi_pct = (1.0 + ci_level) / 2.0 * 100.0
+    return {
+        **base,
+        "ci_low": float(np.percentile(stats, lo_pct)),
+        "ci_high": float(np.percentile(stats, hi_pct)),
+        "ci_suppressed": False,
+    }
+
+
 def _paired_bootstrap_resample_values(
     metric_fn_a: Callable[[np.ndarray], float | None],
     metric_fn_b: Callable[[np.ndarray], float | None],
@@ -406,6 +502,59 @@ def bootstrap_mechanism_metrics(
                 f"(rare class absent on a resample). No CI reported for this metric."
             )
     return out
+
+
+def family_or_gene_clusters(
+    genes: np.ndarray, pfam_map: dict, is_family_split: bool
+) -> np.ndarray:
+    """The R7.3 resampling-unit choice: family-split CIs resample families, not
+    genes — the family is the unit family-split CV actually holds out, so genes
+    within one are not independent draws. Gene-split CIs resample genes
+    unchanged.
+
+    `genes` is a row-aligned gene-id array (typically an OOF dict's "genes"
+    entry). Only annotated genes ever reach a family-split fold
+    (`family_split_cv` excludes unannotated genes), so `pfam_map[g]` cannot
+    miss when `is_family_split` is True.
+    """
+    if not is_family_split:
+        return genes
+    return np.array([pfam_map[g] for g in genes])
+
+
+def binary_auroc_cluster_bootstrap_ci(
+    oof: dict,
+    n_resamples: int = BOOTSTRAP_N_RESAMPLES,
+    ci_level: float = BOOTSTRAP_CI_LEVEL,
+    seed: int = 0,
+    clusters: np.ndarray | None = None,
+) -> dict:
+    """Cluster-bootstrap CI on a binary AUROC from an OOF dict.
+
+    `oof` is {"y_true" (0/1), "proba" (positive-class probability, 1-D), "genes"}
+    — the shape returned by run_logreg_binary_cv/run_mlp_binary_cv/
+    _run_sklearn_probe_impl with return_oof=True on a binary target (e.g. the
+    pathogenicity control's pathogenic-vs-benign probe). Distinct from
+    bootstrap_mechanism_metrics, which is specific to the 3-class GOF/DN/LOF
+    mechanism labels.
+
+    Resamples `oof["genes"]` by default. Pass `clusters` explicitly to resample
+    a different unit instead (R7.3: a family-split arm must resample families,
+    not genes — the family is the unit family-split CV actually holds out).
+    """
+    y_true = oof["y_true"]
+    proba = oof["proba"]
+
+    def _auroc(rows: np.ndarray) -> float | None:
+        y_bin = y_true[rows]
+        if y_bin.sum() == 0 or y_bin.sum() == len(y_bin):
+            return None
+        return float(roc_auc_score(y_bin, proba[rows]))
+
+    resample_unit = oof["genes"] if clusters is None else clusters
+    return cluster_bootstrap_ci(
+        resample_unit, _auroc, n_resamples=n_resamples, ci_level=ci_level, seed=seed
+    )
 
 
 def _permute_labels(

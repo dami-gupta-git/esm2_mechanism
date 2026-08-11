@@ -113,6 +113,20 @@ There are 1,134 families but 833 are singletons, so the effective cluster count 
 gene count. That widening is the correct answer, not an artifact to tune away. The effective
 cluster count is reported next to every family-split interval.
 
+**Addendum, added 2026-08-10 — distance/graph statistics use a subsample, not a bootstrap.**
+`family_clustering.py`'s k-NN family-purity and within/between pairwise-distance-ratio CIs
+(Section 4 of `ESM2_REPORT.md`, exploratory, not in the C1–C6 confirmatory set) are not additive
+statistics like F1 or AUROC — they depend on the neighbor graph or pairwise distances between
+points. A standard with-replacement cluster bootstrap duplicates a family's rows whenever that
+family is drawn more than once, and the duplicate sits at distance exactly 0 from itself, which
+inflates same-family neighbor purity and deflates the within-family mean distance (confirmed
+empirically before this fix: `ci_low` sometimes exceeded the point estimate). These two CIs use
+`cluster_subsample_ci` instead — an m-out-of-n subsample of families **without** replacement
+(`subsample_frac=0.632`, matching the expected unique-cluster fraction of a same-size
+with-replacement bootstrap), which never duplicates a point. Every other family-split CI in the
+project (F1, AUROC, macro_f1, Spearman rho) keeps the ordinary `cluster_bootstrap_ci`, where draw
+multiplicity is a correct resampling weight, not an artifact.
+
 ## R7.4 — Rare-class intervals
 
 DN (≈ 9%, ~150–170 genes) and GOF (≈ 15%) sit in the regime where percentile bootstrap undercovers
