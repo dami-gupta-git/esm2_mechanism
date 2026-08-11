@@ -27,7 +27,7 @@ from esm2_mech.utils.paths import (
     PFAM_JSON,
     EMB_WT_MEAN,
     EMB_MUT_MEAN,
-    ESM3_EMB_SEQ,
+    PROTEOME_FEATURES_ALIGNED,
     PREREQUISITE_FILES,
     PROJECT_ROOT,
     check_prerequisites,
@@ -39,7 +39,7 @@ def test_all_path_constants_are_path_objects():
     paths = [
         DATA_DIR, RESULTS_DIR, REPORTS_DIR, CACHE_DIR,
         EMB_DIR, ESM3_EMB_DIR, VARIANTS_JSON, GENE_LIST_TSV,
-        PFAM_JSON, EMB_WT_MEAN, EMB_MUT_MEAN, ESM3_EMB_SEQ,
+        PFAM_JSON, EMB_WT_MEAN, EMB_MUT_MEAN, PROTEOME_FEATURES_ALIGNED,
     ]
     for p in paths:
         assert isinstance(p, Path), f"{p!r} is not a Path"

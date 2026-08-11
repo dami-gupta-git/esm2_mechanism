@@ -123,6 +123,26 @@ def load_json_or_discard(path):
         return None
 
 
+def load_npy_or_discard(path):
+    """Load a .npy array from path, returning None if it is missing or corrupt.
+
+    A truncated/partially-written .npy (interrupt mid-checkpoint) fails to load
+    with OSError/EOFError (bad header/data) or ValueError. Treat a corrupt cache
+    as absent: warn, delete, and report a miss so the caller re-extracts. Shared
+    by callers that cache a single fitted array (e.g. a stability subspace or a
+    conservation-axis readout) and resume/refit when it is unusable.
+    """
+    path = Path(path)
+    if not path.exists():
+        return None
+    try:
+        return np.load(path)
+    except (ValueError, OSError, EOFError) as exc:
+        print(f"WARNING: corrupt cache {path} ({exc}); deleting", flush=True)
+        path.unlink()
+        return None
+
+
 def atomic_write_text(path, text: str) -> None:
     """Atomically write a text string: write to .tmp, fsync, then rename."""
     tmp = str(path) + ".tmp"

@@ -18,16 +18,23 @@ from pathlib import Path
 import functools
 
 from esm2_mech.utils.io import save_npy
-from esm2_mech.utils.paths import DATA_DIR, GENE_UNIVERSE, TABLE_S3_FILE
+from esm2_mech.utils.paths import (
+    BADONYI_FEATURES_ALIGNED,
+    BADONYI_FEATURES_TSV,
+    BADONYI_FEATURE_COLUMNS_JSON,
+    DATA_DIR,
+    GENE_UNIVERSE,
+    TABLE_S3_FILE,
+)
 
 print = functools.partial(print, flush=True)
 
 DATA = DATA_DIR
 S3_PATH = TABLE_S3_FILE
 
-OUT_TSV = DATA / "badonyi_features.tsv"
-OUT_NPY = DATA / "badonyi_features_aligned.npy"
-OUT_COLS = DATA / "badonyi_feature_columns.json"
+OUT_TSV = BADONYI_FEATURES_TSV
+OUT_NPY = BADONYI_FEATURES_ALIGNED
+OUT_COLS = BADONYI_FEATURE_COLUMNS_JSON
 
 
 def load_badonyi_predictions():
@@ -92,8 +99,12 @@ def compute_family_residuals(df, pfam, feature_cols, observed_mask=None):
             if len(observed_in_fam) <= 1:
                 continue
             fam_mean = df.loc[observed_in_fam, col].mean()
-            df.loc[fam_idx, resid_col] = df.loc[fam_idx, col] - fam_mean
-            df.loc[fam_idx, resid_missing_col] = 0
+            # Only assign a residual (and clear the missing flag) for members
+            # whose own raw score is observed. A family member with a NaN raw
+            # score gets NaN here too, with resid_missing staying 1 — the flag
+            # must track the same condition as the computed value.
+            df.loc[observed_in_fam, resid_col] = df.loc[observed_in_fam, col] - fam_mean
+            df.loc[observed_in_fam, resid_missing_col] = 0
 
     return df
 
@@ -149,26 +160,25 @@ def main():
                 "Refusing to fabricate imputation values."
             )
 
-    # Missingness indicators — record before imputation
+    # Missingness indicators
     for col in feature_cols:
         result[f"{col}_missing"] = result[col].isna().astype(float)
 
     # observed_mask: genes with real scores (used for family mean computation)
     observed_mask = result["pDN_missing"] == 0
 
-    # Family-mean-centred residuals — computed before imputation so family means
-    # are never contaminated by imputed values
+    # Family-mean-centred residuals — computed on observed values only, so
+    # family means are never contaminated by a fabricated value
     result = compute_family_residuals(result, pfam, feature_cols, observed_mask)
 
-    # Median impute raw scores after residuals are computed
     for col in feature_cols:
-        median_val = result[col].median()
-        result[col] = result[col].fillna(median_val)
         print(
-            f"  {col}: median={median_val:.4f}, imputed {result[f'{col}_missing'].sum():.0f} genes"
+            f"  {col}: {int(result[f'{col}_missing'].sum())} genes missing "
+            f"(left as NaN — no imputation; consumers must restrict to the "
+            f"observed subset and recompute CV splits)"
         )
 
-    # Save TSV
+    # Save TSV — raw values, NaN preserved (no imputation)
     result.to_csv(OUT_TSV, sep="\t", index=False)
     print(f"\nSaved TSV: {OUT_TSV} ({result.shape})")
 
@@ -201,7 +211,7 @@ def main():
     print(
         f"Genes covered (raw):    {n_covered} / {len(result)} ({100*n_covered/len(result):.1f}%)"
     )
-    print(f"Genes imputed:          {len(missing_genes)}")
+    print(f"Genes missing (NaN):    {len(missing_genes)}")
     print(f"Matrix shape:           {mat.shape}")
     print(f"Columns:                {numeric_cols}")
 

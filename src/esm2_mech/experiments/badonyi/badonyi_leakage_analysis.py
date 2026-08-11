@@ -32,15 +32,20 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from sklearn.preprocessing import LabelEncoder
 from esm2_mech.utils.constants import MECHANISM_CLASSES
 from esm2_mech.utils.data import build_gene_to_row as _build_gene_to_row
 from esm2_mech.utils.splits import family_split_indices
-from esm2_mech.utils.probes import run_logreg_cv
+from esm2_mech.utils.probes import run_histgb_cv
 from esm2_mech.utils.paths import (
     BADONYI_CACHE_DIR,
-    DATA_DIR,
-    GENE_LIST_TSV,
+    GENE_UNIVERSE,
+    PFAM_JSON,
+    PROTEOME_FEATURES_ALIGNED,
+    PROTEOME_FEATURE_COLUMNS_JSON,
+    PROTEOME_FEATURES_TSV,
+    BADONYI_FEATURES_ALIGNED,
+    BADONYI_FEATURE_COLUMNS_JSON,
+    BADONYI_FEATURES_TSV,
     RESULTS_DIR,
     VALID_VARIANTS_JSON,
 )
@@ -53,13 +58,17 @@ OUT_DIR = RESULTS_DIR
 warnings.filterwarnings("ignore")
 
 MERGED_VALID_VARIANTS = VALID_VARIANTS_JSON
-PROTEOME_FEATURES = DATA_DIR / "proteome_features_aligned.npy"
-BADONYI_FEATURES = DATA_DIR / "badonyi_features_aligned.npy"
+PROTEOME_FEATURES = PROTEOME_FEATURES_ALIGNED
+BADONYI_FEATURES = BADONYI_FEATURES_ALIGNED
 BADONYI_S3 = BADONYI_CACHE_DIR / "table_S3.xlsx"
 BADONYI_RAW_COLS = [0, 1, 2]  # pDN, pGOF, pLOF
 
-MERGED_GENE_LIST = GENE_LIST_TSV
-PFAM_FAMILIES = DATA_DIR / "pfam_families.json"
+# Row index for the aligned feature matrices. MUST be GENE_UNIVERSE, not
+# GENE_LIST_TSV: build_proteome_features/build_badonyi_features write their
+# .npy rows in gene_universe.tsv order, and gene_list.tsv is a longer,
+# differently-ordered superset (see paths.GENE_UNIVERSE).
+MERGED_GENE_LIST = GENE_UNIVERSE
+PFAM_FAMILIES = PFAM_JSON
 
 CLASSES = MECHANISM_CLASSES
 
@@ -88,12 +97,23 @@ def build_gene_to_row():
 
 
 def broadcast(genes, matrix, gene_to_row):
+    """Broadcast per-gene features to variant rows, NaN where the gene has no row.
+
+    A gene absent from the feature matrix gets NaN, not 0.0 — these are
+    probability scores where 0.0 is a plausible real observation, so a
+    zero-filled row would be indistinguishable from a real measurement.
+    """
     n, d = len(genes), matrix.shape[1]
-    X = np.zeros((n, d), dtype=np.float32)
+    X = np.full((n, d), np.nan, dtype=np.float32)
+    n_missing = 0
     for i, g in enumerate(genes):
         r = gene_to_row.get(g)
         if r is not None and r < matrix.shape[0]:
             X[i] = matrix[r]
+        else:
+            n_missing += 1
+    if n_missing:
+        print(f"  {n_missing}/{n} rows have no feature row for their gene (NaN)")
     return X
 
 
@@ -132,9 +152,18 @@ def load_badonyi_train_flags():
 # ---------------------------------------------------------------------------
 
 
-def run_logreg(X, y, genes, groups, n_folds, seed, label):
+def run_probe(X, y, genes, groups, n_folds, seed, label):
+    """NaN-native family-split CV.
+
+    Every arm here reads the proteome or Badonyi block, which carry real
+    missing cells. Nothing is imputed: a value filled in before the split would
+    leak test-fold statistics into training, and this experiment exists to
+    measure leakage. Restricting to complete cases instead would shrink the IN
+    and OUT regimes unevenly — genes in Badonyi's training set are better
+    annotated — which would confound the very contrast being tested.
+    """
     splits = list(family_split_indices(groups, n_folds, seed))
-    return run_logreg_cv(X, y, splits, seed=seed, genes=genes, label=label)
+    return run_histgb_cv(X, y, splits, seed=seed, genes=genes, label=label)
 
 
 # ---------------------------------------------------------------------------
@@ -157,7 +186,7 @@ def run_regime(regime_name, mask, X_prot, X_bad, y, genes, groups, n_folds, seed
     groups_m = groups[mask]
 
     class_counts = Counter(y_m.tolist())
-    cd = {CLASSES[k]: int(v) for k, v in class_counts.items()}
+    cd = {c: int(class_counts.get(c, 0)) for c in CLASSES}
     n_fams = len(set(groups_m.tolist()))
     print(
         f"\n  [{regime_name}] n_variants={n_var}, n_genes={len(set(genes_m.tolist()))}, "
@@ -172,20 +201,22 @@ def run_regime(regime_name, mask, X_prot, X_bad, y, genes, groups, n_folds, seed
     }
 
     print(f"    V2 (proteome 37):")
-    res["V2"] = run_logreg(X_p, y_m, genes_m, groups_m, n_folds, seed, "V2")
+    res["V2"] = run_probe(X_p, y_m, genes_m, groups_m, n_folds, seed, "V2")
     print(f"    V_bad (pDN/pGOF/pLOF):")
-    res["V_bad"] = run_logreg(X_b, y_m, genes_m, groups_m, n_folds, seed, "V_bad")
+    res["V_bad"] = run_probe(X_b, y_m, genes_m, groups_m, n_folds, seed, "V_bad")
     print(f"    V2+bad (40):")
-    res["V2_bad"] = run_logreg(X_2b, y_m, genes_m, groups_m, n_folds, seed, "V2+bad")
+    res["V2_bad"] = run_probe(X_2b, y_m, genes_m, groups_m, n_folds, seed, "V2+bad")
     return res
 
 
 def run_seed(seed, n_folds, y, genes, pfam_map, X_prot, X_bad, train_flag_any):
     print(f"\n{'='*72}\nSEED {seed}\n{'='*72}")
 
-    le = LabelEncoder()
-    le.fit(CLASSES)
-    y_enc = le.transform(y)
+    # y stays string labels — the probe runners and compute_metrics key on
+    # `classes` (strings). Note: sklearn's LabelEncoder sorts classes alphabetically
+    # ("DN","GOF","LOF"), which does NOT match MECHANISM_CLASSES order
+    # ("GOF","DN","LOF") — an int-encoded y here previously also mislabeled
+    # per-class counts positionally against CLASSES.
 
     # Restrict to variants whose gene has a Pfam family (same as result_15)
     gene_pfam = np.array([pfam_map.get(g) for g in genes])
@@ -208,7 +239,7 @@ def run_seed(seed, n_folds, y, genes, pfam_map, X_prot, X_bad, train_flag_any):
     seed_results = {"seed": seed, "regimes": {}}
     for name, mask in [("ALL", mask_all), ("IN", mask_in), ("OUT", mask_out)]:
         seed_results["regimes"][name] = run_regime(
-            name, mask, X_prot, X_bad, y_enc, genes, gene_pfam, n_folds, seed
+            name, mask, X_prot, X_bad, y, genes, gene_pfam, n_folds, seed
         )
     return seed_results
 

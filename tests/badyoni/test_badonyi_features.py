@@ -141,26 +141,37 @@ class TestFamilyResiduals:
         assert "is_singleton_family_badonyi" in out.columns
         assert "pfam_family" in out.columns
 
-    def test_observed_mask_excludes_imputed_from_family_mean(self):
-        """Family mean computed from observed-only; imputed gene gets correct residual
-        and _familyresid_missing=0 (residual exists, even though score was imputed)."""
-        # A and B are observed; C is imputed (value = global median = 0.5)
-        # True family mean of FAM1 from observed = (0.2 + 0.6) / 2 = 0.4
-        # C residual should be 0.5 - 0.4 = 0.1, not 0 as it would be if C were included
+    def test_observed_mask_excludes_unobserved_from_family_mean(self):
+        """Family mean uses observed genes only; an unobserved gene gets a NaN
+        residual and _familyresid_missing=1.
+
+        Scores are no longer imputed, so an unobserved gene's raw value is NaN
+        rather than a filled-in median. It therefore has nothing to take a
+        residual of: the flag and the value it describes must agree, so both say
+        missing. (Previously this asserted the unobserved gene received a
+        residual computed from its imputed value, with the flag claiming it was
+        present — the flag/value divergence this pins shut.)
+        """
+        # A and B are observed; C has no Badonyi score at all.
+        # Family mean of FAM1 from observed = (0.2 + 0.6) / 2 = 0.4
         genes = ["A", "B", "C"]
         pfam = {"A": "FAM1", "B": "FAM1", "C": "FAM1"}
         df = make_df(
-            genes, pDN=[0.2, 0.6, 0.5], pGOF=[0.5, 0.5, 0.5], pLOF=[0.5, 0.5, 0.5]
+            genes,
+            pDN=[0.2, 0.6, float("nan")],
+            pGOF=[0.5, 0.5, float("nan")],
+            pLOF=[0.5, 0.5, float("nan")],
         )
         observed_mask = pd.Series([True, True, False], index=df.index)
         out = compute_family_residuals(
             df, pfam, FEATURE_COLS, observed_mask=observed_mask
         )
+        # Observed members are centred on the observed-only mean (0.4).
         np.testing.assert_allclose(
-            out["pDN_familyresid"].values, [-0.2, 0.2, 0.1], atol=1e-10
+            out["pDN_familyresid"].values[:2], [-0.2, 0.2], atol=1e-10
         )
-        # All three have a valid residual — missing flag must be 0 for all
-        assert list(out["pDN_familyresid_missing"].values) == [0, 0, 0]
+        assert np.isnan(out["pDN_familyresid"].values[2])
+        assert list(out["pDN_familyresid_missing"].values) == [0, 0, 1]
 
     def test_observed_mask_none_uses_all_genes(self):
         """With no mask, behaviour is identical to treating all genes as observed."""

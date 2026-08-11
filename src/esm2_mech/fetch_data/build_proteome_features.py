@@ -12,9 +12,11 @@ data/gene_universe.tsv.  Sources:
   5. BioPlex 3.0 PPI network (PPI_degree)
   6. GeneBayes s_het         (s_het) — replaces ClinGen HI/TS (80%/63% missing)
 
-Missing-data policy (from plan_experiment.md §Phase 2):
+Missing-data policy:
   - Binary <feature>_missing indicator for every numerical feature.
-  - Median imputation applied only to the .npy matrix (raw NaN kept in TSV).
+  - No imputation — raw NaN kept in both the .npy matrix and the TSV.
+    Consumers must restrict to the observed subset per feature and recompute
+    CV splits on that subset (never fabricate a value for a missing cell).
   - Family-mean-centred residuals computed for every continuous feature.
 
 Outputs:
@@ -48,6 +50,9 @@ import numpy as np
 from esm2_mech.utils.paths import (
     DATA_DIR,
     GENE_UNIVERSE,
+    PROTEOME_FEATURES_ALIGNED,
+    PROTEOME_FEATURES_TSV,
+    PROTEOME_FEATURE_COLUMNS_JSON,
     GNOMAD_LOF_FILE,
     PAXDB_FILE,
     PROTEOME_FEATURES_CACHE_DIR,
@@ -65,9 +70,9 @@ CACHE_DIR = PROTEOME_FEATURES_CACHE_DIR
 PILOT_CACHE_DIR = PROTEOME_PILOT_CACHE_DIR
 PILOT_PARALOG_CACHE = PILOT_CACHE_DIR / "paralogs"
 
-OUT_TSV = DATA_DIR / "gene_proteome_features.tsv"
-OUT_NPY = DATA_DIR / "proteome_features_aligned.npy"
-OUT_COLS = DATA_DIR / "proteome_feature_columns.json"
+OUT_TSV = PROTEOME_FEATURES_TSV
+OUT_NPY = PROTEOME_FEATURES_ALIGNED
+OUT_COLS = PROTEOME_FEATURE_COLUMNS_JSON
 
 # ---------------------------------------------------------------------------
 # Source URLs
@@ -891,7 +896,11 @@ def build_aligned_matrix(
 ) -> tuple[np.ndarray, list[str]]:
     """
     Build float32 matrix.  Numerical columns only (skip 'gene', 'pfam_family').
-    Median-impute missing values (NaN) column-wise.
+    Missing values are left as NaN — no imputation. A whole-dataset median
+    computed before any CV split leaks test-fold statistics into training,
+    and the imputed cells are indistinguishable from real measurements in the
+    matrix (the *_missing flag alone doesn't fix that). Consumers must restrict
+    to the observed subset per feature and recompute splits on that subset.
     Returns (matrix, numerical_col_names).
     """
     num_cols = [c for c in col_names if c not in ("gene", "pfam_family")]
@@ -906,20 +915,22 @@ def build_aligned_matrix(
                 except (ValueError, TypeError):
                     pass
 
-    # Median imputation column-wise. Fully-missing columns (source failed entirely)
-    # are left as NaN — imputing them would fabricate values with no basis.
-    for j in range(X.shape[1]):
-        col_data = X[:, j]
-        nan_mask = np.isnan(col_data)
-        if nan_mask.any():
-            finite = col_data[~nan_mask]
-            if finite.size == 0:
-                print(
-                    f"WARNING: column '{num_cols[j]}' has no observed values — "
-                    f"source likely failed; leaving as NaN in matrix."
-                )
-                continue
-            X[nan_mask, j] = float(np.median(finite))
+    # Report per-column coverage. Without imputation a source that failed
+    # entirely leaves an all-NaN column, which the NaN-native probes consume
+    # without complaint — the feature would silently vanish from every arm
+    # rather than erroring. Name those columns explicitly so a failed fetch is
+    # visible here, at the point it happened.
+    empty_cols = []
+    for j, col in enumerate(num_cols):
+        n_obs = int((~np.isnan(X[:, j])).sum())
+        if n_obs == 0:
+            empty_cols.append(col)
+    if empty_cols:
+        print(
+            f"WARNING: {len(empty_cols)} column(s) have NO observed values — the "
+            f"source likely failed to download. They are left as NaN and will "
+            f"contribute nothing to any probe: {', '.join(empty_cols)}"
+        )
 
     return X.astype(np.float32), num_cols
 
@@ -1030,7 +1041,7 @@ def main():
     # 5. Save TSV (raw values, NaN as empty string)
     save_tsv(rows, col_names, OUT_TSV)
 
-    # 6. Build aligned numpy matrix (median-imputed)
+    # 6. Build aligned numpy matrix (raw values, NaN preserved)
     print("=== Building aligned numpy matrix ===")
     X, num_cols = build_aligned_matrix(rows, col_names)
     save_npy(OUT_NPY, X)
@@ -1045,7 +1056,7 @@ def main():
         "n_numerical_cols": len(num_cols),
         "notes": {
             "gene_order": "Same as gene_universe.tsv row order",
-            "imputation": "Median imputation applied only to .npy; raw NaN kept in TSV",
+            "imputation": "None — raw NaN kept in both .npy and TSV; consumers must restrict to the observed subset per feature and recompute CV splits",
             "residuals": "family-mean-centred, named <feat>_familyresid",
             "missingness": "Binary <feat>_missing indicators included",
             "scaling": "NOT applied here — fit scaler on training fold during modelling",

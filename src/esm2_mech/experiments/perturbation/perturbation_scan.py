@@ -44,6 +44,8 @@ from collections import defaultdict
 from pathlib import Path
 
 from esm2_mech.utils.paths import (
+    SCAN_FEATURES_NPY,
+    SCAN_FEATURES_META_JSON,
     RESULTS_DIR as _RESULTS_DIR,
     SCAN_EMB_MUT,
     SCAN_EMB_WT,
@@ -270,9 +272,9 @@ def compute_scan_features(probes, wt_emb, mut_emb, covered_genes, ablation=False
 
 
 def save_features(gene_list, X, feature_names):
-    np.save(DATA / "scan_features.npy", X)
+    np.save(SCAN_FEATURES_NPY, X)
     meta = {"genes": gene_list.tolist(), "feature_names": feature_names}
-    with open(DATA / "scan_features_meta.json", "w") as f:
+    with open(SCAN_FEATURES_META_JSON, "w") as f:
         json.dump(meta, f, indent=2)
     print(f"Saved scan_features.npy ({X.shape})")
 

@@ -2,9 +2,12 @@
 Tests for build_proteome_features.py pure-logic functions.
 
 Covers:
-- build_aligned_matrix: median-imputes a partially-missing column, skips
-  gene/pfam_family text columns, and RAISES on a fully-missing column rather
-  than fabricating a 0.0 default (global no-fallback rule).
+- build_aligned_matrix: leaves missing cells as NaN (no imputation — a
+  whole-dataset median computed before any CV split would leak test-fold
+  statistics into training and fabricate values indistinguishable from real
+  measurements), skips gene/pfam_family text columns, and leaves a
+  fully-missing column as NaN rather than fabricating a 0.0 default (global
+  no-fallback rule).
 - get_shet: joins GeneBayes s_het estimates onto gene symbols via ensg map.
 """
 
@@ -39,10 +42,14 @@ def test_skips_text_columns():
     assert X.shape == (3, 1)
 
 
-def test_median_imputes_partial_missing():
-    # values 0.0, None, 0.4 → median of observed {0.0, 0.4} = 0.2 fills the gap
+def test_partial_missing_left_as_nan_not_imputed():
+    # Regression test: a whole-dataset median computed before any CV split
+    # leaks test-fold statistics into training, and the fabricated value is
+    # indistinguishable from a real measurement downstream. The missing cell
+    # must stay NaN — consumers are responsible for restricting to the
+    # observed subset and recomputing splits on it.
     X, _ = build_aligned_matrix(_rows([0.0, None, 0.4]), COLS)
-    assert X[1, 0] == pytest.approx(0.2)
+    assert np.isnan(X[1, 0])
     assert X[0, 0] == pytest.approx(0.0)
     assert X[2, 0] == pytest.approx(0.4)
 
@@ -182,3 +189,18 @@ def test_bioplex_low_coverage_discarded(monkeypatch, tmp_path):
     result = get_bioplex_degree(genes)
     # All None — refused to fabricate near-zero degrees from an apparent ID mismatch.
     assert all(v is None for v in result.values())
+
+
+def test_fully_missing_column_is_reported(capsys):
+    # A source that failed entirely leaves an all-NaN column. The NaN-native
+    # probes consume it silently, so the build step must name it — otherwise a
+    # failed download removes a feature from every arm with no error anywhere.
+    build_aligned_matrix(_rows([None, None, None]), COLS)
+    out = capsys.readouterr().out
+    assert "NO observed values" in out
+    assert "pLI" in out
+
+
+def test_partially_observed_column_not_reported(capsys):
+    build_aligned_matrix(_rows([0.1, None, 0.3]), COLS)
+    assert "NO observed values" not in capsys.readouterr().out

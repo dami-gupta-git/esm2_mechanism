@@ -38,7 +38,6 @@ import argparse
 import functools
 import json
 import sys
-import urllib.request
 from pathlib import Path
 
 import numpy as np
@@ -58,8 +57,10 @@ from esm2_mech.utils.paths import (
 )
 from esm2_mech.utils.constants import (
     BOOTSTRAP_N_RESAMPLES,
-    DELTA_MEAN_FEATURE, MECHANISM_CLASSES, N_FOLDS, N_SEEDS, SPLIT_FAMILY, nonlinear_key,
+    DELTA_MEAN_FEATURE, DN, GOF, HTTP_USER_AGENT, LOF, MECHANISM_CLASSES,
+    MIN_TRAIN_CLASSES, N_FOLDS, N_SEEDS, SPLIT_FAMILY, nonlinear_key,
 )
+from esm2_mech.fetch_data.uniprot_fetch import TransientFetchError, fetch_with_retries
 from esm2_mech.utils.bootstrap import (
     average_oof_over_seeds,
     bootstrap_mechanism_metrics,
@@ -68,10 +69,23 @@ from esm2_mech.utils.bootstrap import (
 
 # The matched ESM-2 probe for the ESM-3 comparison: MLP, delta_mean, family-split.
 MLP_DELTA_MEAN_FAMILY = nonlinear_key("mlp", DELTA_MEAN_FEATURE, SPLIT_FAMILY)
-from esm2_mech.utils.io import atomic_write_json, save_npy
+from esm2_mech.utils.io import (
+    atomic_write_json,
+    atomic_write_text,
+    load_json_or_discard,
+    save_npy,
+)
+from esm2_mech.utils.metrics import mean_std_n
+from esm2_mech.utils.probes import run_mlp_probe_cv
 from esm2_mech.utils.sequences import apply_missense, window_sequence
 
 AF2_DIR = CACHE_DIR / "af2_structures"
+
+# Failures that are properties of the environment, not of the structure being
+# tokenised. These must never be cached as "no structure" — the next run would
+# skip a protein AF2 may well have modelled. (KeyboardInterrupt/SystemExit derive
+# from BaseException and are already outside `except Exception`.)
+INFRASTRUCTURE_ERRORS = (MemoryError, ImportError, OSError, RecursionError)
 
 GERAS_VARIANTS = DATA / "gerasimavicius_variants.json"
 PFAM_JSON = DATA / "pfam_families.json"
@@ -80,6 +94,11 @@ PFAM_JSON = DATA / "pfam_families.json"
 # ID, so geras and merged share it and the merged run only fetches the extra proteins.
 STRUCT_TOKENS = ESM3_STRUCT_TOKENS_JSON
 AF2_API_URL = "https://alphafold.ebi.ac.uk/api/prediction/{uniprot_id}"
+
+# Inverse regularisation strength for the logistic arm. Deliberately stronger
+# regularisation than the shared logreg probe's default, since the ESM-3 delta
+# matrices are high-dimensional relative to the variant count.
+LOGREG_C = 0.1
 
 # Per-dataset output paths. Resolved by configure_dataset() from --dataset before any
 # phase runs, so geras and merged write to separate directories and never collide.
@@ -163,9 +182,10 @@ def _load_variants(variants_path: Path) -> tuple[list[dict], np.ndarray, dict]:
     with no cached sequence or no 3-class label. Returns (variants, genes, pfam_map)."""
     variants = json.loads(variants_path.read_text())
     pfam_map = json.loads(PFAM_JSON.read_text()) if PFAM_JSON.exists() else {}
-    sequences = (
-        json.loads(SEQUENCES_JSON.read_text()) if SEQUENCES_JSON.exists() else {}
-    )
+    # No empty-dict fallback: every variant needs a cached sequence, so an absent
+    # cache would drop all of them into `skipped` and return an empty set that
+    # looks like a legitimate "no variants matched" result.
+    sequences = json.loads(SEQUENCES_JSON.read_text())
     kept = []
     skipped = 0
     for variant in variants:
@@ -218,49 +238,74 @@ def phase1_structure_tokens() -> None:
     uniprot_ids = sorted({v["uniprot_id"] for v in variants if v.get("uniprot_id")})
     print(f"Unique UniProt IDs: {len(uniprot_ids)}")
 
-    if STRUCT_TOKENS.exists():
-        try:
-            cached = json.loads(STRUCT_TOKENS.read_text())
-        except json.JSONDecodeError:
-            print(
-                f"WARNING: {STRUCT_TOKENS} is corrupt (partial write?); deleting and re-fetching"
-            )
-            STRUCT_TOKENS.unlink()
-            cached = {}
-        already = set(cached.keys())
-        print(f"Resuming: {len(already)} already tokenised")
-    else:
-        cached = {}
-        already = set()
+    # The shared loader, not a local try/except: it also catches UnicodeDecodeError,
+    # which is what a truncated or zero-byte cache raises during the read, before
+    # json parsing starts. It deletes the bad file so this run re-fetches.
+    cached = load_json_or_discard(STRUCT_TOKENS) or {}
+    already = set(cached.keys())
+    print(f"Resuming: {len(already)} already tokenised")
 
-    fallback = 0
+    transient = 0
     for i, uid in enumerate(uniprot_ids):
         if uid in already:
             continue
 
-        # Download AF2 PDB
+        # Download AF2 PDB. A transient failure must NOT be written to the cache:
+        # `already` is keyed on cached.keys(), so a cached None would permanently
+        # downgrade this protein to seq-only and bias the M3 contrast.
         pdb_path = AF2_DIR / f"{uid}.pdb"
         if not pdb_path.exists():
             url = AF2_API_URL.format(uniprot_id=uid)
             try:
-                req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-                with urllib.request.urlopen(req, timeout=30) as r:
-                    meta = json.loads(r.read())
+                meta_body = fetch_with_retries(
+                    url,
+                    headers={"User-Agent": HTTP_USER_AGENT},
+                    timeout=30,
+                    label=f"{uid} AF2 metadata",
+                )
+                if meta_body is None:
+                    # HTTP 404 — AF2 has no model for this accession. Real result.
+                    print(
+                        f"  [{i+1}/{len(uniprot_ids)}] {uid}: no AF2 model (404), seq-only"
+                    )
+                    cached[uid] = None
+                    continue
+                meta = json.loads(meta_body)
                 pdb_url = meta[0]["pdbUrl"]
-                req2 = urllib.request.Request(
-                    pdb_url, headers={"User-Agent": "Mozilla/5.0"}
+                pdb_body = fetch_with_retries(
+                    pdb_url,
+                    headers={"User-Agent": HTTP_USER_AGENT},
+                    timeout=60,
+                    label=f"{uid} AF2 PDB",
                 )
-                with urllib.request.urlopen(req2, timeout=60) as r:
-                    pdb_path.write_bytes(r.read())
-            except Exception as e:
+                if pdb_body is None:
+                    raise TransientFetchError(
+                        f"{uid}: metadata listed {pdb_url} but it returned 404"
+                    )
+                # Atomic write: a partial download must never leave a file that
+                # pdb_path.exists() would treat as a complete structure next run.
+                atomic_write_text(pdb_path, pdb_body)
+            except TransientFetchError as exc:
                 print(
-                    f"  [{i+1}/{len(uniprot_ids)}] {uid}: AF2 fetch failed ({e}), fallback to seq-only"
+                    f"  [{i+1}/{len(uniprot_ids)}] {uid}: transient AF2 fetch failure ({exc}); "
+                    "not cached, will retry next run"
                 )
-                cached[uid] = None
-                fallback += 1
+                transient += 1
+                continue
+            except (json.JSONDecodeError, IndexError, KeyError, TypeError) as exc:
+                # Malformed/unexpected metadata body — most likely a truncated or
+                # error-page response, so treat it as transient rather than caching
+                # "no structure" for a protein AF2 may well have.
+                print(
+                    f"  [{i+1}/{len(uniprot_ids)}] {uid}: unusable AF2 metadata ({exc}); "
+                    "not cached, will retry next run"
+                )
+                transient += 1
                 continue
 
-        # Tokenise with ESM3StructureTokenizer
+        # Tokenise with ESM3StructureTokenizer. The PDB on disk is known complete
+        # (atomic write), so a parse failure here is a property of the structure,
+        # not of the network — it is a definitive result and safe to cache.
         try:
             chain = ProteinChain.from_pdb(str(pdb_path))
             protein = ESMProtein.from_protein_chain(chain)
@@ -271,26 +316,41 @@ def phase1_structure_tokens() -> None:
                 else None
             )
             if cached[uid] is None:
-                fallback += 1
-        except Exception as e:
+                print(
+                    f"  [{i+1}/{len(uniprot_ids)}] {uid}: no coordinates in AF2 model, seq-only"
+                )
+            else:
+                print(f"  [{i+1}/{len(uniprot_ids)}] {uid}: OK")
+        except INFRASTRUCTURE_ERRORS:
+            # Not a property of the structure — an out-of-memory, a missing
+            # dependency or a disk error says nothing about whether AF2 modelled
+            # this protein. Caching None here would permanently mark it seq-only
+            # for a reason that will not reproduce, so let it propagate.
+            raise
+        except Exception as exc:
+            # The PDB on disk is known complete (atomic write), so a parse/shape
+            # failure is a property of the structure: a definitive result, cacheable.
             print(
-                f"  [{i+1}/{len(uniprot_ids)}] {uid}: tokenisation failed ({e}), fallback"
+                f"  [{i+1}/{len(uniprot_ids)}] {uid}: tokenisation failed ({exc}), seq-only"
             )
             cached[uid] = None
-            fallback += 1
 
         if (i + 1) % 50 == 0:
             atomic_write_json(STRUCT_TOKENS, cached)
+            n_fallback = sum(1 for value in cached.values() if value is None)
             print(
-                f"  Checkpoint: {i+1}/{len(uniprot_ids)}, {fallback} fallbacks so far"
+                f"  Checkpoint: {i+1}/{len(uniprot_ids)}, {n_fallback} seq-only so far, "
+                f"{transient} transient failures pending retry"
             )
 
-        print(f"  [{i+1}/{len(uniprot_ids)}] {uid}: OK")
-
     atomic_write_json(STRUCT_TOKENS, cached)
-    n_ok = sum(1 for v in cached.values() if v is not None)
+    n_ok = sum(1 for value in cached.values() if value is not None)
+    n_fallback = sum(1 for value in cached.values() if value is None)
+    n_unresolved = len(uniprot_ids) - len(cached)
     print(
-        f"\nStructure tokens cached: {n_ok}/{len(uniprot_ids)} OK, {fallback} seq-only fallbacks"
+        f"\nStructure tokens cached: {n_ok}/{len(uniprot_ids)} OK, "
+        f"{n_fallback} seq-only fallbacks, {n_unresolved} unresolved "
+        f"({transient} transient failures this run — rerun phase 1 to retry)"
     )
     print(f"Saved → {STRUCT_TOKENS}")
 
@@ -556,124 +616,50 @@ def phase2_extract_embeddings(batch_size: int = 4) -> None:
 # ── Phase 3: probes and decision rules ───────────────────────────────────────
 
 
-def _run_mlp(
+def _run_logreg_folds(
     X: np.ndarray,
     y: np.ndarray,
     splits: list,
-    n_classes: int,
     seed: int,
-    genes: np.ndarray = None,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """
-    PyTorch MLP (256→64) with class-weighted cross-entropy and early stopping.
-    Matches result_7's run_mlp_probe exactly.
-    Returns (all_pred, all_true, all_proba, all_genes, all_rows) concatenated
-    across folds — all_genes/all_rows (test-fold gene ids and original row
-    indices) are for dependency-aware inference (cluster bootstrap); empty
-    arrays when `genes` is None.
-    """
-    import torch
-    import torch.nn as nn
-    from torch.utils.data import DataLoader, TensorDataset
+) -> dict | None:
+    """Logistic-regression CV over `splits`, returning per-fold-averaged macro-F1.
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    all_pred, all_true, all_proba, all_genes, all_rows = [], [], [], [], []
+    Kept separate from the shared run_logreg_cv because this arm is deliberately
+    regularised at C=LOGREG_C rather than the shared probe's default.
+    A fold is skipped only when its train split has fewer than MIN_TRAIN_CLASSES
+    classes (a classifier needs two to fit) — the same condition run_mlp_probe_cv
+    applies, so both arms of this experiment are averaged over the same fold set.
+    Returns None when no fold was scorable.
+    """
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.preprocessing import StandardScaler
+    from sklearn.metrics import f1_score
 
+    fold_f1s = []
     for fold_i, (tr, te) in enumerate(splits):
-        X_tr, X_te = X[tr].astype(np.float32), X[te].astype(np.float32)
-        y_tr, y_te = y[tr], y[te]
-        if len(set(y_tr)) < 3:
+        if len(set(y[tr].tolist())) < MIN_TRAIN_CLASSES:
+            print(f"    [logreg] Fold {fold_i+1}: skipped (< {MIN_TRAIN_CLASSES} classes in train)")
             continue
-
-        # 15% gene-disjoint validation split — matches run_mlp_probe in mlp.py
-        rng = np.random.RandomState(seed + fold_i)
-        if genes is not None:
-            tr_genes = genes[tr]
-            unique_tr_genes = np.array(sorted(set(tr_genes)))
-            rng.shuffle(unique_tr_genes)
-            n_val_genes = max(1, int(0.15 * len(unique_tr_genes)))
-            val_gene_set = set(unique_tr_genes[:n_val_genes])
-            val_mask = np.array([g in val_gene_set for g in tr_genes])
-        else:
-            idx = np.arange(len(y_tr))
-            rng.shuffle(idx)
-            n_val = max(1, int(0.15 * len(idx)))
-            val_mask = np.zeros(len(y_tr), dtype=bool)
-            val_mask[idx[:n_val]] = True
-        fit_mask = ~val_mask
-        X_fit, y_fit = X_tr[fit_mask], y_tr[fit_mask]
-        X_val, y_val = X_tr[val_mask], y_tr[val_mask]
-        if len(X_fit) < 10 or len(X_val) < 5:
-            continue
-
-        mu = X_fit.mean(0)
-        std = X_fit.std(0) + 1e-8
-        X_fit = (X_fit - mu) / std
-        X_val = (X_val - mu) / std
-        X_te_n = (X_te - mu) / std
-
-        counts = np.bincount(y_tr, minlength=n_classes).astype(np.float32)
-        cw = torch.tensor(1.0 / (counts + 1e-8)).to(device)
-
-        layers = []
-        prev = X_fit.shape[1]
-        for h in (256, 64):
-            layers += [nn.Linear(prev, h), nn.ReLU(), nn.Dropout(0.3)]
-            prev = h
-        layers.append(nn.Linear(prev, n_classes))
-        mlp = nn.Sequential(*layers).to(device)
-        opt = torch.optim.Adam(mlp.parameters(), lr=1e-3, weight_decay=1e-3)
-        crit = nn.CrossEntropyLoss(weight=cw)
-
-        ds = TensorDataset(torch.tensor(X_fit), torch.tensor(y_fit, dtype=torch.long))
-        loader = DataLoader(ds, batch_size=256, shuffle=True)
-
-        best_val, patience_cnt, best_state = float("inf"), 0, None
-        for epoch in range(100):
-            mlp.train()
-            for xb, yb in loader:
-                opt.zero_grad()
-                crit(mlp(xb.to(device)), yb.to(device)).backward()
-                opt.step()
-            mlp.eval()
-            with torch.no_grad():
-                vl = crit(
-                    mlp(torch.tensor(X_val).to(device)),
-                    torch.tensor(y_val, dtype=torch.long).to(device),
-                ).item()
-            if vl < best_val - 1e-4:
-                best_val = vl
-                patience_cnt = 0
-                best_state = {k: v.clone() for k, v in mlp.state_dict().items()}
-            else:
-                patience_cnt += 1
-                if patience_cnt >= 10:
-                    break
-
-        if best_state:
-            mlp.load_state_dict(best_state)
-        mlp.eval()
-        with torch.no_grad():
-            proba = (
-                torch.softmax(mlp(torch.tensor(X_te_n).to(device)), dim=1).cpu().numpy()
-            )
-        pred = proba.argmax(axis=1)
-        all_pred.append(pred)
-        all_true.append(y_te)
-        all_proba.append(proba)
-        if genes is not None:
-            all_genes.append(genes[te])
-            all_rows.append(np.asarray(te))
-
-    if not all_pred:
-        return np.array([]), np.array([]), np.array([]), np.array([]), np.array([])
-    return (
-        np.concatenate(all_pred),
-        np.concatenate(all_true),
-        np.vstack(all_proba),
-        np.concatenate(all_genes) if all_genes else np.array([]),
-        np.concatenate(all_rows) if all_rows else np.array([]),
-    )
+        scaler = StandardScaler()
+        X_tr = scaler.fit_transform(X[tr])
+        X_te = scaler.transform(X[te])
+        clf = LogisticRegression(
+            max_iter=1000,
+            random_state=seed,
+            class_weight="balanced",
+            C=LOGREG_C,
+        )
+        clf.fit(X_tr, y[tr])
+        fold_f1s.append(
+            float(f1_score(y[te], clf.predict(X_te), average="macro", zero_division=0))
+        )
+    if not fold_f1s:
+        return None
+    return {
+        "macro_f1_mean": float(np.mean(fold_f1s)),
+        "macro_f1_std": float(np.std(fold_f1s)),
+        "n_folds": len(fold_f1s),
+    }
 
 
 def phase3_probes(
@@ -682,9 +668,6 @@ def phase3_probes(
     n_boot: int = BOOTSTRAP_N_RESAMPLES,
 ) -> None:
     from esm2_mech.utils.splits import gene_split_cv, family_split_cv
-    from sklearn.linear_model import LogisticRegression
-    from sklearn.preprocessing import StandardScaler
-    from sklearn.metrics import f1_score, roc_auc_score
 
     OUT.mkdir(parents=True, exist_ok=True)
 
@@ -692,16 +675,17 @@ def phase3_probes(
     y_labels = np.array([v["mech3"] for v in variants])
     label_set = MECHANISM_CLASSES
     y_all = np.array([label_set.index(label) for label in y_labels])
-    n_classes = len(label_set)
 
     # Load valid indices saved by phase 2 for exact label alignment
     if EMB_VALID_IDX.exists():
         valid_idx = np.load(str(EMB_VALID_IDX))
         y = y_all[valid_idx]
+        labels_valid = y_labels[valid_idx]
         genes_valid = genes[valid_idx]
         print(f"Valid indices loaded: {len(valid_idx)}/{len(y_all)} variants embedded")
     else:
         y = y_all
+        labels_valid = y_labels
         genes_valid = genes
         print("No valid index file found — assuming all variants embedded")
 
@@ -731,6 +715,7 @@ def phase3_probes(
             )
         print(f"\n=== Condition: {cond}  shape={delta.shape} ===")
         y_cond = y
+        labels_cond = labels_valid
         genes_cond = genes_valid
 
         cond_results: dict = {"gene_split": {}, "family_split": {}}
@@ -757,74 +742,49 @@ def phase3_probes(
                     f"({len(splits)} folds)..."
                 )
 
-                # PyTorch MLP — matches result_7
-                pred, true, proba, oof_genes, oof_rows = _run_mlp(
-                    delta, y_cond, splits, n_classes, seed, genes=genes_cond
+                # The shared runner behind the ESM-2 family-split floor this arm is
+                # compared against (M1/M2/M3). Using it — rather than a local copy —
+                # is what keeps the fold-skip condition, the standardization and the
+                # per-fold metric aggregation identical across the two arms.
+                agg, oof = run_mlp_probe_cv(
+                    delta,
+                    labels_cond,
+                    splits,
+                    seed=seed,
+                    genes=genes_cond,
+                    label=f"{cond}_{cv_name}_seed{seed}",
+                    return_oof=True,
                 )
-                if len(pred) == 0:
+                if not agg:
                     continue
-                if compute_ci:
-                    seed_oof_list.append({
-                        "y_true": np.array([label_set[i] for i in true]),
-                        "proba": proba,
-                        "genes": oof_genes,
-                        "row_ids": oof_rows,
-                    })
-                mlp_f1s.append(f1_score(true, pred, average="macro"))
-                mlp_gof.append(
-                    roc_auc_score(
-                        (true == label_set.index("GOF")).astype(int),
-                        proba[:, label_set.index("GOF")],
-                    )
-                )
-                mlp_dn.append(
-                    roc_auc_score(
-                        (true == label_set.index("DN")).astype(int),
-                        proba[:, label_set.index("DN")],
-                    )
-                )
-                mlp_lof.append(
-                    roc_auc_score(
-                        (true == label_set.index("LOF")).astype(int),
-                        proba[:, label_set.index("LOF")],
-                    )
-                )
+                if compute_ci and oof is not None:
+                    seed_oof_list.append(oof)
+                mlp_f1s.append(agg["macro_f1_mean"])
+                mlp_gof.append(agg.get(f"auroc_{GOF}_mean", float("nan")))
+                mlp_dn.append(agg.get(f"auroc_{DN}_mean", float("nan")))
+                mlp_lof.append(agg.get(f"auroc_{LOF}_mean", float("nan")))
 
-                # Logistic regression
-                scaler = StandardScaler()
-                lr_preds, lr_true = [], []
-                for tr, te in splits:
-                    X_tr = scaler.fit_transform(delta[tr])
-                    X_te = scaler.transform(delta[te])
-                    clf = LogisticRegression(
-                        max_iter=1000,
-                        random_state=seed,
-                        class_weight="balanced",
-                        C=0.1,
-                    )
-                    clf.fit(X_tr, y_cond[tr])
-                    lr_preds.append(clf.predict(X_te))
-                    lr_true.append(y_cond[te])
-                lr_f1s.append(
-                    f1_score(
-                        np.concatenate(lr_true),
-                        np.concatenate(lr_preds),
-                        average="macro",
-                    )
-                )
+                # Logistic regression, over the same fold set.
+                lr_agg = _run_logreg_folds(delta, y_cond, splits, seed)
+                if lr_agg is not None:
+                    lr_f1s.append(lr_agg["macro_f1_mean"])
 
             if not mlp_f1s:
                 continue
 
+            # NaN-safe across seeds: a class absent from a whole seed's test folds
+            # leaves that seed's AUROC undefined, which must not poison the mean.
+            f1_mean, f1_std, n_seeds_scored = mean_std_n(mlp_f1s)
+            lr_mean, lr_std, _ = mean_std_n(lr_f1s)
             r = {
-                "mlp_f1_mean": float(np.mean(mlp_f1s)),
-                "mlp_f1_std": float(np.std(mlp_f1s)),
-                "mlp_gof_auroc_mean": float(np.mean(mlp_gof)),
-                "mlp_dn_auroc_mean": float(np.mean(mlp_dn)),
-                "mlp_lof_auroc_mean": float(np.mean(mlp_lof)),
-                "lr_f1_mean": float(np.mean(lr_f1s)),
-                "lr_f1_std": float(np.std(lr_f1s)),
-                "n_seeds": len(mlp_f1s),
+                "mlp_f1_mean": f1_mean,
+                "mlp_f1_std": f1_std,
+                "mlp_gof_auroc_mean": mean_std_n(mlp_gof)[0],
+                "mlp_dn_auroc_mean": mean_std_n(mlp_dn)[0],
+                "mlp_lof_auroc_mean": mean_std_n(mlp_lof)[0],
+                "lr_f1_mean": lr_mean,
+                "lr_f1_std": lr_std,
+                "n_seeds": n_seeds_scored,
             }
             if compute_ci:
                 # Each seed reshuffles the CV fold assignment, so its OOF cannot be

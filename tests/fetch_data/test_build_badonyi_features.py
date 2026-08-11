@@ -82,11 +82,13 @@ def test_singleton_flag_matches_nan_residual_condition():
     assert (nan_rows == singleton).all()
 
 
-def test_observed_mask_excludes_imputed_from_family_mean():
-    # An imputed gene (observed_mask False) must not contaminate the family mean,
-    # and a family with only one OBSERVED member must yield NaN residuals.
-    df = _df([("A", 0.2), ("B_imputed", 99.0)])
-    pfam = {"A": "F1", "B_imputed": "F1"}
+def test_observed_mask_excludes_unobserved_from_family_mean():
+    # An unobserved gene (observed_mask False, raw value NaN — the real
+    # pipeline calls this function BEFORE any imputation) must not contaminate
+    # the family mean, and a family with only one OBSERVED member must yield
+    # NaN residuals.
+    df = _df([("A", 0.2), ("B_missing", np.nan)])
+    pfam = {"A": "F1", "B_missing": "F1"}
     observed = pd.Series([True, False], index=df.index)
     out = compute_family_residuals(df, pfam, FEATURE_COLS, observed_mask=observed)
     # Only one observed member (A) → family has <= 1 observed → all NaN residuals.
@@ -96,17 +98,24 @@ def test_observed_mask_excludes_imputed_from_family_mean():
 
 
 def test_observed_mask_two_observed_uses_observed_mean_only():
-    # Two observed members + one imputed: residuals exist and the mean is over
-    # the two observed values only (the imputed 99.0 is excluded).
-    df = _df([("A", 0.2), ("B", 0.4), ("C_imputed", 99.0)])
-    pfam = {"A": "F1", "B": "F1", "C_imputed": "F1"}
+    # Two observed members + one unobserved: residuals exist for the observed
+    # pair, computed from their mean only (the unobserved member is excluded
+    # both from the mean and from getting a residual of its own).
+    df = _df([("A", 0.2), ("B", 0.4), ("C_missing", np.nan)])
+    pfam = {"A": "F1", "B": "F1", "C_missing": "F1"}
     observed = pd.Series([True, True, False], index=df.index)
     out = compute_family_residuals(df, pfam, FEATURE_COLS, observed_mask=observed).set_index("gene")
     observed_mean = (0.2 + 0.4) / 2
     assert out.loc["A", "pDN_familyresid"] == pytest.approx(0.2 - observed_mean)
     assert out.loc["B", "pDN_familyresid"] == pytest.approx(0.4 - observed_mean)
-    # The imputed gene gets a residual relative to the observed mean, but it is
-    # NOT itself observed; the function assigns residuals to the whole family.
-    assert out.loc["C_imputed", "pDN_familyresid"] == pytest.approx(99.0 - observed_mean)
-    # All three are in a family with >= 2 observed members → not singletons.
-    assert (out["is_singleton_family_badonyi"] == 0).all()
+    # Regression test: the flag and the value it describes must agree. C is
+    # unobserved (its own raw score is NaN) so it must get NaN residual AND
+    # _familyresid_missing = 1 — NOT a residual computed from a value it
+    # doesn't have, with a flag claiming it isn't missing.
+    assert np.isnan(out.loc["C_missing", "pDN_familyresid"])
+    assert out.loc["C_missing", "pDN_familyresid_missing"] == 1
+    # A and B are in a family with >= 2 observed members → not singletons.
+    # C is unobserved itself, so — per the singleton condition, which counts
+    # OBSERVED family members — it is standalone with 0 observed peers too.
+    assert out.loc["A", "is_singleton_family_badonyi"] == 0
+    assert out.loc["B", "is_singleton_family_badonyi"] == 0

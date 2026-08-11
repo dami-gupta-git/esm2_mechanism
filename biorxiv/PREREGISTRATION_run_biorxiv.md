@@ -71,11 +71,33 @@ run and multiplicity control is applied across it.
 | C3 | Pathogenicity clears AUROC 0.85 family-split (positive control) | CI excludes 0.85 |
 | C4 | Conservation alone matches or beats the embedding delta for pathogenicity | paired bootstrap (K1/K2) |
 | C5 | ESM-3 scale lifts the mechanism floor by at least the pre-registered 0.05 (M2: seq > 0.430) | paired bootstrap |
-| C6 | The mechanism null is stable across homology partitions | family / clan / MMseqs2 robustness panel |
+| C6 | The mechanism null holds under a second, coarser homology partition | family-split vs. clan-split on a matched gene subset, each against its own measured floor |
 
-C1 and C3 are the load-bearing pair (the dissociation), C2 is the leakage account, and C6 makes C1
-partition-independent. Those four are the paper. C4 and C5 are the characterisation payoff; if the
-confirmatory set must be trimmed, trim from C4/C5, never C1–C3.
+C1 and C3 are the load-bearing pair (the dissociation), C2 is the leakage account, and C6 shows C1
+does not depend on the Pfam family definition specifically. Those four are the paper. C4 and C5 are
+the characterisation payoff; if the confirmatory set must be trimmed, trim from C4/C5, never C1–C3.
+
+**Scope of C6 (amended 2026-08-11).** C6 was originally instrumented as a three-partition panel
+(Pfam family / Pfam clan / MMseqs2 sequence-identity clusters) testing stability *across* a
+strictness gradient. It is reduced to a two-partition comparison, family vs. clan, and to a
+non-inferiority statement rather than a gradient. Reasons, recorded before the final numbers are
+read:
+
+- The MMseqs2 arm's clustering was never validated. At 20% identity it produced 1,215 clusters from
+  ~1,935 genes — a partition finer than Pfam family rather than coarser, which is not what a 20%
+  identity threshold should yield and points to a coverage-threshold misconfiguration. An arm whose
+  partition is not established cannot support a claim about partitions.
+- A three-point ordering cannot establish a gradient in any case: three noisy values fall in a
+  specified monotone order with probability 1/6 by chance alone. The gradient reading was never
+  identifiable from this design, independent of the MMseqs2 problem.
+- The leakage fraction is dropped as a C6 quantity. It is a ratio of three estimated quantities with
+  a small denominator, and its intervals spanned zero in two of three arms at smoke scale. It
+  remains reported under C2 on the family-split arm only.
+
+C6 therefore tests one thing: whether the mechanism null survives replacing the Pfam family
+partition with the coarser Pfam clan partition, holding the gene set and the floor fixed. No claim
+about a strictness gradient, and no claim that leakage grows with partition coarseness, is made
+anywhere in the paper.
 
 **Benjamini-Hochberg FDR is applied across these six claims only.** Raw and adjusted values are
 both reported so a reader can see the correction rather than only its result.
@@ -100,7 +122,6 @@ The resampling unit matches the unit the split holds out.
 | Gene-split | genes |
 | Family-split | **families** |
 | Clan-split | clans |
-| MMseqs2 cluster-split | clusters |
 | Gene-split minus family-split gap | **families** (the coarser of the two arms) |
 
 The split-gap case resamples families because its family-split arm's variance is only correct
@@ -169,8 +190,16 @@ rather than an expectation:
   license the dissociation, and the whole paper weakens.
 - **C5 restated** as *not distinguishable* if M2's paired CI spans zero, which the +0.008 margin
   makes plausible. The scale claim becomes "consistent in direction, not established".
-- **C6 overturned** if the mechanism null does not hold under clan or MMseqs2 partitions — the
-  result would be an artifact of the Pfam family definition.
+- **C6 overturned** if the clan-split macro-F1, measured on the gene subset both partitions cover
+  and scored against the clan arm's own measured chance floor, sits materially below the family-split
+  score on that same subset — the mechanism null would then be partly an artifact of the Pfam family
+  definition. "Materially" is fixed in advance at 0.05 macro-F1, the same margin the ESM-3 M2 gate
+  uses, so the two are read on one scale.
+- **C6 is a non-inferiority claim and is reported as such.** Overlapping intervals are not evidence
+  of equality. C6 is affirmed only if the paired family-minus-clan difference has an upper CI bound
+  below 0.05; if the interval is wider than that, C6 is recorded as **not adjudicated** (the panel
+  was underpowered to separate the arms), not as confirmed. Recording it as "no difference found" on
+  the strength of an overlap would be the error R7.1's underpowered clause exists to prevent.
 
 run_biorxiv changes error bars, not point estimates. Any point estimate that moves materially from run6
 is either a bug introduced by the wiring or a finding that needs explaining; `scripts/compare_runs.py`

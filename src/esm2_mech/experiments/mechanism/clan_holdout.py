@@ -36,9 +36,19 @@ from sklearn.preprocessing import LabelEncoder
 from sklearn.neighbors import KNeighborsClassifier
 import functools
 
+from esm2_mech.utils.bootstrap import bootstrap_mechanism_metrics
+from esm2_mech.utils.constants import BOOTSTRAP_N_RESAMPLES, MECHANISM_CLASSES
 from esm2_mech.utils.io import load_variants_and_delta
-from esm2_mech.utils.metrics import majority_baseline_f1
-from esm2_mech.utils.paths import DATA_DIR, EMB_MUT_MEAN, EMB_WT_MEAN, RESULTS_DIR, VALID_VARIANTS_JSON
+from esm2_mech.utils.metrics import align_proba, majority_baseline_f1
+from esm2_mech.utils.paths import (
+    CONTRASTIVE_AGGREGATE_JSON,
+    DATA_DIR,
+    EMB_MUT_MEAN,
+    EMB_WT_MEAN,
+    NONLINEAR_RESULTS_SEED_JSON,
+    RESULTS_DIR,
+    VALID_VARIANTS_JSON,
+)
 
 print = functools.partial(print, flush=True)
 
@@ -100,6 +110,10 @@ def train_mlp(X_train, y_train, seed=42):
 
 
 def evaluate_probe(clf, X_test, y_test, le):
+    """Returns (results, proba_aligned). `proba_aligned` has one column per
+    MECHANISM_CLASSES entry (align_proba backfills a class absent from this
+    clan's train fold as an all-zero column), for the cross-clan OOF CI.
+    """
     pred = clf.predict(X_test)
     proba = clf.predict_proba(X_test)
     classes = list(clf.classes_)
@@ -118,7 +132,42 @@ def evaluate_probe(clf, X_test, y_test, le):
             pi = classes.index(ci)
             if proba[:, pi].std() > 0:
                 results[f"auroc_{cls}"] = float(roc_auc_score(y_bin, proba[:, pi]))
-    return results
+
+    clf_str_classes = np.array(le.inverse_transform(clf.classes_))
+    proba_aligned = align_proba(proba, clf_str_classes, MECHANISM_CLASSES)
+    return results, proba_aligned
+
+
+def _read_live_family_split_refs():
+    """Live measured family-split reference floors, replacing the old
+    result_7/result_9 hardcoded literals (0.352, 0.387) that this file
+    used to compare clan-holdout against.
+
+    Read from the same result files the rest of the project cites — mlp.py's
+    nonlinear MLP delta_mean family-split arm (NONLINEAR_RESULTS_SEED_JSON) and
+    contrastive_mechanism.py's pooled contrastive-kNN family-split arm
+    (CONTRASTIVE_AGGREGATE_JSON) — so this can never silently diverge from the
+    numbers the rest of the paper cites. Either value is None if its source
+    file has not been produced yet (no fallback/default substituted).
+    """
+    mlp_f1 = None
+    mlp_path = str(NONLINEAR_RESULTS_SEED_JSON).format(seed=0)
+    if os.path.exists(mlp_path):
+        with open(mlp_path) as f:
+            mlp_results = json.load(f)
+        mlp_f1 = mlp_results.get("mlp_delta_mean_family", {}).get("macro_f1_mean")
+
+    contrastive_f1 = None
+    if CONTRASTIVE_AGGREGATE_JSON.exists():
+        with open(CONTRASTIVE_AGGREGATE_JSON) as f:
+            contrastive_results = json.load(f)
+        contrastive_f1 = (
+            contrastive_results.get("across_seed", {})
+            .get("family_split", {})
+            .get("contrastive_knn", {})
+            .get("macro_f1_seed_mean")
+        )
+    return mlp_f1, contrastive_f1
 
 
 # ---------------------------------------------------------------------------
@@ -126,10 +175,15 @@ def evaluate_probe(clf, X_test, y_test, le):
 # ---------------------------------------------------------------------------
 
 
-def run_clan_holdout(delta, labels, genes, gene_clan, clan_names, le, seed=42):
+def run_clan_holdout(delta, labels, genes, gene_clan, clan_names, le, seed=42, n_boot=BOOTSTRAP_N_RESAMPLES):
     """
     Leave-one-clan-out: for each qualifying clan, train on everything else,
     test on the held-out clan.
+
+    Also collects out-of-fold (y_true, proba, clan) across every qualifying
+    clan and attaches a clan-resampled cluster-bootstrap CI (R7.3: the
+    resampling unit is the clan, the unit this split actually holds out — not
+    genes and not families) to the returned aggregate under "ci".
     """
     y = le.transform(labels)
     all_classes = list(le.classes_)
@@ -170,6 +224,7 @@ def run_clan_holdout(delta, labels, genes, gene_clan, clan_names, le, seed=42):
         )
 
     clan_results = []
+    oof_y, oof_proba, oof_clan, oof_rows = [], [], [], []
 
     for q in qualifying:
         clan = q["clan"]
@@ -201,7 +256,13 @@ def run_clan_holdout(delta, labels, genes, gene_clan, clan_names, le, seed=42):
         # MLP probe
         try:
             clf = train_mlp(X_tr, y_tr, seed=seed)
-            mlp_res = evaluate_probe(clf, X_te, y_te, le)
+            mlp_res, proba_aligned = evaluate_probe(clf, X_te, y_te, le)
+            # Held-out-clan OOF for the cross-clan CI: this clan's own id is the
+            # resampling unit for every row it contributed (R7.3).
+            oof_y.append(labels[test_idx])
+            oof_proba.append(proba_aligned)
+            oof_clan.append(np.full(len(test_idx), clan, dtype=object))
+            oof_rows.append(test_idx)
         except Exception as e:
             print(f"    MLP failed: {e}")
             mlp_res = {"error": str(e)}
@@ -242,11 +303,34 @@ def run_clan_holdout(delta, labels, genes, gene_clan, clan_names, le, seed=42):
             }
         )
 
-    return clan_results, qualifying
+    oof = None
+    ci = None
+    if oof_y:
+        oof = {
+            "y_true": np.concatenate(oof_y),
+            "proba": np.concatenate(oof_proba),
+            "clan": np.concatenate(oof_clan),
+            "row_ids": np.concatenate(oof_rows),
+        }
+        ci = bootstrap_mechanism_metrics(
+            oof["y_true"], oof["proba"], oof["clan"], n_resamples=n_boot, seed=seed
+        )
+        print(
+            f"\n  Clan-resampled CI (n_clusters={len(set(oof['clan'].tolist()))}, "
+            f"n_resamples={n_boot}): "
+            f"macro_f1 point={ci['macro_f1']['point']} "
+            f"[{ci['macro_f1']['ci_low']}, {ci['macro_f1']['ci_high']}]"
+        )
+
+    return clan_results, qualifying, ci, oof
 
 
-def aggregate(clan_results):
-    """Weighted and unweighted aggregates across qualifying clans."""
+def aggregate(clan_results, ci=None):
+    """Weighted and unweighted aggregates across qualifying clans.
+
+    `ci` is the clan-resampled cluster-bootstrap CI from run_clan_holdout
+    (or None if no clan contributed OOF), attached unchanged under "ci".
+    """
     mlp_f1s = [
         r["mlp"].get("macro_f1", float("nan"))
         for r in clan_results
@@ -283,6 +367,7 @@ def aggregate(clan_results):
             # already NaN-filtered, but siblings must use the same guard).
             cls: float(np.nanmean(vs)) for cls, vs in per_class.items() if vs
         },
+        "ci": ci,
     }
 
 
@@ -293,6 +378,7 @@ def main():
     )
     parser.add_argument("--out_dir", default=str(RESULTS_DIR))
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--n_boot", type=int, default=BOOTSTRAP_N_RESAMPLES)
     args = parser.parse_args()
 
     np.random.seed(args.seed)
@@ -314,11 +400,11 @@ def main():
     print(f"Classes: {list(le.classes_)}")
 
     print("\n=== Clan-level holdout evaluation ===")
-    clan_results, qualifying = run_clan_holdout(
-        delta, labels, genes, gene_clan, clan_names, le, seed=args.seed
+    clan_results, qualifying, ci, _oof = run_clan_holdout(
+        delta, labels, genes, gene_clan, clan_names, le, seed=args.seed, n_boot=args.n_boot
     )
 
-    agg = aggregate(clan_results)
+    agg = aggregate(clan_results, ci=ci)
 
     print("\n" + "=" * 60)
     print("AGGREGATE RESULTS")
@@ -335,14 +421,21 @@ def main():
     )
     print(f"  Per-class AUROC: {agg['per_class_auroc_mean']}")
 
-    # Reference numbers from prior results
-    refs = {
-        "Family-split MLP floor (result_7)": 0.352,
-        "Family-split contrastive proj (result_9)": 0.387,
-    }
+    # Live measured family-split reference floors (never hardcoded — see
+    # _read_live_family_split_refs docstring). Either can be None if its
+    # source file has not been produced yet.
+    family_split_mlp_f1, family_split_contrastive_f1 = _read_live_family_split_refs()
+    refs = {}
+    if family_split_mlp_f1 is not None:
+        refs["Family-split MLP floor (live measured)"] = family_split_mlp_f1
+    if family_split_contrastive_f1 is not None:
+        refs["Family-split contrastive proj (live measured)"] = family_split_contrastive_f1
+
     print(
         f"\nVs. cross-family baselines (clan-holdout MLP F1 = {agg['mlp_macro_f1_mean']:.3f}):"
     )
+    if not refs:
+        print("  (no live family-split reference files found — comparison skipped)")
     for name, val in refs.items():
         delta_f1 = agg["mlp_macro_f1_mean"] - val
         symbol = "✓" if delta_f1 > 0.02 else ("~" if delta_f1 > -0.02 else "✗")
@@ -351,20 +444,29 @@ def main():
     print("\nInterpretation:")
     f1 = agg["mlp_macro_f1_mean"]
     maj = agg["majority_macro_f1_mean"]
-    ref = 0.387
-    if f1 > ref + 0.03:
+    if family_split_contrastive_f1 is None:
+        print("  (no live family-split contrastive reference — qualitative read only)")
+        print(f"  Clan-holdout MLP F1 = {f1:.3f}, majority baseline = {maj:.3f}")
+    elif f1 > family_split_contrastive_f1 + 0.03:
         print("  → Clan-holdout F1 exceeds cross-family baseline.")
         print("    ESM-2 delta signal generalises to unseen protein clans.")
         print("    Mechanism encoding is not purely clan-level memorisation.")
     elif f1 > maj + 0.05:
         print(f"  → Clan-holdout F1 ({f1:.3f}) is above majority ({maj:.3f})")
-        print(f"    but below cross-family baseline ({ref:.3f}).")
+        print(f"    but below cross-family baseline ({family_split_contrastive_f1:.3f}).")
         print("    Partial generalisation: some real signal, some memorisation.")
     else:
         print(f"  → Clan-holdout F1 ({f1:.3f}) ≈ majority baseline ({maj:.3f}).")
         print("    Performance collapses on unseen clans.")
         print("    All apparent mechanism signal is clan/family memorisation.")
         print("    This is the definitive negative result.")
+
+    if ci is not None:
+        print(
+            f"\nClan-resampled CI: macro_f1 = {ci['macro_f1']['point']:.3f} "
+            f"[{ci['macro_f1']['ci_low']}, {ci['macro_f1']['ci_high']}] "
+            f"(n_clusters={ci['macro_f1']['n_clusters']})"
+        )
 
     results = {
         "description": (
@@ -373,11 +475,12 @@ def main():
             "to completely unseen protein clans (lookup vs real signal)."
         ),
         "seed": args.seed,
+        "n_boot": args.n_boot,
         "aggregate": agg,
         "per_clan": clan_results,
         "references": {
-            "family_split_mlp_f1_result7": 0.352,
-            "family_split_contrastive_f1_result9": 0.387,
+            "family_split_mlp_f1": family_split_mlp_f1,
+            "family_split_contrastive_f1": family_split_contrastive_f1,
         },
     }
 

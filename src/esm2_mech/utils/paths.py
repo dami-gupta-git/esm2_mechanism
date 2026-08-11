@@ -33,11 +33,6 @@ LEAKAGE_FRACTION_JSON = RESULTS_DIR / "leakage_fraction.json"
 # Per-seed probe outputs, written as each seed completes (resume + progress).
 # Format with .format(seed=N).
 PATHOGENICITY_CONTROL_SEED_JSON = str(RESULTS_DIR / "pathogenicity_control_seed{seed}.json")
-# Seed-0 gene-split/family-split OOF cache (row_ids, y_true, pred, genes) for the
-# PERMUTATION_FEATURES headline features, written by mechanism_delta_family_split.run
-# so leakage_fraction.py can bootstrap the leakage-fraction RATIO jointly (shared
-# resample across both arms) instead of combining two separately-computed CIs.
-MECHANISM_OOF_CACHE_SEED_JSON = str(RESULTS_DIR / "mechanism_oof_cache_seed{seed}.json")
 WITHIN_FAMILY_MECHANISM_JSON = RESULTS_DIR / "within_family_mechanism.json"
 # Per-seed ESM-2 nonlinear-probe results (MLP/GBM/RF/kNN on delta features). Format
 # with .format(seed=N). The ESM-3 experiment reads mlp_delta_mean_family from these to
@@ -49,6 +44,22 @@ NONLINEAR_RESULTS_SEED_JSON = str(RESULTS_DIR / "nonlinear_results_seed{seed}.js
 # contrastive_mechanism.main pools them into CONTRASTIVE_AGGREGATE_JSON.
 CONTRASTIVE_RESULTS_DIR = RESULTS_DIR
 CONTRASTIVE_AGGREGATE_JSON = RESULTS_DIR / "contrastive_aggregate.json"
+
+# ── Homology-partition robustness panel (Task 2b) ─────────────────────────────
+# Consolidates leave-one-clan-out and MMseqs2-cluster-holdout as first-class
+# run_biorxiv deliverables alongside the default Pfam-family split. Lives in its
+# own subdir so the panel JSON never clobbers the per-module seed files.
+HOMOLOGY_PARTITION_PANEL_DIR = RESULTS_DIR / "homology_partition_panel"
+HOMOLOGY_PARTITION_PANEL_JSON = HOMOLOGY_PARTITION_PANEL_DIR / "panel.json"
+MMSEQS_CLUSTERS_JSON = DATA_DIR / "mmseqs_clusters.json"
+# PFAM_CLANS_TSV_GZ is defined below, once DOWNLOADS_DIR exists.
+
+# ── V1 multi-seed replication (multiseed_v1.py) ───────────────────────────────
+V1_MULTISEED_DIR = RESULTS_DIR / "v1_multiseed"
+# Seed-0 numbers are sourced from a frozen prior baseline run, not recomputed
+# under the current RUN_NAME — hence the literal run directory rather than a
+# RESULTS_DIR-derived path.
+V1_MULTISEED_SEED0_DIR = PROJECT_ROOT / "results" / "20260524_baseline_run" / "run_0"
 
 # ── Single-source robustness check (Gerasimavicius-only mechanism re-run) ─────
 # Re-runs the gene/family-split mechanism probe on the single-source subset to
@@ -74,12 +85,36 @@ EMB_DIR = DATA_DIR / "embeddings" / ESM2_MODEL
 ESM3_EMB_DIR = DATA_DIR / "embeddings" / ESM3_MODEL
 
 # ── Top-level data files written by the fetch pipeline ───────────────────────
+# GENE_UNIVERSE is the CANONICAL row order for every aligned feature matrix
+# below — build_gene_universe.py filters GENE_LIST_TSV to Pfam-annotated genes,
+# so the two files have different lengths AND different orderings. Anything that
+# indexes an *_FEATURES_ALIGNED matrix must key off GENE_UNIVERSE; GENE_LIST_TSV
+# is the unfiltered gene/mechanism table and is a row index for nothing.
 GENE_UNIVERSE = DATA_DIR / GENE_UNIVERSE_FILENAME
 VARIANTS_JSON = DATA_DIR / "variants.json"
 GENE_LIST_TSV = DATA_DIR / "gene_list.tsv"
 PFAM_JSON = DATA_DIR / "pfam_families.json"
 ALPHAMISSENSE_SCORES_JSON = DATA_DIR / "alphamissense_scores_full.json"
 VALID_VARIANTS_JSON = DATA_DIR / "valid_variants.json"
+
+# ── Gene-level feature matrices (row-aligned to GENE_UNIVERSE) ───────────────
+# The .npy matrices carry raw NaN for missing cells — nothing is imputed. See
+# build_proteome_features.build_aligned_matrix for why.
+PROTEOME_FEATURES_TSV = DATA_DIR / "gene_proteome_features.tsv"
+PROTEOME_FEATURES_ALIGNED = DATA_DIR / "proteome_features_aligned.npy"
+PROTEOME_FEATURE_COLUMNS_JSON = DATA_DIR / "proteome_feature_columns.json"
+BADONYI_FEATURES_TSV = DATA_DIR / "badonyi_features.tsv"
+BADONYI_FEATURES_ALIGNED = DATA_DIR / "badonyi_features_aligned.npy"
+BADONYI_FEATURE_COLUMNS_JSON = DATA_DIR / "badonyi_feature_columns.json"
+# Gene → enzyme 4-class labels (fetch_annotations --step enzyme). Keyed on gene
+# symbol, not row-aligned to anything.
+ENZYME_LABELS_TSV = DATA_DIR / "enzyme_labels.tsv"
+
+# ── Perturbation scan features (perturbation_scan.py phase 3) ────────────────
+# Row order is pinned by the "genes" list inside SCAN_FEATURES_META_JSON, not by
+# GENE_UNIVERSE.
+SCAN_FEATURES_NPY = DATA_DIR / "scan_features.npy"
+SCAN_FEATURES_META_JSON = DATA_DIR / "scan_features_meta.json"
 
 # ── Cache ─────────────────────────────────────────────────────────────────────
 CACHE_DIR = DATA_DIR / "cache"
@@ -117,6 +152,11 @@ PATH_EMB_WT_MEAN = EMB_DIR / "pathogenicity_wt_mean.npy"
 PATH_EMB_MUT_MEAN = EMB_DIR / "pathogenicity_mut_mean.npy"
 PATH_EMB_META = EMB_DIR / "pathogenicity_meta.json"
 
+# Row-count-validated pathogenicity variant list (dropped rows beyond the
+# embedding count trimmed off), cached once and reused across seeds. Distinct
+# from PATHOGENICITY_CANONICAL_VARIANTS_JSON below (the geometry-experiment set).
+PATHOGENICITY_VALID_VARIANTS_JSON = DATA_DIR / "pathogenicity_valid_variants.json"
+
 # ── Canonical pathogenicity set + masked-LL conservation (geometry experiments) ─
 # The n=16,576 canonical pathogenicity variant set whose embeddings are PATH_EMB_*.
 # Row-aligned to PATH_EMB_WT_MEAN / PATH_EMB_MUT_MEAN.
@@ -124,13 +164,6 @@ PATHOGENICITY_CANONICAL_VARIANTS_JSON = DATA_DIR / "pathogenicity_valid_variants
 # Masked-LM conservation readouts per canonical variant: [logP_wt, logP_mut, entropy].
 CONSERVATION_PATHOGENICITY_NPY = DATA_DIR / "conservation_pathogenicity.npy"
 CONSERVATION_PATHOGENICITY_META_JSON = DATA_DIR / "conservation_pathogenicity_meta.json"
-# Megascale S1724 stability variants (Probe C / stability transfer).
-MEGASCALE_VARIANTS_JSON = DATA_DIR / "megascale_variants.json"
-# Source benchmark archive (S1724 + TED) and the cached protein→cluster map
-# used for the family-split analogue.
-MEGASCALE_BENCHMARKS_ZIP = DATA_DIR / "megascale" / "benchmarks.zip"
-MEGASCALE_PROTEIN_CLUSTERS_JSON = DATA_DIR / "megascale_protein_clusters.json"
-
 # ── Full Tsuboyama 2023 point-mutant stability dataset (scaled-up control) ────
 # The processed point-mutant ΔΔG table: per row a mutant aa_seq, mut_type code,
 # parent domain (WT_name) and ddG_ML label. Natural domains only (de novo designs
@@ -153,16 +186,14 @@ MEGASCALE_EMB_WT_MEAN = EMB_DIR / "megascale_wt_mean.npy"
 MEGASCALE_EMB_MUT_MEAN = EMB_DIR / "megascale_mut_mean.npy"
 MEGASCALE_EMB_WT_POS = EMB_DIR / "megascale_wt_pos.npy"
 MEGASCALE_EMB_MUT_POS = EMB_DIR / "megascale_mut_pos.npy"
-MEGASCALE_DELTAS = EMB_DIR / "megascale_deltas.npy"
-MEGASCALE_DDG = EMB_DIR / "megascale_ddg.npy"
-# Checkpoint subdir for the megascale embedding job. The shared embed helper
-# writes fixed names (embeddings_{wt,mut}_{mean,pos}.npy); isolating them here
-# avoids colliding with the mechanism embeddings in EMB_DIR. On completion the
-# driver promotes them to the MEGASCALE_EMB_* names above.
-MEGASCALE_EMB_CKPT_DIR = EMB_DIR / "megascale_ckpt"
 
 # ── Stability subspace (esm2_mechanism.py) ───────────────────────────────────
 STABILITY_SUBSPACE = EMB_DIR / "stability_subspace.npy"
+# Sidecar recording the Megascale inputs the subspace above was fitted from, so
+# a changed variant set / ΔΔG table / embedding file refits instead of silently
+# serving a subspace fitted against different data. A cache with no sidecar is
+# unverifiable and is treated as a miss.
+STABILITY_SUBSPACE_PARAMS_JSON = EMB_DIR / "stability_subspace.params.json"
 
 # ── Perturbation scan embeddings (perturbation_scan.py) ──────────────────────
 SCAN_EMB_WT = EMB_DIR / "scan_wt.npy"
@@ -170,14 +201,17 @@ SCAN_EMB_MUT = EMB_DIR / "scan_mut.npy"
 SCAN_CKPT_WT = EMB_DIR / "scan_ckpt_wt.npy"
 SCAN_CKPT_MUT = EMB_DIR / "scan_ckpt_mut.npy"
 
-# ── ESM-3 embeddings (esm3_mechanism.py) ─────────────────────────────────────
-ESM3_EMB_SEQ = ESM3_EMB_DIR / "seq_mean.npy"
-ESM3_EMB_SEQ_STRUCT = ESM3_EMB_DIR / "seq_struct_mean.npy"
-ESM3_VALID_IDX = ESM3_EMB_DIR / "valid_idx.npy"
-ESM3_STRUCT_META = ESM3_EMB_DIR / "struct_meta.json"
+# ESM-3 embeddings live one level below ESM3_EMB_DIR, in a per-dataset subdir
+# (geras | merged) chosen at runtime by esm3_mechanism.configure_dataset. There
+# is no single canonical seq_mean.npy to name here.
 
 # ── Downloads (manually-placed prerequisite files) ───────────────────────────
 DOWNLOADS_DIR = DATA_DIR / "downloads"
+
+# Pfam clan map (homology-partition robustness panel, Task 2b) — fetched from
+# https://ftp.ebi.ac.uk/pub/databases/Pfam/current_release/Pfam-A.clans.tsv.gz,
+# not committed (too large; matches the existing DOWNLOADS_DIR convention below).
+PFAM_CLANS_TSV_GZ = DOWNLOADS_DIR / "Pfam-A.clans.tsv.gz"
 
 DISEASE_MECH_STABILITY_VEPS_FILE = DOWNLOADS_DIR / "DiseaseMech_Stability_VEPS.xlsx"
 ALL_G2P_FILE = DOWNLOADS_DIR / "AllG2P.csv"

@@ -12,7 +12,7 @@ import time
 import urllib.error
 import urllib.request
 
-from esm2_mech.utils.constants import UNIPROT_REST
+from esm2_mech.utils.constants import HTTP_USER_AGENT, UNIPROT_REST
 from esm2_mech.utils.io import atomic_write_json, load_json_or_discard
 from esm2_mech.utils.paths import PFAM_JSON
 
@@ -130,7 +130,7 @@ def fetch_pfam_families(variants: list[dict]) -> dict[str, str | None]:
     for gene, uniprot_id in sorted(unique_pairs):
         url = f"{UNIPROT_REST}/{uniprot_id}.json"
         try:
-            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            req = urllib.request.Request(url, headers={"User-Agent": HTTP_USER_AGENT})
             with urllib.request.urlopen(req, timeout=20) as resp:
                 data = json.loads(resp.read().decode())
             pfam_id = parse_pfam_id(data)

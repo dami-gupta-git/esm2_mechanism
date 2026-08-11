@@ -38,7 +38,17 @@ from typing import Optional
 
 import numpy as np
 
-from esm2_mech.utils.paths import DATA_DIR
+from esm2_mech.utils.paths import (
+    BADONYI_FEATURES_ALIGNED,
+    BADONYI_FEATURES_TSV,
+    DATA_DIR,
+    ENZYME_LABELS_TSV,
+    GENE_LIST_TSV,
+    GENE_UNIVERSE,
+    PFAM_JSON,
+    PROTEOME_FEATURES_ALIGNED,
+    PROTEOME_FEATURES_TSV,
+)
 
 print = functools.partial(print, flush=True)
 
@@ -140,14 +150,14 @@ def main() -> int:
     data = args.data_dir
 
     paths = {
-        "gene_list": data / "gene_list.tsv",
-        "gene_universe": data / "gene_universe.tsv",
-        "proteome": data / "gene_proteome_features.tsv",
-        "badonyi": data / "badonyi_features.tsv",
-        "enzyme": data / "enzyme_labels.tsv",
-        "pfam": data / "pfam_families.json",
-        "proteome_npy": data / "proteome_features_aligned.npy",
-        "badonyi_npy": data / "badonyi_features_aligned.npy",
+        "gene_list": data / GENE_LIST_TSV.name,
+        "gene_universe": data / GENE_UNIVERSE.name,
+        "proteome": data / PROTEOME_FEATURES_TSV.name,
+        "badonyi": data / BADONYI_FEATURES_TSV.name,
+        "enzyme": data / ENZYME_LABELS_TSV.name,
+        "pfam": data / PFAM_JSON.name,
+        "proteome_npy": data / PROTEOME_FEATURES_ALIGNED.name,
+        "badonyi_npy": data / BADONYI_FEATURES_ALIGNED.name,
     }
 
     results: list[bool] = []

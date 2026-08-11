@@ -99,6 +99,36 @@ def build_source_mask(valid_variants: list[dict], source: str) -> np.ndarray:
     return np.array(flags, dtype=bool)
 
 
+def observed_rows_mask(
+    X: np.ndarray, col_idx: list[int] | None = None, label: str = ""
+) -> np.ndarray:
+    """Boolean mask selecting rows of `X` with no NaN in the given columns.
+
+    For a probe restricted to a feature subset, only the columns that probe
+    actually uses decide whether a row is usable — a NaN elsewhere in the matrix
+    is irrelevant. `col_idx` names those columns; None means every column.
+
+    This is the complete-case restriction required for models that cannot
+    consume NaN (LogReg, MLP): the caller must subset X, y and genes by this
+    mask AND recompute CV splits on the subset, never impute. Imputing a value
+    (median or otherwise) computed over the whole dataset both leaks test-fold
+    statistics into training and produces cells indistinguishable from real
+    measurements. For a multi-feature matrix where complete-case would discard
+    a large, non-random share of rows, prefer a NaN-native learner
+    (probes.run_histgb_cv) over restricting.
+    """
+    cols = list(range(X.shape[1])) if col_idx is None else col_idx
+    mask = ~np.isnan(X[:, cols]).any(axis=1)
+    n_dropped = int((~mask).sum())
+    if n_dropped:
+        print(
+            f"  {label + ': ' if label else ''}complete-case restriction drops "
+            f"{n_dropped}/{len(mask)} rows ({100 * n_dropped / len(mask):.1f}%) "
+            f"with a NaN in the {len(cols)} column(s) used"
+        )
+    return mask
+
+
 def subset_data(data: dict, mask: np.ndarray) -> dict:
     """Return a copy of a row-aligned data dict with every array/list filtered by mask.
 

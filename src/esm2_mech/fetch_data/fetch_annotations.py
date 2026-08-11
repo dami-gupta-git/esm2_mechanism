@@ -45,12 +45,13 @@ from Bio import SeqIO
 from esm2_mech.utils.paths import (
     DATA_DIR,
     ENZYME_CACHE_DIR,
+    ENZYME_LABELS_TSV,
     GENE_LIST_TSV,
     SEQUENCES_EXTENDED_JSON,
     SEQUENCES_JSON,
     VARIANTS_JSON,
 )
-from esm2_mech.utils.constants import UNIPROT_REST
+from esm2_mech.utils.constants import HTTP_USER_AGENT, UNIPROT_REST
 from esm2_mech.utils.io import atomic_write_json as _atomic_write_json
 from esm2_mech.fetch_data.uniprot_fetch import (
     TransientFetchError as _TransientFetchError,
@@ -67,7 +68,7 @@ MERGED_VARIANTS = VARIANTS_JSON
 MERGED_GENE_LIST = GENE_LIST_TSV
 PFAM_OUT = DATA_DIR / "pfam_families.json"
 SEQUENCES_EXTENDED_OUT = SEQUENCES_EXTENDED_JSON
-ENZYME_OUT = DATA_DIR / "enzyme_labels.tsv"
+ENZYME_OUT = ENZYME_LABELS_TSV
 
 # ===========================================================================
 # Step 1 — Pfam families
@@ -83,7 +84,7 @@ def fetch_pfam_for_uniprot(uniprot_id: str) -> Optional[str]:
     """
     body = fetch_with_retries(
         f"{UNIPROT_REST}/{uniprot_id}.json",
-        headers={"User-Agent": "Mozilla/5.0"},
+        headers={"User-Agent": HTTP_USER_AGENT},
         timeout=20,
         retries=_PFAM_RETRIES,
         delay=_PFAM_DELAY,

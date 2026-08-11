@@ -33,7 +33,7 @@ import functools
 
 print = functools.partial(print, flush=True)
 
-from esm2_mech.utils.io import atomic_write_json, save_npy
+from esm2_mech.utils.io import atomic_write_json, save_npy, load_npy_or_discard
 from esm2_mech.utils.paths import (
     GEOMETRY_RESULTS_DIR,
     CONSERVATION_AXIS_JSON,
@@ -89,15 +89,7 @@ def extract_conservation(variants, seqs, batch_size=64, ckpt_every=2000):
     out = np.full((N, 3), np.nan, dtype=np.float32)
     done = 0
     if CONS_CACHE.exists():
-        # A truncated/partially-written .npy (interrupt mid-checkpoint) fails to
-        # load with OSError/EOFError (bad header/data) or ValueError. Treat a
-        # corrupt cache as absent: warn, delete, and re-extract from scratch.
-        try:
-            cached = np.load(CONS_CACHE)
-        except (ValueError, OSError, EOFError) as exc:
-            print(f"WARNING: corrupt cache {CONS_CACHE} ({exc}); deleting and re-extracting")
-            CONS_CACHE.unlink()
-            cached = None
+        cached = load_npy_or_discard(CONS_CACHE)
         if cached is not None and len(cached) == N:
             out = cached
             done = int(np.isfinite(out[:, 0]).sum())

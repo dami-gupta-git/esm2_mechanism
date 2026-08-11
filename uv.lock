@@ -1077,15 +1077,10 @@ dependencies = [
     { name = "xgboost" },
 ]
 
-[package.optional-dependencies]
-dev = [
-    { name = "black" },
-    { name = "pytest" },
-]
-
 [package.dev-dependencies]
 dev = [
     { name = "black" },
+    { name = "pytest" },
 ]
 
 [package.metadata]
@@ -1094,7 +1089,6 @@ requires-dist = [
     { name = "anthropic" },
     { name = "backoff" },
     { name = "biopython" },
-    { name = "black", marker = "extra == 'dev'" },
     { name = "datasets" },
     { name = "fair-esm" },
     { name = "google-generativeai" },
@@ -1105,7 +1099,6 @@ requires-dist = [
     { name = "pandas" },
     { name = "pymupdf4llm" },
     { name = "pypdf" },
-    { name = "pytest", marker = "extra == 'dev'" },
     { name = "requests" },
     { name = "scikit-learn" },
     { name = "scipy" },
@@ -1116,10 +1109,12 @@ requires-dist = [
     { name = "wandb" },
     { name = "xgboost" },
 ]
-provides-extras = ["dev"]
 
 [package.metadata.requires-dev]
-dev = [{ name = "black", specifier = ">=26.5.1" }]
+dev = [
+    { name = "black", specifier = ">=26.5.1" },
+    { name = "pytest" },
+]
 
 [[package]]
 name = "et-xmlfile"

@@ -232,7 +232,7 @@ docs/interview.md
 docs/explain.txt
 docs/plans/INTERVIEW.md
 data/
-scripts_bak/
+bak/scripts_bak/
 
 # Track reports/ and scripts/ in this repo (override global gitignore)
 !reports

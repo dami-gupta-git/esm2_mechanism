@@ -53,7 +53,7 @@ import numpy as np
 from joblib import Parallel, delayed
 
 from esm2_mech.utils.bootstrap import binary_auroc_cluster_bootstrap_ci, family_or_gene_clusters
-from esm2_mech.utils.constants import BOOTSTRAP_N_RESAMPLES, N_SEEDS
+from esm2_mech.utils.constants import BOOTSTRAP_N_RESAMPLES, HTTP_USER_AGENT, N_SEEDS
 from esm2_mech.utils.data import load_variants, variants_fingerprint
 from esm2_mech.utils.embed import get_esm2_embeddings_for_pairs
 from esm2_mech.utils.io import atomic_write_json, save_npy
@@ -107,7 +107,7 @@ HGVSP_PAT = re.compile(r"p\.([A-Z][a-z]{2})(\d+)([A-Z][a-z]{2})(?=[^a-zA-Z]|$)")
 def _fetch_clinvar(target_genes, max_per_gene_per_class, seed):
     """Download and filter ClinVar to balanced P/B missense variants."""
     print("  Downloading ClinVar variant_summary.txt.gz (~150 MB compressed) ...")
-    req = urllib.request.Request(CLINVAR_URL, headers={"User-Agent": "Mozilla/5.0"})
+    req = urllib.request.Request(CLINVAR_URL, headers={"User-Agent": HTTP_USER_AGENT})
     with urllib.request.urlopen(req, timeout=600) as resp:
         raw = resp.read()
 
@@ -431,7 +431,8 @@ def probe_phase(variants, n_seeds, n_jobs=-1, compute_ci=True, n_boot=BOOTSTRAP_
             seed_result[f"{key}_ci"] = ci
         atomic_write_json(seed_path, seed_result, indent=2)
         summary = "  ".join(
-            f"{k}={v:.3f}" for k, v in seed_result.items() if "mlp" in k and v is not None
+            f"{k}={v:.3f}" for k, v in seed_result.items()
+            if "mlp" in k and not k.endswith("_ci") and v is not None
         )
         print(f"  seed {seed} done -> {seed_path.name}   {summary}")
 

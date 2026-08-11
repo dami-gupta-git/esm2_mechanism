@@ -35,9 +35,6 @@ dependencies = [
     "biopython",
 ]
 
-[project.optional-dependencies]
-dev = ["pytest", "black"]
-
 [tool.black]
 line-length = 88
 target-version = ["py310"]
@@ -57,4 +54,5 @@ markers = [
 [dependency-groups]
 dev = [
     "black>=26.5.1",
+    "pytest",
 ]

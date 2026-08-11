@@ -12,8 +12,13 @@ Invariants:
 - run_mlp_binary_cv: returns auroc_mean on separable binary data
 - run_mlp_binary_cv: empty splits returns empty dict
 - run_mlp_cv: returns macro_f1_mean and recovers signal; per_gene_f1 when genes given
+- run_mlp_probe_cv: keeps a fold whose train has 2 of 3 classes; skips a
+  fold whose train has 1 class
 - run_sklearn_probe: returns macro_f1_mean; insufficient data returns error
 - run_sklearn_probe_pca: returns macro_f1_mean with per-fold PCA reduction
+- run_histgb_cv: fits a matrix containing NaN without imputing, while
+  run_logreg_cv raises on that same matrix; recovers signal on observed data;
+  tolerates a fully-NaN column from a source that failed entirely
 - pca_reduce: output dims match n_components; fit on train only
 - _pos_class_col: returns correct column; raises when pos_label absent
 """
@@ -26,8 +31,11 @@ from sklearn.linear_model import LogisticRegression
 from esm2_mech.utils.probes import (
     run_logreg_cv,
     run_logreg_binary_cv,
+    run_histgb_cv,
+    require_no_nan,
     run_mlp_binary_cv,
     run_mlp_cv,
+    run_mlp_probe_cv,
     run_sklearn_probe,
     run_sklearn_probe_pca,
     pca_reduce,
@@ -195,6 +203,41 @@ class TestRunMlpCv:
 
 
 # ---------------------------------------------------------------------------
+# run_mlp_probe_cv (torch multiclass) — the runner behind the ESM-2 family-split
+# floor, so its fold set is the reference any comparison arm must match.
+# ---------------------------------------------------------------------------
+
+class TestRunMlpProbeCv:
+
+    def test_fold_with_rare_class_only_in_test_is_kept(self):
+        # Train has 2 of 3 classes — fittable, so the fold must be scored.
+        rng = np.random.RandomState(0)
+        n = 180
+        y = np.array([GOF, DN] * 80 + [LOF] * 20)
+        X = rng.randn(n, 8) + np.array(
+            [MECHANISM_CLASSES.index(c) for c in y]
+        )[:, None] * 2.0
+        lof_idx = np.where(y == LOF)[0]
+        extra = np.where(y != LOF)[0][:20]
+        test_idx = np.concatenate([lof_idx, extra])
+        train_idx = np.setdiff1d(np.arange(n), test_idx)
+        assert len(set(y[train_idx].tolist())) == 2  # rare class only in test
+        r = run_mlp_probe_cv(X, y, [(train_idx, test_idx)], hidden=(16,), max_epochs=3)
+        assert "macro_f1_mean" in r  # fold kept and scored, not skipped
+
+    def test_single_class_train_fold_is_skipped(self):
+        # Train has 1 class — unfittable, so the fold must be dropped.
+        rng = np.random.RandomState(0)
+        n = 120
+        y = np.array([GOF] * 60 + [DN] * 40 + [LOF] * 20)
+        X = rng.randn(n, 8)
+        train_idx = np.arange(60)  # GOF only
+        test_idx = np.arange(60, n)
+        r = run_mlp_probe_cv(X, y, [(train_idx, test_idx)], hidden=(16,), max_epochs=3)
+        assert r == {}  # no scorable fold
+
+
+# ---------------------------------------------------------------------------
 # fold-skip condition (CLAUDE.md: < 2 classes in train must skip, valid folds must not)
 # ---------------------------------------------------------------------------
 
@@ -319,3 +362,125 @@ class TestPosClassCol:
         classes = np.array([0])  # only the negative class present
         with pytest.raises(ValueError, match="not found"):
             _pos_class_col(classes, 1)
+
+
+# ---------------------------------------------------------------------------
+# run_histgb_cv — NaN-native runner
+# ---------------------------------------------------------------------------
+
+def _multiclass_data_with_nan(seed=0, nan_frac=0.3):
+    """Separable multiclass data with a NaN-riddled column.
+
+    Mirrors the real proteome matrix: one column (here col 0) is missing for a
+    large share of rows, exactly the case where complete-case restriction would
+    discard a big, non-random slice.
+    """
+    X, y, splits, genes = _multiclass_data(seed)
+    rng = np.random.RandomState(seed + 1)
+    X = X.copy()
+    X[rng.rand(len(X)) < nan_frac, 0] = np.nan
+    return X, y, splits, genes
+
+
+class TestRunHistgbCv:
+
+    def test_fits_on_matrix_containing_nan(self):
+        # The error condition: LogReg/MLP raise on NaN input; the NaN-native
+        # runner must consume the same matrix without imputing anything.
+        X, y, splits, _ = _multiclass_data_with_nan()
+        assert np.isnan(X).any(), "fixture must actually contain NaN"
+        r = run_histgb_cv(X, y, splits)
+        assert "macro_f1_mean" in r
+        assert not np.isnan(r["macro_f1_mean"])
+
+    def test_logreg_rejects_the_same_nan_matrix(self):
+        # Pins why run_histgb_cv exists: the scaler/LogReg path cannot take NaN,
+        # so a matrix with missing cells must either be restricted (complete
+        # case) or routed to the NaN-native runner — never silently imputed.
+        X, y, splits, _ = _multiclass_data_with_nan()
+        with pytest.raises(ValueError):
+            run_logreg_cv(X, y, splits)
+
+    def test_recovers_signal_happy_path(self):
+        # Happy path: fully-observed separable data still classifies well.
+        X, y, splits, _ = _multiclass_data()
+        r = run_histgb_cv(X, y, splits)
+        assert r["macro_f1_mean"] > 0.8
+
+    def test_auroc_keys_present(self):
+        X, y, splits, _ = _multiclass_data()
+        r = run_histgb_cv(X, y, splits)
+        for cls in MECHANISM_CLASSES:
+            assert f"auroc_{cls}_mean" in r
+
+    def test_per_gene_f1_when_genes_given(self):
+        X, y, splits, genes = _multiclass_data_with_nan()
+        r = run_histgb_cv(X, y, splits, genes=genes)
+        assert "per_gene_f1_mean" in r
+
+    def test_return_oof_shapes_align(self):
+        X, y, splits, genes = _multiclass_data_with_nan()
+        agg, oof = run_histgb_cv(X, y, splits, genes=genes, return_oof=True)
+        assert oof is not None
+        assert len(oof["y_true"]) == len(oof["genes"]) == len(oof["row_ids"])
+        assert oof["proba"].shape == (len(oof["y_true"]), len(MECHANISM_CLASSES))
+
+    def test_empty_splits_returns_error(self):
+        X, y, _, _ = _multiclass_data()
+        assert "error" in run_histgb_cv(X, y, [])
+
+    def test_all_nan_column_does_not_crash(self):
+        # A source that failed entirely leaves a fully-NaN column. It carries no
+        # information, but must not take the whole probe down.
+        X, y, splits, _ = _multiclass_data()
+        X = X.copy()
+        X[:, 3] = np.nan
+        r = run_histgb_cv(X, y, splits)
+        assert "macro_f1_mean" in r
+
+
+# ---------------------------------------------------------------------------
+# require_no_nan — the guard that makes the impute-to-silence bug unrepresentable
+# ---------------------------------------------------------------------------
+
+class TestRequireNoNan:
+
+    def test_passes_on_dense_matrix(self):
+        require_no_nan(np.zeros((4, 3)), "caller")  # must not raise
+
+    def test_raises_on_any_nan(self):
+        X = np.zeros((4, 3))
+        X[2, 1] = np.nan
+        with pytest.raises(ValueError):
+            require_no_nan(X, "caller")
+
+    def test_message_names_both_sanctioned_fixes(self):
+        # The message has to point at the two correct responses, because the
+        # tempting wrong one (impute to make the error go away) is the bug.
+        X = np.array([[np.nan]])
+        with pytest.raises(ValueError) as exc:
+            require_no_nan(X, "run_logreg_cv")
+        msg = str(exc.value)
+        assert "run_histgb_cv" in msg
+        assert "observed_rows_mask" in msg
+        assert "Do NOT impute" in msg
+
+    def test_message_reports_scale_of_missingness(self):
+        X = np.zeros((10, 2))
+        X[:3, 0] = np.nan
+        with pytest.raises(ValueError, match=r"3 NaN cells across 3/10 rows"):
+            require_no_nan(X, "run_logreg_cv")
+
+    def test_nan_intolerant_runners_all_guarded(self):
+        # Every runner that standardizes + fits a NaN-intolerant model must
+        # fail at the probe boundary, not deep inside sklearn.
+        X, y, splits, genes = _multiclass_data_with_nan()
+        for runner in (run_logreg_cv, run_mlp_cv):
+            with pytest.raises(ValueError, match="run_histgb_cv"):
+                runner(X, y, splits)
+
+    def test_histgb_runner_is_not_guarded(self):
+        # The NaN-native runner is the sanctioned destination — it must accept
+        # exactly the matrix the others reject.
+        X, y, splits, _ = _multiclass_data_with_nan()
+        assert "macro_f1_mean" in run_histgb_cv(X, y, splits)

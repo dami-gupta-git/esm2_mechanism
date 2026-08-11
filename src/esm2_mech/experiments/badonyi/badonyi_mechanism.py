@@ -7,11 +7,19 @@ as a new modality and tests them alongside ESM-2 delta and proteome features.
 Model variants (all under 5-fold family-split CV, 5 seeds, per-gene T2 scoring):
 
   V1      ESM-2 delta only (1280-dim)                   MLP 1280→256→64→3
-  V2      Proteome only (37-dim)                        LogReg (best from result_13)
-  V_bad   Badonyi priors only (3-dim: pDN,pGOF,pLOF)   LogReg
-  V2+bad  Proteome + Badonyi (50-dim)                   LogReg
-  V1+bad  ESM-2 delta + Badonyi (1293-dim)              MLP 1280→256→64→3
-  V_all   ESM-2 delta + proteome + Badonyi (1330-dim)   MLP 1330→256→64→3
+  V2      Proteome only (37-dim)                        NaN-native boosting
+  V_bad   Badonyi priors only (3-dim: pDN,pGOF,pLOF)    NaN-native boosting
+  V2+bad  Proteome + Badonyi (50-dim)                   NaN-native boosting
+  V1+bad  ESM-2 delta + Badonyi (1293-dim)              NaN-native boosting
+  V_all   ESM-2 delta + proteome + Badonyi (1330-dim)   NaN-native boosting
+
+Missing-data policy. The proteome and Badonyi blocks carry real NaN — a gene
+with no Badonyi row, or a proteome family-residual undefined for a singleton
+family — and nothing is imputed. V1 is delta-only and fully observed, so it
+keeps its MLP. Every other arm includes one of those blocks (V1+bad and V_all
+concatenate them onto the dense delta, where a few missing columns would
+otherwise make the whole row unusable), so all of them use a model that
+consumes NaN directly and keeps every gene.
 
 Usage:
     python scripts/badonyi_mechanism.py               # all 5 seeds
@@ -31,14 +39,20 @@ import numpy as np
 from esm2_mech.utils.constants import MECHANISM_CLASSES
 from esm2_mech.utils.data import build_gene_to_row as _build_gene_to_row
 from esm2_mech.utils.splits import family_split_indices
-from esm2_mech.utils.probes import run_mlp_cv, run_logreg_cv
+from esm2_mech.utils.probes import run_mlp_cv, run_logreg_cv, run_histgb_cv
 from esm2_mech.utils.paths import (
-    DATA_DIR,
     RESULTS_DIR,
     VALID_VARIANTS_JSON,
     EMB_WT_MEAN,
     EMB_MUT_MEAN,
-    GENE_LIST_TSV,
+    GENE_UNIVERSE,
+    PFAM_JSON,
+    PROTEOME_FEATURES_ALIGNED,
+    PROTEOME_FEATURE_COLUMNS_JSON,
+    PROTEOME_FEATURES_TSV,
+    BADONYI_FEATURES_ALIGNED,
+    BADONYI_FEATURE_COLUMNS_JSON,
+    BADONYI_FEATURES_TSV,
 )
 import functools
 
@@ -55,12 +69,16 @@ MERGED_VALID_VARIANTS = VALID_VARIANTS_JSON
 MERGED_WT_MEAN = EMB_WT_MEAN
 MERGED_MUT_MEAN = EMB_MUT_MEAN
 
-PROTEOME_FEATURES = DATA_DIR / "proteome_features_aligned.npy"  # (2424, 37)
-BADONYI_FEATURES = DATA_DIR / "badonyi_features_aligned.npy"  # (2424, 13)
+PROTEOME_FEATURES = PROTEOME_FEATURES_ALIGNED
+BADONYI_FEATURES = BADONYI_FEATURES_ALIGNED
 BADONYI_RAW_COLS = [0, 1, 2]  # pDN, pGOF, pLOF only
 
-MERGED_GENE_LIST = GENE_LIST_TSV
-PFAM_FAMILIES = DATA_DIR / "pfam_families.json"
+# Row index for the aligned feature matrices. MUST be GENE_UNIVERSE, not
+# GENE_LIST_TSV: build_proteome_features/build_badonyi_features write their
+# .npy rows in gene_universe.tsv order, and gene_list.tsv is a longer,
+# differently-ordered superset (see paths.GENE_UNIVERSE).
+MERGED_GENE_LIST = GENE_UNIVERSE
+PFAM_FAMILIES = PFAM_JSON
 
 CLASSES = MECHANISM_CLASSES
 
@@ -96,12 +114,28 @@ def build_gene_to_row() -> dict[str, int]:
 def broadcast_gene_features(
     genes: np.ndarray, matrix: np.ndarray, gene_to_row: dict[str, int]
 ) -> np.ndarray:
+    """Broadcast per-gene features to variant rows, NaN where the gene has no row.
+
+    A gene absent from the feature matrix gets NaN, not 0.0: these are
+    probability scores and constraint metrics where 0.0 is a plausible real
+    observation, so a zero-filled row would be indistinguishable from a real
+    measurement of zero. Downstream arms either consume the NaN natively or
+    restrict to the observed rows.
+    """
     n, n_feats = len(genes), matrix.shape[1]
-    X = np.zeros((n, n_feats), dtype=np.float32)
+    X = np.full((n, n_feats), np.nan, dtype=np.float32)
+    n_missing = 0
     for i, g in enumerate(genes):
         row = gene_to_row.get(g)
         if row is not None and row < matrix.shape[0]:
             X[i] = matrix[row]
+        else:
+            n_missing += 1
+    if n_missing:
+        print(
+            f"  {n_missing}/{n} variant rows have no feature row for their gene "
+            f"(left as NaN)"
+        )
     return X
 
 
@@ -124,6 +158,21 @@ def run_mlp_family_split(X, y, genes, groups, hidden, n_folds, seed, label) -> d
     return run_mlp_cv(X, y, splits, hidden=hidden, seed=seed, genes=genes, label=label)
 
 
+def run_histgb_family_split(X, y, genes, groups, n_folds, seed, label) -> dict:
+    """NaN-native family-split CV — for every arm whose matrix includes the
+    proteome or Badonyi block, alone or concatenated onto the ESM-2 delta.
+
+    Those blocks carry real missing cells (a gene with no Badonyi row, or a
+    proteome family-residual that is undefined for a singleton family). Nothing
+    is imputed: a filled-in value computed before the CV split would leak
+    test-fold statistics into training and be indistinguishable from a real
+    score afterwards. Restricting instead would discard every gene missing any
+    one feature, including genes whose ESM-2 embedding is fully observed.
+    """
+    splits = list(family_split_indices(groups, n_folds, seed))
+    return run_histgb_cv(X, y, splits, seed=seed, genes=genes, label=label)
+
+
 # ---------------------------------------------------------------------------
 # Single-seed runner
 # ---------------------------------------------------------------------------
@@ -132,8 +181,8 @@ def run_mlp_family_split(X, y, genes, groups, hidden, n_folds, seed, label) -> d
 def run_seed(seed, n_folds, labels, genes, delta, X_prot, X_bad_raw, pfam_map) -> dict:
     print(f"\n{'='*60}\nSEED {seed}\n{'='*60}")
 
-    cls_to_idx = {c: i for i, c in enumerate(CLASSES)}
-    y = np.array([cls_to_idx[lbl] for lbl in labels])
+    # y stays string labels — run_logreg_cv/run_mlp_cv key on `classes` (strings).
+    y = np.asarray(labels)
 
     gene_pfam = np.array([pfam_map.get(g) for g in genes])
     has_family = np.array([p is not None for p in gene_pfam])
@@ -160,7 +209,7 @@ def run_seed(seed, n_folds, labels, genes, delta, X_prot, X_bad_raw, pfam_map) -
     )
     print(
         f"  Classes: "
-        + ", ".join(f"{c}={int((y_f==i).sum())}" for i, c in enumerate(CLASSES))
+        + ", ".join(f"{c}={int((y_f==c).sum())}" for c in CLASSES)
     )
 
     results: dict = {
@@ -180,9 +229,9 @@ def run_seed(seed, n_folds, labels, genes, delta, X_prot, X_bad_raw, pfam_map) -
         f"per_gene={results['V1'].get('per_gene_f1_mean', float('nan')):.4f}"
     )
 
-    # V2 — Proteome LogReg (best from result_13)
-    print(f"\n--- V2: Proteome only (LogReg) ---")
-    results["V2"] = run_logreg_family_split(
+    # V2 — Proteome only (NaN-native: the proteome block has missing cells)
+    print(f"\n--- V2: Proteome only (NaN-native gradient boosting) ---")
+    results["V2"] = run_histgb_family_split(
         X_prot_f, y_f, genes_f, groups, n_folds, seed, "V2"
     )
     print(
@@ -192,8 +241,8 @@ def run_seed(seed, n_folds, labels, genes, delta, X_prot, X_bad_raw, pfam_map) -
     )
 
     # V_bad — Badonyi priors only (3 features: pDN, pGOF, pLOF)
-    print(f"\n--- V_bad: Badonyi priors only (3-dim LogReg) ---")
-    results["V_bad"] = run_logreg_family_split(
+    print(f"\n--- V_bad: Badonyi priors only (3-dim, NaN-native) ---")
+    results["V_bad"] = run_histgb_family_split(
         X_bad_f, y_f, genes_f, groups, n_folds, seed, "V_bad"
     )
     print(
@@ -203,8 +252,8 @@ def run_seed(seed, n_folds, labels, genes, delta, X_prot, X_bad_raw, pfam_map) -
     )
 
     # V2+bad — Proteome + Badonyi
-    print(f"\n--- V2+bad: Proteome + Badonyi (40-dim LogReg) ---")
-    results["V2_bad"] = run_logreg_family_split(
+    print(f"\n--- V2+bad: Proteome + Badonyi (40-dim, NaN-native) ---")
+    results["V2_bad"] = run_histgb_family_split(
         X_v2bad, y_f, genes_f, groups, n_folds, seed, "V2+bad"
     )
     print(
@@ -214,9 +263,9 @@ def run_seed(seed, n_folds, labels, genes, delta, X_prot, X_bad_raw, pfam_map) -
     )
 
     # V1+bad — ESM-2 delta + Badonyi
-    print(f"\n--- V1+bad: ESM-2 delta + Badonyi (1283-dim MLP) ---")
-    results["V1_bad"] = run_mlp_family_split(
-        X_v1bad, y_f, genes_f, groups, (256, 64), n_folds, seed, "V1+bad"
+    print(f"\n--- V1+bad: ESM-2 delta + Badonyi (1283-dim, NaN-native) ---")
+    results["V1_bad"] = run_histgb_family_split(
+        X_v1bad, y_f, genes_f, groups, n_folds, seed, "V1+bad"
     )
     print(
         f"  V1+bad macro_f1={results['V1_bad']['macro_f1_mean']:.4f} ± "
@@ -225,9 +274,9 @@ def run_seed(seed, n_folds, labels, genes, delta, X_prot, X_bad_raw, pfam_map) -
     )
 
     # V_all — ESM-2 + proteome + Badonyi
-    print(f"\n--- V_all: ESM-2 + proteome + Badonyi (1320-dim MLP) ---")
-    results["V_all"] = run_mlp_family_split(
-        X_vall, y_f, genes_f, groups, (256, 64), n_folds, seed, "V_all"
+    print(f"\n--- V_all: ESM-2 + proteome + Badonyi (1320-dim, NaN-native) ---")
+    results["V_all"] = run_histgb_family_split(
+        X_vall, y_f, genes_f, groups, n_folds, seed, "V_all"
     )
     print(
         f"  V_all macro_f1={results['V_all']['macro_f1_mean']:.4f} ± "

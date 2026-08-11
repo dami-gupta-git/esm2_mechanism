@@ -29,18 +29,26 @@ from pathlib import Path
 
 import numpy as np
 from sklearn.preprocessing import LabelEncoder
-from esm2_mech.utils.constants import MECHANISM_CLASSES
+from esm2_mech.utils.bootstrap import bootstrap_mechanism_metrics
+from esm2_mech.utils.constants import BOOTSTRAP_N_RESAMPLES, MECHANISM_CLASSES
 from esm2_mech.utils.data import build_gene_to_row as _build_gene_to_row
 from esm2_mech.utils.metrics import mean_std_n
 from esm2_mech.utils.io import load_variants_and_delta
-from esm2_mech.utils.probes import run_mlp_cv, run_logreg_cv
+from esm2_mech.utils.probes import run_mlp_cv, run_histgb_cv
 from esm2_mech.utils.paths import (
-    DATA_DIR,
     RESULTS_DIR,
     VALID_VARIANTS_JSON,
     EMB_WT_MEAN,
     EMB_MUT_MEAN,
-    GENE_LIST_TSV,
+    GENE_UNIVERSE,
+    PFAM_JSON,
+    PROTEOME_FEATURES_ALIGNED,
+    PROTEOME_FEATURE_COLUMNS_JSON,
+    PROTEOME_FEATURES_TSV,
+    BADONYI_FEATURES_ALIGNED,
+    BADONYI_FEATURE_COLUMNS_JSON,
+    BADONYI_FEATURES_TSV,
+    MMSEQS_CLUSTERS_JSON,
 )
 import functools
 
@@ -54,11 +62,15 @@ MERGED_VALID_VARIANTS = VALID_VARIANTS_JSON
 MERGED_WT_MEAN = EMB_WT_MEAN
 MERGED_MUT_MEAN = EMB_MUT_MEAN
 
-PROTEOME_FEATURES = DATA_DIR / "proteome_features_aligned.npy"
-BADONYI_FEATURES = DATA_DIR / "badonyi_features_aligned.npy"
+PROTEOME_FEATURES = PROTEOME_FEATURES_ALIGNED
+BADONYI_FEATURES = BADONYI_FEATURES_ALIGNED
 BADONYI_RAW_COLS = [0, 1, 2]
-MERGED_GENE_LIST = GENE_LIST_TSV
-MMSEQS_CLUSTERS = DATA_DIR / "mmseqs_clusters.json"
+# Row index for the aligned feature matrices. MUST be GENE_UNIVERSE, not
+# GENE_LIST_TSV: build_proteome_features/build_badonyi_features write their
+# .npy rows in gene_universe.tsv order, and gene_list.tsv is a longer,
+# differently-ordered superset (see paths.GENE_UNIVERSE).
+MERGED_GENE_LIST = GENE_UNIVERSE
+MMSEQS_CLUSTERS = MMSEQS_CLUSTERS_JSON
 
 CLASSES = MECHANISM_CLASSES
 
@@ -112,14 +124,43 @@ def cluster_split_indices(groups, n_folds, seed):
         yield train, test
 
 
-def run_logreg(X, y, genes, groups, n_folds, seed, label):
+def run_mlp(X, y, genes, groups, hidden, n_folds, seed, label, return_oof=False):
     splits = list(cluster_split_indices(groups, n_folds, seed))
-    return run_logreg_cv(X, y, splits, seed=seed, genes=genes, label=label)
+    return run_mlp_cv(
+        X, y, splits, hidden=hidden, seed=seed, genes=genes, label=label, return_oof=return_oof
+    )
 
 
-def run_mlp(X, y, genes, groups, hidden, n_folds, seed, label):
+def run_histgb(X, y, genes, groups, n_folds, seed, label, return_oof=False):
+    """NaN-native cluster-split CV — for every arm reading the proteome or
+    Badonyi block.
+
+    Those blocks carry missing values at two levels: a gene may have no feature
+    row at all, and a gene that has one may still be missing individual cells
+    (a family-residual undefined for a singleton family). The row-level
+    `observed` masks below catch only the first. This consumes both directly,
+    so no value is fabricated and no variant is dropped for either reason.
+    """
     splits = list(cluster_split_indices(groups, n_folds, seed))
-    return run_mlp_cv(X, y, splits, hidden=hidden, seed=seed, genes=genes, label=label)
+    return run_histgb_cv(
+        X, y, splits, seed=seed, genes=genes, label=label, return_oof=return_oof
+    )
+
+
+def _attach_cluster_ci(agg, oof, cluster_ids, n_boot, seed):
+    """Attach a cluster-resampled CI to `agg["ci"]` (R7.3: MMseqs2-cluster-split
+    CIs resample the cluster id, not genes). `oof["row_ids"]` are positions into
+    the arm-local arrays this fold ran on (post any observed-subset filtering),
+    so `cluster_ids` must already be that same arm-local, aligned array — the
+    caller passes `groups[keep]` (or plain `groups` when no subset was applied).
+    """
+    if oof is None:
+        return agg
+    row_clusters = cluster_ids[oof["row_ids"]]
+    agg["ci"] = bootstrap_mechanism_metrics(
+        oof["y_true"], oof["proba"], row_clusters, n_resamples=n_boot, seed=seed
+    )
+    return agg
 
 
 def run_seed(
@@ -133,17 +174,21 @@ def run_seed(
     prot_observed,
     bad_observed,
     gene_to_cluster,
+    compute_ci=True,
+    n_boot=BOOTSTRAP_N_RESAMPLES,
 ):
     print(f"\n{'='*72}\nSEED {seed}\n{'='*72}")
 
-    # Use fixed mapping matching CLASSES order: GOF=0, DN=1, LOF=2
-    cls_to_idx = {c: i for i, c in enumerate(CLASSES)}
-    y = np.array([cls_to_idx[lbl] for lbl in labels])
-
+    # y stays the string labels themselves (matching CLASSES/MECHANISM_CLASSES),
+    # not an int encoding: run_mlp_cv/run_logreg_cv compare y against `classes`
+    # (default MECHANISM_CLASSES strings) internally to build the oversampling
+    # index and the auroc_<cls> keys, so an int-encoded y silently produces zero
+    # counts for every class and crashes with "need at least one array to
+    # concatenate" the moment a class-balanced fold is built.
     cluster_of = np.array([gene_to_cluster.get(g) for g in genes])
     has_cluster = np.array([c is not None for c in cluster_of])
     idx = np.where(has_cluster)[0]
-    y_f = y[idx]
+    y_f = labels[idx]
     genes_f = genes[idx]
     groups = cluster_of[idx]
     X_delta_f = delta[idx]
@@ -157,8 +202,8 @@ def run_seed(
     bad_obs_f = bad_observed[idx]
 
     n_clusters = len(set(groups.tolist()))
-    cd = {CLASSES[k]: int(v) for k, v in Counter(y_f.tolist()).items()}
-    print(f"  Variants with cluster: {len(idx)}/{len(y)} ({n_clusters} clusters)")
+    cd = {k: int(v) for k, v in Counter(y_f.tolist()).items()}
+    print(f"  Variants with cluster: {len(idx)}/{len(labels)} ({n_clusters} clusters)")
     print(f"  Class dist: {cd}")
     print(
         f"  Feature-observed (within cluster set): "
@@ -180,10 +225,12 @@ def run_seed(
             f"pgF1={res_key.get('per_gene_f1_mean', float('nan')):.4f}"
         )
 
-    # Each feature arm is restricted to the variants whose features are all
-    # observed (no NaN-imputed rows), and cluster splits are recomputed on that
-    # subset inside run_logreg/run_mlp. n_used records how many variants the arm
-    # actually saw, so a silently shrunk arm is visible in the output.
+    # Arms reading the proteome/Badonyi blocks use the NaN-native runner, so
+    # they keep every variant: a gene with no feature row, and a gene missing
+    # only some cells, are both consumed directly rather than imputed or
+    # dropped. n_used records how many variants the arm saw and
+    # n_rows_with_missing how many of those carried any missing feature, so the
+    # extent of missingness stays visible in the output.
     def subset(*masks):
         keep = np.ones(len(idx), dtype=bool)
         for mask in masks:
@@ -192,42 +239,54 @@ def run_seed(
 
     print(f"\n--- V1: ESM-2 delta MLP ---")
     # delta (ESM-2) is always observed — no feature-row dropout.
-    res["V1"] = run_mlp(X_delta_f, y_f, genes_f, groups, (256, 64), n_folds, seed, "V1")
+    res["V1"], oof = run_mlp(
+        X_delta_f, y_f, genes_f, groups, (256, 64), n_folds, seed, "V1", return_oof=True
+    )
     res["V1"]["n_used"] = int(len(idx))
+    if compute_ci:
+        _attach_cluster_ci(res["V1"], oof, groups, n_boot, seed)
     report("V1")
 
-    print(f"\n--- V2: Proteome LogReg ---")
-    keep = subset(prot_obs_f)
-    res["V2"] = run_logreg(
-        X_prot_f[keep], y_f[keep], genes_f[keep], groups[keep], n_folds, seed, "V2"
+    print(f"\n--- V2: Proteome (NaN-native) ---")
+    res["V2"], oof = run_histgb(
+        X_prot_f, y_f, genes_f, groups, n_folds, seed, "V2", return_oof=True
     )
-    res["V2"]["n_used"] = int(keep.sum())
+    res["V2"]["n_used"] = int(len(idx))
+    res["V2"]["n_rows_with_missing"] = int((~prot_obs_f).sum())
+    if compute_ci:
+        _attach_cluster_ci(res["V2"], oof, groups, n_boot, seed)
     report("V2")
 
-    print(f"\n--- V_bad: Badonyi LogReg ---")
-    keep = subset(bad_obs_f)
-    res["V_bad"] = run_logreg(
-        X_bad_f[keep], y_f[keep], genes_f[keep], groups[keep], n_folds, seed, "V_bad"
+    print(f"\n--- V_bad: Badonyi (NaN-native) ---")
+    res["V_bad"], oof = run_histgb(
+        X_bad_f, y_f, genes_f, groups, n_folds, seed, "V_bad", return_oof=True
     )
-    res["V_bad"]["n_used"] = int(keep.sum())
+    res["V_bad"]["n_used"] = int(len(idx))
+    res["V_bad"]["n_rows_with_missing"] = int((~bad_obs_f).sum())
+    if compute_ci:
+        _attach_cluster_ci(res["V_bad"], oof, groups, n_boot, seed)
     report("V_bad")
 
-    print(f"\n--- V2+bad: Proteome+Badonyi LogReg ---")
-    keep = subset(prot_obs_f, bad_obs_f)
-    X_v2bad = np.concatenate([X_prot_f[keep], X_bad_f[keep]], axis=1)
-    res["V2_bad"] = run_logreg(
-        X_v2bad, y_f[keep], genes_f[keep], groups[keep], n_folds, seed, "V2+bad"
+    print(f"\n--- V2+bad: Proteome+Badonyi (NaN-native) ---")
+    X_v2bad = np.concatenate([X_prot_f, X_bad_f], axis=1)
+    res["V2_bad"], oof = run_histgb(
+        X_v2bad, y_f, genes_f, groups, n_folds, seed, "V2+bad", return_oof=True
     )
-    res["V2_bad"]["n_used"] = int(keep.sum())
+    res["V2_bad"]["n_used"] = int(len(idx))
+    res["V2_bad"]["n_rows_with_missing"] = int((~subset(prot_obs_f, bad_obs_f)).sum())
+    if compute_ci:
+        _attach_cluster_ci(res["V2_bad"], oof, groups, n_boot, seed)
     report("V2_bad")
 
-    print(f"\n--- V_all: ESM-2+proteome+Badonyi MLP ---")
-    keep = subset(prot_obs_f, bad_obs_f)
-    X_vall = np.concatenate([X_delta_f[keep], X_prot_f[keep], X_bad_f[keep]], axis=1)
-    res["V_all"] = run_mlp(
-        X_vall, y_f[keep], genes_f[keep], groups[keep], (256, 64), n_folds, seed, "V_all"
+    print(f"\n--- V_all: ESM-2+proteome+Badonyi (NaN-native) ---")
+    X_vall = np.concatenate([X_delta_f, X_prot_f, X_bad_f], axis=1)
+    res["V_all"], oof = run_histgb(
+        X_vall, y_f, genes_f, groups, n_folds, seed, "V_all", return_oof=True
     )
-    res["V_all"]["n_used"] = int(keep.sum())
+    res["V_all"]["n_used"] = int(len(idx))
+    res["V_all"]["n_rows_with_missing"] = int((~subset(prot_obs_f, bad_obs_f)).sum())
+    if compute_ci:
+        _attach_cluster_ci(res["V_all"], oof, groups, n_boot, seed)
     report("V_all")
 
     return res
@@ -299,6 +358,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--seed", type=int, default=None)
     ap.add_argument("--n-folds", type=int, default=5)
+    ap.add_argument("--no_ci", action="store_true", help="skip the cluster-bootstrap CIs")
+    ap.add_argument("--n_boot", type=int, default=BOOTSTRAP_N_RESAMPLES)
     args = ap.parse_args()
 
     seeds = [args.seed] if args.seed is not None else list(range(5))
@@ -337,6 +398,8 @@ def main():
             prot_observed,
             bad_observed,
             gene_to_cluster,
+            compute_ci=not args.no_ci,
+            n_boot=args.n_boot,
         )
         all_res.append(res)
         path = OUT_DIR / f"cluster_seed{s}.json"

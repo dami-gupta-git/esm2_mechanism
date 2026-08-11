@@ -15,30 +15,44 @@ from esm2_mech.utils.metrics import aggregate_folds, align_proba, compute_metric
 print = functools.partial(print, flush=True)
 
 
-def _per_gene_f1(y_true: np.ndarray, proba: np.ndarray, genes: np.ndarray) -> float:
-    """Aggregate per-variant probabilities to per-gene predictions and compute macro-F1."""
+def _per_gene_f1(
+    y_true: np.ndarray,
+    proba: np.ndarray,
+    genes: np.ndarray,
+    classes: list[str] = MECHANISM_CLASSES,
+) -> float:
+    """Aggregate per-variant probabilities to per-gene predictions and compute macro-F1.
+
+    `classes` must be the same label list `proba`'s columns are aligned to — the
+    caller's, not MECHANISM_CLASSES, since the multiclass runners accept an
+    arbitrary class list (e.g. the 4-class GOF/DN/HI/AR probe).
+    """
     unique = list(set(genes.tolist()))
     y_g, p_g = [], []
     for g in unique:
         mask = genes == g
         gene_labels = y_true[mask]
-        counts = {cls: int((gene_labels == cls).sum()) for cls in MECHANISM_CLASSES}
+        counts = {cls: int((gene_labels == cls).sum()) for cls in classes}
         true_label = max(counts, key=counts.__getitem__)
-        pred_label = MECHANISM_CLASSES[int(proba[mask].mean(0).argmax())]
+        pred_label = classes[int(proba[mask].mean(0).argmax())]
         y_g.append(true_label)
         p_g.append(pred_label)
     return float(f1_score(y_g, p_g, average="macro", zero_division=0))
 
 
 def _record_per_gene_f1(
-    pg_f1s: list, y_true: np.ndarray, proba: np.ndarray, genes_sub: np.ndarray
+    pg_f1s: list,
+    y_true: np.ndarray,
+    proba: np.ndarray,
+    genes_sub: np.ndarray,
+    classes: list[str] = MECHANISM_CLASSES,
 ) -> str:
     """Compute the fold's per-gene macro-F1, append it to pg_f1s, return the log suffix.
 
     `genes_sub` is the gene-id array for the test rows (already sliced). Shared by the
     three multiclass runners, which each computed and accumulated this identically.
     """
-    pg = _per_gene_f1(y_true, proba, genes_sub)
+    pg = _per_gene_f1(y_true, proba, genes_sub, classes)
     pg_f1s.append(pg)
     return f"  per_gene_f1={pg:.3f}"
 
@@ -98,6 +112,91 @@ class _OofCollector:
         }
 
 
+def require_no_nan(X: np.ndarray, caller: str) -> None:
+    """Raise if X contains NaN, naming the two sanctioned ways to handle it.
+
+    sklearn's own "Input contains NaN" is raised deep inside a fit call and says
+    nothing about which arm fed it or what to do. This fails at the probe
+    boundary instead, because the wrong fix (imputing to make the error go away)
+    is the bug this guard exists to prevent: a value filled in before the CV
+    split leaks test-fold statistics into training and is indistinguishable from
+    a real measurement afterwards.
+
+    The two correct responses, per feature block:
+      - Sparse block (proteome / Badonyi features, or anything concatenated with
+        one): use run_histgb_cv, which consumes NaN natively — no row is dropped.
+      - A single scalar feature: restrict to the observed subset with
+        data.observed_rows_mask AND recompute the CV splits on that subset.
+    """
+    n_nan = int(np.isnan(X).sum())
+    if not n_nan:
+        return
+    n_rows = int(np.isnan(X).any(axis=1).sum())
+    raise ValueError(
+        f"{caller} received {n_nan} NaN cells across {n_rows}/{len(X)} rows. "
+        f"{caller} standardizes and fits a model that cannot consume missing "
+        f"values. Do NOT impute to silence this. Either use run_histgb_cv "
+        f"(NaN-native, keeps every row — correct for the proteome/Badonyi "
+        f"blocks and anything concatenated with them), or restrict to the "
+        f"observed subset with data.observed_rows_mask and recompute the CV "
+        f"splits on that subset."
+    )
+
+
+def _run_multiclass_cv(
+    fit_proba_fn,
+    X: np.ndarray,
+    y: np.ndarray,
+    splits: list[tuple],
+    classes: list[str],
+    seed: int,
+    genes: np.ndarray | None,
+    label: str,
+    min_train_classes: int | None,
+    return_oof: bool,
+):
+    """Shared multiclass CV body: guard folds → fit → align proba → aggregate.
+
+    fit_proba_fn(X_tr, y_tr, X_te, seed) -> (raw_proba, clf_classes), where
+    clf_classes are the string labels of raw_proba's columns. Shared by
+    run_logreg_cv (per-fold StandardScaler + LogReg) and run_histgb_cv
+    (NaN-native gradient boosting, unscaled), which differ only in that step.
+    """
+    min_train_classes = len(classes) if min_train_classes is None else min_train_classes
+    fold_results, pg_f1s = [], []
+    oof = _OofCollector()
+    for fold_i, (tr, te) in enumerate(splits):
+        X_tr, X_te = X[tr], X[te]
+        y_tr, y_te = y[tr], y[te]
+        if len(set(y_tr.tolist())) < min_train_classes:
+            print(f"    [{label}] Fold {fold_i+1}: skipped (< {min_train_classes} classes in train)")
+            continue
+        if len(set(y_te.tolist())) < 2:
+            print(f"    [{label}] Fold {fold_i+1}: skipped (< 2 classes in test)")
+            continue
+        raw_proba, clf_classes = fit_proba_fn(X_tr, y_tr, X_te, seed)
+        proba = align_proba(raw_proba, clf_classes, classes)
+        pred = np.array([classes[idx] for idx in proba.argmax(axis=1)])
+        fm = compute_metrics(y_te, pred, proba, classes)
+        fold_results.append(fm)
+        if return_oof and genes is not None:
+            oof.add(y_te, proba, genes[te], te)
+
+        pg_str = ""
+        if genes is not None:
+            # `classes` (not the MECHANISM_CLASSES default) — proba's columns are
+            # aligned to the caller's class list, which may not be the 3-class one.
+            pg_str = _record_per_gene_f1(pg_f1s, y_te, proba, genes[te], classes)
+
+        _log_fold(label, fold_i, fm, classes, pg_str)
+
+    agg = aggregate_folds(fold_results, classes)
+    _add_per_gene_f1(agg, pg_f1s)
+    if return_oof:
+        return agg, oof.finalize()
+    return agg
+
+
 def run_logreg_cv(
     X: np.ndarray,
     y: np.ndarray,
@@ -108,11 +207,22 @@ def run_logreg_cv(
     label: str = "",
     min_train_classes: int | None = None,
     return_oof: bool = False,
+    prescaled: bool = False,
 ):
     """Run LogReg + StandardScaler over pre-computed splits, return aggregated metrics.
 
+    X must not contain NaN — LogReg cannot fit on missing values. Restrict to the
+    observed subset with data.observed_rows_mask and recompute `splits` on that
+    subset, or use run_histgb_cv when complete-case would drop too many rows.
+
     genes : if provided, also computes per_gene_f1 per fold
     label : prefix for per-fold log lines
+    prescaled : set True when X has already been standardized by the caller AND a
+        direction has been projected out of it. The per-fold StandardScaler rescales
+        each column independently, which reintroduces variance along a removed
+        direction and silently undoes the projection; with prescaled=True the
+        scaler is skipped so the projection survives to the classifier. Callers
+        must standardize once up front and make the projection the last transform.
     min_train_classes : minimum distinct classes a fold's train split must have to
         be kept. Defaults to n_classes (the historical behaviour — every class must
         be present). Pass 2 to keep folds where a rare class falls entirely in test
@@ -125,42 +235,62 @@ def run_logreg_cv(
         scorable. `genes` must be provided for oof to carry gene ids. Default False
         keeps the bare-`agg` return for existing callers.
     """
-    n_classes = len(classes)
-    min_train_classes = n_classes if min_train_classes is None else min_train_classes
-    fold_results, pg_f1s = [], []
-    oof = _OofCollector()
-    for fold_i, (tr, te) in enumerate(splits):
-        X_tr, X_te = X[tr], X[te]
-        y_tr, y_te = y[tr], y[te]
-        if len(set(y_tr.tolist())) < min_train_classes:
-            print(f"    [{label}] Fold {fold_i+1}: skipped (< {min_train_classes} classes in train)")
-            continue
-        if len(set(y_te.tolist())) < 2:
-            print(f"    [{label}] Fold {fold_i+1}: skipped (< 2 classes in test)")
-            continue
-        sc = StandardScaler().fit(X_tr)
+    require_no_nan(X, "run_logreg_cv")
+
+    def _fit(X_tr, y_tr, X_te, fold_seed):
+        if prescaled:
+            X_tr_s, X_te_s = X_tr, X_te
+        else:
+            sc = StandardScaler().fit(X_tr)
+            X_tr_s, X_te_s = sc.transform(X_tr), sc.transform(X_te)
         clf = LogisticRegression(
-            max_iter=2000, class_weight="balanced", random_state=seed
+            max_iter=2000, class_weight="balanced", random_state=fold_seed
         )
-        clf.fit(sc.transform(X_tr), y_tr)
-        proba = align_proba(clf.predict_proba(sc.transform(X_te)), clf.classes_, classes)
-        pred = np.array([classes[idx] for idx in proba.argmax(axis=1)])
-        fm = compute_metrics(y_te, pred, proba, classes)
-        fold_results.append(fm)
-        if return_oof and genes is not None:
-            oof.add(y_te, proba, genes[te], te)
+        clf.fit(X_tr_s, y_tr)
+        return clf.predict_proba(X_te_s), clf.classes_
 
-        pg_str = ""
-        if genes is not None:
-            pg_str = _record_per_gene_f1(pg_f1s, y_te, proba, genes[te])
+    return _run_multiclass_cv(
+        _fit, X, y, splits, classes, seed, genes, label, min_train_classes, return_oof,
+    )
 
-        _log_fold(label, fold_i, fm, classes, pg_str)
 
-    agg = aggregate_folds(fold_results, classes)
-    _add_per_gene_f1(agg, pg_f1s)
-    if return_oof:
-        return agg, oof.finalize()
-    return agg
+def run_histgb_cv(
+    X: np.ndarray,
+    y: np.ndarray,
+    splits: list[tuple],
+    classes: list[str] = MECHANISM_CLASSES,
+    seed: int = 42,
+    genes: np.ndarray | None = None,
+    label: str = "",
+    min_train_classes: int | None = None,
+    return_oof: bool = False,
+    max_iter: int = 200,
+):
+    """NaN-native multiclass CV (HistGradientBoosting), same return shape as run_logreg_cv.
+
+    Use this instead of run_logreg_cv/run_mlp_cv when the feature matrix has
+    missing cells and complete-case restriction would discard a large or
+    non-random share of rows. HistGradientBoostingClassifier consumes NaN
+    directly — at each split it learns which side missing values go to — so no
+    value is ever fabricated and no row is dropped. Imputing instead (a median
+    over the whole dataset) would both leak test-fold statistics into training
+    and make the filled cells indistinguishable from real measurements.
+
+    Not scaled: gradient-boosted trees are invariant to monotone feature
+    rescaling, and StandardScaler would need its own missing-value handling.
+    """
+    from sklearn.ensemble import HistGradientBoostingClassifier
+
+    def _fit(X_tr, y_tr, X_te, fold_seed):
+        clf = HistGradientBoostingClassifier(
+            max_iter=max_iter, class_weight="balanced", random_state=fold_seed
+        )
+        clf.fit(X_tr, y_tr)
+        return clf.predict_proba(X_te), clf.classes_
+
+    return _run_multiclass_cv(
+        _fit, X, y, splits, classes, seed, genes, label, min_train_classes, return_oof,
+    )
 
 
 def _pos_class_col(clf_classes: np.ndarray, pos_label) -> int:
@@ -201,6 +331,7 @@ def _run_binary_cv(
         must be provided for oof to carry gene ids. Default False keeps the
         bare-`agg` return for existing callers.
     """
+    require_no_nan(X, "binary probe CV")
     aurocs = []
     oof_y, oof_proba, oof_genes, oof_rows = [], [], [], []
     for tr, te in splits:
@@ -275,6 +406,7 @@ def run_mlp_cv(
     """
     from sklearn.neural_network import MLPClassifier
 
+    require_no_nan(X, "run_mlp_cv")
     n_classes = len(classes)
     cls_to_idx = {cls: idx for idx, cls in enumerate(classes)}
     fold_results, pg_f1s = [], []
@@ -338,7 +470,7 @@ def run_mlp_cv(
 
         pg_str = ""
         if genes is not None:
-            pg_str = _record_per_gene_f1(pg_f1s, y_te, proba, genes[te])
+            pg_str = _record_per_gene_f1(pg_f1s, y_te, proba, genes[te], classes)
 
         _log_fold(label, fold_i, fm, classes, pg_str)
 
@@ -411,6 +543,7 @@ def _run_sklearn_probe_impl(
         callers.
     """
     from sklearn.preprocessing import LabelEncoder
+    require_no_nan(X, "run_sklearn_probe")
     le = LabelEncoder()
     y = le.fit_transform(labels)
     classes = le.classes_
@@ -520,6 +653,7 @@ def run_mlp_probe_cv(
     from torch.utils.data import DataLoader, TensorDataset
     from sklearn.metrics import roc_auc_score, f1_score
 
+    require_no_nan(X, "run_mlp_probe_cv")
     classes = MECHANISM_CLASSES
     n_classes = len(classes)
     cls_to_idx = {cls: idx for idx, cls in enumerate(classes)}
@@ -616,7 +750,7 @@ def run_mlp_probe_cv(
 
         pg_str = ""
         if genes is not None:
-            pg_str = _record_per_gene_f1(pg_f1s, labels_te, proba, genes[test_idx])
+            pg_str = _record_per_gene_f1(pg_f1s, labels_te, proba, genes[test_idx], classes)
         print(f"    [{label}] Fold {fold_i+1}: macro_f1={fm['macro_f1']:.3f}{pg_str}")
 
     if not fold_results:

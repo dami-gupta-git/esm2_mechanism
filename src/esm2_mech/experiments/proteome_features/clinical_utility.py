@@ -14,6 +14,12 @@ Key design choices vs naive version:
   - Two feature sets: FULL (37 features including *_missing indicators) and
     NO-MISSING (18 features: 9 substantive + 9 family residuals only).
     Report AUROCs for both; delta shows how much signal is study-bias artefact.
+  - Missing features are never imputed. The two feature-set arms use a
+    NaN-native booster, which consumes missing cells directly; the MLP arm
+    cannot, so it is restricted to fully-observed genes with folds recomputed
+    on that subset. That subset is ~35% of genes and is not a random sample
+    (it excludes singleton and small-family genes), so the MLP arm describes a
+    different population than the other two and is not directly comparable.
   - Baselines within HI=3: mis_z alone, paralog_count alone, PPI_degree alone.
     (pLI/LOEUF are tautologically at chance within HI=3 and are reported only
     to confirm the tautology, not as a meaningful comparison.)
@@ -32,7 +38,7 @@ from __future__ import annotations
 import argparse
 import json
 import warnings
-from collections import defaultdict
+from collections import Counter, defaultdict
 from pathlib import Path
 
 import numpy as np
@@ -41,7 +47,8 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-from sklearn.linear_model import LogisticRegression
+from sklearn.ensemble import HistGradientBoostingClassifier
+from sklearn.inspection import permutation_importance
 from sklearn.neural_network import MLPClassifier
 from sklearn.preprocessing import StandardScaler, LabelEncoder
 from sklearn.metrics import (
@@ -61,15 +68,26 @@ warnings.filterwarnings("ignore")
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
-from esm2_mech.utils.paths import DATA_DIR, RESULTS_DIR, GENE_LIST_TSV
+from esm2_mech.utils.paths import (
+    RESULTS_DIR,
+    GENE_UNIVERSE,
+    PROTEOME_FEATURES_ALIGNED,
+    PROTEOME_FEATURE_COLUMNS_JSON,
+    PROTEOME_FEATURES_TSV,
+)
 from esm2_mech.utils.constants import MECHANISM_CLASSES, N_FOLDS
+from esm2_mech.utils.data import observed_rows_mask
 
 OUT_DIR = RESULTS_DIR
 
-MERGED_GENE_LIST = GENE_LIST_TSV
-PROTEOME_FEATURES = DATA_DIR / "proteome_features_aligned.npy"
-PROTEOME_COLS = DATA_DIR / "proteome_feature_columns.json"
-GENE_FEATURES_TSV = DATA_DIR / "gene_proteome_features.tsv"
+# Row index for the aligned feature matrices. MUST be GENE_UNIVERSE, not
+# GENE_LIST_TSV: build_proteome_features/build_badonyi_features write their
+# .npy rows in gene_universe.tsv order, and gene_list.tsv is a longer,
+# differently-ordered superset (see paths.GENE_UNIVERSE).
+MERGED_GENE_LIST = GENE_UNIVERSE
+PROTEOME_FEATURES = PROTEOME_FEATURES_ALIGNED
+PROTEOME_COLS = PROTEOME_FEATURE_COLUMNS_JSON
+GENE_FEATURES_TSV = PROTEOME_FEATURES_TSV
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -156,6 +174,31 @@ def build_family_folds(
     return [np.array(idx) for idx in test_indices]
 
 
+def _scatter_aligned_proba(
+    probs: np.ndarray, test_rows: np.ndarray, raw_proba: np.ndarray, clf_classes
+) -> None:
+    """Write a fold's predictions into `probs` at `test_rows`, aligned to CLASSES.
+
+    `clf_classes` are the integer-encoded labels actually fitted in this fold; a
+    class absent from the fold's train split stays a zero column rather than
+    being assumed present positionally.
+    """
+    aligned = np.zeros((len(test_rows), len(CLASSES)), dtype=np.float32)
+    for col, cls_idx in enumerate(clf_classes):
+        aligned[:, cls_idx] = raw_proba[:, col]
+    probs[test_rows] = aligned
+
+
+def _warn_unpredicted(probs: np.ndarray, arm: str) -> None:
+    """Report rows left without a prediction. They stay NaN — never a uniform prior."""
+    n_unpredicted = int(np.isnan(probs[:, 0]).sum())
+    if n_unpredicted:
+        print(
+            f"  {n_unpredicted} genes received no {arm} prediction (left as NaN; "
+            f"downstream AUROC/ECE drop these rows rather than score a fabricated one)"
+        )
+
+
 def run_family_split_cv(
     X: np.ndarray,
     y: np.ndarray,
@@ -166,7 +209,18 @@ def run_family_split_cv(
 ) -> np.ndarray:
     """
     5-fold family-split CV. Returns out-of-sample probability matrix (n_genes, 3).
-    Genes not scoreable in any fold (shouldn't happen) get uniform priors.
+
+    NaN-native (HistGradientBoosting): the proteome matrix has missing cells in
+    every feature — the family-residual columns are ~44-61% missing by design
+    (singletons and families with <2 observed members). Imputing them, as this
+    previously did via a whole-dataset median in build_proteome_features, both
+    leaked test-fold statistics into training and produced cells
+    indistinguishable from real measurements. Complete-case restriction is not
+    an option here either: it would keep only ~35% of genes, and the genes it
+    drops are precisely the singleton/small-family ones whose treatment this
+    family-split experiment is measuring. The booster consumes NaN directly,
+    learning a default branch direction per split, so no value is fabricated
+    and no gene is dropped.
     """
     n = len(y)
     probs = np.full((n, len(CLASSES)), np.nan)
@@ -176,42 +230,24 @@ def run_family_split_cv(
 
     X_sub = X[:, feature_idx]
 
-    for fold_i, test_idx in enumerate(test_fold_indices):
+    for test_idx in test_fold_indices:
+        if len(test_idx) == 0:
+            continue
         train_mask = np.ones(n, dtype=bool)
         train_mask[test_idx] = False
         train_idx = np.where(train_mask)[0]
 
-        X_train, y_train = X_sub[train_idx], y[train_idx]
-        X_test = X_sub[test_idx]
-
-        scaler = StandardScaler()
-        X_train_sc = scaler.fit_transform(X_train)
-        X_test_sc = scaler.transform(X_test)
-
-        # LogReg
-        lr = LogisticRegression(
-            C=1.0,
-            max_iter=2000,
+        clf = HistGradientBoostingClassifier(
+            max_iter=200,
             class_weight="balanced",
-            multi_class="ovr",
             random_state=RANDOM_STATE,
         )
-        lr.fit(X_train_sc, y_train)
-        raw_proba = lr.predict_proba(X_test_sc)
-        aligned = np.zeros((len(test_idx), len(CLASSES)), dtype=np.float32)
-        for ci, c in enumerate(lr.classes_):
-            aligned[:, c] = raw_proba[:, ci]
-        probs[test_idx] = aligned
-
-    # Any genes never assigned to a test fold keep NaN — they received no
-    # prediction. Do NOT fabricate a uniform probability; downstream AUROC/ECE
-    # must drop these rows rather than score a made-up prediction.
-    n_unpredicted = int(np.isnan(probs[:, 0]).sum())
-    if n_unpredicted:
-        print(
-            f"  WARNING: {n_unpredicted} genes received no LR prediction (left as NaN)"
+        clf.fit(X_sub[train_idx], y[train_idx])
+        _scatter_aligned_proba(
+            probs, test_idx, clf.predict_proba(X_sub[test_idx]), clf.classes_
         )
 
+    _warn_unpredicted(probs, f"HistGB {feature_set_name}")
     return probs
 
 
@@ -221,30 +257,47 @@ def run_mlp_cv(
     families: np.ndarray,
     feature_idx: list[int],
 ) -> np.ndarray:
-    """MLP family-split CV with oversampling on train folds."""
+    """MLP family-split CV with oversampling on train folds, on the observed subset.
+
+    MLPClassifier cannot consume NaN, so this arm is restricted to genes with
+    every used feature observed and the family folds are recomputed on that
+    subset (never imputed). Restricted-out genes keep NaN probabilities and are
+    dropped downstream. The subset is much smaller than the full gene set and is
+    not a random sample of it — genes drop out because they are singletons or
+    sit in small families — so this arm's metrics describe a different, better-
+    annotated population than the NaN-native arms and are not directly
+    comparable to them.
+    """
     n = len(y)
     probs = np.full((n, len(CLASSES)), np.nan)
 
-    rng = np.random.default_rng(RANDOM_STATE)
-    test_fold_indices = build_family_folds(families, N_FOLDS, rng)
-
     X_sub = X[:, feature_idx]
+    observed = observed_rows_mask(X_sub, label="MLP arm")
+    if observed.sum() < N_FOLDS:
+        print("  MLP arm: too few fully-observed genes to run — skipped (all NaN)")
+        return probs
 
-    for fold_i, test_idx in enumerate(test_fold_indices):
-        train_mask = np.ones(n, dtype=bool)
+    obs_rows = np.where(observed)[0]
+    X_obs, y_obs = X_sub[obs_rows], y[obs_rows]
+
+    # Folds are recomputed on the restricted subset: reusing the full-data folds
+    # would leave test folds with unequal, unpredictable coverage.
+    rng = np.random.default_rng(RANDOM_STATE)
+    test_fold_indices = build_family_folds(families[obs_rows], N_FOLDS, rng)
+
+    for test_idx in test_fold_indices:
+        if len(test_idx) == 0:
+            continue
+        train_mask = np.ones(len(obs_rows), dtype=bool)
         train_mask[test_idx] = False
         train_idx = np.where(train_mask)[0]
 
-        X_train, y_train = X_sub[train_idx], y[train_idx]
-        X_test = X_sub[test_idx]
-
+        X_train, y_train = X_obs[train_idx], y_obs[train_idx]
         scaler = StandardScaler()
         X_train_sc = scaler.fit_transform(X_train)
-        X_test_sc = scaler.transform(X_test)
+        X_test_sc = scaler.transform(X_obs[test_idx])
 
         # Oversample minority classes
-        from collections import Counter
-
         counts = Counter(y_train)
         max_count = max(counts.values())
         X_bal, y_bal = [], []
@@ -268,20 +321,11 @@ def run_mlp_cv(
             random_state=RANDOM_STATE,
         )
         mlp.fit(X_bal, y_bal)
-        raw_proba = mlp.predict_proba(X_test_sc)
-        aligned = np.zeros((len(test_idx), len(CLASSES)), dtype=np.float32)
-        for ci, c in enumerate(mlp.classes_):
-            aligned[:, c] = raw_proba[:, ci]
-        probs[test_idx] = aligned
-
-    # Genes never assigned to a test fold keep NaN (no prediction). Do NOT
-    # fabricate a uniform probability; downstream AUROC/ECE drop these rows.
-    n_unpredicted = int(np.isnan(probs[:, 0]).sum())
-    if n_unpredicted:
-        print(
-            f"  WARNING: {n_unpredicted} genes received no MLP prediction (left as NaN)"
+        _scatter_aligned_proba(
+            probs, obs_rows[test_idx], mlp.predict_proba(X_test_sc), mlp.classes_
         )
 
+    _warn_unpredicted(probs, "MLP")
     return probs
 
 
@@ -775,7 +819,7 @@ def _plot_unannotated(
 
 
 # ---------------------------------------------------------------------------
-# Feature importance (from full-data LogReg for interpretability only)
+# Feature importance (full-data fit, for interpretability only)
 # ---------------------------------------------------------------------------
 def feature_importance_plot(
     X: np.ndarray,
@@ -786,56 +830,77 @@ def feature_importance_plot(
     out_dir: Path,
 ) -> dict:
     """
-    Fit a single full-data LogReg on the NO_MISS feature set for
-    interpretable coefficients (no missingness confound).
+    Fit a single full-data model on the NO_MISS feature set and rank features by
+    permutation importance.
+
+    Permutation importance rather than LogReg coefficients: the NO_MISS columns
+    still contain NaN (the family-residual block is ~44-61% missing by design),
+    which LogReg cannot fit, and imputing to recover coefficients would fabricate
+    the values this experiment is meant to avoid. Permutation importance works
+    directly on the NaN-native booster — it measures the drop in balanced
+    accuracy when one column is shuffled, so it is unsigned (magnitude only, no
+    direction of effect, unlike a coefficient).
+
+    Importance is measured on the training data, so these values describe what
+    the fitted model relies on, not what generalizes; the CV arms above carry
+    the out-of-sample claims.
     """
     X_sub = X[:, feature_idx]
-    scaler = StandardScaler()
-    X_sc = scaler.fit_transform(X_sub)
 
-    lr = LogisticRegression(
-        C=1.0,
-        max_iter=2000,
+    clf = HistGradientBoostingClassifier(
+        max_iter=200,
         class_weight="balanced",
-        multi_class="ovr",
         random_state=RANDOM_STATE,
     )
-    lr.fit(X_sc, y)
+    clf.fit(X_sub, y)
+
+    perm = permutation_importance(
+        clf,
+        X_sub,
+        y,
+        n_repeats=10,
+        random_state=RANDOM_STATE,
+        scoring="balanced_accuracy",
+    )
 
     sub_names = [feature_names[i] for i in feature_idx]
-    coef = lr.coef_  # (n_classes, n_features)
+    importances = perm.importances_mean
+    stds = perm.importances_std
 
-    fig, axes = plt.subplots(1, 3, figsize=(18, 6))
-    results = {}
+    n_top = min(15, len(sub_names))
+    top_idx = np.argsort(importances)[-n_top:][::-1]
+    top_names = [sub_names[j] for j in top_idx]
+    top_vals = importances[top_idx]
+    top_stds = stds[top_idx]
 
-    for i, (cls, ax) in enumerate(zip(le.classes_, axes)):
-        coefs = coef[i]
-        top_idx = np.argsort(np.abs(coefs))[-15:][::-1]
-        top_names = [sub_names[j] for j in top_idx]
-        top_vals = coefs[top_idx]
-        bar_colors = ["#e74c3c" if v > 0 else "#3498db" for v in top_vals]
-
-        ax.barh(range(len(top_names)), top_vals[::-1], color=bar_colors[::-1])
-        ax.set_yticks(range(len(top_names)))
-        ax.set_yticklabels(top_names[::-1], fontsize=8)
-        ax.axvline(0, color="black", lw=0.8)
-        ax.set_title(
-            f"Top features for {cls}\n(full-data LR, no-miss features)", fontsize=10
-        )
-        ax.set_xlabel("Coefficient")
-
-        results[f"top_features_{cls}"] = [
-            {"feature": n, "coefficient": float(v)} for n, v in zip(top_names, top_vals)
-        ]
-
-    plt.suptitle(
-        "LogReg feature importance (NO-MISS features, full-data fit)", fontsize=12
+    fig, ax = plt.subplots(figsize=(9, 6))
+    ax.barh(
+        range(len(top_names)),
+        top_vals[::-1],
+        xerr=top_stds[::-1],
+        color="#3498db",
+    )
+    ax.set_yticks(range(len(top_names)))
+    ax.set_yticklabels(top_names[::-1], fontsize=8)
+    ax.axvline(0, color="black", lw=0.8)
+    ax.set_xlabel("Drop in balanced accuracy when shuffled")
+    ax.set_title(
+        "Permutation importance (NO-MISS features, full-data fit)", fontsize=12
     )
     plt.tight_layout()
     plt.savefig(out_dir / "feature_importance.png", dpi=150)
     plt.close()
 
-    return results
+    # Unsigned and model-wide: permutation importance scores one column against
+    # the whole multiclass objective, so there is no per-class breakdown to
+    # report the way signed per-class coefficients gave one.
+    return {
+        "importance_metric": "permutation_importance_balanced_accuracy",
+        "top_features": [
+            {"feature": n, "importance": float(v), "std": float(s)}
+            for n, v, s in zip(top_names, top_vals, top_stds)
+        ],
+    }
 
 
 # ---------------------------------------------------------------------------

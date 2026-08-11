@@ -44,13 +44,12 @@ from esm2_mech.utils.bootstrap import (
     average_oof_over_seeds, binary_auroc_cluster_bootstrap_ci, bootstrap_mechanism_metrics,
     family_or_gene_clusters,
 )
-from esm2_mech.utils.constants import BOOTSTRAP_N_RESAMPLES, N_SEEDS
+from esm2_mech.utils.constants import BOOTSTRAP_N_RESAMPLES, MIN_TRAIN_CLASSES, N_SEEDS
 from esm2_mech.utils.io import atomic_write_json
 from esm2_mech.utils.paths import (
     GEOMETRY_RESULTS_DIR,
     MAGNITUDE_DIRECTION_JSON,
     NAIVE_BASELINE_JSON,
-    MEGASCALE_VARIANTS_JSON,
     MEGASCALE_TSUBOYAMA_VARIANTS_JSON,
     PATH_EMB_WT_MEAN,
     PATH_EMB_MUT_MEAN,
@@ -153,7 +152,6 @@ def decompose(delta):
 # the logreg probe (via run_logreg_cv), the MLP probe (already skips at < 2), and
 # the chance floor below — so the probe and its baseline are averaged over the
 # SAME folds (CLAUDE.md: flags and computed values must use the same condition).
-MIN_TRAIN_CLASSES = 2
 
 
 def run_logreg_multi(X, labels, splits, seed=42, genes=None, return_oof=False):

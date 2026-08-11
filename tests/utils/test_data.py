@@ -17,9 +17,10 @@ Covers:
 
 import json
 
+import numpy as np
 import pytest
 
-from esm2_mech.utils.data import build_gene_to_row, load_variants
+from esm2_mech.utils.data import build_gene_to_row, load_variants, observed_rows_mask
 
 
 # ---------------------------------------------------------------------------
@@ -151,3 +152,35 @@ class TestBuildGeneToRow:
         path = _write_tsv(tmp_path / "genes.tsv", ["BRCA1"])
         result = build_gene_to_row(path)
         assert result == {"BRCA1": 0}
+
+
+# ---------------------------------------------------------------------------
+# observed_rows_mask — complete-case restriction for models that reject NaN
+# ---------------------------------------------------------------------------
+
+class TestObservedRowsMask:
+
+    def test_all_observed_keeps_every_row(self):
+        X = np.array([[1.0, 2.0], [3.0, 4.0]])
+        assert observed_rows_mask(X).all()
+
+    def test_drops_row_with_any_nan(self):
+        X = np.array([[1.0, 2.0], [np.nan, 4.0], [5.0, np.nan]])
+        assert observed_rows_mask(X).tolist() == [True, False, False]
+
+    def test_only_named_columns_decide(self):
+        # A NaN in a column this probe does not use must not drop the row —
+        # otherwise a single sparse feature silently shrinks every other arm.
+        X = np.array([[1.0, np.nan], [2.0, np.nan]])
+        assert observed_rows_mask(X, col_idx=[0]).all()
+        assert not observed_rows_mask(X, col_idx=[1]).any()
+
+    def test_fully_nan_column_drops_everything(self):
+        X = np.array([[1.0, np.nan], [2.0, np.nan]])
+        assert not observed_rows_mask(X).any()
+
+    def test_mask_is_boolean_and_row_aligned(self):
+        X = np.array([[1.0], [np.nan], [3.0]])
+        mask = observed_rows_mask(X)
+        assert mask.dtype == bool
+        assert len(mask) == len(X)

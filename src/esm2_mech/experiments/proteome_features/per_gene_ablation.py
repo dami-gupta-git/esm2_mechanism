@@ -53,19 +53,25 @@ import pandas as pd
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import f1_score, roc_auc_score
 from sklearn.neural_network import MLPClassifier
-from sklearn.preprocessing import LabelEncoder, StandardScaler
+from sklearn.preprocessing import StandardScaler
 from esm2_mech.utils.data import build_gene_to_row
 from esm2_mech.utils.splits import family_split_indices
 from esm2_mech.utils.metrics import compute_metrics, aggregate_folds, align_proba
 from esm2_mech.utils.paths import (
-    DATA_DIR,
     RESULTS_DIR,
     VALID_VARIANTS_JSON,
     EMB_WT_MEAN,
     EMB_MUT_MEAN,
-    GENE_LIST_TSV,
+    GENE_UNIVERSE,
+    PFAM_JSON,
+    PROTEOME_FEATURES_ALIGNED,
+    PROTEOME_FEATURE_COLUMNS_JSON,
+    PROTEOME_FEATURES_TSV,
+    BADONYI_FEATURES_ALIGNED,
+    BADONYI_FEATURE_COLUMNS_JSON,
+    BADONYI_FEATURES_TSV,
 )
-from esm2_mech.utils.constants import MECHANISM_CLASSES, N_FOLDS
+from esm2_mech.utils.constants import MECHANISM_CLASSES, MIN_TRAIN_CLASSES, N_FOLDS
 import functools
 
 print = functools.partial(print, flush=True)
@@ -77,12 +83,33 @@ warnings.filterwarnings("ignore")
 MERGED_VALID_VARIANTS = VALID_VARIANTS_JSON
 MERGED_WT_MEAN = EMB_WT_MEAN
 MERGED_MUT_MEAN = EMB_MUT_MEAN
-PROTEOME_FEATURES = DATA_DIR / "proteome_features_aligned.npy"
-PROTEOME_COLS = DATA_DIR / "proteome_feature_columns.json"
-MERGED_GENE_LIST = GENE_LIST_TSV
-PFAM_FAMILIES = DATA_DIR / "pfam_families.json"
+PROTEOME_FEATURES = PROTEOME_FEATURES_ALIGNED
+PROTEOME_COLS = PROTEOME_FEATURE_COLUMNS_JSON
+# Row index for the aligned feature matrices. MUST be GENE_UNIVERSE, not
+# GENE_LIST_TSV: build_proteome_features/build_badonyi_features write their
+# .npy rows in gene_universe.tsv order, and gene_list.tsv is a longer,
+# differently-ordered superset (see paths.GENE_UNIVERSE).
+MERGED_GENE_LIST = GENE_UNIVERSE
+PFAM_FAMILIES = PFAM_JSON
 
 CLASSES = MECHANISM_CLASSES
+CLASS_TO_IDX = {cls: idx for idx, cls in enumerate(CLASSES)}
+
+# A classifier needs only two classes in train to fit; requiring all len(CLASSES)
+# silently drops valid folds where a rare class falls entirely in the test split.
+
+
+def _encode(y: np.ndarray) -> np.ndarray:
+    """String labels -> CLASSES indices, for sklearn estimators that cannot take
+    string targets (MLPClassifier with early_stopping scores its internal
+    validation split with np.isnan, which raises on string arrays)."""
+    return np.array([CLASS_TO_IDX[lab] for lab in y])
+
+
+def _decode(clf_classes: np.ndarray) -> np.ndarray:
+    """Integer-encoded clf.classes_ -> their string labels, so align_proba maps
+    columns by name instead of assuming the fitted order matches CLASSES."""
+    return np.array([CLASSES[idx] for idx in clf_classes])
 
 # ---------------------------------------------------------------------------
 # Feature class definitions for T4
@@ -130,11 +157,19 @@ def load_all():
     gene_to_row = build_gene_to_row(MERGED_GENE_LIST)
 
     prot_matrix = np.load(PROTEOME_FEATURES).astype(np.float32)
-    X_prot_var = np.zeros((n, prot_matrix.shape[1]), dtype=np.float32)
+    # NaN, not 0.0, for a variant whose gene has no proteome row: 0.0 is a
+    # plausible real value for these features and would be indistinguishable
+    # from a measurement. The proteome arms consume NaN natively.
+    X_prot_var = np.full((n, prot_matrix.shape[1]), np.nan, dtype=np.float32)
+    n_no_row = 0
     for i, g in enumerate(genes):
         row = gene_to_row.get(g)
         if row is not None:
             X_prot_var[i] = prot_matrix[row]
+        else:
+            n_no_row += 1
+    if n_no_row:
+        print(f"  {n_no_row}/{n} variants have no proteome row for their gene (NaN)")
 
     with open(PROTEOME_COLS) as f:
         col_meta = json.load(f)
@@ -194,7 +229,6 @@ def run_per_gene_cv(
     X_prot_gene: np.ndarray,
     pfam_map: dict,
     seed: int,
-    le: LabelEncoder,
 ) -> dict:
     """
     For each CV fold:
@@ -203,8 +237,12 @@ def run_per_gene_cv(
       - Train V3 MLP on variant-level concat (train variants)
       - For test: aggregate per-variant probabilities to per-gene by mean
       - Compute macro-F1 per-gene (one vote per gene)
+
+    Labels stay string-typed throughout: compute_metrics/align_proba key on the
+    string labels in CLASSES, so an int-encoded y silently yields None for every
+    per-class AUROC (`y_true == "GOF"` is never true against ints).
     """
-    y_var = le.transform(var_labels)
+    y_var = np.asarray(var_labels)
     gene_pfam_var = np.array([pfam_map.get(g) for g in var_genes])
     has_fam_var = np.array([p is not None for p in gene_pfam_var])
     fam_idx = np.where(has_fam_var)[0]
@@ -222,7 +260,7 @@ def run_per_gene_cv(
     has_fam_g = np.array([p is not None for p in gene_pfam_g])
     gene_df_f = gene_level_df[has_fam_g].copy()
     X_prot_g_f = X_prot_gene[has_fam_g]
-    y_g_f = le.transform(gene_df_f["mech3"].values)
+    y_g_f = np.asarray(gene_df_f["mech3"].values)
     groups_g = gene_pfam_g[has_fam_g]
 
     v1_folds, v2_folds, v3_folds = [], [], []
@@ -241,20 +279,23 @@ def run_per_gene_cv(
         X_tr_g, y_tr_g = X_prot_g_f[tr_g], y_g_f[tr_g]
         X_te_g, y_te_g = X_prot_g_f[te_g], y_g_f[te_g]
 
-        if len(set(y_tr_g.tolist())) < len(CLASSES) or len(set(y_te_g.tolist())) < 2:
+        if (
+            len(set(y_tr_g.tolist())) < MIN_TRAIN_CLASSES
+            or len(set(y_te_g.tolist())) < 2
+        ):
             continue
 
-        sc2 = StandardScaler().fit(X_tr_g)
-        lr2 = LogisticRegression(
-            max_iter=2000, class_weight="balanced", random_state=seed
+        # NaN-native: the proteome block has real missing cells and nothing is
+        # imputed. Unscaled — boosted trees are invariant to monotone rescaling.
+        lr2 = HistGradientBoostingClassifier(
+            max_iter=200, class_weight="balanced", random_state=seed
         )
-        lr2.fit(sc2.transform(X_tr_g), y_tr_g)
-        pr2 = lr2.predict_proba(sc2.transform(X_te_g))
-        # Align to CLASSES order
-        pr2_al = np.zeros((len(te_g), len(CLASSES)))
-        for ci, c in enumerate(lr2.classes_):
-            pr2_al[:, c] = pr2[:, ci]
-        pd2 = pr2_al.argmax(axis=1)
+        lr2.fit(X_tr_g, y_tr_g)
+        # Takes the string labels directly; align by class NAME so a class
+        # absent from this train fold becomes a zero column rather than shifting
+        # every later column left.
+        pr2_al = align_proba(lr2.predict_proba(X_te_g), lr2.classes_, CLASSES)
+        pd2 = np.array([CLASSES[idx] for idx in pr2_al.argmax(axis=1)])
         # --- V1 and V3: variant-level train, gene-level test ---
         # Train: all variants from train genes
         tr_var_mask = np.array([g in train_genes_set for g in genes_f])
@@ -266,8 +307,11 @@ def run_per_gene_cv(
 
         v2_folds.append(compute_metrics(y_te_g, pd2, pr2_al))
 
-        X_tr_d, y_tr_d = delta_f[tr_var_mask], y_f[tr_var_mask]
-        X_tr_c, y_tr_c = X_concat_f[tr_var_mask], y_f[tr_var_mask]
+        # MLPClassifier with early_stopping cannot take string targets, so the
+        # MLP arms fit on CLASSES indices and map clf.classes_ back to strings
+        # for align_proba — never assuming the fitted order matches CLASSES.
+        X_tr_d, y_tr_d = delta_f[tr_var_mask], _encode(y_f[tr_var_mask])
+        X_tr_c, y_tr_c = X_concat_f[tr_var_mask], _encode(y_f[tr_var_mask])
 
         # Oversample for MLP
         def oversample(X, y, seed):
@@ -300,17 +344,14 @@ def run_per_gene_cv(
         )
         mlp1.fit(X_bal_d, y_bal_d)
 
-        sc3 = StandardScaler().fit(X_tr_c)
-        X_tr_c_s = sc3.transform(X_tr_c)
-        X_bal_c, y_bal_c = oversample(X_tr_c_s, y_tr_c, seed)
-        mlp3 = MLPClassifier(
-            (256, 64),
-            max_iter=500,
-            early_stopping=True,
-            validation_fraction=0.15,
-            random_state=seed,
+        # V3 concatenates the dense delta with the sparse proteome block, so a
+        # few missing proteome columns would make the whole 1321-dim row
+        # unusable to an MLP. NaN-native instead: no imputation, no row dropped.
+        # class_weight replaces the oversampling the MLP arm needs.
+        mlp3 = HistGradientBoostingClassifier(
+            max_iter=200, class_weight="balanced", random_state=seed
         )
-        mlp3.fit(X_bal_c, y_bal_c)
+        mlp3.fit(X_tr_c, y_tr_c)
 
         # Aggregate per-gene predictions for test genes
         test_genes_list = sorted(test_genes_set)
@@ -329,18 +370,19 @@ def run_per_gene_cv(
             # V1
             X_g_d = sc1.transform(delta_f[gene_var_idx])
             pr1_g = align_proba(
-                mlp1.predict_proba(X_g_d), mlp1.classes_, len(CLASSES)
+                mlp1.predict_proba(X_g_d), _decode(mlp1.classes_), CLASSES
             ).mean(0)
             pr_gene1.append(pr1_g)
-            y_gene_pred1.append(pr1_g.argmax())
+            y_gene_pred1.append(CLASSES[int(pr1_g.argmax())])
 
-            # V3
-            X_g_c = sc3.transform(X_concat_f[gene_var_idx])
+            # V3 — unscaled, matching the NaN-native model fitted above
             pr3_g = align_proba(
-                mlp3.predict_proba(X_g_c), mlp3.classes_, len(CLASSES)
+                mlp3.predict_proba(X_concat_f[gene_var_idx]),
+                _decode(mlp3.classes_),
+                CLASSES,
             ).mean(0)
             pr_gene3.append(pr3_g)
-            y_gene_pred3.append(pr3_g.argmax())
+            y_gene_pred3.append(CLASSES[int(pr3_g.argmax())])
 
         y_gene_true = np.array(y_gene_true)
         y_gene_pred1 = np.array(y_gene_pred1)
@@ -377,30 +419,42 @@ def run_v2_ablation(
     groups_gene: np.ndarray,
     feature_names: list[str],
     seed: int,
-    le: LabelEncoder,
 ) -> dict:
-    """Run V2 LogReg with and without each feature class. Return delta-F1."""
+    """Run V2 LogReg with and without each feature class. Return delta-F1.
 
-    def run_logreg_cv(X, y, groups):
+    `y_gene` holds string class labels — compute_metrics/align_proba key on the
+    strings in CLASSES, so an int-encoded y silently yields None for every
+    per-class AUROC and makes delta_auroc_DN unreportable.
+    """
+
+    def run_ablation_cv(X, y, groups):
+        """NaN-native family-split CV over a proteome feature subset.
+
+        The ablation drops feature columns and re-measures, so every arm reads
+        the proteome block, which has real missing cells. Imputing to make a
+        linear model fit would leak test-fold statistics into training; the
+        ablation would then partly measure the imputation rather than the
+        feature class it removed. Unscaled — trees are rescaling-invariant.
+        """
         folds = []
         for tr, te in family_split_indices(groups, N_FOLDS, seed):
             X_tr, y_tr = X[tr], y[tr]
             X_te, y_te = X[te], y[te]
-            if len(set(y_tr.tolist())) < len(CLASSES) or len(set(y_te.tolist())) < 2:
+            if (
+                len(set(y_tr.tolist())) < MIN_TRAIN_CLASSES
+                or len(set(y_te.tolist())) < 2
+            ):
                 continue
-            sc = StandardScaler().fit(X_tr)
-            lr = LogisticRegression(
-                max_iter=2000, class_weight="balanced", random_state=seed
+            clf = HistGradientBoostingClassifier(
+                max_iter=200, class_weight="balanced", random_state=seed
             )
-            lr.fit(sc.transform(X_tr), y_tr)
-            pr_al = align_proba(
-                lr.predict_proba(sc.transform(X_te)), lr.classes_, len(CLASSES)
-            )
-            pd_ = pr_al.argmax(axis=1)
+            clf.fit(X_tr, y_tr)
+            pr_al = align_proba(clf.predict_proba(X_te), clf.classes_, CLASSES)
+            pd_ = np.array([CLASSES[idx] for idx in pr_al.argmax(axis=1)])
             folds.append(compute_metrics(y_te, pd_, pr_al))
         return aggregate_folds(folds) if folds else {"macro_f1_mean": float("nan")}
 
-    full_result = run_logreg_cv(X_prot_gene, y_gene, groups_gene)
+    full_result = run_ablation_cv(X_prot_gene, y_gene, groups_gene)
     full_f1 = full_result["macro_f1_mean"]
     print(f"  [T4 seed={seed}] V2 FULL: macro_f1={full_f1:.4f}")
 
@@ -410,7 +464,7 @@ def run_v2_ablation(
         drop_idx = get_drop_indices(feature_names, base_feats)
         keep_idx = [i for i in range(X_prot_gene.shape[1]) if i not in drop_idx]
         X_abl = X_prot_gene[:, keep_idx]
-        res = run_logreg_cv(X_abl, y_gene, groups_gene)
+        res = run_ablation_cv(X_abl, y_gene, groups_gene)
         delta_f1 = full_f1 - res["macro_f1_mean"]
         # DN AUROC delta — missing AUROC must NOT be coerced to 0.0
         # (a 0.0 default would read as "no change" and silently mask the failure).
@@ -463,15 +517,12 @@ def main():
         feature_names,
     ) = load_all()
 
-    le = LabelEncoder()
-    le.fit(CLASSES)
-
     # Gene-level arrays for T4
     gene_pfam_g = np.array([pfam_map.get(g) for g in gene_level_df["gene"].values])
     has_fam_g = np.array([p is not None for p in gene_pfam_g])
     gene_df_f = gene_level_df[has_fam_g].copy()
     X_prot_g_f = X_prot_gene[has_fam_g]
-    y_g_f = le.transform(gene_df_f["mech3"].values)
+    y_g_f = np.asarray(gene_df_f["mech3"].values)
     groups_g = gene_pfam_g[has_fam_g]
 
     seeds = [args.seed] if args.seed is not None else list(range(5))
@@ -493,7 +544,6 @@ def main():
                 X_prot_gene=X_prot_gene,
                 pfam_map=pfam_map,
                 seed=seed,
-                le=le,
             )
             res["seed"] = seed
             t2_seed_results.append(res)
@@ -553,7 +603,7 @@ def main():
         t4_seed_results = []
         for seed in seeds:
             print(f"\n--- Seed {seed} ---")
-            res = run_v2_ablation(X_prot_g_f, y_g_f, groups_g, feature_names, seed, le)
+            res = run_v2_ablation(X_prot_g_f, y_g_f, groups_g, feature_names, seed)
             res["seed"] = seed
             t4_seed_results.append(res)
             out_path = OUT_DIR / f"v2_ablation_seed{seed}.json"

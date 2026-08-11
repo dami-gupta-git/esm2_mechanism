@@ -33,7 +33,6 @@ from esm2_mech.utils.io import atomic_write_json
 from esm2_mech.utils.paths import (
     GEOMETRY_RESULTS_DIR,
     TRANSFER_CONTRAST_JSON,
-    MEGASCALE_VARIANTS_JSON,
     MEGASCALE_TSUBOYAMA_VARIANTS_JSON,
     PATH_EMB_WT_MEAN,
     PATH_EMB_MUT_MEAN,

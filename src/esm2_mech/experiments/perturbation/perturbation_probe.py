@@ -24,13 +24,24 @@ import functools
 import json, os, sys, numpy as np
 from pathlib import Path
 
-from esm2_mech.utils.paths import DATA_DIR as DATA, RESULTS_DIR as _RESULTS_DIR, VALID_VARIANTS_JSON, EMB_WT_MEAN, EMB_MUT_MEAN, GENE_LIST_TSV
+from esm2_mech.utils.data import build_gene_to_row
+from esm2_mech.utils.paths import (
+    BADONYI_FEATURES_ALIGNED,
+    EMB_MUT_MEAN,
+    EMB_WT_MEAN,
+    GENE_UNIVERSE,
+    PFAM_JSON,
+    PROTEOME_FEATURES_ALIGNED,
+    RESULTS_DIR as _RESULTS_DIR,
+    SCAN_FEATURES_META_JSON,
+    SCAN_FEATURES_NPY,
+    VALID_VARIANTS_JSON,
+)
 from esm2_mech.utils.splits import gene_split_cv, family_split_cv
 from esm2_mech.utils.embed import load_gene_delta
-from esm2_mech.utils.probes import run_logreg_cv
+from esm2_mech.utils.probes import run_logreg_cv, run_histgb_cv
 
 print = functools.partial(print, flush=True)
-EMB = DATA / "embeddings"
 OUT = _RESULTS_DIR / "perturbation_scan"
 OUT.mkdir(parents=True, exist_ok=True)
 
@@ -50,27 +61,22 @@ def load_all_features(gene_list):
     """
     features = {}
 
-    # 1. Scan features (phase 3 output)
-    scan_X = np.load(DATA / "scan_features.npy")
-    with open(DATA / "scan_features_meta.json") as f:
+    # 1. Scan features (phase 3 output). Row order is pinned by the meta file's
+    # own gene list, not by gene_universe.
+    scan_X = np.load(SCAN_FEATURES_NPY)
+    with open(SCAN_FEATURES_META_JSON) as f:
         scan_meta = json.load(f)
-    scan_genes = np.array(scan_meta["genes"])
-    scan_idx = {g: i for i, g in enumerate(scan_genes)}
+    scan_idx = {g: i for i, g in enumerate(scan_meta["genes"])}
 
     # 2. Mean-pooled delta index
     gene_delta = load_gene_delta(VALID_VARIANTS_JSON, EMB_WT_MEAN, EMB_MUT_MEAN)
 
-    # 3. Proteome / Badonyi gene-to-row index
-    proteome_path = DATA / "proteome_features_aligned.npy"
+    # 3. Proteome gene→row index. The matrix rows are in gene_universe.tsv order
+    # (see paths.GENE_UNIVERSE); gene_list.tsv is a longer, differently-ordered
+    # superset and indexing by it reads the wrong gene's features.
     pg_idx: dict = {}
-    if proteome_path.exists():
-        with open(GENE_LIST_TSV) as f:
-            merged_genes = [
-                line.split("\t")[0].strip() for line in f if not line.startswith("gene")
-            ]
-        pg_idx = {g: i for i, g in enumerate(merged_genes)}
-
-    badonyi_path = DATA / "badonyi_features_aligned.npy"
+    if PROTEOME_FEATURES_ALIGNED.exists():
+        pg_idx = build_gene_to_row(GENE_UNIVERSE)
 
     # Determine which genes have ALL required features so every array has the
     # same row count (previously each source filtered independently, making
@@ -80,9 +86,7 @@ def load_all_features(gene_list):
             return False
         if g not in gene_delta:
             return False
-        if proteome_path.exists() and g not in pg_idx:
-            return False
-        if badonyi_path.exists() and g not in pg_idx:
+        if PROTEOME_FEATURES_ALIGNED.exists() and g not in pg_idx:
             return False
         return True
 
@@ -97,19 +101,18 @@ def load_all_features(gene_list):
         [np.mean(gene_delta[g], axis=0) for g in scan_gene_list], dtype=np.float32
     )
 
-    if proteome_path.exists():
-        proteome_X = np.load(proteome_path)
+    if PROTEOME_FEATURES_ALIGNED.exists():
+        proteome_X = np.load(PROTEOME_FEATURES_ALIGNED)
+        if proteome_X.shape[0] != len(pg_idx):
+            raise ValueError(
+                f"{PROTEOME_FEATURES_ALIGNED} has {proteome_X.shape[0]} rows but "
+                f"{GENE_UNIVERSE} lists {len(pg_idx)} genes — not row-aligned."
+            )
         features["proteome"] = np.array(
             [proteome_X[pg_idx[g]] for g in scan_gene_list], dtype=np.float32
         )
     else:
-        print("  proteome_features_aligned.npy not found — skipping proteome features")
-
-    if badonyi_path.exists():
-        badonyi_X = np.load(badonyi_path)
-        features["badonyi"] = np.array(
-            [badonyi_X[pg_idx[g]] for g in scan_gene_list], dtype=np.float32
-        )
+        print(f"  {PROTEOME_FEATURES_ALIGNED} not found — skipping proteome features")
 
     # Sanity check: all feature arrays must have the same number of rows
     row_counts = {name: X.shape[0] for name, X in features.items()}
@@ -119,7 +122,21 @@ def load_all_features(gene_list):
     return features, gene_mask
 
 
-def run_probe(X, labels, splits, seed=42):
+# Combos whose matrix includes the proteome block, which carries real NaN.
+# These route to the NaN-native runner; the dense scan/delta combos keep LogReg
+# so the linear read on them is unchanged.
+NAN_BEARING_COMBOS = {"scan_proteome"}
+
+
+def run_probe(X, labels, splits, seed=42, combo_name=""):
+    """Route by whether this combo's matrix can contain missing cells.
+
+    The proteome block is sparse, and hstacking it onto the dense scan block
+    means a few missing proteome columns would otherwise make the whole row
+    unusable. Nothing is imputed and no gene is dropped.
+    """
+    if combo_name in NAN_BEARING_COMBOS:
+        return run_histgb_cv(X, labels, splits, seed=seed)
     return run_logreg_cv(X, labels, splits, seed=seed)
 
 
@@ -157,7 +174,7 @@ def main():
     print(f"Genes with scan features: {len(gene_list_scan)}")
 
     # Pfam map
-    with open(DATA / "pfam_families.json") as f:
+    with open(PFAM_JSON) as f:
         pfam_map = json.load(f)
 
     # Feature combinations to test
@@ -185,7 +202,7 @@ def main():
         for combo_name, X in combos.items():
             for split_name, splits in [("gene_split", gs), ("family_split", fs)]:
                 key = f"{combo_name}_{split_name}"
-                r = run_probe(X, labels_scan, splits, seed=seed)
+                r = run_probe(X, labels_scan, splits, seed=seed, combo_name=combo_name)
                 seed_res[key] = r
                 f1 = r.get("macro_f1_mean", float("nan"))
                 gof = r.get("auroc_GOF_mean", float("nan"))

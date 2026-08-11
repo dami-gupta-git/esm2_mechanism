@@ -18,6 +18,7 @@ Pipeline:
   6. Baselines, negative controls, probe direction orthogonality analysis
 """
 
+import hashlib
 import json
 import os
 import warnings
@@ -29,13 +30,19 @@ print = functools.partial(print, flush=True)
 from scipy.stats import spearmanr
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import roc_auc_score, f1_score, precision_recall_curve, auc
-from sklearn.preprocessing import LabelEncoder
 from sklearn.decomposition import PCA
 
+from esm2_mech.experiments.stability.stability_data import load_stability_inputs
+from esm2_mech.experiments.stability.tsuboyama_loader import load_tsuboyama_variants
 from esm2_mech.utils.constants import MECHANISM_CLASSES
 from esm2_mech.utils.splits import gene_split_cv, family_split_cv
 from esm2_mech.utils.probes import run_logreg_cv
-from esm2_mech.utils.io import save_npy
+from esm2_mech.utils.io import (
+    atomic_write_json,
+    load_json_or_discard,
+    load_npy_or_discard,
+    save_npy,
+)
 from esm2_mech.utils.embed import unpack_run_data
 from esm2_mech.utils.sequences import (
     apply_missense,
@@ -47,9 +54,10 @@ from esm2_mech.utils.paths import (
     EMB_MUT_MEAN,
     EMB_WT_POS,
     EMB_MUT_POS,
-    MEGASCALE_DELTAS,
-    MEGASCALE_DDG,
+    MEGASCALE_EMB_WT_MEAN,
+    MEGASCALE_EMB_MUT_MEAN,
     STABILITY_SUBSPACE,
+    STABILITY_SUBSPACE_PARAMS_JSON,
     RESULTS_DIR,
     VARIANTS_JSON,
     SEQUENCES_JSON,
@@ -83,6 +91,55 @@ BENIGN_LEAK_THRESHOLD = 0.50  # benign AUROC as fraction of pathogenic AUROC
 # ---------------------------------------------------------------------------
 
 
+def stability_subspace_fingerprint(ddg, n_components):
+    """Identity of the Megascale inputs a cached stability subspace was fitted from.
+
+    Covers the fitted target exactly (a content hash of the ΔΔG vector, which
+    pins both the variant set and its labels) and the two embedding files that
+    supply the deltas, by size and mtime — hashing 1.8 GB of embeddings on every
+    call would cost more than the refit the cache exists to avoid. Row alignment
+    between the embeddings and the variant table is enforced separately by
+    stability_data._check_alignment.
+    """
+    digest = hashlib.sha256()
+    digest.update(np.ascontiguousarray(ddg, dtype=np.float64).tobytes())
+    for path in (MEGASCALE_EMB_WT_MEAN, MEGASCALE_EMB_MUT_MEAN):
+        stat = path.stat()
+        digest.update(f"{path.name}|{stat.st_size}|{stat.st_mtime_ns}".encode())
+    return {
+        "n_variants": int(len(ddg)),
+        "n_components": int(n_components),
+        "inputs_digest": digest.hexdigest(),
+    }
+
+
+def load_cached_stability_subspace(fingerprint):
+    """Return the cached subspace if it was fitted from `fingerprint`, else None.
+
+    A cache with a missing, corrupt, or non-matching sidecar is a miss: the array
+    alone carries no record of its inputs, so it cannot be verified and must not
+    be trusted.
+    """
+    if not os.path.exists(STABILITY_SUBSPACE):
+        return None
+    recorded = load_json_or_discard(STABILITY_SUBSPACE_PARAMS_JSON)
+    if recorded is None:
+        print(f"  {STABILITY_SUBSPACE} has no readable sidecar — refitting")
+        return None
+    if recorded != fingerprint:
+        print(
+            f"  {STABILITY_SUBSPACE} was fitted from different Megascale inputs "
+            f"({recorded} != {fingerprint}) — refitting"
+        )
+        return None
+    cached = load_npy_or_discard(STABILITY_SUBSPACE)
+    if cached is None:
+        print(f"  {STABILITY_SUBSPACE} unreadable — refitting")
+        return None
+    print("Loading cached stability subspace...")
+    return cached
+
+
 def fit_stability_subspace_megascale(
     n_components=10
 ):
@@ -92,26 +149,38 @@ def fit_stability_subspace_megascale(
 
     Returns the projection matrix (n_components, D) or None if unavailable.
     """
-    if os.path.exists(STABILITY_SUBSPACE):
-        print("Loading cached stability subspace...")
-        # A truncated/partially-written .npy fails to load with OSError/EOFError
-        # (bad header/data) or ValueError. Treat a corrupt cache as absent:
-        # warn, delete, and refit below.
-        try:
-            return np.load(STABILITY_SUBSPACE)
-        except (ValueError, OSError, EOFError) as exc:
-            print(f"WARNING: corrupt cache {STABILITY_SUBSPACE} ({exc}); deleting and refitting")
-            os.remove(STABILITY_SUBSPACE)
-
-    if not (os.path.exists(MEGASCALE_DELTAS) and os.path.exists(MEGASCALE_DDG)):
+    # The ΔΔG vector comes from the variant table alone, so the cache key is
+    # computed without touching the 1.8 GB of embeddings — a hit skips the load
+    # as well as the fit.
+    try:
+        variants = load_tsuboyama_variants()
+        ddg = np.array([variant["ddg"] for variant in variants], dtype=np.float64)
+        fingerprint = stability_subspace_fingerprint(ddg, n_components)
+    except FileNotFoundError as exc:
         print(
-            "Megascale delta embeddings not found — will fit subspace on Gerasimavicius data"
+            f"Megascale stability inputs unavailable ({exc}) — "
+            f"will fit subspace on Gerasimavicius data"
         )
         return None
 
+    cached = load_cached_stability_subspace(fingerprint)
+    if cached is not None:
+        return cached
+
+    # Deltas come from the shared Tsuboyama loader, which derives
+    # delta_mean = mut_mean − wt_mean from the megascale embeddings and checks
+    # both are row-aligned to the variant table. It previously read two .npy
+    # files (megascale_deltas / megascale_ddg) that no script in the pipeline
+    # ever wrote, so this branch always fell through to the Gerasimavicius fit.
+    inputs = load_stability_inputs()
+
     print("Fitting stability subspace on Megascale delta embeddings...")
-    deltas = np.load(MEGASCALE_DELTAS)
-    ddg = np.load(MEGASCALE_DDG)
+    deltas = inputs.delta_mean
+    if len(inputs.ddg) != len(ddg):
+        raise ValueError(
+            f"ΔΔG row count changed between the cache-key read ({len(ddg)}) and "
+            f"the full load ({len(inputs.ddg)}) — Megascale inputs are unstable."
+        )
 
     from sklearn.linear_model import Ridge
 
@@ -130,7 +199,11 @@ def fit_stability_subspace_megascale(
     subspace = np.vstack([stability_dir.reshape(1, -1), pca.components_])
     subspace = subspace[:n_components]
 
+    # Array first, then the sidecar: an interrupt between the two leaves a cache
+    # with no sidecar, which reads as a miss and refits. The reverse order would
+    # leave a sidecar vouching for a stale array.
     save_npy(STABILITY_SUBSPACE, subspace)
+    atomic_write_json(STABILITY_SUBSPACE_PARAMS_JSON, fingerprint, indent=2)
     return subspace
 
 
@@ -238,6 +311,62 @@ def project_out_subspace(deltas, subspace):
     Q, _ = np.linalg.qr(subspace.T, mode="reduced")
     proj = deltas.dot(Q).dot(Q.T)
     return deltas - proj
+
+
+def standardize_once(deltas):
+    """Standardize columns once, up front, returning (Z, scale).
+
+    The probes that consume the projected deltas run with prescaled=True, so this
+    is the only standardization applied. Doing it here rather than per fold is
+    what makes the projection the last transform before the classifier: a per-fold
+    StandardScaler applied after projection rescales each column independently and
+    reintroduces variance along the removed directions.
+
+    Constant columns get scale 1 (matching StandardScaler): centering already
+    sends them to exactly zero, so no value is invented.
+    """
+    scale = deltas.std(axis=0)
+    scale = np.where(scale > 0, scale, 1.0)
+    return (deltas - deltas.mean(axis=0)) / scale, scale
+
+
+def subspace_in_standardized_coords(subspace, scale):
+    """Re-express a raw-space subspace in the standardized coordinates of `scale`.
+
+    A row x maps to z = (x - mean) / scale, so x·v = z·(scale ⊙ v) + const. Removing
+    direction (scale ⊙ v) from z therefore removes the raw stability coordinate x·v.
+    Projecting the untransformed v out of z would remove a different direction and
+    leave the stability signal partly intact.
+    """
+    if subspace is None:
+        return None
+    scaled = subspace * scale[None, :]
+    norms = np.linalg.norm(scaled, axis=1, keepdims=True)
+    if np.any(norms == 0):
+        raise ValueError(
+            "subspace direction has zero norm in standardized coordinates — "
+            "it lies entirely in constant feature columns"
+        )
+    return scaled / norms
+
+
+def assert_subspace_removed(deltas_proj, subspace, name, tol=1e-8):
+    """Verify no variance survives along `subspace` after projection.
+
+    This is the invariant the whole projected-vs-unprojected comparison rests on;
+    a silent failure here makes the "projected" arm test nothing.
+    """
+    if subspace is None:
+        return 0.0
+    Q, _ = np.linalg.qr(subspace.T, mode="reduced")
+    residual_var = float(np.var(deltas_proj.dot(Q), axis=0).max())
+    print(f"  {name}: max variance along stability subspace after projection = {residual_var:.3e}")
+    if residual_var > tol:
+        raise ValueError(
+            f"{name}: projection failed — {residual_var:.3e} variance remains along "
+            f"the stability subspace (tolerance {tol:.0e})"
+        )
+    return residual_var
 
 
 def variance_explained_per_class(deltas, labels_3class, subspace):
@@ -366,7 +495,6 @@ def probe_direction_orthogonality(
 
 def run_baselines(
     embeddings_wt,
-    deltas_mean,
     foldx_ddg,
     y,
     genes,
@@ -445,6 +573,7 @@ def run_negative_controls(deltas_mean, y, genes, seed=42):
             classes=CLASSES_3,
             seed=seed,
             label="shuffled_delta",
+            prescaled=True,
         ),
     }
 
@@ -557,7 +686,12 @@ def _run_primary_probes(
     n_cv_folds,
     seed,
 ):
-    """Phase 5: run the four primary probe variants."""
+    """Phase 5: run the four primary probe variants.
+
+    All four inputs are standardized up front by run(); the projected and
+    unprojected arms therefore receive identical preprocessing and differ only
+    by the projection. prescaled=True keeps the per-fold scaler out of the way.
+    """
     splits = gene_split_cv(genes, n_folds=n_cv_folds, seed=seed)
     probe_configs = [
         ("mean_pooled_projected", deltas_mean_proj),
@@ -569,7 +703,7 @@ def _run_primary_probes(
     for name, X in probe_configs:
         print(f"  {name}:")
         results[name] = run_logreg_cv(
-            X, y, splits, classes=CLASSES_3, seed=seed, label=name
+            X, y, splits, classes=CLASSES_3, seed=seed, label=name, prescaled=True
         )
     return results
 
@@ -581,18 +715,18 @@ def _run_secondary_probes(
     results = {}
     classes_4 = ["GOF", "DN", "HI", "AR"]
 
-    le4 = LabelEncoder().fit(classes_4)
-    y4 = le4.transform(labels_4class)
+    # y4/y2 stay string labels — run_logreg_cv keys on `classes` (strings).
+    y4 = np.asarray(labels_4class)
     splits4 = gene_split_cv(genes, n_folds=n_cv_folds, seed=seed)
     print("  4-class (GOF/DN/HI/AR):")
     results["four_class"] = run_logreg_cv(
-        deltas_mean_proj, y4, splits4, classes=classes_4, seed=seed, label="4class"
+        deltas_mean_proj, y4, splits4, classes=classes_4, seed=seed, label="4class",
+        prescaled=True,
     )
 
     hi_ar_mask = np.isin(labels_4class, ["HI", "AR"])
     if hi_ar_mask.sum() >= 20:
-        le2 = LabelEncoder().fit(["AR", "HI"])
-        y2 = le2.transform(labels_4class[hi_ar_mask])
+        y2 = np.asarray(labels_4class[hi_ar_mask])
         splits2 = gene_split_cv(genes[hi_ar_mask], n_folds=n_cv_folds, seed=seed)
         print("  HI vs AR (2-class):")
         results["hi_vs_ar"] = run_logreg_cv(
@@ -602,6 +736,7 @@ def _run_secondary_probes(
             classes=["AR", "HI"],
             seed=seed,
             label="hi_vs_ar",
+            prescaled=True,
         )
     return results
 
@@ -623,7 +758,8 @@ def _run_family_cv(
 
     print(f"  Running family-split CV with {len(splits)} folds")
     results = run_logreg_cv(
-        deltas_mean_proj, y, splits, classes=CLASSES_3, seed=seed, label="family_cv"
+        deltas_mean_proj, y, splits, classes=CLASSES_3, seed=seed, label="family_cv",
+        prescaled=True,
     )
     print(f"  Family-split macro-F1: {results.get('macro_f1_mean', float('nan')):.3f}")
     return results, pfam_map, n_families
@@ -663,8 +799,8 @@ def run(
     deltas_mean = data["deltas_mean"]
     deltas_pos = data["deltas_pos"]
 
-    le3 = LabelEncoder().fit(CLASSES_3)
-    y3 = le3.transform(labels_3class)
+    # y3 stays string labels — run_logreg_cv keys on `classes` (CLASSES_3, strings).
+    y3 = np.asarray(labels_3class)
 
     from collections import Counter
 
@@ -682,13 +818,32 @@ def run(
         megascale_subspace, deltas_mean, foldx_ddg, genes_arr, n_stability_components
     )
 
+    # Variance explained is a raw-space quantity — computed before standardization.
     var_exp = variance_explained_per_class(
         deltas_mean, labels_3class, stability_subspace
     )
     print(f"  Variance explained by stability subspace: {var_exp}")
 
-    deltas_mean_proj = project_out_subspace(deltas_mean, stability_subspace)
-    deltas_pos_proj = project_out_subspace(deltas_pos, stability_subspace)
+    # Standardize once, here, and project afterwards. The probes downstream run
+    # with prescaled=True: a per-fold StandardScaler applied to already-projected
+    # data would rescale each column independently and put variance back along the
+    # removed directions. Both arms of every projected-vs-unprojected comparison
+    # get this same standardization, so the projection is the only difference.
+    deltas_mean_std, mean_scale = standardize_once(deltas_mean)
+    deltas_pos_std, pos_scale = standardize_once(deltas_pos)
+
+    subspace_mean_std = subspace_in_standardized_coords(stability_subspace, mean_scale)
+    subspace_pos_std = subspace_in_standardized_coords(stability_subspace, pos_scale)
+
+    deltas_mean_proj = project_out_subspace(deltas_mean_std, subspace_mean_std)
+    deltas_pos_proj = project_out_subspace(deltas_pos_std, subspace_pos_std)
+
+    residual_var_mean = assert_subspace_removed(
+        deltas_mean_proj, subspace_mean_std, "mean_pooled"
+    )
+    residual_var_pos = assert_subspace_removed(
+        deltas_pos_proj, subspace_pos_std, "per_residue"
+    )
 
     # ------------------------------------------------------------------
     # 5. Primary probes
@@ -696,9 +851,9 @@ def run(
     print("\n=== Primary linear probe (3-class: GOF/DN/LOF) ===")
     results_primary = _run_primary_probes(
         deltas_mean_proj,
-        deltas_mean,
+        deltas_mean_std,
         deltas_pos_proj,
-        deltas_pos,
+        deltas_pos_std,
         y3,
         genes_arr,
         n_cv_folds,
@@ -719,7 +874,6 @@ def run(
     print("\n=== Baselines ===")
     results_baselines = run_baselines(
         emb_wt_mean,
-        deltas_mean_proj,
         foldx_ddg,
         y3,
         genes_arr,
@@ -747,7 +901,10 @@ def run(
     # 10. Probe direction orthogonality
     # ------------------------------------------------------------------
     print("\n=== Probe direction orthogonality ===")
-    subspace_for_ortho = stability_subspace if stability_path == "A_megascale" else None
+    # Standardized-coordinate subspace: the probe weights it is compared against are
+    # fitted on the standardized+projected deltas, so the raw-space basis would be
+    # a different direction in that space.
+    subspace_for_ortho = subspace_mean_std if stability_path == "A_megascale" else None
     ortho_results = probe_direction_orthogonality(
         deltas_mean_proj,
         labels_3class,
@@ -779,6 +936,8 @@ def run(
         ),
         "stability_path": stability_path,
         "stability_transfer_rho": transfer_rho,
+        "stability_residual_var_mean_pooled": residual_var_mean,
+        "stability_residual_var_per_residue": residual_var_pos,
         "variance_explained_GOF": var_exp.get("GOF", float("nan")),
         "variance_explained_DN": var_exp.get("DN", float("nan")),
         "variance_explained_LOF": var_exp.get("LOF", float("nan")),

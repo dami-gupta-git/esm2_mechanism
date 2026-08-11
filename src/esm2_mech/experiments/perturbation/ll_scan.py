@@ -31,7 +31,7 @@ import argparse, functools, json, os, sys, numpy as np
 from collections import defaultdict
 from pathlib import Path
 
-from esm2_mech.utils.paths import EMB_MUT_MEAN, EMB_WT_MEAN, LL_CKPT_JSON, RESULTS_DIR as _RESULTS_DIR, SCAN_PROBE_CACHE_JSON, SEQUENCES_EXTENDED_JSON, SEQUENCES_JSON, VALID_VARIANTS_JSON
+from esm2_mech.utils.paths import EMB_MUT_MEAN, EMB_WT_MEAN, LL_CKPT_JSON, RESULTS_DIR as _RESULTS_DIR, SCAN_FEATURES_META_JSON, SCAN_FEATURES_NPY, SCAN_PROBE_CACHE_JSON, SEQUENCES_EXTENDED_JSON, SEQUENCES_JSON, VALID_VARIANTS_JSON
 from esm2_mech.utils.constants import AA_ORDER
 from esm2_mech.utils.embed import load_gene_delta
 from esm2_mech.utils.probes import run_logreg_cv
@@ -349,10 +349,10 @@ def run_probe_analysis():
     )
 
     # Load scan features (result_20)
-    scan_path = DATA / "scan_features.npy"
+    scan_path = SCAN_FEATURES_NPY
     if scan_path.exists():
         scan_X_all = np.load(scan_path)
-        with open(DATA / "scan_features_meta.json") as f:
+        with open(SCAN_FEATURES_META_JSON) as f:
             scan_meta = json.load(f)
         scan_idx = {g: i for i, g in enumerate(scan_meta["genes"])}
         scan_X = np.array(

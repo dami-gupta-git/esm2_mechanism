@@ -171,6 +171,12 @@ BOOTSTRAP_MIN_VALID_FRAC = 0.8
 # No-signal reference for a one-vs-rest AUROC (ranking metric): a CI clearing this
 # from above, or a permutation p-value against it, marks above-chance separation.
 CHANCE_AUROC = 0.5
+# Minimum distinct classes a CV fold's train split needs for a classifier to fit.
+# A fold where a rare class falls entirely in test is still fittable and must be
+# kept: skipping at n_classes silently averages arms over different fold sets.
+MIN_TRAIN_CLASSES = 2
 
 # ── External API roots ────────────────────────────────────────────────────────
 UNIPROT_REST = "https://rest.uniprot.org/uniprotkb"
+# Sent on every outbound HTTP request; some endpoints reject the default urllib UA.
+HTTP_USER_AGENT = "Mozilla/5.0"

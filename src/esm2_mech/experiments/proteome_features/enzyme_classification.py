@@ -39,7 +39,17 @@ from sklearn.neural_network import MLPClassifier
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 from esm2_mech.utils.constants import N_SEEDS
 from esm2_mech.utils.splits import gene_split_cv, family_split_cv
-from esm2_mech.utils.paths import DATA_DIR, EMB_WT_MEAN, GENE_LIST_TSV, RESULTS_DIR, VALID_VARIANTS_JSON
+from esm2_mech.utils.data import build_gene_to_row
+from esm2_mech.utils.paths import (
+    EMB_WT_MEAN,
+    ENZYME_LABELS_TSV,
+    GENE_UNIVERSE,
+    PFAM_JSON,
+    PROTEOME_FEATURES_ALIGNED,
+    PROTEOME_FEATURE_COLUMNS_JSON,
+    RESULTS_DIR,
+    VALID_VARIANTS_JSON,
+)
 
 print = functools.partial(print, flush=True)
 
@@ -91,7 +101,7 @@ def load_enzyme_labels() -> dict:
     import csv
 
     labels: dict[str, str] = {}
-    label_path = DATA_DIR / "enzyme_labels.tsv"
+    label_path = ENZYME_LABELS_TSV
     with open(label_path) as f:
         reader = csv.DictReader(f, delimiter="\t")
         for row in reader:
@@ -101,23 +111,26 @@ def load_enzyme_labels() -> dict:
 
 
 def load_pfam() -> dict:
-    with open(DATA_DIR / "pfam_families.json") as f:
+    with open(PFAM_JSON) as f:
         return json.load(f)
 
 
 def load_proteome_features() -> tuple:
-    """Load proteome feature matrix and aligned gene list."""
-    X = np.load(DATA_DIR / "proteome_features_aligned.npy").astype(np.float32)
-    with open(DATA_DIR / "proteome_feature_columns.json") as f:
-        cols = json.load(f)
-    # Load gene order from gene_list.tsv
-    import csv
+    """Load the proteome feature matrix and the gene list its rows are aligned to.
 
-    genes = []
-    with open(GENE_LIST_TSV) as f:
-        reader = csv.DictReader(f, delimiter="\t")
-        for row in reader:
-            genes.append(row["gene"])
+    The row order is gene_universe.tsv, not gene_list.tsv — the latter is a
+    longer, differently-ordered superset, so indexing the matrix by it silently
+    reads the wrong gene's features.
+    """
+    X = np.load(PROTEOME_FEATURES_ALIGNED).astype(np.float32)
+    with open(PROTEOME_FEATURE_COLUMNS_JSON) as f:
+        cols = json.load(f)
+    genes = list(build_gene_to_row(GENE_UNIVERSE))
+    if len(genes) != X.shape[0]:
+        raise ValueError(
+            f"{PROTEOME_FEATURES_ALIGNED} has {X.shape[0]} rows but "
+            f"{GENE_UNIVERSE} lists {len(genes)} genes — not row-aligned."
+        )
     print(f"Proteome features: {X.shape}, {len(genes)} genes")
     return X, genes
 
@@ -127,27 +140,36 @@ def load_proteome_features() -> tuple:
 # ---------------------------------------------------------------------------
 
 
-def run_logreg(
+def _run_cv(
+    clf_factory,
+    scale: bool,
     X: np.ndarray,
     y: np.ndarray,
     splits: list[tuple],
     classes: list[str],
     seed: int = 42,
 ) -> dict:
-    from sklearn.linear_model import LogisticRegression
+    """Shared CV body for the three probe runners, which differ only in the
+    estimator and whether the features need standardizing.
 
+    scale=False is used by the NaN-native runner: gradient-boosted trees are
+    invariant to monotone rescaling, and StandardScaler would need its own
+    missing-value handling anyway.
+    """
     n_cls = len(classes)
     fold_f1s, fold_aurocs = [], {c: [] for c in classes}
 
     for tr, te in splits:
         if len(set(y[tr])) < 2:
             continue
-        sc = StandardScaler().fit(X[tr])
-        clf = LogisticRegression(
-            max_iter=2000, class_weight="balanced", random_state=seed
-        )
-        clf.fit(sc.transform(X[tr]), y[tr])
-        proba_raw = clf.predict_proba(sc.transform(X[te]))
+        if scale:
+            sc = StandardScaler().fit(X[tr])
+            X_tr, X_te = sc.transform(X[tr]), sc.transform(X[te])
+        else:
+            X_tr, X_te = X[tr], X[te]
+        clf = clf_factory(seed)
+        clf.fit(X_tr, y[tr])
+        proba_raw = clf.predict_proba(X_te)
 
         # Align proba columns to canonical class indices
         proba = np.zeros((len(te), n_cls), dtype=np.float32)
@@ -176,57 +198,48 @@ def run_logreg(
     }
 
 
-def run_mlp(
-    X: np.ndarray,
-    y: np.ndarray,
-    splits: list[tuple],
-    classes: list[str],
-    seed: int = 42,
-) -> dict:
-    n_cls = len(classes)
-    fold_f1s, fold_aurocs = [], {c: [] for c in classes}
+def run_logreg(X, y, splits, classes, seed: int = 42) -> dict:
+    """Linear probe. Requires fully-observed X (see run_histgb for NaN input)."""
+    from sklearn.linear_model import LogisticRegression
 
-    for tr, te in splits:
-        if len(set(y[tr])) < 2:
-            continue
-        sc = StandardScaler().fit(X[tr])
-        clf = MLPClassifier(
+    return _run_cv(
+        lambda s: LogisticRegression(
+            max_iter=2000, class_weight="balanced", random_state=s
+        ),
+        True, X, y, splits, classes, seed,
+    )
+
+
+def run_mlp(X, y, splits, classes, seed: int = 42) -> dict:
+    """Nonlinear probe. Requires fully-observed X (see run_histgb for NaN input)."""
+    return _run_cv(
+        lambda s: MLPClassifier(
             hidden_layer_sizes=(256, 64),
             activation="relu",
             alpha=1e-3,
             max_iter=300,
-            random_state=seed,
+            random_state=s,
             early_stopping=True,
             validation_fraction=0.1,
             n_iter_no_change=15,
-        )
-        clf.fit(sc.transform(X[tr]), y[tr])
-        proba_raw = clf.predict_proba(sc.transform(X[te]))
+        ),
+        True, X, y, splits, classes, seed,
+    )
 
-        proba = np.zeros((len(te), n_cls), dtype=np.float32)
-        for ci, c in enumerate(clf.classes_):
-            if 0 <= c < n_cls:
-                proba[:, c] = proba_raw[:, ci]
 
-        pred = proba.argmax(axis=1)
-        fold_f1s.append(float(f1_score(y[te], pred, average="macro", zero_division=0)))
+def run_histgb(X, y, splits, classes, seed: int = 42) -> dict:
+    """NaN-native probe — for the proteome matrix, which has real missing cells.
 
-        for i, cls in enumerate(classes):
-            y_bin = (y[te] == i).astype(int)
-            if y_bin.sum() > 0 and y_bin.sum() < len(y_bin):
-                fold_aurocs[cls].append(float(roc_auc_score(y_bin, proba[:, i])))
+    Consumes NaN directly, so no value is fabricated and no gene is dropped.
+    """
+    from sklearn.ensemble import HistGradientBoostingClassifier
 
-    return {
-        "macro_f1_mean": float(np.mean(fold_f1s)) if fold_f1s else None,
-        "macro_f1_std": float(np.std(fold_f1s)) if fold_f1s else None,
-        "per_class_auroc_mean": {
-            c: float(np.mean(v)) if v else None for c, v in fold_aurocs.items()
-        },
-        "per_class_auroc_std": {
-            c: float(np.std(v)) if v else None for c, v in fold_aurocs.items()
-        },
-        "n_folds": len(fold_f1s),
-    }
+    return _run_cv(
+        lambda s: HistGradientBoostingClassifier(
+            max_iter=200, class_weight="balanced", random_state=s
+        ),
+        False, X, y, splits, classes, seed,
+    )
 
 
 def majority_baseline_f1(y: np.ndarray) -> float:
@@ -248,7 +261,18 @@ def run_multiseed(
     le: LabelEncoder,
     seeds: list[int],
     n_folds: int = 5,
+    nan_native: bool = False,
 ) -> dict:
+    """Run the linear and nonlinear probes across seeds.
+
+    nan_native : set for a feature matrix with missing cells (the proteome
+        block). Both probes then use the NaN-native booster, which consumes
+        missing values directly rather than having them imputed — imputation
+        before the CV split would leak test-fold statistics into training. The
+        dense embedding arm leaves this False and keeps LogReg/MLP.
+    """
+    linear_probe = run_histgb if nan_native else run_logreg
+    nonlinear_probe = run_histgb if nan_native else run_mlp
     classes = list(le.classes_)
     print(f"\nClasses: {classes}")
     print(f"Class distribution: {dict(Counter(y.tolist()))}")
@@ -263,7 +287,7 @@ def run_multiseed(
 
         # Gene-split
         gs_splits = gene_split_cv(genes, n_folds=n_folds, seed=seed)
-        gs = run_logreg(X, y, gs_splits, classes, seed=seed)
+        gs = linear_probe(X, y, gs_splits, classes, seed=seed)
         gs_f1s.append(gs["macro_f1_mean"])
         for c in classes:
             v = gs["per_class_auroc_mean"].get(c)
@@ -273,7 +297,7 @@ def run_multiseed(
 
         # Family-split LogReg
         fs_splits = family_split_cv(genes, pfam_map, n_folds=n_folds, seed=seed)
-        fs = run_logreg(X, y, fs_splits, classes, seed=seed)
+        fs = linear_probe(X, y, fs_splits, classes, seed=seed)
         fs_f1s.append(fs["macro_f1_mean"])
         for c in classes:
             v = fs["per_class_auroc_mean"].get(c)
@@ -289,7 +313,7 @@ def run_multiseed(
         )
 
         # Family-split MLP
-        mlp = run_mlp(X, y, fs_splits, classes, seed=seed)
+        mlp = nonlinear_probe(X, y, fs_splits, classes, seed=seed)
         mlp_f1s.append(mlp["macro_f1_mean"])
         for c in classes:
             v = mlp["per_class_auroc_mean"].get(c)
@@ -430,42 +454,39 @@ def main():
     print("PART 2: Proteome features (37-dim) — baseline comparison")
     print("=" * 60)
 
-    proteome_results = None
-    try:
-        X_prot, prot_genes = load_proteome_features()
-        prot_gene_to_idx = {g: i for i, g in enumerate(prot_genes)}
+    X_prot, prot_genes = load_proteome_features()
+    prot_gene_to_idx = {g: i for i, g in enumerate(prot_genes)}
 
-        # Align proteome features to gene_list
-        prot_aligned_idxs = [
-            prot_gene_to_idx[g] for g in gene_list if g in prot_gene_to_idx
-        ]
-        prot_aligned_genes = [g for g in gene_list if g in prot_gene_to_idx]
-        prot_aligned_y = y[[gene_list.index(g) for g in prot_aligned_genes]]
-        X_prot_aligned = X_prot[prot_aligned_idxs]
+    # Align proteome features to gene_list
+    prot_aligned_idxs = [prot_gene_to_idx[g] for g in gene_list if g in prot_gene_to_idx]
+    prot_aligned_genes = [g for g in gene_list if g in prot_gene_to_idx]
+    prot_aligned_y = y[[gene_list.index(g) for g in prot_aligned_genes]]
+    X_prot_aligned = X_prot[prot_aligned_idxs]
 
-        # NaN check: proteome_features_aligned.npy is pre-imputed in build_proteome_features.py
-        # so NaNs should not occur. Log if any are present; do not impute here
-        # (imputation must be done per-fold inside CV to avoid test-set leakage).
-        if np.isnan(X_prot_aligned).any():
-            n_nan = int(np.isnan(X_prot_aligned).sum())
-            print(
-                f"  WARNING: {n_nan} NaN values found in proteome features — "
-                f"these will cause errors in StandardScaler. "
-                f"Re-run build_proteome_features.py to regenerate pre-imputed features."
-            )
-
-        print(f"Proteome-aligned genes: {len(prot_aligned_genes)}")
-        proteome_results = run_multiseed(
-            X_prot_aligned,
-            prot_aligned_y,
-            prot_aligned_genes,
-            pfam_map,
-            le,
-            seeds=seeds,
-            n_folds=args.n_folds,
+    # The proteome matrix carries real NaN — nothing is imputed at build time,
+    # because a value filled in before the CV split leaks test-fold statistics
+    # into training and is indistinguishable from a real measurement after.
+    # run_multiseed therefore uses the NaN-native probes, which consume the
+    # missing cells directly and keep every gene.
+    n_nan = int(np.isnan(X_prot_aligned).sum())
+    if n_nan:
+        n_rows = int(np.isnan(X_prot_aligned).any(axis=1).sum())
+        print(
+            f"  {n_nan} missing cells across {n_rows}/{len(X_prot_aligned)} genes "
+            f"— consumed natively, not imputed"
         )
-    except Exception as e:
-        print(f"Proteome baseline failed: {e}")
+
+    print(f"Proteome-aligned genes: {len(prot_aligned_genes)}")
+    proteome_results = run_multiseed(
+        X_prot_aligned,
+        prot_aligned_y,
+        prot_aligned_genes,
+        pfam_map,
+        le,
+        seeds=seeds,
+        n_folds=args.n_folds,
+        nan_native=True,
+    )
 
     # -----------------------------------------------------------------------
     # Decision rule evaluation (pre-registered)
