@@ -53,7 +53,16 @@ The experimental work is essentially done. Remaining: writeup consolidation, one
 
 ### 6. `result_6.md` — Pathogenicity positive control
 **Script:** `pathogenicity_control.py` · 17,236 ClinVar pathogenic/benign variants, 944 genes
-**Headline numbers:** Pathogenicity MLP AUROC = **0.878 (seed 0, RunPod variant set) / 0.742 ± 0.006 (seeds 1–4, locally-truncated variant set)**. Family-split Δ ≈ 0 reproducibly across all seeds and both variant sets (family-split stability is the robust claim). Clean 5-seed mean on a consistent variant set is pending due to provenance issue.
+**Headline numbers (superseded — see below):** Pathogenicity MLP AUROC = **0.878 (seed 0, RunPod variant set) / 0.742 ± 0.006 (seeds 1–4, locally-truncated variant set)**. Family-split Δ ≈ 0 reproducibly across all seeds and both variant sets.
+
+> **⚠ Superseded by run6 (2026-05-31). Do not cite the 0.74–0.88 band.** Its width was a data
+> artifact — two different variant sets across seeds — not sampling uncertainty. Run6 rebuilt this
+> experiment as a single consolidated fetch → embed → probe over one canonical, fingerprinted set of
+> **37,218 balanced ClinVar variants (1,929 genes, GRCh38)**; `pathogenicity_control.py` refuses to
+> run if the embeddings do not match the variant set. All five seeds now agree:
+> **`delta_mean` MLP family-split AUROC = 0.894, gene-split = 0.897, std ≤ 0.001** (Δ = 0.003, so the
+> family-split stability claim holds and is now measured on one set). The provenance issue is
+> resolved; cite `reports/run6/report_control.md` and `results/run6/pathogenicity_control*.json`.
 **What it concludes:** Pipeline is sound. Pathogenicity AUROC in the 0.74–0.88 range across replications (family-split-stable in all) vs mechanism floor 0.30–0.39 (family-split) — the controlled dissociation under identical pipeline holds.
 
 ### 7. `result_7.md` — Full calibration: all numbers, honest framing
