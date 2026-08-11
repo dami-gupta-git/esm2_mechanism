@@ -33,17 +33,16 @@ from esm2_mech.utils.constants import (
     DELTA_MEAN_FEATURE, DELTA_POS_FEATURE, N_SEEDS, SPLIT_FAMILY, SPLIT_GENE, nonlinear_key,
 )
 from esm2_mech.utils.splits import gene_split_cv, family_split_cv
-from esm2_mech.utils.probes import run_logreg_binary_cv, run_mlp_probe_cv
+from esm2_mech.utils.probes import run_logreg_binary_cv, run_mlp_binary_cv, run_mlp_probe_cv
+from esm2_mech.utils.io import atomic_write_json, load_json_or_discard
 from esm2_mech.utils.paths import (
-    DATA_DIR as _DATA_DIR,
-    RESULTS_DIR as _RESULTS_DIR,
-    VALID_VARIANTS_JSON,
-    EMB_WT_MEAN,
-    EMB_MUT_MEAN,
-    EMB_WT_POS,
-    EMB_MUT_POS,
+    PFAM_JSON,
+    CLINVAR_PATHOGENICITY_VARIANTS_JSON,
+    PATHOGENICITY_VALID_VARIANTS_JSON,
     PATH_EMB_WT_MEAN,
     PATH_EMB_MUT_MEAN,
+    V1_MULTISEED_DIR,
+    V1_MULTISEED_SEED0_DIR,
 )
 
 # Nonlinear-result keys this experiment writes and reads, built via the shared
@@ -53,28 +52,8 @@ MLP_DELTA_MEAN_FAMILY = nonlinear_key("mlp", DELTA_MEAN_FEATURE, SPLIT_FAMILY)
 
 # ── paths ────────────────────────────────────────────────────────────────────
 
-DATA_DIR = str(_DATA_DIR)
-OUT_DIR = str(_RESULTS_DIR / "v1_multiseed")
-SEED0_DIR = str(_RESULTS_DIR / "20260524_baseline_run" / "run_0")
-
-PFAM_JSON = os.path.join(DATA_DIR, "pfam_families.json")
-GERAS_VARIANTS = os.path.join(DATA_DIR, "gerasimavicius_variants.json")
-MERGED_VARIANTS = str(VALID_VARIANTS_JSON)
-
-# Gerasimavicius embeddings
-GERAS_EMB_WT_MEAN = str(EMB_WT_MEAN)
-GERAS_EMB_MUT_MEAN = str(EMB_MUT_MEAN)
-GERAS_EMB_WT_POS = str(EMB_WT_POS)
-GERAS_EMB_MUT_POS = str(EMB_MUT_POS)
-
-# Merged embeddings (same as Gerasimavicius in current pipeline)
-MERGED_EMB_WT_MEAN = str(EMB_WT_MEAN)
-MERGED_EMB_MUT_MEAN = str(EMB_MUT_MEAN)
-
-# Pathogenicity embeddings
-PATH_EMB_WT = str(PATH_EMB_WT_MEAN)
-PATH_EMB_MUT = str(PATH_EMB_MUT_MEAN)
-PATH_VARIANTS = os.path.join(DATA_DIR, "clinvar_pathogenicity_variants.json")
+OUT_DIR = str(V1_MULTISEED_DIR)
+SEED0_DIR = str(V1_MULTISEED_SEED0_DIR)
 
 
 # ── CV helpers ───────────────────────────────────────────────────────────────
@@ -82,69 +61,28 @@ PATH_VARIANTS = os.path.join(DATA_DIR, "clinvar_pathogenicity_variants.json")
 
 
 
-# ── Logistic regression probe (binary, for pathogenicity) ────────────────────
-
-
-def run_mlp_binary(X, y, splits, seed=42):
-    from sklearn.neural_network import MLPClassifier
-    from sklearn.preprocessing import StandardScaler
-    from sklearn.metrics import roc_auc_score
-
-    aurocs = []
-    for tr, te in splits:
-        sc = StandardScaler()
-        Xtr = sc.fit_transform(X[tr])
-        Xte = sc.transform(X[te])
-        if len(set(y[tr])) < 2 or len(set(y[te])) < 2:
-            continue
-        clf = MLPClassifier(
-            hidden_layer_sizes=(256,),
-            max_iter=300,
-            random_state=seed,
-            early_stopping=True,
-            validation_fraction=0.1,
-        )
-        clf.fit(Xtr, y[tr])
-        classes_list = list(clf.classes_)
-        if 1 not in classes_list:
-            continue
-        proba = clf.predict_proba(Xte)[:, classes_list.index(1)]
-        aurocs.append(float(roc_auc_score(y[te], proba)))
-    if not aurocs:
-        return {}
-    return {
-        "auroc_mean": float(np.mean(aurocs)),
-        "auroc_std": float(np.std(aurocs)),
-        "n_folds": len(aurocs),
-    }
-
-
 from esm2_mech.experiments.mechanism.loaders import load_mechanism_variants, load_merged
 
 
 def load_pathogenicity(pfam_map):
-    path_valid_cache = os.path.join(DATA_DIR, "pathogenicity_valid_variants.json")
-    if os.path.exists(path_valid_cache):
-        with open(path_valid_cache) as f:
+    variants = load_json_or_discard(PATHOGENICITY_VALID_VARIANTS_JSON)
+    if variants is None:
+        with open(CLINVAR_PATHOGENICITY_VARIANTS_JSON) as f:
             variants = json.load(f)
-    else:
-        with open(PATH_VARIANTS) as f:
-            variants = json.load(f)
-        emb_n = np.load(PATH_EMB_WT, mmap_mode="r").shape[0]
+        emb_n = np.load(PATH_EMB_WT_MEAN, mmap_mode="r").shape[0]
         if len(variants) > emb_n:
             print(
                 f"  Warning: {len(variants)} pathogenicity variants but {emb_n} embeddings; "
                 f"truncating to {emb_n} (23 dropped on RunPod)"
             )
             variants = variants[:emb_n]
-        with open(path_valid_cache, "w") as f:
-            json.dump(variants, f)
-        print(f"  Saved {path_valid_cache}")
+        atomic_write_json(PATHOGENICITY_VALID_VARIANTS_JSON, variants)
+        print(f"  Saved {PATHOGENICITY_VALID_VARIANTS_JSON}")
 
     genes = np.array([v["gene"] for v in variants])
     y = np.array([1 if v["label"] == "pathogenic" else 0 for v in variants])
-    wt = np.load(PATH_EMB_WT)
-    mut = np.load(PATH_EMB_MUT)
+    wt = np.load(PATH_EMB_WT_MEAN)
+    mut = np.load(PATH_EMB_MUT_MEAN)
     delta = mut - wt
     assert len(delta) == len(
         y
@@ -166,10 +104,9 @@ def run_seed(seed, pfam_map, out_dir):
 
     # ── 1. Gerasimavicius mechanism ──────────────────────────────────────────
     geras_out = os.path.join(out_dir, f"mechanism_geras_seed{seed}.json")
-    if os.path.exists(geras_out):
+    geras_results = load_json_or_discard(geras_out)
+    if geras_results is not None:
         print(f"  [skip] {geras_out} already exists")
-        with open(geras_out) as _f:
-            geras_results = json.load(_f)
     else:
         print("\n--- Gerasimavicius mechanism ---")
         dm, dp, labels, genes = load_mechanism_variants(pfam_map)
@@ -185,16 +122,14 @@ def run_seed(seed, pfam_map, out_dir):
             geras_results[nonlinear_key("mlp", feat_name, SPLIT_FAMILY)] = run_mlp_probe_cv(
                 X, labels, fs, seed=seed, genes=genes, label=f"{feat_name}_family"
             )
-        with open(geras_out, "w") as f:
-            json.dump(geras_results, f, indent=2)
+        atomic_write_json(geras_out, geras_results, indent=2)
         print(f"  -> {geras_out}")
 
     # ── 2. Merged dataset mechanism ──────────────────────────────────────────
     merged_out = os.path.join(out_dir, f"mechanism_merged_seed{seed}.json")
-    if os.path.exists(merged_out):
+    merged_results = load_json_or_discard(merged_out)
+    if merged_results is not None:
         print(f"  [skip] {merged_out} already exists")
-        with open(merged_out) as _f:
-            merged_results = json.load(_f)
     else:
         print("\n--- Merged dataset mechanism ---")
         dm, labels, genes = load_merged(pfam_map)
@@ -209,16 +144,14 @@ def run_seed(seed, pfam_map, out_dir):
         merged_results[MLP_DELTA_MEAN_FAMILY] = run_mlp_probe_cv(
             dm, labels, fs, seed=seed, genes=genes, label="delta_mean_family"
         )
-        with open(merged_out, "w") as f:
-            json.dump(merged_results, f, indent=2)
+        atomic_write_json(merged_out, merged_results, indent=2)
         print(f"  -> {merged_out}")
 
     # ── 3. Pathogenicity control ─────────────────────────────────────────────
     path_out = os.path.join(out_dir, f"pathogenicity_seed{seed}.json")
-    if os.path.exists(path_out):
+    path_results = load_json_or_discard(path_out)
+    if path_results is not None:
         print(f"  [skip] {path_out} already exists")
-        with open(path_out) as _f:
-            path_results = json.load(_f)
     else:
         print("\n--- Pathogenicity control ---")
         delta, y, genes = load_pathogenicity(pfam_map)
@@ -231,11 +164,10 @@ def run_seed(seed, pfam_map, out_dir):
         print(f"  logreg family-split")
         path_results["logreg_family"] = run_logreg_binary_cv(delta, y, fs, seed=seed)
         print(f"  MLP gene-split")
-        path_results["mlp_gene"] = run_mlp_binary(delta, y, gs, seed=seed)
+        path_results["mlp_gene"] = run_mlp_binary_cv(delta, y, gs, seed=seed)
         print(f"  MLP family-split")
-        path_results["mlp_family"] = run_mlp_binary(delta, y, fs, seed=seed)
-        with open(path_out, "w") as f:
-            json.dump(path_results, f, indent=2)
+        path_results["mlp_family"] = run_mlp_binary_cv(delta, y, fs, seed=seed)
+        atomic_write_json(path_out, path_results, indent=2)
         print(f"  -> {path_out}")
 
     return geras_results, merged_results, path_results
@@ -366,8 +298,7 @@ def summarise(all_seeds, out_dir):
         )
 
     out = os.path.join(out_dir, "summary.json")
-    with open(out, "w") as f:
-        json.dump(summary, f, indent=2)
+    atomic_write_json(out, summary, indent=2)
     print(f"\nSummary written to {out}")
     return summary
 
