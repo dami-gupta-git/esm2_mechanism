@@ -6,7 +6,7 @@ than 5-seed fold-jitter error bars.
 
 Supersedes `RUNBOOK_4.md` (run6). The experiments, gates, and hypotheses are unchanged — run_biorxiv
 re-scores the same science with correct error bars. Statistical methodology is
-[`reports/run6/STATS_PLAN.md`](reports/run6/STATS_PLAN.md); the change list is
+[`reports/run6/STATS_PLAN.md`](../reports/run6/STATS_PLAN.md); the change list is
 [`PLAN_2026-07-20.md`](PLAN_2026-07-20.md).
 
 All commands use `python -m esm2_mech.<module>` from the project root with the package installed
@@ -139,7 +139,7 @@ level across two fold assignments**: resample **families** (the coarser unit —
 recompute each arm under its own partition. Written without distinguishing these, the cross-partition case gets silently
 implemented as the same-fold path and is wrong.
 
-### 0b-bis. Pre-registered decision rules written into EXPERIMENT.md
+### 0b-bis. Pre-registered decision rules written into PREREGISTRATION_run_biorxiv.md
 
 Two documents must exist **before** run_biorxiv executes, or the run produces intervals with no stated
 reading and any interpretation chosen afterwards is retro-fitted:
@@ -153,8 +153,8 @@ reading and any interpretation chosen afterwards is retro-fitted:
    `PLAN_2026-07-20.md` Task 0.2) carry BH-FDR correction across the set, reported raw and
    adjusted. Everything else is labelled exploratory and is not corrected.
 
-Both go into `docs/EXPERIMENT.md` with the run6 point estimates recorded, so the rules cannot be
-tuned to the run_biorxiv intervals.
+Both go into `PREREGISTRATION_run_biorxiv.md` with the run6 point estimates recorded, so the
+rules cannot be tuned to the run_biorxiv intervals.
 
 ### 0c. Green CI and a pinned environment
 
@@ -168,12 +168,12 @@ tuned to the run_biorxiv intervals.
 
 ### 0d. Configuration
 
-- `RUN_NAME = "run6"` → `"run_biorxiv"` in [`utils/paths.py:11`](src/esm2_mech/utils/paths.py#L11). One
+- `RUN_NAME = "run6"` → `"run_biorxiv"` in [`utils/paths.py:11`](../src/esm2_mech/utils/paths.py#L11). One
   line; `RESULTS_DIR`, `RUN_REPORTS_DIR`, and `FIGURES_DIR` all derive from it. **Flip this only
   after 0a and 0b pass their gates** — flipping first means the replay writes CI-less files into
   `results/run_biorxiv/`, and fixing them later either overwrites run_biorxiv provenance or forces a run8.
 - Widen `PERMUTATION_FEATURES` at
-  [`mechanism_delta_family_split.py:108`](src/esm2_mech/experiments/mechanism/mechanism_delta_family_split.py#L108)
+  [`mechanism_delta_family_split.py:108`](../src/esm2_mech/experiments/mechanism/mechanism_delta_family_split.py#L108)
   from `("delta_mean", "wt_only_mean")` to also include `wt_concat_mut` and `mut_only_mean` —
   all four above-floor features, plus `delta_mean` retained as the negative control. The four
   at-floor features are left out: permuting a feature already at chance adds nothing its CI does

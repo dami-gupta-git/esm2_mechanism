@@ -5,6 +5,17 @@
 **Script:** `../scripts/pathogenicity_control.py`
 **Output:** `../results/20260524_baseline_run/run_0/pathogenicity_control.json`
 
+> **⚠ Superseded by run6 (2026-05-31). Do not cite the numbers below as clean.** This file's
+> AUROC band (0.74–0.88 across replications in Part 2 below) reflects two different variant sets
+> across seeds — a data artifact, not sampling uncertainty. Run6 rebuilt this experiment as a
+> single consolidated fetch → embed → probe over one canonical, fingerprinted set of **37,218
+> balanced ClinVar variants (1,929 genes, GRCh38)**; `pathogenicity_control.py` now refuses to run
+> if the embeddings do not match the variant set. All five run6 seeds agree:
+> **`delta_mean` MLP family-split AUROC = 0.894, gene-split = 0.897, std ≤ 0.001** (Δ = 0.003,
+> confirming family-split stability on one set). Cite
+> [`reports/run6/report_control.md`](../run6/report_control.md) and
+> `results/run6/pathogenicity_control*.json` instead.
+
 ## TL;DR
 
 The same ESM-2 delta embeddings (mutant − WT) that classify GOF / DN / LOF at chance (macro-F1 0.28, result_4) predict ClinVar pathogenic vs benign at **MLP AUROC 0.886 ± 0.001** (5-seed replication, 16,576 variants, 943 genes — see Part 2). The pathogenicity signal is **identical under gene-split and family-split CV** (Δ = 0.002 ± 0.002), confirming it is per-variant biochemistry rather than homology leakage. Conclusion: **ESM-2 encodes whether a mutation is damaging, but not how it acts.** The mechanism null in result_4 is therefore a real absence of mechanism signal in ESM-2 deltas, not a pipeline failure.

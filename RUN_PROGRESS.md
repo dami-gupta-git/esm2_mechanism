@@ -135,75 +135,9 @@ Uses `esm2_mech` package (RUNBOOK_3). All commands use `python -m esm2_mech.<mod
 
 ---
 
-## Run 7 — started 2026-07-22 (RUNBOOK_5, inferential statistics)
+## Run 7 / run_biorxiv — started 2026-07-22 (RUNBOOK_biorxiv, inferential statistics)
 
-Re-scores the run6 science with dependency-aware confidence intervals, permutation p-values, and
-tested difference claims. Experiments, gates, and hypotheses are unchanged — only the error bars
-and the difference tests are new. Methodology: `reports/run6/STATS_PLAN.md`. Execution spec:
-`RUNBOOK_5.md`.
-
-**Embeddings are reused from run6, not re-extracted.** Nothing upstream of the probes changed.
-Embedding paths are keyed by model (`data/embeddings/<ESM2_MODEL>/`, `<ESM3_MODEL>/`), not by
-run, so no copy is needed and no path changes. Every GPU embedding step is skipped; GPU is used
-only for the conservation extract (Exp 5 step 3), the megascale nonlinear probe (Exp 7 step 4),
-and the permutation refits (Exp 1 step 3b). run_biorxiv result files record the embedding fingerprint
-so the reuse is recorded in the output, not only here.
-
-### Stage 0 — preconditions (must all pass before `RUN_NAME` is flipped)
-
-| # | Task | Description | Status | Notes |
-|---|---|---|---|---|
-| 0.0 | Pathogenicity provenance | Verify all 5 seeds share one variant-set fingerprint (run6 already consolidated this; `pathogenicity_control.py:306/332/360`). Correct the stale "pending provenance issue" note in `docs/README.md`; mark `result_6.md`'s 0.74–0.88 band superseded | ⬜ | Docs fix, not a re-derivation — but stop and re-run if any seed's fingerprint disagrees |
-| 0.1 | Pre-registered CI decision rules | Into `docs/EXPERIMENT.md` before the run: gate affirmed only if point estimate clears AND paired CI excludes zero; else "not distinguishable". Failing gate with wide CI = "underpowered", not "no effect" | ⬜ | Must predate the run or the rule is retro-fitted |
-| 0.2 | Confirmatory/exploratory split | Enumerate the six confirmatory claims (C1–C6); BH-FDR across that set only; label everything else exploratory | ⬜ | Into `docs/EXPERIMENT.md` alongside 0.1 |
-| 0a | Wire 7 modules | Add cluster-bootstrap CIs to `mechanism/mlp.py`, `mechanism/contrastive_mechanism.py`, `esm3/esm3_mechanism.py` (phase 3), `pathogenicity/pathogenicity_control.py`, `geometry/run_geometry.py`, `stability/megascale_stability.py`, `mechanism/family_clustering.py` (+`--seeds`). Plus a CI on `leakage_fraction`'s ratio. Reference impl: `classify_by_mechanism` | ⬜ | Only 3 modules imported `utils/bootstrap.py` as of run6. Gate: a CI key must actually appear in an emitted JSON |
-| 0b | `paired_cluster_bootstrap_diff` | New function in `utils/bootstrap.py` + unit tests. Shared resample applied to both arms. **Two pairing modes:** same-fold (ESM-3, contrastive, conservation) and cross-partition (the gene-vs-family split gap, which spans two CV partitions) | ⬜ | Unblocks six claims. Split gap uses this, NOT a permutation test — its permutation null is zero by construction |
-| 0c | Config | `RUN_NAME`→`run_biorxiv` (`utils/paths.py:11`); widen `PERMUTATION_FEATURES` to the 4 above-floor features + `delta_mean` control; confirm `PERMUTATION_N_RESAMPLES`=1000 | ⬜ | Flip `RUN_NAME` only after 0a/0b pass |
-| 0c | Production quality | Trim+pin runtime deps (**remove `wandb`**, `aider-chat`, `openai`, `google-generativeai`); add CI running the 38-file suite green; build `scripts/compare_runs.py` with a run6-vs-run6 zero-movement invariant | ⬜ | Green CI is a precondition for flipping `RUN_NAME` |
-| 0d | Working tree | `git status` clean before the run_biorxiv branch point | ⬜ | Else run6/run_biorxiv provenance is inseparable |
-
-### Experiments
-
-| # | RUNBOOK_5 step | Command | Inputs | Outputs | Status | Notes |
-|---|---|---|---|---|---|---|
-| 1 | Stage 1 | `python -m esm2_mech.fetch_data.build_gene_list` | `downloads/DiseaseMech_Stability_VEPS.xlsx`, `downloads/AllG2P.csv` | `gene_list.tsv` | ⬜ | Skippable if `data/` intact |
-| 2 | Exp1 Step 1 | `fetch_variants` / `fetch_sequences` / `fetch_annotations` / `fetch_alphamissense_mechanism` / `build_valid_variants` | `downloads/*` | `variants.json`, `valid_variants.json`, `pfam_families.json`, `alphamissense_scores_full.json` | ⬜ | Not keyed by run; skip if present and verified |
-| 3 | Exp1 Step 2 | *(SKIPPED — embeddings reused)* | — | `data/embeddings/<ESM2_MODEL>/*.npy` | ⏭️ | Verify (17826, 1280) × 4 arrays before proceeding |
-| 4 | Exp1 Step 3 | `python -m esm2_mech.experiments.mechanism.classify_by_mechanism --seeds 5` | `valid_variants.json`, `pfam_families.json`, `embeddings_*.npy`, `alphamissense_scores_full.json` | `results/run_biorxiv/family_split_baselines_seed{0..4}.json`, `aggregate.json` | ⬜ | CIs on by default |
-| 5 | Exp1 Step 3 | `python -m esm2_mech.experiments.mechanism.mlp --seeds 5` | `valid_variants.json`, `pfam_families.json`, `embeddings_*.npy` | `results/run_biorxiv/nonlinear_results_seed{0..4}.json` | ⬜ | Needs 0a wiring |
-| 6 | Exp1 Step 3 | `python -m esm2_mech.experiments.mechanism.family_clustering --seeds 5` | `valid_variants.json`, `pfam_families.json`, `embeddings_{wt,mut}_mean.npy` | `results/run_biorxiv/family_clustering.json` | ⬜ | `--seeds` is new: run6 was seed 0 only |
-| 7 | Exp1 Step 3 | `python -m esm2_mech.experiments.mechanism.naive_baseline` | `valid_variants.json`, `pfam_families.json` | `results/run_biorxiv/naive_baseline.json` | ⬜ | Measured chance floor |
-| 8 | Exp1 Step 3 | `python -m esm2_mech.experiments.mechanism.leakage_fraction` | result JSONs from steps 4, 6, 7 | `results/run_biorxiv/leakage_fraction.json` | ⬜ | Runs last (reads JSONs only). Needs a CI — run6 reported ~40% bare |
-| 9 | Exp1 Step 3b | `python -m esm2_mech.experiments.mechanism.classify_by_mechanism --seeds 1 --n_permutations 1000` | same as step 4 | permutation p-values in `results/run_biorxiv/` | ⬜ | GPU, tmux. **Seed 0 only** (a permutation test builds its own null). **Time one refit before launching** — 8,000 refits, per-refit cost never measured |
-| 10 | Exp1 Step 4 | `python -m esm2_mech.experiments.mechanism.single_source_mechanism --seeds 5` | `valid_variants.json`, `pfam_families.json`, `embeddings_*.npy` | `results/run_biorxiv/single_source_gerasimavicius/*` | ⬜ | Question is whether `delta_mean`'s *interval* straddles the 0.279 subset floor |
-| 11 | Exp2 | `python -m esm2_mech.experiments.pathogenicity.pathogenicity_control --model esm2_t33_650M_UR50D` | `pathogenicity_{wt,mut}_mean.npy` (reused), `pfam_families.json` | `results/run_biorxiv/pathogenicity_control{,_seed0..4}.json` | ⬜ | Embed phase SKIPPED; probe only, CPU. Needs 0a wiring |
-| 12 | Exp3 | `python -m esm2_mech.experiments.mechanism.mechanism_within_family --seeds 5` | `valid_variants.json`, `pfam_families.json`, `embeddings_{wt,mut}_mean.npy` | `results/run_biorxiv/within_family_mechanism.json` | ⬜ | Local CPU. Add BH-FDR across 28 families, minimal-detectable-effect per family, within-family gene CIs |
-| 13 | Exp4 | `python -m esm2_mech.experiments.esm3.esm3_mechanism --phase 3 --dataset merged --seeds 5` | `data/embeddings/<ESM3_MODEL>/merged/*` (reused), `pfam_families.json`, `nonlinear_results_seed*.json` | `results/run_biorxiv/esm3_mechanism/merged/summary.json` | ⬜ | Phases 1+2 SKIPPED. Paired bootstrap on `seq`−ESM-2 and `seq_struct`−`seq`. Merged only |
-| 14 | Exp5 step 1 | `python -m esm2_mech.experiments.geometry.build_canonical_pathogenicity` | `clinvar_pathogenicity_variants.json`, `pathogenicity_*.npy` | `data/pathogenicity_valid_variants_canonical.json` | ⬜ | Fingerprint-checked |
-| 15 | Exp5 step 2 | `python -m esm2_mech.experiments.geometry.run_geometry --seeds 5` | canonical variants, `pathogenicity_*.npy`, `valid_variants.json`, `embeddings_*.npy` | `results/run_biorxiv/magnitude_direction/*.json` | ⬜ | CPU. Needs 0a wiring |
-| 16 | Exp5 step 3 | `python -m esm2_mech.experiments.geometry.conservation_axis --extract` | canonical variants, `cache/sequences.json` | `data/conservation_pathogenicity.npy` | ⬜ | **GPU** — masked-LM pass. Can share a pod with step 9 |
-| 17 | Exp5 step 4 | `python -m esm2_mech.experiments.geometry.conservation_axis` | `conservation_pathogenicity.npy`, `pathogenicity_*.npy`, `pfam_families.json` | `results/run_biorxiv/magnitude_direction/conservation_axis.json` | ⬜ | Paired bootstrap on conservation−delta and the K2 increment (+0.002) |
-| 18 | Exp6 | `python -m esm2_mech.experiments.mechanism.contrastive_mechanism --seeds 5` | `valid_variants.json`, `pfam_families.json`, `embeddings_{wt,mut}_mean.npy`, `aggregate.json` | `results/run_biorxiv/contrastive_results_seed{0..4}.json`, `contrastive_aggregate.json` | ⬜ | Paired bootstrap on the +0.041 gap; per-class AUROC CIs for the "DN unmoved" null |
-| 19 | Exp7 step 1 | `python -m esm2_mech.experiments.stability.build_domain_families` | Tsuboyama CSV, `PFAM_A_HMM` | `megascale_tsuboyama_variants.json`, `megascale_domain_families.json` | ⬜ | Skip if present and non-empty (needs hmmscan + Pfam-A) |
-| 20 | Exp7 step 2 | *(SKIPPED — embeddings reused)* | — | `megascale_{wt,mut}_{mean,pos}.npy` | ⏭️ | |
-| 21 | Exp7 step 3 | `python -m esm2_mech.experiments.stability.megascale_stability` | megascale variants + embeddings, `valid_variants.json` | `results/run_biorxiv/megascale_stability/{summary,per_protein_spearman,h3_stability_projection}.json` | ⬜ | CPU. Needs 0a wiring |
-| 22 | Exp7 step 4 | `python -m esm2_mech.experiments.stability.megascale_mlp --xgboost` | same as step 21 | `results/run_biorxiv/megascale_stability/mlp_summary_xgb.json` | ⬜ | **GPU** |
-| 23 | Exp7 step 5 | `python -m esm2_mech.experiments.stability.stability_baselines` | same as step 21 | `results/run_biorxiv/megascale_stability/baselines.json` | ⬜ | CPU |
-
-| 24 | Task 2b | `python -m esm2_mech.experiments.mechanism.clan_holdout` and `...mmseqs_cluster_holdout` | `valid_variants.json`, `pfam_families.json`, `embeddings_*.npy` | `results/run_biorxiv/homology_partition_panel/` | ⬜ | Robustness panel: mechanism null + leakage fraction under Pfam family / clan / MMseqs2. Each row's CI resamples that row's own held-out unit |
-| 25 | Task 2c.3 | `python scripts/compare_runs.py run6 run_biorxiv` | `results/run6/*`, `results/run_biorxiv/*` | delta-note table | ⬜ | Regression test + the delta-note deliverable, generated not transcribed |
-
-### Stage 2 — remaining statistical work
-
-| # | Task | Status | Notes |
-|---|---|---|---|
-| S1 | AUPRC + prevalence baseline, PPV/NPV at class prevalence | ⬜ | Rare classes: DN ≈ 9%, GOF ≈ 15%. AUROC alone overstates usefulness |
-| S2 | Calibration note in every probe report | ⬜ | Probes are uncalibrated; scores are discrimination, not risk. State, don't fix |
-| S3 | BH-FDR + minimal-detectable-effect (within-family) | ⬜ | Part of step 12 |
-| S4 | Multi-seed family probe | ⬜ | Part of step 6 |
-
-### Stage 3 — reports
-
-| # | Task | Status | Notes |
-|---|---|---|---|
-| R1 | Regenerate all 13 reports into `reports/run_biorxiv/` | ⬜ | Zero run6 reports cite a CI. Every number traces to `results/run_biorxiv/`; Provenance notes the reused embeddings |
+Live status table moved to [`biorxiv/RUN_PROGRESS_biorxiv.md`](biorxiv/RUN_PROGRESS_biorxiv.md) so
+it stays a current, run-scoped table separate from this file's historical log of runs 1–6.
+Execution spec: `biorxiv/RUNBOOK_biorxiv.md`. Change list: `biorxiv/PLAN_2026-07-20.md`.
+Pre-registered values: `biorxiv/PREREGISTRATION_run_biorxiv.md`.
