@@ -301,19 +301,21 @@ def run_h3_stability_projection(
                 fold_f1s.append(
                     float(f1_score(y[te], pred, average="macro", zero_division=0))
                 )
+            seed_f1_mean, _, _ = mean_std_n(fold_f1s)
             if tag == "baseline":
-                baseline_f1s.append(float(np.mean(fold_f1s)))
+                baseline_f1s.append(seed_f1_mean)
             else:
-                projected_f1s.append(float(np.mean(fold_f1s)))
+                projected_f1s.append(seed_f1_mean)
 
+    baseline_f1_mean, baseline_f1_std, _ = mean_std_n(baseline_f1s)
+    projected_f1_mean, projected_f1_std, _ = mean_std_n(projected_f1s)
     return {
-        "baseline_f1_mean": float(np.mean(baseline_f1s)),
-        "baseline_f1_std": float(np.std(baseline_f1s)),
-        "projected_f1_mean": float(np.mean(projected_f1s)),
-        "projected_f1_std": float(np.std(projected_f1s)),
-        "delta_f1": float(np.mean(projected_f1s) - np.mean(baseline_f1s)),
-        "h3_passes": float(np.mean(projected_f1s))
-        <= float(np.mean(baseline_f1s)) + 0.01,
+        "baseline_f1_mean": baseline_f1_mean,
+        "baseline_f1_std": baseline_f1_std,
+        "projected_f1_mean": projected_f1_mean,
+        "projected_f1_std": projected_f1_std,
+        "delta_f1": projected_f1_mean - baseline_f1_mean,
+        "h3_passes": projected_f1_mean <= baseline_f1_mean + 0.01,
     }
 
 

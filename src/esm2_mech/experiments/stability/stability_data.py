@@ -105,6 +105,7 @@ def load_stability_inputs(include_pos=False):
     wt_mean = np.load(MEGASCALE_EMB_WT_MEAN)
     mut_mean = np.load(MEGASCALE_EMB_MUT_MEAN)
     _check_alignment(wt_mean, len(variants), MEGASCALE_EMB_WT_MEAN)
+    _check_alignment(mut_mean, len(variants), MEGASCALE_EMB_MUT_MEAN)
     delta_mean = mut_mean - wt_mean
 
     delta_pos = None
@@ -112,6 +113,7 @@ def load_stability_inputs(include_pos=False):
         wt_pos = np.load(MEGASCALE_EMB_WT_POS)
         mut_pos = np.load(MEGASCALE_EMB_MUT_POS)
         _check_alignment(wt_pos, len(variants), MEGASCALE_EMB_WT_POS)
+        _check_alignment(mut_pos, len(variants), MEGASCALE_EMB_MUT_POS)
         delta_pos = mut_pos - wt_pos
 
     return StabilityInputs(
