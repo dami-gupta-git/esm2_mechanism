@@ -43,12 +43,11 @@ import numpy as np
 from sklearn.metrics import f1_score
 
 from esm2_mech.utils.bootstrap import cluster_bootstrap_ci
-from esm2_mech.utils.constants import BOOTSTRAP_N_RESAMPLES
+from esm2_mech.utils.constants import BOOTSTRAP_N_RESAMPLES, mechanism_oof_cache_filename
 from esm2_mech.utils.metrics import mean_std_n
 from esm2_mech.utils.paths import (
     FAMILY_CLUSTERING_JSON,
     LEAKAGE_FRACTION_JSON,
-    MECHANISM_OOF_CACHE_SEED_JSON,
     NAIVE_BASELINE_JSON,
     PFAM_JSON,
     RESULTS_DIR,
@@ -206,7 +205,7 @@ def main(compute_ci: bool = True, n_boot: int = BOOTSTRAP_N_RESAMPLES) -> None:
     # Seed-0 OOF cache (delta_mean, wt_only_mean) for the joint ratio bootstrap.
     # Optional: absent when mechanism_delta_family_split was run with --no_ci or
     # before this cache existed, in which case the LF ratio CI is simply omitted.
-    oof_cache_path = MECHANISM_OOF_CACHE_SEED_JSON.format(seed=0)
+    oof_cache_path = os.path.join(RESULTS_DIR, mechanism_oof_cache_filename(0))
     oof_cache = None
     pfam_map = None
     if compute_ci and os.path.exists(oof_cache_path):

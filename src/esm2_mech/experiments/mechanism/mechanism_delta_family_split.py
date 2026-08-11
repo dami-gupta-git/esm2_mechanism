@@ -21,13 +21,13 @@ import numpy as np
 from esm2_mech.utils.paths import (
     EMB_WT_MEAN, EMB_MUT_MEAN, EMB_WT_POS, EMB_MUT_POS,
     SEQUENCES_JSON, VARIANTS_JSON, RESULTS_DIR, PFAM_JSON,
-    MECHANISM_OOF_CACHE_SEED_JSON,
 )
 
 OUT_DIR = RESULTS_DIR
 from esm2_mech.utils.sequences import window_sequence, apply_missense, build_wt_mut_onehot
 from esm2_mech.utils.constants import (
     seed_result_filename,
+    mechanism_oof_cache_filename,
     MECHANISM_CLASSES,
     BOOTSTRAP_N_RESAMPLES,
 )
@@ -326,7 +326,7 @@ def run(
     print(f"\nResults written to {out_path}")
 
     if oof_cache:
-        oof_cache_path = MECHANISM_OOF_CACHE_SEED_JSON.format(seed=seed)
+        oof_cache_path = os.path.join(out_dir, mechanism_oof_cache_filename(seed))
         atomic_write_json(oof_cache_path, oof_cache)
         print(f"OOF cache written to {oof_cache_path}")
 

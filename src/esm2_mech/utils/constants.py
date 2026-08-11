@@ -79,6 +79,20 @@ def seed_result_filename(seed: int) -> str:
     return f"{SEED_RESULT_PREFIX}{seed}{SEED_RESULT_EXT}"
 
 
+# Seed-0 gene-split/family-split OOF cache (row_ids, y_true, pred, genes) for the
+# PERMUTATION_FEATURES headline features, written by mechanism_delta_family_split.run
+# alongside its seed-result file (same out_dir) so leakage_fraction.py can bootstrap
+# the leakage-fraction RATIO jointly (shared resample across both arms) instead of
+# combining two separately-computed CIs.
+MECHANISM_OOF_CACHE_PREFIX = "mechanism_oof_cache_seed"
+MECHANISM_OOF_CACHE_EXT = ".json"
+
+
+def mechanism_oof_cache_filename(seed: int) -> str:
+    """Filename for one seed's mechanism OOF cache."""
+    return f"{MECHANISM_OOF_CACHE_PREFIX}{seed}{MECHANISM_OOF_CACHE_EXT}"
+
+
 # ── Contrastive metric-learning per-seed result files ─────────────────────────
 # Written by contrastive_mechanism.run; pooled by contrastive_mechanism.main.
 # Same single-source pattern as SEED_RESULT_* above.
