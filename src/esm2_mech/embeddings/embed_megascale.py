@@ -9,8 +9,9 @@ limit), so the WT/mut sequence pairs are read straight from the parsed variants.
 The heavy lifting (interleaved WT/mut forward passes, atomic checkpointing,
 resume) is the shared get_esm2_embeddings_for_pairs helper. That helper writes
 fixed filenames into out_dir, so this driver points it at an isolated checkpoint
-subdir (MEGASCALE_EMB_CKPT_DIR) to avoid colliding with the mechanism embeddings,
-then promotes the four arrays to the MEGASCALE_EMB_* paths the probes read.
+subdir (megascale_ckpt, under the --model's embedding directory) to avoid
+colliding with the mechanism embeddings, then promotes the four arrays to
+megascale_*.npy in that same model directory.
 
 Outputs (under data/embeddings/<model>/):
   megascale_wt_mean.npy   megascale_mut_mean.npy
@@ -42,23 +43,25 @@ from esm2_mech.utils.constants import (
     MAX_SEQ_LEN,
 )
 from esm2_mech.utils.paths import (
-    MEGASCALE_EMB_CKPT_DIR,
+    DATA_DIR,
     MEGASCALE_EMB_WT_MEAN,
     MEGASCALE_EMB_MUT_MEAN,
     MEGASCALE_EMB_WT_POS,
     MEGASCALE_EMB_MUT_POS,
 )
 
-# The shared helper's fixed checkpoint name → the megascale target path it is
-# promoted to once extraction is complete. Keyed off EMB_ARRAY_NAMES (the same
-# tuple the helper writes) so the names cannot drift from the writer.
-_CKPT_TO_TARGET = dict(zip(
+# Filenames the shared helper writes (EMB_ARRAY_NAMES) → the megascale target
+# filename each is promoted to. Filenames are taken from the MEGASCALE_EMB_*
+# path constants (paths.py) so they cannot drift from the canonical naming;
+# the directory they land in is namespaced per --model below, matching
+# embed_variants.py's convention (data/embeddings/<model>/).
+_CKPT_TO_TARGET_FILENAME = dict(zip(
     EMB_ARRAY_NAMES,
     (
-        MEGASCALE_EMB_WT_MEAN,
-        MEGASCALE_EMB_MUT_MEAN,
-        MEGASCALE_EMB_WT_POS,
-        MEGASCALE_EMB_MUT_POS,
+        MEGASCALE_EMB_WT_MEAN.name,
+        MEGASCALE_EMB_MUT_MEAN.name,
+        MEGASCALE_EMB_WT_POS.name,
+        MEGASCALE_EMB_MUT_POS.name,
     ),
 ))
 
@@ -84,9 +87,9 @@ def _build_pairs(variants):
     return wt_seqs, mut_seqs, positions
 
 
-def _promote_checkpoint(ckpt_dir, n_expected):
-    """Copy the completed checkpoint arrays to the MEGASCALE_EMB_* target paths."""
-    for name, target in _CKPT_TO_TARGET.items():
+def _promote_checkpoint(ckpt_dir, n_expected, target_dir):
+    """Copy the completed checkpoint arrays to megascale_*.npy under target_dir."""
+    for name, target_filename in _CKPT_TO_TARGET_FILENAME.items():
         src = os.path.join(ckpt_dir, name)
         rows = np.load(src, mmap_mode="r").shape[0]
         if rows != n_expected:
@@ -94,8 +97,8 @@ def _promote_checkpoint(ckpt_dir, n_expected):
                 f"checkpoint {src} has {rows} rows, expected {n_expected} — "
                 f"extraction incomplete"
             )
-        shutil.copyfile(src, str(target))
-    print(f"Promoted 4 arrays ({n_expected} rows) to megascale embedding paths")
+        shutil.copyfile(src, os.path.join(target_dir, target_filename))
+    print(f"Promoted 4 arrays ({n_expected} rows) to {target_dir}")
 
 
 def main():
@@ -117,16 +120,19 @@ def main():
     print(f"Embedding {len(wt_seqs)} WT/mut pairs across "
           f"{len({v['protein'] for v in variants})} domains")
 
-    ckpt_dir = str(MEGASCALE_EMB_CKPT_DIR)
+    # Namespaced by --model (mirrors embed_variants.py) so different models'
+    # checkpoints and outputs never collide or silently reuse one another.
+    target_dir = str(DATA_DIR / "embeddings" / args.model)
+    ckpt_dir = os.path.join(target_dir, "megascale_ckpt")
     os.makedirs(ckpt_dir, exist_ok=True)
 
     # Resume: if a full checkpoint already exists, skip extraction and just promote.
-    ckpt_paths = [os.path.join(ckpt_dir, name) for name in _CKPT_TO_TARGET]
+    ckpt_paths = [os.path.join(ckpt_dir, name) for name in _CKPT_TO_TARGET_FILENAME]
     resume_arrays, resume_start = None, 0
     status, payload = inspect_four_array_checkpoint(ckpt_paths, len(wt_seqs))
     if status == "complete":
         print("Embeddings already complete — promoting checkpoint.")
-        _promote_checkpoint(ckpt_dir, len(wt_seqs))
+        _promote_checkpoint(ckpt_dir, len(wt_seqs), target_dir)
         return
     if status == "resume":
         resume_start, resume_arrays = payload
@@ -146,7 +152,7 @@ def main():
         resume_arrays=resume_arrays,
     )
 
-    _promote_checkpoint(ckpt_dir, len(wt_seqs))
+    _promote_checkpoint(ckpt_dir, len(wt_seqs), target_dir)
     print("Done.")
 
 
