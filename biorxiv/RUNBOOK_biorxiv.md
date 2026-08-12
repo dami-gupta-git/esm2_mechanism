@@ -47,11 +47,12 @@ GPU is still required for three steps, which are computed rather than cached:
 
 ## Stage 0 — preconditions
 
-run_biorxiv must not start until all of these hold. 0a/0a-bis/0b are the substance of the run,
-0b-bis fixes how its results may be read, and 0c–0e protect its provenance. Live status is in
-`RUN_PROGRESS_biorxiv.md`; this document states what must be true, not what has been done.
+run_biorxiv must not start until all of these hold. 0.2–0.4 are the substance of the run, 0.5–0.6
+fix how its results may be read, and 0.7–0.9 protect its provenance. 0.1 and 0.6 are documentation
+deliverables tracked in `RUN_PROGRESS_biorxiv.md` rather than sections here. Live status is in
+that file; this document states what must be true, not what has been done.
 
-### 0a. Stats machinery wired and verified
+### 0.2. Stats machinery wired and verified
 
 Eleven modules import `utils/bootstrap.py` and emit CI keys: `naive_baseline`,
 `mechanism_delta_family_split`, `mechanism_within_family`, `mechanism/mlp.py`,
@@ -75,7 +76,7 @@ across seven call sites; `pathogenicity_control.py` computing CIs for five seeds
 seed 0's; and `family_clustering.py`'s k-NN-purity and within/between CIs biased by duplicate points
 under a with-replacement bootstrap, which is why `cluster_subsample_ci` exists (R7.3 addendum).
 
-### 0a-bis. Methodology rules the wiring must implement
+### 0.3. Methodology rules the wiring must implement
 
 Settled in `PLAN_biorxiv.md` Task 0. These are properties of the emitted numbers, so getting
 them wrong means re-running, not just re-reporting.
@@ -91,7 +92,7 @@ them wrong means re-running, not just re-reporting.
    degenerate-fold suppression guard, and are labelled the least trustworthy intervals in their
    table. No confirmatory claim rests on them — per-class AUROCs are exploratory under R7.2.
 
-### 0b. Paired cluster bootstrap
+### 0.4. Paired cluster bootstrap
 
 `utils/bootstrap.py` provides `paired_cluster_bootstrap_diff` (same-fold) and
 `paired_cluster_bootstrap_diff_cross_partition`, with `paired_oof_diff` wrapping both: it aligns two
@@ -138,18 +139,18 @@ are different CV partitions by definition — so its pairing is across two fold 
 families, then recompute each arm under its own partition. Written without distinguishing these, the
 cross-partition case gets silently implemented as the same-fold path and is wrong.
 
-### 0b-bis. Pre-registered decision rules written into PREREGISTRATION_run_biorxiv.md
+### 0.5 / 0.6. Pre-registered decision rules
 
 Both rules below must be written down **before** run_biorxiv executes, or the run produces intervals
 with no stated reading and any interpretation chosen afterwards is retro-fitted:
 
-1. **CI decision rule for every confirmatory gate.** A gate is affirmed only if its point estimate
+**0.5 — CI decision rule for every confirmatory gate.** A gate is affirmed only if its point estimate
    clears the threshold *and* the paired difference 95% CI excludes zero; if the point estimate
    clears but the CI spans zero, the claim is restated as **not distinguishable**. A gate failing
    with a CI that also spans the threshold is reported as **underpowered to detect an effect of
    the pre-registered size**, not as evidence of no effect.
-2. **The confirmatory / exploratory split.** Five confirmatory claims (C1–C5 in
-   `PLAN_biorxiv.md` Task 0.2), enumerated before the run. Everything else is labelled
+**0.6 — The confirmatory / exploratory split.** Five confirmatory claims (C1–C5 in
+   the confirmatory / exploratory split in `PLAN_biorxiv.md`), enumerated before the run. Everything else is labelled
    exploratory and asserts nothing the paper relies on. No multiplicity correction is applied;
    R7.2 records why none is needed across a set this size. C1 is a null claim and is adjudicated
    against the pre-registered 0.05 equivalence margin, not by an interval overlapping the floor.
@@ -157,7 +158,7 @@ with no stated reading and any interpretation chosen afterwards is retro-fitted:
 Both go into `PREREGISTRATION_run_biorxiv.md` with the run6 point estimates recorded, so the
 rules cannot be tuned to the run_biorxiv intervals.
 
-### 0c. A pinned environment
+### 0.7. A pinned environment
 
 - `pytest tests/` passes on the commit that produces the run. **A green suite is a precondition
   for flipping `RUN_NAME`**, run locally; there is no CI job.
@@ -168,11 +169,11 @@ rules cannot be tuned to the run_biorxiv intervals.
 - `scripts/compare_runs.py` exists and passes its self-diff invariant (run6 against run6 must
   report zero movement).
 
-### 0d. Configuration
+### 0.8. Configuration
 
 - `RUN_NAME = "run6"` → `"run_biorxiv"` in [`utils/paths.py:11`](../src/esm2_mech/utils/paths.py#L11). One
   line; `RESULTS_DIR`, `RUN_REPORTS_DIR`, and `FIGURES_DIR` all derive from it. **Flip this only
-  after 0a and 0b pass their gates** — flipping first means the replay writes CI-less files into
+  after Stage 0.2 and 0.4 pass their gates** — flipping first means the replay writes CI-less files into
   `results/run_biorxiv/`, and fixing them later either overwrites run_biorxiv provenance or forces a run8.
 - `PERMUTATION_FEATURES` stays at `("delta_mean", "wt_only_mean")`. `delta_mean` is C1's
   instrument and `wt_only_mean` is the above-floor comparison; the remaining features are
@@ -183,7 +184,7 @@ rules cannot be tuned to the run_biorxiv intervals.
   is 1/(200+1) = 0.0099, which is exactly what `wt_only_mean` reported — an unresolved floor,
   not a measurement.
 
-### 0e. Working tree clean
+### 0.9. Working tree clean
 
 `git status` must be clean before the run_biorxiv branch point, or run6 and run_biorxiv provenance become
 impossible to separate. Commit or set aside everything, including the report and plan edits
@@ -278,7 +279,7 @@ this is 4,000 refits and the per-refit cost has never been measured. It decides 
 hours or days, and whether it needs joblib parallelism across the pod's cores. This is the run's
 main schedule risk — everything else in run_biorxiv is cheap.
 
-**This step does NOT cover the split gap.** That is a paired-bootstrap quantity (Stage 0b).
+**This step does NOT cover the split gap.** That is a paired-bootstrap quantity (Stage 0.4).
 
 ### Step 4 — single-source robustness check (CPU)
 
@@ -311,7 +312,7 @@ fingerprint-verified. Only the probe phase re-runs, on CPU.
 python -m esm2_mech.experiments.pathogenicity.pathogenicity_control --model esm2_t33_650M_UR50D
 ```
 
-Requires wiring per Stage 0a. Classes are balanced here, but the gene-level dependency structure
+Requires wiring per Stage 0.2. Classes are balanced here, but the gene-level dependency structure
 still applies, so CIs resample whole genes. Add the calibration note: the probes measure
 discrimination only and are not risk estimates.
 

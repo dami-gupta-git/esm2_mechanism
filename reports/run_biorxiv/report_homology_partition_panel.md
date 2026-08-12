@@ -2,7 +2,7 @@
 
 **Run 6 · 2026-08-11** · ESM-2 `esm2_t33_650M_UR50D` · `delta_mean` MLP probe
 (hidden=(256, 64)) · seed 0, n_boot=20 (smoke-scale; not preprint-grade precision). Source:
-[`results/run6/homology_partition_panel/panel.json`](../../results/run_biorxiv/homology_partition_panel/panel.json),
+[`results/run6/homology_partition_panel/panel.json`](../../for_me/homology_partition_panel/panel.json),
 computed by `experiments/mechanism/homology_partition_panel.py`.
 
 ---
@@ -135,5 +135,5 @@ PyTorch figure, 0.381, is cited in the result JSON as `mlp_py_torch_family_refer
 cross-check only). Chance floor from `results/run6/naive_baseline.json`. Clan assignments from
 `data/downloads/Pfam-A.clans.tsv.gz` (Pfam-A clans release); MMseqs2 clusters from
 `data/mmseqs_clusters.json` (20% sequence-identity clustering). Output:
-[`results/run6/homology_partition_panel/panel.json`](../../results/run_biorxiv/homology_partition_panel/panel.json).
+[`results/run6/homology_partition_panel/panel.json`](../../for_me/homology_partition_panel/panel.json).
 Full run log: [`RUN_PROGRESS.md`](../../RUN_PROGRESS.md), Run 6.

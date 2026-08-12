@@ -8,7 +8,7 @@ print = functools.partial(print, flush=True)
 PACKAGE_ROOT = Path(__file__).parent.parent.resolve()  # src/esm2_mech/
 PROJECT_ROOT = PACKAGE_ROOT.parent.parent              # esm2_mechanism/
 
-RUN_NAME="run6"
+RUN_NAME="run_biorxiv"
 
 DATA_DIR = PROJECT_ROOT / "data"
 ALL_RESULTS_DIR = PROJECT_ROOT / "results"

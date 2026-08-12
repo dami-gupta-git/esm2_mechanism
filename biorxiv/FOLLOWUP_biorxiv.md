@@ -16,7 +16,7 @@ label-heterogeneity objection without depending on subset size.
 
 Task 2b asks whether the mechanism null survives a **coarser partition**. This asks whether it
 survives **cleaner labels** — same shape, same machinery, same reports section. The objection it
-answers is stated in the Task 0.2 amendment: one label per gene means some fraction of variants is
+answers is stated in the confirmatory / exploratory split of `PLAN_biorxiv.md`: one label per gene means some fraction of variants is
 mislabelled by construction, which caps achievable macro-F1, and a reviewer can claim the floor
 result is that cap rather than an absent signal.
 
@@ -57,7 +57,7 @@ merged set's *gene-level* label distribution is far more skewed than its variant
 
 DN is 98 genes and GOF 136, spread across 301 non-singleton families. Any clean-label filter cuts
 directly into those. If the subset retains even half, DN lands near ~50 genes across perhaps ~150
-families — below what a family-resampled CI can usefully constrain, and squarely in the Task 0.4
+families — below what a family-resampled CI can usefully constrain, and squarely in the rare-class
 regime where a rare-class interval is indicative rather than authoritative. **The thin branch is
 therefore the expected outcome**, not a first-class row.
 

@@ -15,15 +15,15 @@ Full run, all seven experiments.
 numbers." Reading the run6 reports against `STATS_PLAN.md` turned up problems that needed settling
 first (all marked ★):
 
-- **0.0 Pathogenicity provenance** — pin down exactly which variant set the headline control ran
+- **Pathogenicity provenance** — pin down exactly which variant set the headline control ran
   on, and record its fingerprint.
-- **0.1 Decide the pass/fail rules before the run** — so a gate that clears by 0.008 with an error
+- **Decide the pass/fail rules before the run** — so a gate that clears by 0.008 with an error
   bar through zero has a stated meaning, instead of one picked afterwards.
-- **0.2 Name the claims the paper rests on** — five of them; everything else is labelled a
+- **Name the claims the paper rests on** — five of them; everything else is labelled a
   look-around, so nobody can say we tested many things and reported the wins.
-- **0.3 Resample the same unit the split uses** — family-split numbers resample families, not genes.
-- **0.4 Rare-class error bars** — DN and GOF have too few genes for the plain method.
-- **0.5 How many permutations** — and what that costs.
+- **Resample the same unit the split uses** — family-split numbers resample families, not genes.
+- **Rare-class error bars** — DN and GOF have too few genes for the plain method.
+- **How many permutations** — and what that costs.
 - **Task 1 Fix the split-gap error bar** — the two arms are paired, so the test must be too.
 - **Task 2c Production quality** — enforced, not assumed.
 
@@ -31,7 +31,7 @@ first (all marked ★):
 one gene carries two different mechanisms, which makes "your gene labels are wrong a lot of the
 time" a specific, citable objection to C1 rather than a vague caveat. Three new tasks answer it:
 
-Task 0.2 records the objection. The three tasks that answer it — 2d (re-run C1 on genes with
+The confirmatory / exploratory split records the objection. The three tasks that answer it — 2d (re-run C1 on genes with
 unambiguous labels), 8 (measure how much wrong labels hurt a probe that works) and 9 (show other
 features find mechanism in the same labels) — are all after the run, in
 [`FOLLOWUP_biorxiv.md`](FOLLOWUP_biorxiv.md).
@@ -102,7 +102,7 @@ The restriction to two features is `PERMUTATION_FEATURES = ("delta_mean", "wt_on
 Everything below is decided before implementation, because each one changes what the machinery
 must emit — discovering them mid-run means re-running, not just re-reporting.
 
-### 0.0 Freeze and document the pathogenicity variant set
+### Freeze and document the pathogenicity variant set
 
 The paper's headline positive control was recorded twice on two different variant sets. Seed 0 ran on
 RunPod with the full set and scored AUROC **0.878**; seeds 1–4 ran locally on a truncated version and
@@ -135,7 +135,7 @@ What remains is **documentation, not re-derivation** — the stale text is what 
   and that the spread is ≤ 0.01. If any seed disagrees, stop — that is a real data defect and the
   freeze-and-rerun this task originally called for becomes necessary after all.
 
-### 0.1 ★ Pre-registered CI decision rules for the confirmatory gates
+### ★ Pre-registered CI decision rules for the confirmatory gates
 
 Several load-bearing conclusions are gates that "pass" by thin margins — M2 by 0.008, K2 by
 0.002. A **paired CI** puts one error bar on the gap between the two arms rather than a separate
@@ -196,7 +196,7 @@ section at line 166 so the run_biorxiv rules can't drift as `EXPERIMENT.md`'s na
 **before** run_biorxiv executes, with the run6 point estimates recorded so the rule cannot be
 retro-fitted to the run_biorxiv intervals.
 
-### 0.2 ★ Whole-paper confirmatory / exploratory split
+### ★ Whole-paper confirmatory / exploratory split
 
 `STATS_PLAN.md` applies multiplicity control to the 28-family within-family table only. But the
 paper runs gate comparisons across seven reports, and correcting one table while leaving the rest
@@ -228,7 +228,7 @@ detect an effect of the pre-registered size" means: too few genes to resolve a g
 evidence there is no gap.
 
 M3 is not in the C1–C5 confirmatory set, so it has no test of its own; it takes its reading from Task
-0.1's failing-gate rule. K2 is the same shape — it needed the embedding to add something over
+the CI decision rules' failing-gate clause. K2 is the same shape — it needed the embedding to add something over
 conservation, got +0.002, and fails. The consequence is a wording change in §6 (Task 6): "structure
 adds nothing" becomes "no effect of the pre-registered size was detected, and the test is
 underpowered to rule one out."
@@ -260,9 +260,9 @@ reports must cite this paper and point at those two results rather than assertin
 adequate.
 
 Deliverable: written into [`PREREGISTRATION_run_biorxiv.md`](PREREGISTRATION_run_biorxiv.md)
-alongside 0.1, before the run.
+alongside the CI decision rules, before the run.
 
-### 0.3 Resample the unit that defines the split
+### Resample the unit that defines the split
 
 Two different things are in play, and the rule is that they must match.
 
@@ -297,7 +297,7 @@ understates it. Resample the **coarser** of the two units: a family resample ind
 resample, but not the reverse. Report the gene-resampled interval alongside as a sensitivity check,
 labelled as the narrower and anticonservative of the two.
 
-### 0.4 Rare-class intervals carry a health warning, not a correction
+### Rare-class intervals carry a health warning, not a correction
 
 DN is ≈ 9% of variants — roughly 150–170 genes, and fewer effective clusters under family-split.
 Percentile bootstrap undercovers for a bounded metric (AUROC ∈ [0,1]) near its boundary with few
@@ -306,12 +306,12 @@ clusters, which is precisely this regime.
 - Rare-class one-vs-rest AUROC uses the same percentile cluster bootstrap as every other interval
   in the project. A bias correction is not applied: over ~150 clusters the correction is itself
   noisy, so it trades one inaccuracy for another, and no confirmatory claim reads these intervals —
-  per-class AUROCs are exploratory under 0.2.
+  per-class AUROCs are exploratory under the confirmatory / exploratory split.
 - **Flag every rare-class interval as the least trustworthy in its table.** DN intervals are
   indicative, not authoritative, and saying so is worth more than a false-precision interval.
 - Keep the existing suppression guard for degenerate folds.
 
-### 0.5 Permutation budget — linear probe only
+### Permutation budget — linear probe only
 
 The permutation test refits the probe per repeat, and the MLP is the expensive tail.
 
@@ -329,7 +329,7 @@ Still requires timing a single refit on the pod before the linear permutation is
 ## Task 1 — paired cluster bootstrap (new code) ✅ done 2026-08-10
 
 The one piece of new statistics code in the run: an error bar on the **difference** between two
-results rather than on each result separately (the paired CI of Task 0.1). Six claims need it, and
+results rather than on each result separately (the paired CI required by the CI decision rules). Six claims need it, and
 the thinnest — M2 at +0.008 and K2 at +0.002 — are currently two point estimates with separated
 error bars at margins smaller than a seed of spread.
 
@@ -338,7 +338,7 @@ Two versions, because the arms are not always scored the same way.
 vs raw k-NN, conservation vs embedding. `paired_cluster_bootstrap_diff_cross_partition` handles arms
 from different fold layouts, which is only the gene-split-minus-family-split gap — resample families,
 then re-score each arm under its own partition. Its optional `sensitivity_clusters` arg returns the
-gene-resampled version that Task 0.3 requires alongside.
+gene-resampled version that the resampling-unit rule requires alongside.
 
 Both are in `utils/bootstrap.py`, and both hand `metric_fn_a`/`metric_fn_b` the identical drawn
 row-index array per replicate, so the difference is paired rather than two independently resampled
@@ -478,7 +478,7 @@ produce zero movement — a cheap invariant that catches parser drift).
   above-floor features was cut on 2026-08-11. `delta_mean` is C1's instrument and `wt_only_mean`
   the above-floor comparison; the rest are exploratory, and each added feature multiplies an
   8,000-refit GPU step. The same constant also gates which features cache OOF for the split gap,
-  so widening it enlarges that cache as a side effect. The per-probe N is set by Task 0.5.
+  so widening it enlarges that cache as a side effect. The per-probe N is set by the permutation budget.
 - **Resolve the working tree first.** ★ **Largely done as of commit `427c3db` ("cleanup")** — the
   modified `constants.py`, `paths.py`, five `family_split_baselines_seed*.json`, and
   `reports/run6/INTRO_REPORT.md`, plus the untracked `docs/` additions and `experiments/llm_judge/`,
@@ -501,7 +501,7 @@ Machinery exists for all of these; none is implemented.
 
 - AUPRC with prevalence baseline, and PPV/NPV at class prevalence, for the rare classes
   (DN ≈ 9%, GOF ≈ 15%) — AUROC alone overstates usefulness at those rates.
-- ★ Multiplicity control is now set by Task 0.2, which supersedes this bullet's original scope: no
+- ★ Multiplicity control is now set by the confirmatory / exploratory split, which supersedes this bullet's original scope: no
   correction is applied to the five confirmatory claims, and the 28-family within-family table is
   labelled **exploratory** rather than corrected.
 - Minimal-detectable-effect statement per family, so the within-family nulls read as
@@ -550,9 +550,11 @@ cites a quantity computed on the reused run6 embeddings, Provenance says so.
 
 ## Sequencing
 
-1. **Task 0** — settle correctness and methodology. 0.0 is a docs deliverable; 0.1–0.2 are
-   written into `docs/EXPERIMENT.md` before the run; **0.3–0.5 are decisions that become code in
-   Tasks 1–2** (split-unit resampling changes what `bootstrap.py` must compute).
+1. **Task 0** — settle correctness and methodology. The pathogenicity variant set is a docs
+   deliverable; the CI decision rules and the confirmatory / exploratory split are written into
+   `PREREGISTRATION_run_biorxiv.md` before the run; **the resampling unit, rare-class intervals and
+   permutation budget become code in Tasks 1–2** (split-unit resampling changes what `bootstrap.py`
+   must compute).
 2. **Task 3 (partial)** — working-tree cleanup only. Cheap, and establishes the run_biorxiv branch point.
 3. ✅ **Task 1** — paired cluster bootstrap, both pairing modes. Unblocks the difference claims.
 4. **Task 2** — wire the seven modules; verify a CI key appears in real output.
@@ -577,7 +579,7 @@ Tasks 1 and 2 are CPU-testable locally and can proceed while the pod is being pr
    comparison). The earlier recommendation to add `wt_concat_mut` and `mut_only_mean` was cut; the
    rest are exploratory. See Task 3.
 
-2. **Is 1,000 permutations firm?** ★ **Resolved by Task 0.5.** The permutation test is linear-probe
+2. **Is 1,000 permutations firm?** ★ **Resolved by the permutation budget.** The permutation test is linear-probe
    only, at two features (open question 1): 2 features × 2 splits × 1,000 = **4,000 refits at
    seed 0**, which covers the load-bearing claim. The MLP is not permutation-tested.
    **Per-refit cost has still not been measured** — a single timed refit on the pod is needed before
@@ -598,7 +600,7 @@ Tasks 1 and 2 are CPU-testable locally and can proceed while the pod is being pr
 5. ★ **Does `report_esm3_mechanism_geras.md` carry into run_biorxiv?** ★ **Decided: no** — cite the
    run6 archive instead. See Task 6.
 
-6. ★ **Which unit for the split-gap CI?** ★ **Resolved by Task 0.3: resample families**, the coarser
+6. ★ **Which unit for the split-gap CI?** ★ **Resolved by the resampling-unit rule: resample families**, the coarser
    unit, with the gene-resampled interval reported alongside as a labelled sensitivity check.
 
 7. ★ **Does `INTRO_REPORT.md` stay in `reports/run_biorxiv/`?** ★ **Decided: yes** — the tone issue
