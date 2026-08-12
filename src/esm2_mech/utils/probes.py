@@ -10,7 +10,15 @@ from sklearn.metrics import roc_auc_score, f1_score
 from sklearn.preprocessing import StandardScaler
 
 from esm2_mech.utils.constants import MECHANISM_CLASSES
-from esm2_mech.utils.metrics import aggregate_folds, align_proba, compute_metrics, standardize
+from esm2_mech.utils.metrics import (
+    add_flat_class_metrics,
+    aggregate_folds,
+    align_proba,
+    compute_metrics,
+    imbalance_metrics,
+    mean_std_n,
+    standardize,
+)
 
 print = functools.partial(print, flush=True)
 
@@ -333,6 +341,11 @@ def _run_binary_cv(
     """
     require_no_nan(X, "binary probe CV")
     aurocs = []
+    # AUPRC and its prevalence baseline, plus PPV/NPV at the prevalence-matched
+    # operating point — AUROC alone reads the same at 9% prevalence as at 50%.
+    imbalance_folds: dict[str, list[float]] = {
+        "auprc": [], "prevalence": [], "ppv": [], "npv": []
+    }
     oof_y, oof_proba, oof_genes, oof_rows = [], [], [], []
     for tr, te in splits:
         sc = StandardScaler()
@@ -344,6 +357,11 @@ def _run_binary_cv(
         clf.fit(X_tr, y[tr])
         proba = clf.predict_proba(X_te)[:, _pos_class_col(clf.classes_, pos_label)]
         aurocs.append(float(roc_auc_score(y[te], proba)))
+        imbalance = imbalance_metrics((y[te] == pos_label).astype(int), proba)
+        if imbalance is not None:
+            for name, vals in imbalance_folds.items():
+                if imbalance[name] is not None:
+                    vals.append(imbalance[name])
         if return_oof and genes is not None:
             oof_y.append(y[te])
             oof_proba.append(proba)
@@ -353,11 +371,17 @@ def _run_binary_cv(
     if not aurocs:
         agg = {}
     else:
+        auroc_mean, auroc_std, _ = mean_std_n(aurocs)
         agg = {
-            "auroc_mean": float(np.mean(aurocs)),
-            "auroc_std": float(np.std(aurocs)),
+            "auroc_mean": auroc_mean,
+            "auroc_std": auroc_std,
             "n_folds": len(aurocs),
         }
+        for name, vals in imbalance_folds.items():
+            mean, std, count = mean_std_n(vals)
+            if count:
+                agg[f"{name}_mean"] = mean
+                agg[f"{name}_std"] = std
     if not return_oof:
         return agg
     oof = None
@@ -578,17 +602,16 @@ def _run_sklearn_probe_impl(
         fm = {"macro_f1": float(f1_score(y_te, pred, average="macro", zero_division=0))}
         if hasattr(clf, "predict_proba"):
             proba = clf.predict_proba(X_te)
-            for i, cls in enumerate(classes):
-                y_bin = (y_te == i).astype(int)
-                if y_bin.sum() > 0 and (1 - y_bin).sum() > 0:
-                    fm[f"auroc_{cls}"] = float(roc_auc_score(y_bin, proba[:, i]))
+            # clf.classes_ are the integer-encoded labels actually present in this
+            # fold's train split (a class missing from train is absent here, not
+            # merely a zero column) — map each back to its string label before
+            # scoring, rather than assuming column i of proba is classes[i].
+            clf_classes_str = np.array([classes[idx] for idx in clf.classes_])
+            fitted = [cls for cls in classes if cls in set(clf_classes_str)]
+            if fitted:
+                proba_by_class = align_proba(proba, clf_classes_str, fitted)
+                add_flat_class_metrics(fm, labels[test_idx], proba_by_class, fitted)
             if return_oof and genes is not None:
-                # clf.classes_ are the integer-encoded labels actually present in
-                # this fold's train split (a class missing from train is absent
-                # here, not merely a zero column) — map each back to its string
-                # label before aligning, rather than assuming every column of
-                # `classes` was fit.
-                clf_classes_str = np.array([classes[idx] for idx in clf.classes_])
                 proba_aligned = align_proba(proba, clf_classes_str, MECHANISM_CLASSES)
                 oof.add(labels[test_idx], proba_aligned, genes[test_idx], test_idx)
         fold_results.append(fm)
@@ -756,10 +779,7 @@ def run_mlp_probe_cv(
             proba = torch.softmax(model(torch.tensor(X_te_n).to(device)), 1).cpu().numpy()
         pred_labels = np.array([classes[idx] for idx in proba.argmax(1)])
         fm = {"macro_f1": float(f1_score(labels_te, pred_labels, average="macro", zero_division=0))}
-        for col_idx, cls in enumerate(classes):
-            y_bin = (labels_te == cls).astype(int)
-            if y_bin.sum() > 0 and (1 - y_bin).sum() > 0:
-                fm[f"auroc_{cls}"] = float(roc_auc_score(y_bin, proba[:, col_idx]))
+        add_flat_class_metrics(fm, labels_te, proba, classes)
         fold_results.append(fm)
         if return_oof and genes is not None:
             oof.add(labels_te, proba, genes[test_idx], test_idx)

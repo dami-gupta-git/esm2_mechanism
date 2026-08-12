@@ -450,7 +450,7 @@ def pooled_gof_test(
         flat_labels = np.concatenate([inputs[fam]["y"] for fam in gof_families])
         flat_genes = np.concatenate([inputs[fam]["genes"] for fam in gof_families])
         perm = label_permutation_pvalue(
-            _run_metric, flat_labels, groups=flat_genes,
+            _run_metric, flat_labels, statistic="auroc_GOF", groups=flat_genes,
             n_permutations=n_permutations, alternative="greater",
         )
         perm["observed"] = observed if observed is not None else perm.get("observed")

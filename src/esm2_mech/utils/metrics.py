@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections import Counter
 
 import numpy as np
-from sklearn.metrics import f1_score, roc_auc_score
+from sklearn.metrics import average_precision_score, f1_score, roc_auc_score
 
 from esm2_mech.utils.constants import MECHANISM_CLASSES
 
@@ -77,33 +77,113 @@ def auroc_at_median(y_true: np.ndarray, y_pred: np.ndarray) -> float:
     return float(roc_auc_score(binary, y_pred))
 
 
+def binary_class_target(y_true: np.ndarray, cls: str) -> np.ndarray | None:
+    """One-vs-rest 0/1 target for `cls`, or None when the class is absent or universal.
+
+    AUROC, AUPRC, PPV and NPV are all undefined on a degenerate target, so every
+    per-class scorer needs this same guard. It lives here so the four call sites
+    (compute_metrics, and the AUROC/AUPRC/macro-AUROC scorers in utils.bootstrap)
+    cannot drift apart on what counts as scorable.
+    """
+    y_bin = (np.asarray(y_true) == cls).astype(int)
+    if y_bin.sum() == 0 or y_bin.sum() == len(y_bin):
+        return None
+    return y_bin
+
+
+def imbalance_metrics(y_bin: np.ndarray, scores: np.ndarray) -> dict | None:
+    """AUPRC, its prevalence baseline, and PPV/NPV at the class-prevalence operating point.
+
+    AUROC's no-signal value is 0.5 regardless of class balance, so it reads the same
+    for a 9%-prevalence class as for a balanced one. AUPRC's no-signal value is the
+    class prevalence itself, which is why the baseline is returned alongside it — the
+    pair is what makes the number readable.
+
+    PPV/NPV need an operating point. This uses the prevalence-matched one: label the
+    top `round(prevalence * n)` scores positive, so the predicted positive rate equals
+    the observed one. That is threshold-free in the sense that matters here — it does
+    not assume the scores are calibrated probabilities, only that they rank.
+
+    Returns None when y_bin is degenerate (all one class), where none of these are
+    defined; callers store that as a missing value rather than a number.
+    """
+    n = len(y_bin)
+    n_pos = int(y_bin.sum())
+    if n_pos == 0 or n_pos == n:
+        return None
+    prevalence = n_pos / n
+    order = np.argsort(-np.asarray(scores, dtype=float), kind="stable")
+    k = int(round(prevalence * n))
+    if k == 0 or k == n:
+        ppv = npv = None
+    else:
+        predicted_positive = order[:k]
+        predicted_negative = order[k:]
+        true_positives = int(y_bin[predicted_positive].sum())
+        true_negatives = int((1 - y_bin[predicted_negative]).sum())
+        ppv = true_positives / k
+        npv = true_negatives / (n - k)
+    return {
+        "auprc": float(average_precision_score(y_bin, scores)),
+        "prevalence": float(prevalence),
+        "ppv": None if ppv is None else float(ppv),
+        "npv": None if npv is None else float(npv),
+    }
+
+
 def compute_metrics(
     y_true: np.ndarray,
     y_pred: np.ndarray,
     y_proba: np.ndarray,
     classes: list[str] = MECHANISM_CLASSES,
 ) -> dict:
-    """Compute macro-F1 and per-class AUROC.
+    """Compute macro-F1, per-class AUROC, and the imbalance metrics.
 
     y_true and y_pred must contain string class labels (e.g. "GOF", "DN", "LOF").
     y_proba columns must be aligned to classes in the same order as classes.
 
-    Returns {"macro_f1": float, "per_class_auroc": {cls: float|None}}.
+    Returns macro_f1 plus per-class AUROC, AUPRC, prevalence (the AUPRC baseline),
+    PPV and NPV — see `imbalance_metrics` for what the last four mean and why AUROC
+    alone is not enough at 9–15% prevalence.
     """
+    empty_per_class = {c: None for c in classes}
     if len(y_true) == 0:
-        return {"macro_f1": None, "per_class_auroc": {c: None for c in classes}, "n": 0}
+        return {
+            "macro_f1": None,
+            "per_class_auroc": dict(empty_per_class),
+            "per_class_auprc": dict(empty_per_class),
+            "per_class_prevalence": dict(empty_per_class),
+            "per_class_ppv": dict(empty_per_class),
+            "per_class_npv": dict(empty_per_class),
+            "n": 0,
+        }
     macro_f1 = float(f1_score(y_true, y_pred, average="macro", zero_division=0))
     auroc: dict[str, float | None] = {}
+    auprc: dict[str, float | None] = {}
+    prevalence: dict[str, float | None] = {}
+    ppv: dict[str, float | None] = {}
+    npv: dict[str, float | None] = {}
     for col_idx, cls in enumerate(classes):
-        y_bin = (y_true == cls).astype(int)
-        if y_bin.sum() == 0 or y_bin.sum() == len(y_bin):
+        y_bin = binary_class_target(y_true, cls)
+        if y_bin is None:
             auroc[cls] = None
+            y_bin = (y_true == cls).astype(int)  # imbalance_metrics returns None on it
         else:
             auroc[cls] = float(roc_auc_score(y_bin, y_proba[:, col_idx]))
-    out: dict = {"macro_f1": macro_f1, "per_class_auroc": auroc}
-    if len(y_true) > 0:
-        out["n"] = int(len(y_true))
-    return out
+        imbalance = imbalance_metrics(y_bin, y_proba[:, col_idx])
+        auprc[cls] = None if imbalance is None else imbalance["auprc"]
+        prevalence[cls] = None if imbalance is None else imbalance["prevalence"]
+        ppv[cls] = None if imbalance is None else imbalance["ppv"]
+        npv[cls] = None if imbalance is None else imbalance["npv"]
+    return {
+        "macro_f1": macro_f1,
+        "per_class_auroc": auroc,
+        "per_class_auprc": auprc,
+        "per_class_prevalence": prevalence,
+        "per_class_ppv": ppv,
+        "per_class_npv": npv,
+        "n": int(len(y_true)),
+    }
 
 
 def aggregate_folds(
@@ -113,19 +193,65 @@ def aggregate_folds(
     if not fold_list:
         return {"error": "no folds"}
     out: dict = {}
-    f1_vals = [f["macro_f1"] for f in fold_list if f.get("macro_f1") is not None]
-    out["macro_f1_mean"] = float(np.mean(f1_vals)) if f1_vals else None
-    out["macro_f1_std"] = float(np.std(f1_vals)) if f1_vals else None
+    f1_mean, f1_std, f1_n = mean_std_n(
+        [f["macro_f1"] for f in fold_list if f.get("macro_f1") is not None]
+    )
+    out["macro_f1_mean"] = f1_mean if f1_n else None
+    out["macro_f1_std"] = f1_std if f1_n else None
+    # nested key in the fold dict -> flat prefix in the aggregate
+    per_class_keys = {
+        "per_class_auroc": "auroc",
+        "per_class_auprc": "auprc",
+        "per_class_prevalence": "prevalence",
+        "per_class_ppv": "ppv",
+        "per_class_npv": "npv",
+    }
     for cls in classes:
-        vals = [
-            f["per_class_auroc"][cls]
-            for f in fold_list
-            if f.get("per_class_auroc", {}).get(cls) is not None
-        ]
-        out[f"auroc_{cls}_mean"] = float(np.mean(vals)) if vals else None
-        out[f"auroc_{cls}_std"] = float(np.std(vals)) if vals else None
+        for nested_key, prefix in per_class_keys.items():
+            vals = [
+                f[nested_key][cls]
+                for f in fold_list
+                if f.get(nested_key, {}).get(cls) is not None
+            ]
+            mean, std, count = mean_std_n(vals)
+            out[f"{prefix}_{cls}_mean"] = mean if count else None
+            out[f"{prefix}_{cls}_std"] = std if count else None
     out["n_folds"] = len(fold_list)
     return out
+
+
+def add_flat_class_metrics(
+    fold_metrics: dict,
+    y_true: np.ndarray,
+    proba: np.ndarray,
+    classes,
+) -> None:
+    """Write per-class AUROC/AUPRC/prevalence/PPV/NPV into a flat per-fold dict.
+
+    In place, as `auroc_<cls>`, `auprc_<cls>`, `prevalence_<cls>`, `ppv_<cls>`,
+    `npv_<cls>`. This is the flat-key counterpart of `compute_metrics` for the probe
+    runners in `utils/probes.py`, which build `{"macro_f1": ..., "auroc_GOF": ...}`
+    dicts for `aggregate_fold_dicts`. Degenerate classes (absent from the fold, or
+    the only class in it) write no key at all, which is what that aggregator treats
+    as missing.
+
+    `y_true` must be comparable to the entries of `classes` by equality — string
+    labels against string classes, or integer codes against the integer positions
+    a LabelEncoder assigned them. `proba` columns must be aligned to `classes`.
+    """
+    for col_idx, cls in enumerate(classes):
+        y_bin = (y_true == cls).astype(int)
+        if y_bin.sum() == 0 or y_bin.sum() == len(y_bin):
+            continue
+        fold_metrics[f"auroc_{cls}"] = float(roc_auc_score(y_bin, proba[:, col_idx]))
+        imbalance = imbalance_metrics(y_bin, proba[:, col_idx])
+        if imbalance is None:
+            continue
+        fold_metrics[f"auprc_{cls}"] = imbalance["auprc"]
+        fold_metrics[f"prevalence_{cls}"] = imbalance["prevalence"]
+        for name in ("ppv", "npv"):
+            if imbalance[name] is not None:
+                fold_metrics[f"{name}_{cls}"] = imbalance[name]
 
 
 def align_proba(

@@ -1,9 +1,9 @@
 # Follow-up work — after run_biorxiv
 
 Work that does not gate run_biorxiv. Each item is self-contained; none is a precondition for the
-paper, and nothing in `PLAN_biorxiv.md` depends on any of them landing.
+paper, and nothing in [`RUNBOOK_biorxiv.md`](RUNBOOK_biorxiv.md) depends on any of them landing.
 
-Task numbering is kept from `PLAN_biorxiv.md` so existing cross-references still resolve.
+Task numbering is kept from the retired run_biorxiv plan so existing cross-references still resolve.
 
 The clean-label arm (Task 2d) was in run_biorxiv scope and is now here. Its expected outcome was an
 underpowered sensitivity check — a clean-label filter leaves DN near ~50 genes across perhaps ~150
@@ -12,11 +12,54 @@ label-heterogeneity objection without depending on subset size.
 
 ---
 
+## Task 2b — homology-partition robustness panel (cut from run_biorxiv, committed panel withdrawn)
+
+The mechanism null is measured under the Pfam family partition only. C6 was removed from the
+confirmatory set and the coarser-partition check is named in the paper as follow-up work, so the
+paper claims partition-independence nowhere and must not imply it (R7.2).
+
+**The committed panel is defective and is withdrawn, not amended.** Anyone reviving this starts
+from a rerun, not from `results/run_biorxiv/homology_partition_panel/panel.json`, which is deleted.
+Three defects produced its apparent finding that the null strengthens under stricter partitions:
+
+- **The clan arm ran on a different dataset, not a stricter split.** Only genes whose Pfam family
+  belongs to a clan can be clan-split, which drops roughly two thirds of the genes — a smaller,
+  differently-composed subset biased toward well-studied superfamilies.
+- **Every arm was scored against the same chance floor.** All three rows carry
+  `measured_floor: 0.2884`, the family-split floor on the full dataset. Held-out folds under
+  different partitions have different class balance, so the floor moves; the clan arm was graded on
+  the wrong curve, and the leakage fraction inherited the error through its denominator.
+- **The MMseqs2 clustering was never validated.** At 20% identity it produced 1,215 clusters from
+  ~1,935 genes — finer than Pfam family's 1,134, when that threshold should merge aggressively.
+  Check the coverage threshold (`-c` / `--cov-mode`) first if this arm is revived.
+
+On a matched subset with each arm against its own floor, family and clan scores are close and no
+decline is visible. `for_me/homology_partition_findings.md` records the retracted version. No
+smoke-scale CI may be quoted: at `n_boot=20` a nominal 95% interval sits at essentially the min and
+max of the resample distribution.
+
+Two bugs found here were real and their fixes stand: `mmseqs_cluster_holdout.py` fed int-coded
+labels into probes that compare against the string `MECHANISM_CLASSES` internally, silently zeroing
+every class bucket and crashing on the first balanced fold; and `clan_holdout.py` compared against
+hardcoded stale reference floors (`0.352`, `0.387`) instead of live measured numbers.
+
+---
+
+## Open — does stability gate H2 get a paired test?
+
+H2 (the random→family Spearman drop against the LEAKY threshold of 0.10) is currently descriptive.
+The paired cluster bootstrap exists and could be applied to it. Recommendation: do it if cheap,
+otherwise state explicitly in `report_stability.md` that the gate is descriptive rather than tested.
+This is the only question left open when the run_biorxiv plan was retired; everything else in it was
+either resolved or became code.
+
+---
+
 ## Task 2d — ★ clean-label robustness arm (Badonyi & Marsh 2025)
 
 Task 2b asks whether the mechanism null survives a **coarser partition**. This asks whether it
 survives **cleaner labels** — same shape, same machinery, same reports section. The objection it
-answers is stated in the confirmatory / exploratory split of `PLAN_biorxiv.md`: one label per gene means some fraction of variants is
+answers is stated in R7.2 of `PREREGISTRATION_run_biorxiv.md`: one label per gene means some fraction of variants is
 mislabelled by construction, which caps achievable macro-F1, and a reviewer can claim the floor
 result is that cap rather than an absent signal.
 
@@ -71,7 +114,7 @@ made on the *minimum* per-class gene count and its family spread, not on the sub
   0.1's underpowered-null language, and do **not** let it gate the run.
 
 Either way the count itself is reported, so the reader can see what the subset could and could not
-resolve. This is exploratory (it is not in the C1–C5 confirmatory set) but it is the direct answer
+resolve. This is exploratory (it is not in the C1–C4 confirmatory set) but it is the direct answer
 to a confirmatory claim's main threat, so it belongs in the same report as C1.
 
 ★ **Consequence for sequencing: Task 8 likely carries this argument, not Task 2d** — it has no

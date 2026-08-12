@@ -40,6 +40,7 @@ from esm2_mech.utils.bootstrap import (
     bootstrap_mechanism_metrics,
     family_or_gene_clusters,
     label_permutation_pvalue,
+    oof_permutation_pvalue,
     paired_oof_diff,
 )
 
@@ -118,7 +119,24 @@ def run_probe_on_splits(X, y, splits, genes=None, seed=42):
     return agg, oof
 
 
-PERMUTATION_FEATURES = ("delta_mean", "wt_only_mean")  # headline features for the slow permutation test
+PERMUTATION_FEATURES = ("delta_mean", "wt_only_mean")  # headline features: permutation tests + OOF cache
+
+# The two headline features get different permutation tests, per R7.5 of
+# biorxiv/PREREGISTRATION_run_biorxiv.md.
+#
+# wt_only_mean refits the probe per permutation and scores macro-F1: it is the
+# above-floor comparison, its p-value is the load-bearing one, and run6 left it
+# unresolved at the 1/(N+1) floor.
+#
+# delta_mean scores macro one-vs-rest AUROC against the cached out-of-fold
+# predictions instead, so it costs no refits. Macro-F1 is a weak instrument for
+# C1: a probe at the chance floor predicts the majority class almost everywhere,
+# which pins macro-F1 near the floor whether or not the ranking carries signal —
+# run6 measured delta_mean BELOW its own shuffled-label mean (0.289 vs 0.319,
+# p = 1.0). AUROC reads the ranking directly, so it can fire on a small effect
+# macro-F1 would miss, which is what C1's refutation test needs.
+REFIT_PERMUTATION_FEATURES = ("wt_only_mean",)
+OOF_PERMUTATION_FEATURES = ("delta_mean",)
 
 
 def run(
@@ -271,19 +289,38 @@ def run(
                     fs_oof["y_true"], fs_oof["proba"], fs_clusters,
                     n_resamples=n_boot, seed=seed,
                 )
-            if n_permutations > 0 and name in PERMUTATION_FEATURES:
+            # Both permutation tests score a FAMILY-split metric, so the exchangeable
+            # unit is the family, matching what the interval clusters on (R7.3).
+            # Shuffling one label per gene would break the label structure shared by
+            # homologous genes and build a null narrower than the truth.
+            if n_permutations > 0 and name in REFIT_PERMUTATION_FEATURES:
                 def _family_macro_f1(perm_labels, _X=X, _splits=feat_family_splits, _genes=feat_genes):
                     agg_perm, _ = run_probe_on_splits(_X, perm_labels, _splits, _genes, seed=seed)
                     return agg_perm.get("macro_f1_mean")
 
                 fs["permutation"] = label_permutation_pvalue(
-                    _family_macro_f1, feat_labels, groups=feat_genes,
+                    _family_macro_f1, feat_labels, statistic="macro_f1",
+                    groups=feat_genes,
+                    clusters=family_or_gene_clusters(
+                        feat_genes, pfam_map, is_family_split=True
+                    ),
                     n_permutations=n_permutations, seed=seed,
                 )
+            elif n_permutations > 0 and name in OOF_PERMUTATION_FEATURES and fs_oof is not None:
+                fs["permutation"] = oof_permutation_pvalue(
+                    fs_oof["y_true"], fs_oof["proba"], groups=fs_oof["genes"],
+                    clusters=family_or_gene_clusters(
+                        fs_oof["genes"], pfam_map, is_family_split=True
+                    ),
+                    classes=MECHANISM_CLASSES, n_permutations=n_permutations, seed=seed,
+                )
+            if "permutation" in fs:
+                perm = fs["permutation"]
                 print(
-                    f"  family-split permutation p = {fs['permutation'].get('p_value')} "
-                    f"(observed {fs['permutation'].get('observed')}, "
-                    f"null mean {fs['permutation'].get('null_mean')})"
+                    f"  family-split permutation p = {perm.get('p_value')} "
+                    f"({perm.get('statistic')} via {perm.get('null_type')}, "
+                    f"unit {perm.get('permutation_unit')}, "
+                    f"observed {perm.get('observed')}, null mean {perm.get('null_mean')})"
                 )
             if (
                 compute_ci and seed == 0 and name in PERMUTATION_FEATURES

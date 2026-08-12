@@ -27,6 +27,20 @@ Invariants:
   its own (finer) granularity, reported separately under gene_resampled_sensitivity
 - label_permutation_pvalue: null centers on chance; planted signal -> small p
 - label_permutation_pvalue: gene-level shuffle keeps one label per gene
+- oof_permutation_pvalue: null centers on 0.5 (macro AUROC); planted signal -> small p
+- oof_permutation_pvalue: uninformative predictions -> p far from significance
+- oof_permutation_pvalue: each shuffle unit widens the null relative to the finer one
+  below it (family blocks > genes > variants); the finer unit is anticonservative
+- _permute_labels_by_cluster: swaps whole clusters' label blocks between same-size
+  clusters, preserving the label multiset and each cluster's internal label mixing
+- _permute_labels_by_cluster: a cluster with a unique size cannot move; counted
+- oof_permutation_pvalue: refits nothing — predictions are never recomputed
+- oof_permutation_pvalue: a draw scoring a different class set is dropped, not
+  averaged into the null, and the drop is counted
+- macro_ovr_auroc: drops classes absent from y_true and reports which it scored;
+  all-absent -> (None, ())
+- bootstrap_mechanism_metrics: emits prevalence and AUPRC-minus-prevalence intervals
+  beside each AUPRC, so the lift is read against a resampled baseline
 - _permute_labels: with groups, every gene's rows share one (permuted) label
 """
 
@@ -41,10 +55,13 @@ from esm2_mech.utils.bootstrap import (
     cluster_bootstrap_ci,
     cluster_subsample_ci,
     label_permutation_pvalue,
+    macro_ovr_auroc,
+    oof_permutation_pvalue,
     paired_cluster_bootstrap_diff,
     paired_cluster_bootstrap_diff_cross_partition,
     paired_oof_diff,
     _permute_labels,
+    _permute_labels_by_cluster,
 )
 from esm2_mech.utils.constants import MECHANISM_CLASSES, GOF, DN, LOF
 
@@ -380,6 +397,21 @@ class TestBootstrapMechanismMetrics:
                 "point", "ci_low", "ci_high", "n_resamples", "n_resamples_total",
                 "valid_frac", "ci_suppressed", "n_clusters",
             } <= set(out[f"auroc_{cls}"])
+
+    def test_auprc_carries_a_resampled_baseline_and_lift(self):
+        # AUPRC's no-signal value is the prevalence, which moves with each resample.
+        # The lift must be bootstrapped as one quantity (both terms from the same
+        # draw), not reconstructed by subtracting two separately-computed points.
+        y, proba, genes = self._signal_data()
+        out = bootstrap_mechanism_metrics(y, proba, genes, n_resamples=300)
+        for cls in MECHANISM_CLASSES:
+            assert f"prevalence_{cls}" in out
+            assert f"auprc_lift_{cls}" in out
+        lift = out["auprc_lift_GOF"]
+        assert lift["point"] == pytest.approx(
+            out["auprc_GOF"]["point"] - out["prevalence_GOF"]["point"], abs=1e-9
+        )
+        assert lift["ci_low"] > 0  # planted signal beats its own prevalence baseline
 
     def test_recovers_gof_signal_above_chance(self):
         y, proba, genes = self._signal_data()
@@ -729,7 +761,8 @@ class TestLabelPermutationPvalue:
             return float(roc_auc_score(y_bin, scores))
 
         out = label_permutation_pvalue(
-            run_metric, labels, groups=genes, n_permutations=200, alternative="greater"
+            run_metric, labels, statistic="auroc_GOF", groups=genes, n_permutations=200,
+            alternative="greater",
         )
         assert out["observed"] == pytest.approx(1.0)  # perfect by construction
         assert out["null_mean"] == pytest.approx(0.5, abs=0.1)
@@ -741,7 +774,7 @@ class TestLabelPermutationPvalue:
         labels = np.array([GOF if i % 2 else LOF for i in range(30)])
 
         out = label_permutation_pvalue(
-            lambda lab: 0.5, labels, groups=genes, n_permutations=50
+            lambda lab: 0.5, labels, statistic="constant", groups=genes, n_permutations=50
         )
         # (1 + #{null >= observed}) / (1 + n); with a constant metric all null >=
         # observed, so p == 1.0, and p is always in (0, 1].
@@ -764,10 +797,10 @@ class TestLabelPermutationPvalue:
             return float(np.corrcoef(feature, y_bin)[0, 1])
 
         first = label_permutation_pvalue(
-            run_metric, labels, groups=genes, n_permutations=64, seed=7
+            run_metric, labels, statistic="corr", groups=genes, n_permutations=64, seed=7
         )
         second = label_permutation_pvalue(
-            run_metric, labels, groups=genes, n_permutations=64, seed=7
+            run_metric, labels, statistic="corr", groups=genes, n_permutations=64, seed=7
         )
         assert first["p_value"] == second["p_value"]
         assert first["null_mean"] == second["null_mean"]
@@ -788,10 +821,10 @@ class TestLabelPermutationPvalue:
             return float(np.corrcoef(feature, y_bin)[0, 1])
 
         serial = label_permutation_pvalue(
-            run_metric, labels, groups=genes, n_permutations=48, seed=1, n_jobs=1
+            run_metric, labels, statistic="corr", groups=genes, n_permutations=48, seed=1, n_jobs=1
         )
         parallel = label_permutation_pvalue(
-            run_metric, labels, groups=genes, n_permutations=48, seed=1, n_jobs=2
+            run_metric, labels, statistic="corr", groups=genes, n_permutations=48, seed=1, n_jobs=2
         )
         assert serial["p_value"] == parallel["p_value"]
         assert serial["null_mean"] == parallel["null_mean"]
@@ -813,7 +846,7 @@ class TestLabelPermutationPvalue:
         labels = np.array([GOF if i % 3 == 0 else LOF for i in range(200)])
 
         out = label_permutation_pvalue(
-            make_metric(), labels, groups=genes, n_permutations=32, seed=0, n_jobs=2
+            make_metric(), labels, statistic="r2", groups=genes, n_permutations=32, seed=0, n_jobs=2
         )
         assert out["n_permutations"] == 32
         assert 0.0 < out["p_value"] <= 1.0
@@ -833,11 +866,215 @@ class TestLabelPermutationPvalue:
             return 0.5
 
         out = label_permutation_pvalue(
-            flaky_metric, labels, groups=genes, n_permutations=10, seed=0, n_jobs=1
+            flaky_metric, labels, statistic="flaky", groups=genes, n_permutations=10, seed=0, n_jobs=1
         )
         # Half the draws are NaN and dropped; the kept null has only finite values.
         assert out["n_permutations"] < 10
         assert np.isfinite(out["null_mean"])
+
+
+# ---------------------------------------------------------------------------
+# oof_permutation_pvalue / macro_ovr_auroc
+# ---------------------------------------------------------------------------
+
+def _gene_level_labels(rng, n_genes, rows_per_gene):
+    genes = np.repeat([f"G{i}" for i in range(n_genes)], rows_per_gene)
+    gene_labels = rng.choice([GOF, DN, LOF], size=n_genes)
+    return genes, np.repeat(gene_labels, rows_per_gene)
+
+
+def _proba_matching(labels, strength=0.8):
+    """Predictions that rank the true class highest, aligned to MECHANISM_CLASSES."""
+    proba = np.full((len(labels), len(MECHANISM_CLASSES)), (1.0 - strength) / 2.0)
+    for col_idx, cls in enumerate(MECHANISM_CLASSES):
+        proba[labels == cls, col_idx] = strength
+    return proba / proba.sum(axis=1, keepdims=True)
+
+
+class TestPermuteLabelsByCluster:
+    def _families(self):
+        # F0: 2 genes mixed, F1: 2 genes homogeneous, F2: 2 genes mixed, F3: 1 gene.
+        genes = np.array(["a", "b", "c", "d", "e", "f", "g"])
+        clusters = np.array(["F0", "F0", "F1", "F1", "F2", "F2", "F3"])
+        labels = np.array([GOF, LOF, DN, DN, GOF, GOF, LOF])
+        return labels, genes, clusters
+
+    def test_whole_blocks_move_together(self):
+        labels, genes, clusters = self._families()
+        rng = np.random.RandomState(0)
+        permuted, _ = _permute_labels_by_cluster(labels, genes, clusters, rng)
+        # Every size-2 family must now hold some size-2 family's original block.
+        original_blocks = {("F0", (GOF, LOF)), ("F1", (DN, DN)), ("F2", (GOF, GOF))}
+        blocks_in = {tuple(sorted(b)) for _, b in original_blocks}
+        for fam in ["F0", "F1", "F2"]:
+            got = tuple(sorted(permuted[clusters == fam].tolist()))
+            assert got in blocks_in
+
+    def test_label_multiset_is_preserved(self):
+        labels, genes, clusters = self._families()
+        rng = np.random.RandomState(1)
+        permuted, _ = _permute_labels_by_cluster(labels, genes, clusters, rng)
+        assert sorted(permuted.tolist()) == sorted(labels.tolist())
+
+    def test_unique_size_cluster_cannot_move_and_is_counted(self):
+        # F3 is the only single-gene family, so it has no same-size partner to swap
+        # with and keeps its own label. That has to be visible, not silent.
+        labels, genes, clusters = self._families()
+        rng = np.random.RandomState(2)
+        permuted, immovable = _permute_labels_by_cluster(labels, genes, clusters, rng)
+        assert immovable == 1
+        assert permuted[clusters == "F3"][0] == LOF
+
+    def test_within_family_mixing_is_preserved(self):
+        # A family that was label-homogeneous stays homogeneous and a mixed one stays
+        # mixed: forcing one label per family would make the null wider than reality.
+        labels, genes, clusters = self._families()
+        rng = np.random.RandomState(3)
+        homogeneous_before = sum(
+            len(set(labels[clusters == fam].tolist())) == 1 for fam in ["F0", "F1", "F2"]
+        )
+        permuted, _ = _permute_labels_by_cluster(labels, genes, clusters, rng)
+        homogeneous_after = sum(
+            len(set(permuted[clusters == fam].tolist())) == 1 for fam in ["F0", "F1", "F2"]
+        )
+        assert homogeneous_after == homogeneous_before
+
+    def test_every_gene_keeps_one_label_across_its_rows(self):
+        rows_per_gene = 3
+        genes = np.repeat(["a", "b", "c", "d"], rows_per_gene)
+        clusters = np.repeat(["F0", "F0", "F1", "F1"], rows_per_gene)
+        labels = np.repeat([GOF, LOF, DN, GOF], rows_per_gene)
+        rng = np.random.RandomState(4)
+        permuted, _ = _permute_labels_by_cluster(labels, genes, clusters, rng)
+        for gene in np.unique(genes):
+            assert len(set(permuted[genes == gene].tolist())) == 1
+
+
+class TestMacroOvrAuroc:
+    def test_perfect_ranking_is_one_and_chance_is_half(self):
+        rng = np.random.RandomState(0)
+        _, labels = _gene_level_labels(rng, 30, 4)
+        value, scored = macro_ovr_auroc(labels, _proba_matching(labels))
+        assert value == pytest.approx(1.0)
+        assert set(scored) == set(MECHANISM_CLASSES)
+        chance, _ = macro_ovr_auroc(labels, _simplex_proba(rng, len(labels)))
+        assert chance == pytest.approx(0.5, abs=0.15)
+
+    def test_absent_class_is_dropped_and_reported(self):
+        # DN never appears, so it has no defined one-vs-rest AUROC. Averaging it in
+        # as 0.5 would drag a perfect two-class result away from 1.0 — and the caller
+        # has to know only two classes were averaged, or it will compare this against
+        # a three-class value.
+        labels = np.array([GOF, GOF, LOF, LOF])
+        value, scored = macro_ovr_auroc(labels, _proba_matching(labels))
+        assert value == pytest.approx(1.0)
+        assert set(scored) == {GOF, LOF}
+
+    def test_single_class_everywhere_returns_none(self):
+        labels = np.array([LOF, LOF, LOF])
+        assert macro_ovr_auroc(labels, _proba_matching(labels)) == (None, ())
+
+
+class TestOofPermutationPvalue:
+    def test_planted_signal_is_significant_and_null_centers_on_chance(self):
+        rng = np.random.RandomState(0)
+        genes, labels = _gene_level_labels(rng, 60, 4)
+        out = oof_permutation_pvalue(
+            labels, _proba_matching(labels), groups=genes, n_permutations=200, seed=0
+        )
+        assert out["observed"] == pytest.approx(1.0)
+        assert out["null_mean"] == pytest.approx(0.5, abs=0.05)
+        assert out["p_value"] < 0.05
+        assert out["statistic"] == "macro_ovr_auroc"
+        assert out["null_type"] == "oof_fixed_predictions"
+
+    def test_uninformative_predictions_are_not_significant(self):
+        rng = np.random.RandomState(1)
+        genes, labels = _gene_level_labels(rng, 60, 4)
+        out = oof_permutation_pvalue(
+            labels, _simplex_proba(rng, len(labels)), groups=genes,
+            n_permutations=200, seed=0,
+        )
+        assert out["p_value"] > 0.1
+
+    def test_family_block_shuffle_gives_a_wider_null_than_gene_level(self):
+        # Families whose genes share a mechanism are the real exchangeable unit. A
+        # gene-level shuffle breaks that shared structure and builds too tight a null,
+        # which would make a chance-level score look significant.
+        rng = np.random.RandomState(6)
+        n_families, genes_per_family, rows_per_gene = 30, 3, 2
+        genes, clusters, labels = [], [], []
+        for fam in range(n_families):
+            family_label = [GOF, DN, LOF][fam % 3]
+            for gene_idx in range(genes_per_family):
+                gene = f"F{fam}g{gene_idx}"
+                genes += [gene] * rows_per_gene
+                clusters += [f"F{fam}"] * rows_per_gene
+                labels += [family_label] * rows_per_gene
+        genes, clusters, labels = np.array(genes), np.array(clusters), np.array(labels)
+        proba = _simplex_proba(rng, len(labels))
+
+        block = oof_permutation_pvalue(
+            labels, proba, groups=genes, clusters=clusters, n_permutations=300, seed=0
+        )
+        gene_level = oof_permutation_pvalue(
+            labels, proba, groups=genes, n_permutations=300, seed=0
+        )
+        assert block["permutation_unit"] == "cluster_block"
+        assert gene_level["permutation_unit"] == "gene"
+        assert block["null_std"] > gene_level["null_std"]
+
+    def test_gene_level_shuffle_gives_a_wider_null_than_variant_level(self):
+        # Labels are constant within a gene, so shuffling individual variants breaks
+        # that structure and builds an unrealistically tight null — which would make
+        # a chance-level score look significant. The gene-level null must be wider.
+        rng = np.random.RandomState(2)
+        genes, labels = _gene_level_labels(rng, 40, 8)
+        proba = _simplex_proba(rng, len(labels))
+
+        gene_level = oof_permutation_pvalue(
+            labels, proba, groups=genes, n_permutations=400, seed=0
+        )
+        variant_level = oof_permutation_pvalue(
+            labels, proba, groups=None, n_permutations=400, seed=0
+        )
+        # Both nulls sit on chance; only their widths differ. 40 genes is the real
+        # sample size, 320 variants is not, so the variant-level null is too tight.
+        assert gene_level["null_mean"] == pytest.approx(0.5, abs=0.05)
+        assert variant_level["null_mean"] == pytest.approx(0.5, abs=0.05)
+        assert gene_level["null_std"] > variant_level["null_std"]
+
+    def test_predictions_are_never_recomputed(self):
+        # The whole point of this path is that it costs no refits: the proba matrix
+        # handed in must be the one scored on every permutation.
+        rng = np.random.RandomState(3)
+        genes, labels = _gene_level_labels(rng, 20, 3)
+        proba = _proba_matching(labels)
+        before = proba.copy()
+        oof_permutation_pvalue(labels, proba, groups=genes, n_permutations=50, seed=0)
+        assert np.array_equal(proba, before)
+
+    def test_deterministic_for_fixed_seed(self):
+        rng = np.random.RandomState(4)
+        genes, labels = _gene_level_labels(rng, 30, 4)
+        proba = _simplex_proba(rng, len(labels))
+        first = oof_permutation_pvalue(labels, proba, groups=genes, n_permutations=64, seed=7)
+        second = oof_permutation_pvalue(labels, proba, groups=genes, n_permutations=64, seed=7)
+        assert first["p_value"] == second["p_value"]
+        assert first["null_mean"] == second["null_mean"]
+
+    def test_draws_scoring_a_different_class_set_are_dropped_and_counted(self):
+        # One gene carries the only DN, so most shuffles land DN somewhere scorable
+        # but some leave a class degenerate. Those draws average a different number
+        # of classes and must not enter the null.
+        rng = np.random.RandomState(5)
+        genes = np.array(["G0", "G0", "G1", "G1", "G2", "G2"])
+        labels = np.array([GOF, GOF, LOF, LOF, DN, DN])
+        proba = _simplex_proba(rng, len(labels))
+        out = oof_permutation_pvalue(labels, proba, groups=genes, n_permutations=50, seed=0)
+        assert set(out["classes_scored"]) == set(MECHANISM_CLASSES)
+        assert out["n_permutations"] + out["n_dropped_class_mismatch"] <= 50
+        assert out["n_dropped_class_mismatch"] >= 0
 
 
 # ---------------------------------------------------------------------------

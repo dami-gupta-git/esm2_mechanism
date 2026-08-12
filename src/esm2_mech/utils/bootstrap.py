@@ -6,7 +6,10 @@ families), so the effective sample size is the cluster count, not the variant co
   - cluster_bootstrap_ci: CI that resamples whole clusters with replacement.
   - paired_cluster_bootstrap_diff / _cross_partition: CI on the DIFFERENCE between
     two metrics on a shared resample.
-  - label_permutation_pvalue: p-value from cluster-aware label shuffling.
+  - label_permutation_pvalue: p-value from cluster-aware label shuffling, refitting
+    the probe per permutation.
+  - oof_permutation_pvalue: the same shuffling against FIXED out-of-fold predictions,
+    scored by macro one-vs-rest AUROC. No refits.
 
 See reports/run6/STATS_PLAN.md for the full rationale.
 """
@@ -18,8 +21,9 @@ from typing import Callable
 
 import numpy as np
 from joblib import Parallel, delayed
-from sklearn.metrics import f1_score, roc_auc_score
+from sklearn.metrics import average_precision_score, f1_score, roc_auc_score
 
+from esm2_mech.utils.metrics import binary_class_target
 from esm2_mech.utils.constants import (
     BOOTSTRAP_CI_LEVEL,
     BOOTSTRAP_MIN_VALID_FRAC,
@@ -463,11 +467,20 @@ def bootstrap_mechanism_metrics(
     ci_level: float = BOOTSTRAP_CI_LEVEL,
     seed: int = 0,
 ) -> dict:
-    """Cluster-bootstrap CIs for macro-F1 and per-class one-vs-rest AUROC.
+    """Cluster-bootstrap CIs for macro-F1 and per-class one-vs-rest AUROC and AUPRC.
 
     `proba` columns must be aligned to `classes` (use utils.metrics.align_proba). Each
     metric reuses the same resampled clusters via cluster_bootstrap_ci. Returns
-    {"macro_f1": {...}, "auroc_GOF": {...}, ...} where each value is the CI dict.
+    {"macro_f1": {...}, "auroc_GOF": {...}, "auprc_GOF": {...}, ...} where each value
+    is the CI dict.
+
+    AUPRC gets an interval because its no-signal reference is the class prevalence,
+    which itself varies across resamples — reading the point estimate against a fixed
+    prevalence would understate the uncertainty for the rare classes. For that reason
+    the prevalence is bootstrapped too (`prevalence_<cls>`), and so is the gap between
+    them (`auprc_lift_<cls>`, AUPRC minus prevalence on each draw, so the two move
+    together). The lift is the interval to read for "better than no signal"; comparing
+    the AUPRC interval against one fixed prevalence is the thing this avoids.
     """
     y_true = np.asarray(y_true)
     proba = np.asarray(proba)
@@ -484,13 +497,49 @@ def bootstrap_mechanism_metrics(
 
     for col_idx, cls in enumerate(classes):
         def _auroc(rows: np.ndarray, _col=col_idx, _cls=cls) -> float | None:
-            y_bin = (y_true[rows] == _cls).astype(int)
-            if y_bin.sum() == 0 or y_bin.sum() == len(y_bin):
+            y_bin = binary_class_target(y_true[rows], _cls)
+            if y_bin is None:
                 return None
             return float(roc_auc_score(y_bin, proba[rows, _col]))
 
         out[f"auroc_{cls}"] = cluster_bootstrap_ci(
             clusters, _auroc, n_resamples=n_resamples, ci_level=ci_level, seed=seed
+        )
+
+        def _auprc(rows: np.ndarray, _col=col_idx, _cls=cls) -> float | None:
+            y_bin = binary_class_target(y_true[rows], _cls)
+            if y_bin is None:
+                return None
+            return float(average_precision_score(y_bin, proba[rows, _col]))
+
+        out[f"auprc_{cls}"] = cluster_bootstrap_ci(
+            clusters, _auprc, n_resamples=n_resamples, ci_level=ci_level, seed=seed
+        )
+
+        # AUPRC's no-signal reference is the prevalence, which moves with the resample,
+        # so the interval on AUPRC alone still leaves it read against a fixed baseline.
+        # The lift is the quantity that answers "better than no signal", and it is
+        # bootstrapped directly so numerator and reference move together on each draw.
+        def _prevalence(rows: np.ndarray, _cls=cls) -> float | None:
+            y_bin = binary_class_target(y_true[rows], _cls)
+            if y_bin is None:
+                return None
+            return float(y_bin.mean())
+
+        out[f"prevalence_{cls}"] = cluster_bootstrap_ci(
+            clusters, _prevalence, n_resamples=n_resamples, ci_level=ci_level, seed=seed
+        )
+
+        def _auprc_lift(rows: np.ndarray, _col=col_idx, _cls=cls) -> float | None:
+            y_bin = binary_class_target(y_true[rows], _cls)
+            if y_bin is None:
+                return None
+            return float(
+                average_precision_score(y_bin, proba[rows, _col]) - y_bin.mean()
+            )
+
+        out[f"auprc_lift_{cls}"] = cluster_bootstrap_ci(
+            clusters, _auprc_lift, n_resamples=n_resamples, ci_level=ci_level, seed=seed
         )
 
     for metric_name, ci in out.items():
@@ -777,25 +826,213 @@ def _permute_labels(
     return np.array([mapping[g] for g in groups])
 
 
+def _permute_labels_by_cluster(
+    labels: np.ndarray,
+    groups: np.ndarray,
+    clusters: np.ndarray,
+    rng: np.random.RandomState,
+) -> tuple[np.ndarray, int]:
+    """Permute whole clusters' label blocks between clusters of the same size.
+
+    The permutation unit must match the unit the interval clusters on (R7.3). Under
+    family-split the unit is the Pfam family: homologous genes are not independent, and
+    if related genes tend to share a mechanism then shuffling one label per gene
+    destroys that shared structure and builds a null narrower than the truth, which
+    makes any p-value smaller than it deserves.
+
+    Swapping whole label blocks preserves the observed degree of within-family label
+    mixing. The alternative — one shuffled label per family, broadcast to its genes —
+    would force every family to be homogeneous, which is MORE clustered than reality
+    and widens the null instead, costing the test the power it needs to refute a null
+    claim. Blocks are only exchangeable with blocks of the same length, so clusters are
+    stratified by gene count; a cluster whose size is unique in the data has no partner
+    and keeps its own labels. That count is returned so it can be reported rather than
+    silently reducing how much of the data actually moves.
+
+    `groups` is the row-aligned label unit (genes; labels are constant within one) and
+    `clusters` the row-aligned exchangeable unit (families).
+    """
+    labels = np.asarray(labels)
+    groups = np.asarray(groups)
+    clusters = np.asarray(clusters)
+
+    gene_label = {}
+    gene_cluster = {}
+    for gene in np.unique(groups):
+        mask = groups == gene
+        gene_label[gene] = labels[mask][0]
+        gene_cluster[gene] = clusters[mask][0]
+
+    cluster_genes: dict = {}
+    for gene, cluster in gene_cluster.items():
+        cluster_genes.setdefault(cluster, []).append(gene)
+    for cluster in cluster_genes:
+        cluster_genes[cluster] = sorted(cluster_genes[cluster])
+
+    by_size: dict = {}
+    for cluster, genes_in in cluster_genes.items():
+        by_size.setdefault(len(genes_in), []).append(cluster)
+
+    new_gene_label = {}
+    immovable = 0
+    for size, cluster_ids in by_size.items():
+        cluster_ids = sorted(cluster_ids)
+        if len(cluster_ids) == 1:
+            immovable += 1
+            only = cluster_ids[0]
+            for gene in cluster_genes[only]:
+                new_gene_label[gene] = gene_label[gene]
+            continue
+        donors = [cluster_ids[i] for i in rng.permutation(len(cluster_ids))]
+        for target, donor in zip(cluster_ids, donors):
+            donor_labels = [gene_label[g] for g in cluster_genes[donor]]
+            for gene, label in zip(cluster_genes[target], donor_labels):
+                new_gene_label[gene] = label
+
+    return np.array([new_gene_label[g] for g in groups]), immovable
+
+
 def _permutation_null_value(
     run_metric_fn: Callable[[np.ndarray], float | None],
     labels: np.ndarray,
     groups: np.ndarray | None,
     child_seed: int,
+    clusters: np.ndarray | None = None,
 ) -> float | None:
     """Shuffle labels with an independent seeded RNG, then recompute the metric."""
     rng = np.random.RandomState(child_seed)
-    permuted = _permute_labels(np.asarray(labels), groups, rng)
+    if clusters is not None:
+        permuted, _ = _permute_labels_by_cluster(
+            np.asarray(labels), np.asarray(groups), clusters, rng
+        )
+    else:
+        permuted = _permute_labels(np.asarray(labels), groups, rng)
     value = run_metric_fn(permuted)
     if value is not None and np.isfinite(value):
         return float(value)
     return None
 
 
+def macro_ovr_auroc(
+    y_true: np.ndarray, proba: np.ndarray, classes: list[str] = MECHANISM_CLASSES
+) -> tuple[float | None, tuple[str, ...]]:
+    """Macro one-vs-rest AUROC and the classes it averaged over.
+
+    `proba` columns must be aligned to `classes`. Classes absent from `y_true` (or
+    covering all of it) have no defined AUROC and are dropped. The scored classes come
+    back with the value because a three-class average and a two-class average are not
+    the same statistic and must not be compared — a caller mixing them would be
+    building a null out of two different quantities. Returns (None, ()) if no class is
+    scorable.
+    """
+    y_true = np.asarray(y_true)
+    values, scored = [], []
+    for col_idx, cls in enumerate(classes):
+        y_bin = binary_class_target(y_true, cls)
+        if y_bin is None:
+            continue
+        values.append(float(roc_auc_score(y_bin, proba[:, col_idx])))
+        scored.append(cls)
+    if not values:
+        return None, ()
+    return float(np.mean(values)), tuple(scored)
+
+
+def oof_permutation_pvalue(
+    y_true: np.ndarray,
+    proba: np.ndarray,
+    groups: np.ndarray | None = None,
+    clusters: np.ndarray | None = None,
+    classes: list[str] = MECHANISM_CLASSES,
+    n_permutations: int = PERMUTATION_N_RESAMPLES,
+    seed: int = 0,
+) -> dict:
+    """Permutation p-value for macro one-vs-rest AUROC against FIXED OOF predictions.
+
+    Shuffles the labels and re-scores the same held-out predictions, so no probe is
+    refit — the cost is a re-scoring per permutation rather than a full cross-validated
+    fit.
+
+    `groups` is the label unit (genes). `clusters` is the exchangeable unit and must
+    match what the interval clusters on: pass families for a family-split metric, so
+    whole families' label blocks swap (see `_permute_labels_by_cluster`). Omitting it
+    shuffles one label per gene, which is only correct when genes are the clustering
+    unit — a gene-level shuffle under a family-split metric builds too tight a null.
+
+    This tests a different null from `label_permutation_pvalue`: it conditions on the
+    model that was fit on the real labels and asks whether that model's held-out
+    predictions carry label information. The predictions are out-of-fold, so the test
+    is not circular, but reports must say which of the two was run.
+
+    Macro AUROC rather than macro-F1 because a probe sitting at the chance floor
+    predicts the majority class almost everywhere, which pins macro-F1 near the floor
+    whether or not the ranking carries signal. AUROC reads the ranking directly and so
+    can detect a small effect that macro-F1 cannot — which is what a refutation test
+    for a null claim needs.
+    """
+    y_true = np.asarray(y_true)
+    proba = np.asarray(proba, dtype=float)
+    observed, observed_classes = macro_ovr_auroc(y_true, proba, classes)
+
+    rng = np.random.RandomState(seed)
+    null = []
+    dropped_class_mismatch = 0
+    immovable = None
+    for _ in range(n_permutations):
+        if clusters is not None:
+            if groups is None:
+                raise ValueError("clusters requires groups (the gene-level label unit)")
+            permuted, immovable = _permute_labels_by_cluster(y_true, groups, clusters, rng)
+        else:
+            permuted = _permute_labels(y_true, groups, rng)
+        value, scored = macro_ovr_auroc(permuted, proba, classes)
+        if value is None or not np.isfinite(value):
+            continue
+        # A draw that scores a different class set is a different statistic; averaging
+        # it into the null would compare a 3-class observed value against 2-class draws.
+        if scored != observed_classes:
+            dropped_class_mismatch += 1
+            continue
+        null.append(value)
+
+    null_arr = np.array(null)
+    common = {
+        "statistic": "macro_ovr_auroc",
+        "null_type": "oof_fixed_predictions",
+        "permutation_unit": "cluster_block" if clusters is not None else "gene",
+        "classes_scored": list(observed_classes),
+        "n_permutations": int(len(null_arr)),
+        "n_dropped_class_mismatch": dropped_class_mismatch,
+        # Clusters with a unique gene count have no same-size partner and keep their
+        # own labels; reported so it is visible how much of the data actually moved.
+        "n_clusters_immovable": immovable,
+    }
+    if observed is None or not np.isfinite(observed) or len(null_arr) == 0:
+        return {
+            **common,
+            "observed": float(observed) if observed is not None and np.isfinite(observed) else None,
+            "p_value": None,
+            "null_mean": float(np.mean(null_arr)) if len(null_arr) else None,
+            "null_std": float(np.std(null_arr)) if len(null_arr) else None,
+        }
+    extreme = int(np.sum(null_arr >= observed))
+    return {
+        **common,
+        "observed": float(observed),
+        "p_value": float((1 + extreme) / (1 + len(null_arr))),
+        "null_mean": float(np.mean(null_arr)),
+        # The null's spread is what the cluster-level shuffle widens relative to a
+        # row-level one; reported so a narrow null is visible rather than implicit.
+        "null_std": float(np.std(null_arr)),
+    }
+
+
 def label_permutation_pvalue(
     run_metric_fn: Callable[[np.ndarray], float | None],
     labels: np.ndarray,
+    statistic: str,
     groups: np.ndarray | None = None,
+    clusters: np.ndarray | None = None,
     n_permutations: int = PERMUTATION_N_RESAMPLES,
     seed: int = 0,
     alternative: str = "greater",
@@ -805,9 +1042,18 @@ def label_permutation_pvalue(
 
     `run_metric_fn(labels)` must recompute the FULL cross-validated metric for a label
     vector — i.e. it refits the probe — since this can't be computed from fixed
-    out-of-fold predictions. Pass groups=genes for a gene-level shuffle (the correct
-    null when labels are gene-level). The p-value is (1 + #{null >= observed}) / (1 + n)
-    for alternative="greater".
+    out-of-fold predictions. The p-value is (1 + #{null >= observed}) / (1 + n) for
+    alternative="greater".
+
+    `groups` is the label unit (genes). `clusters` is the exchangeable unit and must
+    match what the metric's interval clusters on: pass families for a family-split
+    metric, so whole families' label blocks swap rather than one label per gene, which
+    would build too tight a null (see `_permute_labels_by_cluster`).
+
+    `statistic` names what `run_metric_fn` computes and is stamped into the result, so
+    a report can say which quantity the p-value is on. It is required and has no
+    default: only the caller knows what its function measures, and a default would
+    silently mislabel every caller that computes something else.
 
     Permutations run in parallel across cores via joblib (n_jobs=-1 = all cores); each
     draws from its own SeedSequence-spawned RNG, so the null matches a serial run.
@@ -818,7 +1064,7 @@ def label_permutation_pvalue(
     child_seeds = [int(s.generate_state(1)[0]) for s in child_seqs]
 
     null_values = Parallel(n_jobs=n_jobs)(
-        delayed(_permutation_null_value)(run_metric_fn, labels, groups, child_seed)
+        delayed(_permutation_null_value)(run_metric_fn, labels, groups, child_seed, clusters)
         for child_seed in child_seeds
     )
     null = [value for value in null_values if value is not None]
@@ -826,9 +1072,13 @@ def label_permutation_pvalue(
     null_arr = np.array(null)
     if observed is None or not np.isfinite(observed) or len(null_arr) == 0:
         return {
+            "statistic": statistic,
+            "null_type": "refit_per_permutation",
+            "permutation_unit": "cluster_block" if clusters is not None else "gene",
             "observed": float(observed) if observed is not None and np.isfinite(observed) else None,
             "p_value": None,
             "null_mean": float(np.mean(null_arr)) if len(null_arr) else None,
+            "null_std": float(np.std(null_arr)) if len(null_arr) else None,
             "n_permutations": int(len(null_arr)),
         }
     if alternative == "greater":
@@ -839,8 +1089,12 @@ def label_permutation_pvalue(
         raise ValueError(f"alternative must be 'greater' or 'less', got {alternative!r}")
     p_value = (1 + extreme) / (1 + len(null_arr))
     return {
+        "statistic": statistic,
+        "null_type": "refit_per_permutation",
+        "permutation_unit": "cluster_block" if clusters is not None else "gene",
         "observed": float(observed),
         "p_value": float(p_value),
         "null_mean": float(np.mean(null_arr)),
+        "null_std": float(np.std(null_arr)),
         "n_permutations": int(len(null_arr)),
     }

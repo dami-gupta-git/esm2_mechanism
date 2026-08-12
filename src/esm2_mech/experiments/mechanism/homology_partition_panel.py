@@ -1,5 +1,5 @@
 """
-Homology-partition robustness panel (Task 2b, biorxiv/PLAN_biorxiv.md).
+Homology-partition robustness panel (Task 2b, biorxiv/FOLLOWUP_biorxiv.md).
 
 Promotes `clan_holdout.py` (leave-one-Pfam-clan-out) and
 `mmseqs_cluster_holdout.py` (MMseqs2 20% sequence-identity cluster-holdout)

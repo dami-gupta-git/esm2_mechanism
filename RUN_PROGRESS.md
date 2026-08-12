@@ -137,7 +137,14 @@ Uses `esm2_mech` package (RUNBOOK_3). All commands use `python -m esm2_mech.<mod
 
 ## Run 7 / run_biorxiv — started 2026-07-22 (RUNBOOK_biorxiv, inferential statistics)
 
-Live status table moved to [`biorxiv/RUN_PROGRESS_biorxiv.md`](biorxiv/RUN_PROGRESS_biorxiv.md) so
-it stays a current, run-scoped table separate from this file's historical log of runs 1–6.
-Execution spec: `biorxiv/RUNBOOK_biorxiv.md`. Change list: `biorxiv/PLAN_biorxiv.md`.
-Pre-registered values: `biorxiv/PREREGISTRATION_run_biorxiv.md`.
+This file remains the historical log of runs 1–6. run_biorxiv's execution spec and its live status
+are the same document, [`biorxiv/RUNBOOK_biorxiv.md`](biorxiv/RUNBOOK_biorxiv.md), which carries a
+status against each stage and step. Pre-registered claims, decision rules and resampling rules:
+`biorxiv/PREREGISTRATION_run_biorxiv.md`.
+
+Experiment 1, Step 1 (fetch data) completed 2026-08-11/12: ClinVar re-fetched from scratch against
+a current snapshot. gerasimavicius 10,233 variants / 948 genes; ClinVar 48,152 rows / 2,115 genes;
+merged `variants.json` 17,865 variants / 1,937 genes (gerasimavicius=10,233, clinvar_g2p=7,632);
+sequences fetched for 1,935 genes; Pfam 1,913/1,937 genes annotated; AlphaMissense matched 17,765
+variants; `valid_variants.json` 17,770 rows. Details: `biorxiv/RUNBOOK_biorxiv.md` Experiment 1
+Step 1.
