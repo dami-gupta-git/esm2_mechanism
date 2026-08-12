@@ -139,5 +139,5 @@ Uses `esm2_mech` package (RUNBOOK_3). All commands use `python -m esm2_mech.<mod
 
 Live status table moved to [`biorxiv/RUN_PROGRESS_biorxiv.md`](biorxiv/RUN_PROGRESS_biorxiv.md) so
 it stays a current, run-scoped table separate from this file's historical log of runs 1–6.
-Execution spec: `biorxiv/RUNBOOK_biorxiv.md`. Change list: `biorxiv/PLAN_2026-07-20.md`.
+Execution spec: `biorxiv/RUNBOOK_biorxiv.md`. Change list: `biorxiv/PLAN_biorxiv.md`.
 Pre-registered values: `biorxiv/PREREGISTRATION_run_biorxiv.md`.

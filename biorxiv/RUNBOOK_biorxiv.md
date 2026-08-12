@@ -7,7 +7,7 @@ every "beats" claim — in place of run6's 5-seed fold-jitter error bars.
 Supersedes `RUNBOOK_4.md` (run6). The experiments, gates, and hypotheses are unchanged — run_biorxiv
 re-scores the same science with correct error bars. Statistical methodology is
 [`reports/run6/STATS_PLAN.md`](../reports/run6/STATS_PLAN.md); the change list is
-[`PLAN_2026-07-20.md`](PLAN_2026-07-20.md).
+[`PLAN_biorxiv.md`](PLAN_biorxiv.md).
 
 All commands use `python -m esm2_mech.<module>` from the project root with the package installed
 (`pip install -e .`).
@@ -48,41 +48,36 @@ GPU is still required for three steps, which are computed rather than cached:
 ## Stage 0 — preconditions
 
 run_biorxiv must not start until all of these hold. 0a/0a-bis/0b are the substance of the run,
-0b-bis fixes how its results may be read, and 0c–0e protect its provenance.
+0b-bis fixes how its results may be read, and 0c–0e protect its provenance. Live status is in
+`RUN_PROGRESS_biorxiv.md`; this document states what must be true, not what has been done.
 
 ### 0a. Stats machinery wired and verified
 
-`utils/bootstrap.py` (`cluster_bootstrap_ci`, `bootstrap_mechanism_metrics`,
-`label_permutation_pvalue`) is built, but as of run6 only three modules import it
-(`naive_baseline`, `mechanism_delta_family_split`, `mechanism_within_family`). Seven more must be
-wired before the replay, or run_biorxiv reproduces run6's CI-less result files and the run is wasted.
+Eleven modules import `utils/bootstrap.py` and emit CI keys: `naive_baseline`,
+`mechanism_delta_family_split`, `mechanism_within_family`, `mechanism/mlp.py`,
+`mechanism/contrastive_mechanism.py`, `esm3/esm3_mechanism.py` (phase 3),
+`pathogenicity/pathogenicity_control.py`, `geometry/run_geometry.py`,
+`stability/megascale_stability.py`, `mechanism/family_clustering.py` (`--seeds`, since run6 was
+seed 0 only), and `leakage_fraction.py`. Anything short of that reproduces run6's CI-less result
+files and wastes the run.
 
-| Module | Experiment |
-|---|---|
-| `mechanism/mlp.py` | 1 (Step 3, nonlinear probes) |
-| `mechanism/contrastive_mechanism.py` | 6 |
-| `esm3/esm3_mechanism.py` (phase 3) | 4 |
-| `pathogenicity/pathogenicity_control.py` | 2 |
-| `geometry/run_geometry.py` | 5 |
-| `stability/megascale_stability.py` | 7 |
-| `mechanism/family_clustering.py` | 1 (needs a new `--seeds` flag; run6 is seed 0 only) |
+`leakage_fraction.py`'s ~40% figure is a headline in `INTRO_REPORT.md` and `ESM2_REPORT.md` §4. It
+is a derived ratio sharing the gene-split term between numerator and denominator, so the whole
+ratio is recomputed once per bootstrap replicate rather than combined from two separate intervals.
 
-`leakage_fraction.py` also needs an interval: its ~40% figure is a headline in `INTRO_REPORT.md`
-and `ESM2_REPORT.md` §4 and is currently a bare point estimate. It is a derived ratio sharing the
-gene-split term between numerator and denominator, so recompute the whole ratio once per
-bootstrap replicate rather than combining two separate intervals.
+`classify_by_mechanism` is the reference implementation: gene/family clusters passed to
+`bootstrap_mechanism_metrics`, `--no_ci` / `--n_boot` flags, CI keys in the result JSON.
 
-`classify_by_mechanism` is the working reference implementation to copy: pass gene/family
-clusters to `bootstrap_mechanism_metrics`, add the `--no_ci` / `--n_boot` flags, emit CI keys
-into the result JSON.
-
-**Verification gate:** run one module for one seed locally and confirm a CI key is actually
-present in the emitted JSON. Wiring that silently no-ops is the failure this gate exists to
-catch.
+**Verification gate.** Run each module for one seed and confirm `ci_low`/`ci_high` are populated in
+the emitted JSON, not merely that it exited cleanly. Wiring that silently no-ops is the failure this
+gate exists to catch, and it has caught three: family-split CIs resampling genes instead of families
+across seven call sites; `pathogenicity_control.py` computing CIs for five seeds but keeping only
+seed 0's; and `family_clustering.py`'s k-NN-purity and within/between CIs biased by duplicate points
+under a with-replacement bootstrap, which is why `cluster_subsample_ci` exists (R7.3 addendum).
 
 ### 0a-bis. Methodology rules the wiring must implement
 
-Settled in `PLAN_2026-07-20.md` Task 0. These are properties of the emitted numbers, so getting
+Settled in `PLAN_biorxiv.md` Task 0. These are properties of the emitted numbers, so getting
 them wrong means re-running, not just re-reporting.
 
 1. **The resampling unit matches the split.** Gene-split metrics resample genes; family-split
@@ -96,18 +91,25 @@ them wrong means re-running, not just re-reporting.
    degenerate-fold suppression guard, and are labelled the least trustworthy intervals in their
    table. No confirmatory claim rests on them — per-class AUROCs are exploratory under R7.2.
 
-### 0b. Paired cluster bootstrap implemented
+### 0b. Paired cluster bootstrap
 
-`paired_cluster_bootstrap_diff(...)` in `utils/bootstrap.py`, plus unit tests. This is the only
-genuinely new statistical primitive in run_biorxiv. Six claims rest on comparing two point estimates with
-separated error bars, and the thinnest margins are smaller than a seed of spread:
+`utils/bootstrap.py` provides `paired_cluster_bootstrap_diff` (same-fold) and
+`paired_cluster_bootstrap_diff_cross_partition`, with `paired_oof_diff` wrapping both: it aligns two
+arms by `row_ids`, takes the class list as a parameter, and supports macro-F1, binary AUROC and
+one-vs-rest AUROC. `adjudicate_diff` and `adjudicate_level` render the R7.1 verdict for a difference
+and for a level respectively. The call sites are `esm3_mechanism.py`,
+`contrastive_mechanism.py`, `conservation_axis.py` and `mechanism_delta_family_split.py`.
+
+Six comparisons below rest on two point estimates with separated error bars, and the thinnest
+margins are smaller than a seed of spread. **Five are paired**; the transfer contrast is not, for
+the reason given in its row:
 
 | Claim | Margin | Report |
 |---|---|---|
-| ESM-3 seq vs ESM-2 MLP delta_mean | M2 gate clears its 0.430 threshold by 0.008 | `report_esm3_mechanism.md` |
+| ESM-3 seq vs ESM-2 MLP delta_mean | clears `m1_threshold` (the measured floor + 0.05) by 0.008 in run6 | `report_esm3_mechanism.md` |
 | Contrastive k-NN vs raw-delta k-NN | +0.041 | `report_contrastive.md` |
 | Conservation vs embedding delta (gate K2) | +0.002 | `report_geometry.md` |
-| Pathogenicity vs mechanism cross-family transfer | 0.85–0.90 vs 0.62–0.64 | `report_geometry.md` — **not paired**, see below |
+| Pathogenicity vs mechanism cross-family transfer | 0.85–0.90 vs 0.62–0.64 | `report_geometry.md` — **not paired**: different datasets, no shared row space |
 | Contrastive per-class DN "unmoved" | a null asserted from a 0.577 → 0.545 point drop | `report_contrastive.md` |
 | Gene-split minus family-split gap | see below | `report_classifier.md` |
 
@@ -138,8 +140,8 @@ cross-partition case gets silently implemented as the same-fold path and is wron
 
 ### 0b-bis. Pre-registered decision rules written into PREREGISTRATION_run_biorxiv.md
 
-Two documents must exist **before** run_biorxiv executes, or the run produces intervals with no stated
-reading and any interpretation chosen afterwards is retro-fitted:
+Both rules below must be written down **before** run_biorxiv executes, or the run produces intervals
+with no stated reading and any interpretation chosen afterwards is retro-fitted:
 
 1. **CI decision rule for every confirmatory gate.** A gate is affirmed only if its point estimate
    clears the threshold *and* the paired difference 95% CI excludes zero; if the point estimate
@@ -147,7 +149,7 @@ reading and any interpretation chosen afterwards is retro-fitted:
    with a CI that also spans the threshold is reported as **underpowered to detect an effect of
    the pre-registered size**, not as evidence of no effect.
 2. **The confirmatory / exploratory split.** Five confirmatory claims (C1–C5 in
-   `PLAN_2026-07-20.md` Task 0.2), enumerated before the run. Everything else is labelled
+   `PLAN_biorxiv.md` Task 0.2), enumerated before the run. Everything else is labelled
    exploratory and asserts nothing the paper relies on. No multiplicity correction is applied;
    R7.2 records why none is needed across a set this size. C1 is a null claim and is adjudicated
    against the pre-registered 0.05 equivalence margin, not by an interval overlapping the floor.
@@ -460,6 +462,12 @@ Data and alignment:
 - [ ] `data/pfam_families.json` has entries for ≥ 1,900 genes.
 - [ ] `data/alphamissense_scores_full.json` covers > 90% of `valid_variants.json`.
 - [ ] Embedding fingerprints recorded in the run_biorxiv result files match the run6 arrays.
+- [ ] **All five pathogenicity seeds share one variant-set fingerprint, and the AUROC spread across
+      them is ≤ 0.01.** If any seed disagrees, stop the run — that is a real data defect, and it is
+      the failure that produced run0's 0.74–0.88 band, where two different variant sets across seeds
+      were read as sampling uncertainty. `pathogenicity_control.py` already refuses to proceed when
+      the embeddings do not match the current variant set; this checks the recorded fingerprints
+      agree across seeds after the fact as well.
 
 Statistics — the point of this run:
 

@@ -1,16 +1,23 @@
-# esm2_mechanism — results index
+# esm2_mechanism — historical results index (run0 era)
+
+**This is a historical document.** It indexes the exploratory phase — twenty-six `result_*.md`
+files written across May 23–29, 2026, plus `result_leakage_fraction.md` (working note) — in the
+order that makes the narrative arc readable. Results 3 and 5 are superseded by result 7.
+
+**Assume it is stale.** These are run0-era numbers with 5-seed fold-jitter error bars, and most
+have been re-measured since. Where run6 or `run_biorxiv` covers a result, the later run governs and
+this file does not track it. Current work starts at `biorxiv/README.md`; nothing here should be cited without
+checking against it.
 
 **This is a standalone research project, not an AI Scientist run.** All experiments were designed and executed manually. The code lives in `esm2_mechanism/scripts/` and was run directly on RunPod (A100 80GB) or local CPU. The project will likely move to its own repository.
 
-Twenty-six `result_*.md` files written across May 23–29, 2026, plus `result_leakage_fraction.md` (working note). Read in the order below for the coherent narrative arc. Results 3 and 5 are superseded by result 7.
-
 ---
 
-## Current state (as of result 26, 2026-05-29)
+## State at the close of the exploratory phase (result 26, 2026-05-29)
 
 The project has four connected arcs:
 
-1. **Results 1–10 — frozen ESM-2 characterisation.** Mechanism floor under family-split CV is **F1 = 0.385 ± 0.018 (merged, 5-seed) / 0.299 ± 0.034 (Gerasimavicius, 5-seed)** — see result_6 Part 2 for the multi-seed correction. Clan-holdout shows ~half the family-split signal is fold memorisation (result 10). Pathogenicity positive control AUROC 0.74–0.88 across replications, family-split-stable (gene→family Δ ≈ 0 reproducibly; result 6) — confirms pipeline soundness and establishes the pathogenicity–mechanism dissociation. 62.8% of gene-split mechanism signal is family-recognition leakage on Gerasimavicius (exact, seed-invariant — structural property of the dataset; result 7 + result 6 Part 2).
+1. **Results 1–10 — frozen ESM-2 characterisation.** Mechanism floor under family-split CV is **F1 = 0.385 ± 0.018 (merged, 5-seed) / 0.299 ± 0.034 (Gerasimavicius, 5-seed)** — see result_6 Part 2 for the multi-seed correction. Clan-holdout shows ~half the family-split signal is fold memorisation (result 10). Pathogenicity positive control AUROC 0.74–0.88 across replications, family-split-stable (gene→family Δ ≈ 0 reproducibly; result 6) — confirms pipeline soundness and establishes the pathogenicity–mechanism dissociation. **The 0.74–0.88 band is superseded and must not be cited:** its width was two different variant sets across seeds, not sampling uncertainty. Run6 measures 0.894 on one canonical set, std ≤ 0.001 (see the result 6 entry below). 62.8% of gene-split mechanism signal is family-recognition leakage on Gerasimavicius (exact, seed-invariant — structural property of the dataset; result 7 + result 6 Part 2).
 
 2. **Results 11–14 — gene-level proteome features.** A 4-feature pilot (result 11) hits macro-F1 0.417 family-split. The 37-feature matrix (result 12, sources: gnomAD, paralogs, HPA, PaxDb, BioPlex, ClinGen) gives V2 macro-F1 = 0.462 ± 0.025 — outperforming frozen ESM-2 delta (V1, 0.382) by +0.080 (result 13). Per-gene scoring lifts the V2 advantage to +0.101. Combining ESM-2 + proteome (V3) does not reliably improve over V2 alone (Gate 2 fails 3/5 seeds). Feature ablation (T4) shows constraint + dosage are load-bearing; the proteome-biology features (PPI, paralogs, abundance) contribute little to aggregate F1 but matter per-class. Clinical utility (result 14) collapses to a single column: paralog count alone achieves AUROC 0.746 within ClinGen HI=3, beating the full 37-feature model (0.650). Calibration is poor; operating-point performance is weak.
 
@@ -18,7 +25,11 @@ The project has four connected arcs:
 
 4. **Results 17–26 — pathogenicity geometry, perturbation scans, stability, AlphaMissense, ProteinGym ΔLL, ESM-3 scale/structure.** AlphaMissense is family-robust on ClinVar (mean per-family AUROC 0.948 ± 0.046; result 17) but not on ProteinGym DMS labels (mean per-assay AUROC 0.721 ± 0.150, 32% below 0.70; result 18) — the tight ClinVar distribution reflects curation–training overlap, not general family-robustness. ClinVar variant pattern features (spatial hotspot vs spread) give nearly leak-free GOF signal (family-split AUROC 0.646; result 19); the unbiased in-silico scan loses that GOF signal alone (F1 0.272) but adds orthogonal signal to proteome (V2+scan F1 0.413; result 20). Stability in ESM-2 delta is nonlinearly encoded but cross-family transferable (GBM Pfam-split AUROC 0.750 vs linear 0.597; result 21) — the sharpest contrast with mechanism, where nonlinearity does not rescue family-split performance. Log-likelihood scan gives no improvement over the embedding scan (LL-only F1 0.261; result 22), confirming the bottleneck is sampling density not readout. Pathogenicity is carried by delta direction not magnitude (direction AUROC 0.896 vs magnitude 0.664; result 23); that direction IS conservation (masked-LL alone 0.891 family-split); conservation transfers linearly for pathogenicity, nonlinearly for stability, and not at all for mechanism — the transferability is task- and probe-dependent within one frozen model. ESM-2 ΔLL on 96 human ProteinGym assays replicates published ESM-1v baseline (median ρ=0.50; result 24); fewer tail failures than AlphaMissense (8% vs 14% below ρ=0.20) but the median gap is +0.041, short of the pre-registered +0.05 — the per-assay variance is intrinsic to DMS task heterogeneity, not predictor type, completing the transferability gradient. Enzyme classification from ESM-2 WT embeddings achieves family-split F1 = 0.655 (result 25), confirming the mechanism null is task-specific — ESM-2 encodes enzymatic function family-transferably but not disease mechanism. ESM-3 1.4B raises mechanism family-split F1 from 0.299 to 0.424 (result 26); structure tokens add nothing (seq+struct 0.417 < seq 0.424) — scale helps, 3D structure does not, confirming the mechanism null is not a modality limitation.
 
-The experimental work is essentially done. Remaining: writeup consolidation, one master figure, optional rigour (bootstrap CIs, calibration on V2+bad), optional Path B (raw structural features de novo).
+That was the position when the exploratory phase closed. What followed is outside this index: run6
+consolidated the experiments, and `run_biorxiv` re-scores them with dependency-aware confidence
+intervals, permutation p-values and paired difference tests — the "optional rigour" named here
+turned out to be the substance of the paper rather than an extra. The probes remain uncalibrated
+and measure discrimination only.
 
 ---
 
@@ -63,7 +74,7 @@ The experimental work is essentially done. Remaining: writeup consolidation, one
 > **`delta_mean` MLP family-split AUROC = 0.894, gene-split = 0.897, std ≤ 0.001** (Δ = 0.003, so the
 > family-split stability claim holds and is now measured on one set). The provenance issue is
 > resolved; cite `reports/run6/report_control.md` and `results/run6/pathogenicity_control*.json`.
-**What it concludes:** Pipeline is sound. Pathogenicity AUROC in the 0.74–0.88 range across replications (family-split-stable in all) vs mechanism floor 0.30–0.39 (family-split) — the controlled dissociation under identical pipeline holds.
+**What it concludes:** Pipeline is sound, and the controlled dissociation under an identical pipeline holds — pathogenicity far above the mechanism floor of 0.30–0.39 (family-split). The 0.74–0.88 figure quoted here is the superseded band (see the banner above); run6's single-set measurement is 0.894.
 
 ### 7. `result_7.md` — Full calibration: all numbers, honest framing
 **Scripts:** `experiment_mlp.py` with family-split, `build_merged_dataset.py`, Option B gene-level WT
@@ -72,7 +83,7 @@ The experimental work is essentially done. Remaining: writeup consolidation, one
 - Merged dataset family-split **0.352** seed 0 → **0.385 ± 0.018 5-seed**
 - Always-predict-LOF baseline: **0.279** (Gerasimavicius), **0.311** (gene-level merged)
 - Family-split floor under multi-seed: **F1 = 0.30 (Gerasimavicius) / 0.39 (merged)** — merged is the more reliable headline
-**What it concludes:** The floor is real but lower than the single-seed numbers in this file. The pathogenicity-mechanism dissociation holds (pathogenicity 0.74–0.88 vs mechanism 0.30–0.39, both family-split-stable). The GOF AUROC (0.557 ± 0.036 Geras / 0.655 ± 0.014 merged delta MLP) is the strongest mechanism-class signal that survives family-split, distinct from the WT-only GOF AUROC of 0.73–0.80 which captures gene identity rather than mutation effect.
+**What it concludes:** The floor is real but lower than the single-seed numbers in this file. The pathogenicity-mechanism dissociation holds (pathogenicity well above mechanism 0.30–0.39, both family-split-stable; the 0.74–0.88 band quoted here is superseded — run6 measures 0.894 on one canonical set). The GOF AUROC (0.557 ± 0.036 Geras / 0.655 ± 0.014 merged delta MLP) is the strongest mechanism-class signal that survives family-split, distinct from the WT-only GOF AUROC of 0.73–0.80 which captures gene identity rather than mutation effect.
 
 ### 8. `result_8.md` — Within-family mechanism (first pass)
 **Script:** ad-hoc analysis on cached Gerasimavicius embeddings · Local CPU, seed=42
@@ -197,7 +208,7 @@ The experimental work is essentially done. Remaining: writeup consolidation, one
 
 1. **(1–2)** Linear probes are at chance on delta. WT-only F1=0.58 collapses to 0.39 under family-split — most apparent mechanism signal is family identity.
 2. **(4)** ESM-2 strongly clusters by Pfam (26× purity) and 74.8% of genes share their family's modal mechanism — the causal explanation.
-3. **(6)** Pathogenicity positive control AUROC 0.74–0.88 across replications, family-split-stable (Δ ≈ 0 reproducibly) — pipeline works; mechanism null is real, not methodological. Multi-seed update in result 6 Part 2.
+3. **(6)** Pathogenicity positive control, family-split-stable (Δ ≈ 0 reproducibly) — pipeline works; mechanism null is real, not methodological. The 0.74–0.88 band once quoted here is superseded (two variant sets across seeds); run6 measures AUROC 0.894 on one canonical fingerprinted set, std ≤ 0.001.
 4. **(7)** Full calibration: mechanism family-split floor F1 = 0.385 ± 0.018 (merged, 5-seed) / 0.299 ± 0.034 (Gerasimavicius, 5-seed). 62.8% of gene-split signal is family-recognition leakage (exact, seed-invariant on Gerasimavicius). Pathogenicity–mechanism dissociation is the central finding of the ESM-2 arc.
 5. **(8)** Within ion-channel family, ESM-2 delta has within-family signal (AUROC 0.659 GOF/DN) — directional, small N.
 6. **(9)** Contrastive metric learning lifts cross-family floor from 0.364 → 0.397 with equal gene-/family-split deltas (real signal, not leakage). LOF benefits; DN doesn't.

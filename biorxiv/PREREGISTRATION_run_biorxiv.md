@@ -10,7 +10,7 @@ pass or fail on point estimates alone. Without a reading fixed in advance, an in
 awkwardly invites a framing chosen after the fact. The run6 point estimates are recorded here so
 the rules cannot be retro-fitted to the run_biorxiv intervals.
 
-Methodology: `reports/run6/STATS_PLAN.md`. Change list: `PLAN_2026-07-20.md`. Execution:
+Methodology: `reports/run6/STATS_PLAN.md`. Change list: `PLAN_biorxiv.md`. Execution:
 `RUNBOOK_biorxiv.md`.
 
 ## R7.1 — CI decision rule for gate verdicts

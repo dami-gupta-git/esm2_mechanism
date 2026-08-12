@@ -1,9 +1,9 @@
 # Follow-up work — after run_biorxiv
 
 Work that does not gate run_biorxiv. Each item is self-contained; none is a precondition for the
-paper, and nothing in `PLAN_2026-07-20.md` depends on any of them landing.
+paper, and nothing in `PLAN_biorxiv.md` depends on any of them landing.
 
-Task numbering is kept from `PLAN_2026-07-20.md` so existing cross-references still resolve.
+Task numbering is kept from `PLAN_biorxiv.md` so existing cross-references still resolve.
 
 The clean-label arm (Task 2d) was in run_biorxiv scope and is now here. Its expected outcome was an
 underpowered sensitivity check — a clean-label filter leaves DN near ~50 genes across perhaps ~150
