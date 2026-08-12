@@ -522,6 +522,207 @@ def family_or_gene_clusters(
     return np.array([pfam_map[g] for g in genes])
 
 
+def _align_oof_pair(oof_a: dict, oof_b: dict, label: str) -> tuple[np.ndarray, np.ndarray] | None:
+    """Positions into each arm for the variants both arms scored, in one order.
+
+    Pairing is defined only on rows both arms scored: a fold skipped in one arm
+    (missing class) but not the other leaves rows with no counterpart. Both OOF
+    dicts must carry "row_ids" — positional alignment is not assumed, because two
+    arms can drop different folds and still produce equal-length arrays.
+    """
+    for name, oof in (("a", oof_a), ("b", oof_b)):
+        if "row_ids" not in oof:
+            raise KeyError(
+                f"{label}: arm {name}'s OOF has no 'row_ids'; paired differences "
+                "cannot be aligned positionally"
+            )
+    rows_a = {int(row): pos for pos, row in enumerate(oof_a["row_ids"])}
+    rows_b = {int(row): pos for pos, row in enumerate(oof_b["row_ids"])}
+    shared = sorted(set(rows_a) & set(rows_b))
+    if not shared:
+        print(f"  [paired] {label}: skipped — the arms share no scored variants")
+        return None
+    dropped = (len(rows_a) - len(shared)) + (len(rows_b) - len(shared))
+    if dropped:
+        print(
+            f"  [paired] {label}: {len(shared)} shared variants, "
+            f"{dropped} arm-specific rows dropped"
+        )
+    idx_a = np.array([rows_a[row] for row in shared], dtype=int)
+    idx_b = np.array([rows_b[row] for row in shared], dtype=int)
+
+    y_a = np.asarray(oof_a["y_true"])[idx_a]
+    y_b = np.asarray(oof_b["y_true"])[idx_b]
+    if not np.array_equal(y_a, y_b):
+        raise RuntimeError(
+            f"{label}: the two arms disagree on the label of a shared variant — "
+            "the OOF row spaces are not the same variants"
+        )
+    return idx_a, idx_b
+
+
+def paired_oof_diff(
+    oof_a: dict | None,
+    oof_b: dict | None,
+    pfam_map: dict,
+    label: str,
+    classes: list[str] | None = None,
+    metric: str = "macro_f1",
+    pos_class: str | None = None,
+    is_family_split: bool = True,
+    cross_partition: bool = False,
+    n_resamples: int = BOOTSTRAP_N_RESAMPLES,
+    seed: int = 0,
+) -> dict | None:
+    """Paired cluster-bootstrap CI on metric(A) − metric(B) for two OOF arms.
+
+    Same-fold pairing (the default): both arms were scored over the same variants
+    under the same split, so one cluster resample per replicate is handed to both
+    arms and the difference is paired rather than a comparison of two independent
+    intervals. This is the instrument behind the C4/C5 and contrastive claims.
+
+    `cross_partition=True` is the C2 case — the gene-split-minus-family-split gap,
+    where the arms were scored under two DIFFERENT CV partitions of the same rows.
+    The resampling unit is then the family (R7.3: the coarser of the two arms; a
+    family resample induces a valid gene resample, not the reverse), and the
+    gene-resampled interval is returned alongside under
+    `gene_resampled_sensitivity` as a labelled sensitivity check, never the primary
+    result. `is_family_split` is ignored in this mode.
+
+    `metric` selects what the arms are compared on:
+
+      - "macro_f1"    — `proba` is an (n, n_classes) matrix whose columns are
+                        aligned to `classes` (required); predictions are its argmax.
+      - "auroc_binary" — `proba` is the 1-D positive-class probability and `y_true`
+                        is 0/1, the shape `binary_auroc_cluster_bootstrap_ci` takes.
+      - "auroc_one_vs_rest" — one class's column out of the (n, n_classes) matrix
+                        against all others; `classes` and `pos_class` are both
+                        required. This is how a per-class null ("DN is unmoved") is
+                        tested as a difference rather than asserted from two point
+                        estimates.
+
+    `classes` is a parameter rather than a closed-over constant because callers
+    pass 2-, 3- and 4-class label lists; a hardcoded list would index the wrong
+    label or raise. Returns None when either arm is missing or the arms share no
+    rows; otherwise the `paired_cluster_bootstrap_diff` shape plus n_shared.
+    """
+    if oof_a is None or oof_b is None:
+        print(f"  [paired] {label}: skipped — an arm has no OOF")
+        return None
+    if metric not in ("macro_f1", "auroc_binary", "auroc_one_vs_rest"):
+        raise ValueError(f"{label}: unknown metric {metric!r}")
+    if metric == "macro_f1" and not classes:
+        raise ValueError(f"{label}: metric 'macro_f1' requires the `classes` list")
+    if metric == "auroc_one_vs_rest":
+        if not classes:
+            raise ValueError(
+                f"{label}: metric 'auroc_one_vs_rest' requires the `classes` list"
+            )
+        if pos_class not in classes:
+            raise ValueError(
+                f"{label}: pos_class {pos_class!r} is not in classes {classes} — the "
+                "proba column would be selected by the wrong index"
+            )
+
+    aligned = _align_oof_pair(oof_a, oof_b, label)
+    if aligned is None:
+        return None
+    idx_a, idx_b = aligned
+    y_true = np.asarray(oof_a["y_true"])[idx_a]
+
+    def _metric_fn(oof: dict, idx: np.ndarray) -> Callable[[np.ndarray], float | None]:
+        proba = np.asarray(oof["proba"])[idx]
+        if metric == "macro_f1":
+            pred = np.array([classes[col] for col in proba.argmax(axis=1)])
+
+            def _macro_f1(rows: np.ndarray) -> float:
+                return float(
+                    f1_score(y_true[rows], pred[rows], average="macro", zero_division=0)
+                )
+            return _macro_f1
+
+        if metric == "auroc_one_vs_rest":
+            column = proba[:, classes.index(pos_class)]
+            y_bin_all = (y_true == pos_class).astype(int)
+        else:
+            column = proba
+            y_bin_all = y_true
+
+        def _auroc(rows: np.ndarray) -> float | None:
+            y_bin = y_bin_all[rows]
+            # A resample with no positives (or no negatives) leaves AUROC undefined;
+            # the replicate is dropped, never scored as 0.5.
+            if len(np.unique(y_bin)) < 2:
+                return None
+            return float(roc_auc_score(y_bin, column[rows]))
+        return _auroc
+
+    shared_genes = np.asarray(oof_a["genes"], dtype=object)[idx_a]
+    fn_a, fn_b = _metric_fn(oof_a, idx_a), _metric_fn(oof_b, idx_b)
+    if cross_partition:
+        out = paired_cluster_bootstrap_diff_cross_partition(
+            family_or_gene_clusters(shared_genes, pfam_map, is_family_split=True),
+            fn_a,
+            fn_b,
+            sensitivity_clusters=shared_genes,
+            n_resamples=n_resamples,
+            seed=seed,
+        )
+    else:
+        out = paired_cluster_bootstrap_diff(
+            family_or_gene_clusters(shared_genes, pfam_map, is_family_split),
+            fn_a,
+            fn_b,
+            n_resamples=n_resamples,
+            seed=seed,
+        )
+    out["n_shared"] = len(idx_a)
+    return out
+
+
+def adjudicate_diff(passed: bool | None, diff_ci: dict | None, threshold: float) -> str:
+    """R7.1 verdict for a gate, reading its point estimate against its paired CI.
+
+    The point estimate decides pass/fail; the CI decides whether that reading is
+    established or underpowered. A pass whose CI spans zero is reported as consistent
+    in direction but not distinguishable, never as an established effect.
+    """
+    if passed is None:
+        return "not adjudicated (no point estimate)"
+    if diff_ci is None or diff_ci.get("ci_suppressed") or diff_ci.get("ci_low") is None:
+        return f"{'pass' if passed else 'fail'}, no CI"
+    ci_low, ci_high = diff_ci["ci_low"], diff_ci["ci_high"]
+    if passed:
+        if ci_low > 0:
+            return "pass, established (CI excludes zero)"
+        return "pass on point estimate, not distinguishable (CI spans zero)"
+    if ci_high > threshold:
+        return "fail, underpowered (CI spans the pre-registered threshold)"
+    return "fail, established (CI excludes the pre-registered threshold)"
+
+
+def adjudicate_level(value: float | None, ci: dict | None, threshold: float) -> str:
+    """R7.1 verdict for a claim about a LEVEL rather than a difference.
+
+    K1 ("conservation alone clears 0.85") and C3 ("pathogenicity clears 0.85") are
+    claims that one score sits above a threshold, so the interval is read against
+    that threshold rather than against zero. Clearing on the point estimate while
+    the interval still covers the threshold is not an established result.
+    """
+    if value is None or not np.isfinite(value):
+        return "not adjudicated (no point estimate)"
+    passed = value >= threshold
+    if ci is None or ci.get("ci_suppressed") or ci.get("ci_low") is None:
+        return f"{'pass' if passed else 'fail'}, no CI"
+    if passed:
+        if ci["ci_low"] > threshold:
+            return "pass, established (CI excludes the threshold)"
+        return "pass on point estimate, not distinguishable (CI covers the threshold)"
+    if ci["ci_high"] > threshold:
+        return "fail, underpowered (CI covers the threshold)"
+    return "fail, established (CI excludes the threshold)"
+
+
 def binary_auroc_cluster_bootstrap_ci(
     oof: dict,
     n_resamples: int = BOOTSTRAP_N_RESAMPLES,

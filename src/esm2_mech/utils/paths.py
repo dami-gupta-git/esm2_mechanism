@@ -11,10 +11,21 @@ PROJECT_ROOT = PACKAGE_ROOT.parent.parent              # esm2_mechanism/
 RUN_NAME="run6"
 
 DATA_DIR = PROJECT_ROOT / "data"
-RESULTS_DIR = PROJECT_ROOT / "results" / RUN_NAME
+ALL_RESULTS_DIR = PROJECT_ROOT / "results"
+RESULTS_DIR = ALL_RESULTS_DIR / RUN_NAME
 REPORTS_DIR = PROJECT_ROOT / "reports"
 RUN_REPORTS_DIR = REPORTS_DIR / RUN_NAME
 FIGURES_DIR = RUN_REPORTS_DIR / "figures"
+
+
+def results_dir_for_run(run_name: str) -> Path:
+    """The results directory of an arbitrary run, not necessarily the live one.
+
+    Everything else keys off RUN_NAME; this exists for tools that read two runs at
+    once (compare_runs.py diffing an old run against the new one), so they do not
+    build a run directory inline.
+    """
+    return ALL_RESULTS_DIR / run_name
 
 # ── LLM-judge mechanism eval (Langfuse-traced agent) ─────────────────────────
 # An LLM-as-judge predicts label_3class per variant; predictions are scored

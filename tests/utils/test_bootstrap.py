@@ -34,6 +34,8 @@ import numpy as np
 import pytest
 
 from esm2_mech.utils.bootstrap import (
+    adjudicate_diff,
+    adjudicate_level,
     average_oof_over_seeds,
     bootstrap_mechanism_metrics,
     cluster_bootstrap_ci,
@@ -41,6 +43,7 @@ from esm2_mech.utils.bootstrap import (
     label_permutation_pvalue,
     paired_cluster_bootstrap_diff,
     paired_cluster_bootstrap_diff_cross_partition,
+    paired_oof_diff,
     _permute_labels,
 )
 from esm2_mech.utils.constants import MECHANISM_CLASSES, GOF, DN, LOF
@@ -835,3 +838,307 @@ class TestLabelPermutationPvalue:
         # Half the draws are NaN and dropped; the kept null has only finite values.
         assert out["n_permutations"] < 10
         assert np.isfinite(out["null_mean"])
+
+
+# ---------------------------------------------------------------------------
+# paired_oof_diff
+# ---------------------------------------------------------------------------
+
+def _mechanism_oof(row_ids, genes, y_true, proba):
+    return {
+        "row_ids": np.asarray(row_ids),
+        "genes": np.asarray(genes, dtype=object),
+        "y_true": np.asarray(y_true),
+        "proba": np.asarray(proba, dtype=float),
+    }
+
+
+def _confident_proba(labels, classes, correct_mask):
+    """Proba that predicts the true label where correct_mask, else the next class."""
+    rows = []
+    for label, correct in zip(labels, correct_mask):
+        target = classes.index(label)
+        if not correct:
+            target = (target + 1) % len(classes)
+        vec = np.full(len(classes), 0.01)
+        vec[target] = 1.0
+        rows.append(vec / vec.sum())
+    return np.array(rows)
+
+
+class TestPairedOofDiff:
+    """paired_oof_diff aligns two arms by row_ids and pairs one resample across both."""
+
+    def _arms(self, n=120, n_genes=20, n_families=5, a_correct=1.0, b_correct=0.5, seed=0):
+        rng = np.random.RandomState(seed)
+        row_ids = np.arange(n)
+        genes = np.array([f"G{i % n_genes}" for i in row_ids], dtype=object)
+        pfam_map = {f"G{i}": f"F{i % n_families}" for i in range(n_genes)}
+        classes = list(MECHANISM_CLASSES)
+        y_true = np.array([classes[i % len(classes)] for i in row_ids])
+        mask_a = rng.rand(n) < a_correct
+        mask_b = rng.rand(n) < b_correct
+        arm_a = _mechanism_oof(row_ids, genes, y_true, _confident_proba(y_true, classes, mask_a))
+        arm_b = _mechanism_oof(row_ids, genes, y_true, _confident_proba(y_true, classes, mask_b))
+        return arm_a, arm_b, pfam_map, classes
+
+    def test_planted_difference_excludes_zero(self):
+        arm_a, arm_b, pfam_map, classes = self._arms()
+        out = paired_oof_diff(
+            arm_a, arm_b, pfam_map, "planted", classes=classes, n_resamples=200
+        )
+        assert out["point_diff"] > 0
+        assert out["ci_low"] > 0, "a large planted difference must exclude zero"
+        assert out["n_shared"] == 120
+
+    def test_identical_arms_give_exactly_zero_difference(self):
+        arm_a, _, pfam_map, classes = self._arms()
+        out = paired_oof_diff(
+            arm_a, arm_a, pfam_map, "identical", classes=classes, n_resamples=100
+        )
+        # The pairing is what makes this exact: both arms see the same drawn rows on
+        # every replicate, so an identical arm cancels to zero in each one.
+        assert out["point_diff"] == pytest.approx(0.0)
+        assert out["ci_low"] == pytest.approx(0.0)
+        assert out["ci_high"] == pytest.approx(0.0)
+
+    def test_family_split_resamples_families_not_genes(self):
+        arm_a, arm_b, pfam_map, classes = self._arms(n_genes=20, n_families=5)
+        family = paired_oof_diff(
+            arm_a, arm_b, pfam_map, "fam", classes=classes,
+            is_family_split=True, n_resamples=50,
+        )
+        gene = paired_oof_diff(
+            arm_a, arm_b, pfam_map, "gene", classes=classes,
+            is_family_split=False, n_resamples=50,
+        )
+        assert family["n_clusters"] == 5
+        assert gene["n_clusters"] == 20
+
+    def test_arms_aligned_by_row_id_not_position(self):
+        arm_a, arm_b, pfam_map, classes = self._arms()
+        shuffled = np.random.RandomState(7).permutation(len(arm_b["row_ids"]))
+        reordered = {key: np.asarray(value)[shuffled] for key, value in arm_b.items()}
+        straight = paired_oof_diff(
+            arm_a, arm_b, pfam_map, "ordered", classes=classes, n_resamples=50
+        )
+        shuffled_out = paired_oof_diff(
+            arm_a, reordered, pfam_map, "shuffled", classes=classes, n_resamples=50
+        )
+        assert shuffled_out["point_diff"] == pytest.approx(straight["point_diff"])
+
+    def test_non_overlapping_rows_are_dropped(self):
+        arm_a, arm_b, pfam_map, classes = self._arms(n=120)
+        keep = slice(0, 80)
+        trimmed = {key: np.asarray(value)[keep] for key, value in arm_b.items()}
+        out = paired_oof_diff(
+            arm_a, trimmed, pfam_map, "partial", classes=classes, n_resamples=50
+        )
+        assert out["n_shared"] == 80
+
+    def test_missing_row_ids_raises(self):
+        arm_a, arm_b, pfam_map, classes = self._arms()
+        no_rows = {k: v for k, v in arm_b.items() if k != "row_ids"}
+        # Equal-length arrays are not evidence of alignment: two arms can drop
+        # different folds and still match in length, so this must not fall back to
+        # positional pairing.
+        with pytest.raises(KeyError, match="row_ids"):
+            paired_oof_diff(arm_a, no_rows, pfam_map, "no-rows", classes=classes)
+
+    def test_disagreeing_labels_on_a_shared_row_raises(self):
+        arm_a, arm_b, pfam_map, classes = self._arms()
+        corrupted = {key: np.array(value, copy=True) for key, value in arm_b.items()}
+        corrupted["y_true"][0] = "GOF" if corrupted["y_true"][0] != "GOF" else "LOF"
+        with pytest.raises(RuntimeError, match="disagree on the label"):
+            paired_oof_diff(arm_a, corrupted, pfam_map, "corrupt", classes=classes)
+
+    def test_missing_arm_returns_none(self):
+        arm_a, _, pfam_map, classes = self._arms()
+        assert paired_oof_diff(arm_a, None, pfam_map, "none", classes=classes) is None
+        assert paired_oof_diff(None, arm_a, pfam_map, "none", classes=classes) is None
+
+    def test_macro_f1_requires_classes(self):
+        arm_a, arm_b, pfam_map, _ = self._arms()
+        with pytest.raises(ValueError, match="requires the `classes` list"):
+            paired_oof_diff(arm_a, arm_b, pfam_map, "no-classes")
+
+    def test_one_vs_rest_isolates_the_named_class(self):
+        # An arm that is perfect on DN and random elsewhere must show a large DN
+        # difference and near-zero differences on the other classes.
+        n, n_genes = 300, 40
+        rng = np.random.RandomState(11)
+        classes = list(MECHANISM_CLASSES)
+        row_ids = np.arange(n)
+        genes = np.array([f"G{i % n_genes}" for i in row_ids], dtype=object)
+        pfam_map = {f"G{i}": f"F{i % 8}" for i in range(n_genes)}
+        y_true = np.array([classes[i % len(classes)] for i in row_ids])
+
+        dn_col = classes.index(DN)
+        strong = rng.rand(n, len(classes))
+        strong[:, dn_col] = np.where(y_true == DN, 0.9, 0.1)
+        weak = rng.rand(n, len(classes))
+
+        arm_a = _mechanism_oof(row_ids, genes, y_true, strong)
+        arm_b = _mechanism_oof(row_ids, genes, y_true, weak)
+
+        dn = paired_oof_diff(
+            arm_a, arm_b, pfam_map, "dn", classes=classes,
+            metric="auroc_one_vs_rest", pos_class=DN, n_resamples=200,
+        )
+        assert dn["point_a"] > 0.95
+        assert dn["ci_low"] > 0
+
+    def test_one_vs_rest_requires_a_pos_class_in_classes(self):
+        arm_a, arm_b, pfam_map, classes = self._arms()
+        # Selecting the proba column by a name not in `classes` would silently read
+        # the wrong class's column.
+        with pytest.raises(ValueError, match="not in classes"):
+            paired_oof_diff(
+                arm_a, arm_b, pfam_map, "bad-class", classes=classes,
+                metric="auroc_one_vs_rest", pos_class="NOT_A_CLASS",
+            )
+        with pytest.raises(ValueError, match="requires the `classes` list"):
+            paired_oof_diff(
+                arm_a, arm_b, pfam_map, "no-classes",
+                metric="auroc_one_vs_rest", pos_class=DN,
+            )
+
+    def test_unknown_metric_raises(self):
+        arm_a, arm_b, pfam_map, classes = self._arms()
+        with pytest.raises(ValueError, match="unknown metric"):
+            paired_oof_diff(
+                arm_a, arm_b, pfam_map, "bad", classes=classes, metric="rmse"
+            )
+
+    def test_classes_parameter_is_used_not_a_module_constant(self):
+        # A caller with a 2-class arm must not be silently scored against the
+        # 3-class MECHANISM_CLASSES.
+        n, n_genes = 60, 10
+        row_ids = np.arange(n)
+        genes = np.array([f"G{i % n_genes}" for i in row_ids], dtype=object)
+        pfam_map = {f"G{i}": f"F{i % 3}" for i in range(n_genes)}
+        classes = ["benign", "pathogenic"]
+        y_true = np.array([classes[i % 2] for i in row_ids])
+        arm_a = _mechanism_oof(
+            row_ids, genes, y_true, _confident_proba(y_true, classes, np.ones(n, bool))
+        )
+        arm_b = _mechanism_oof(
+            row_ids, genes, y_true,
+            _confident_proba(y_true, classes, np.zeros(n, bool)),
+        )
+        out = paired_oof_diff(
+            arm_a, arm_b, pfam_map, "2class", classes=classes, n_resamples=50
+        )
+        assert out["point_a"] == pytest.approx(1.0)
+        assert out["point_b"] == pytest.approx(0.0)
+
+    def test_auroc_binary_metric(self):
+        n, n_genes = 100, 20
+        rng = np.random.RandomState(2)
+        row_ids = np.arange(n)
+        genes = np.array([f"G{i % n_genes}" for i in row_ids], dtype=object)
+        pfam_map = {f"G{i}": f"F{i % 4}" for i in range(n_genes)}
+        y_true = np.array([0] * (n // 2) + [1] * (n // 2))
+        perfect = _mechanism_oof(row_ids, genes, y_true, y_true.astype(float))
+        noise = _mechanism_oof(row_ids, genes, y_true, rng.rand(n))
+        out = paired_oof_diff(
+            perfect, noise, pfam_map, "auroc", metric="auroc_binary", n_resamples=200
+        )
+        assert out["point_a"] == pytest.approx(1.0)
+        assert out["point_diff"] > 0
+        assert out["ci_low"] > 0
+
+    def test_cross_partition_resamples_families_and_adds_gene_sensitivity(self):
+        arm_a, arm_b, pfam_map, classes = self._arms(n_genes=20, n_families=5)
+        out = paired_oof_diff(
+            arm_a, arm_b, pfam_map, "gap", classes=classes,
+            cross_partition=True, n_resamples=50,
+        )
+        # R7.3: the primary interval resamples the coarser unit (families); the
+        # gene-resampled one rides alongside as a labelled sensitivity check.
+        assert out["n_clusters"] == 5
+        assert out["gene_resampled_sensitivity"]["n_clusters"] == 20
+
+    def test_cross_partition_family_interval_is_wider_than_gene(self):
+        arm_a, arm_b, pfam_map, classes = self._arms(
+            n=400, n_genes=40, n_families=8, a_correct=0.8, b_correct=0.6
+        )
+        out = paired_oof_diff(
+            arm_a, arm_b, pfam_map, "gap", classes=classes,
+            cross_partition=True, n_resamples=400,
+        )
+        family_width = out["ci_high"] - out["ci_low"]
+        gene = out["gene_resampled_sensitivity"]
+        gene_width = gene["ci_high"] - gene["ci_low"]
+        # Fewer effective clusters means a wider interval. A gene-resampled gap
+        # understates the family-split arm's variance, which is why it is only ever
+        # reported as a sensitivity check.
+        assert family_width > gene_width
+
+
+# ---------------------------------------------------------------------------
+# adjudicate_diff / adjudicate_level (R7.1 verdicts)
+# ---------------------------------------------------------------------------
+
+class TestAdjudicateDiff:
+    def test_pass_with_ci_above_zero_is_established(self):
+        ci = {"ci_low": 0.01, "ci_high": 0.05}
+        assert "established" in adjudicate_diff(True, ci, 0.03)
+
+    def test_pass_with_ci_spanning_zero_is_not_distinguishable(self):
+        ci = {"ci_low": -0.01, "ci_high": 0.05}
+        assert adjudicate_diff(True, ci, 0.03) == (
+            "pass on point estimate, not distinguishable (CI spans zero)"
+        )
+
+    def test_fail_with_ci_spanning_threshold_is_underpowered(self):
+        # A failing gate whose CI still reaches the pre-registered effect size is
+        # underpowered, never evidence of no effect.
+        ci = {"ci_low": -0.02, "ci_high": 0.04}
+        assert "underpowered" in adjudicate_diff(False, ci, 0.03)
+
+    def test_fail_with_ci_below_threshold_is_established(self):
+        ci = {"ci_low": -0.02, "ci_high": 0.01}
+        assert adjudicate_diff(False, ci, 0.03) == (
+            "fail, established (CI excludes the pre-registered threshold)"
+        )
+
+    def test_suppressed_or_absent_ci_reports_no_ci(self):
+        assert adjudicate_diff(True, None, 0.03) == "pass, no CI"
+        assert adjudicate_diff(False, {"ci_suppressed": True}, 0.03) == "fail, no CI"
+
+    def test_no_point_estimate_is_not_adjudicated(self):
+        assert adjudicate_diff(None, {"ci_low": 0.1, "ci_high": 0.2}, 0.03) == (
+            "not adjudicated (no point estimate)"
+        )
+
+
+class TestAdjudicateLevel:
+    def test_clearing_threshold_with_clear_interval_is_established(self):
+        assert "established" in adjudicate_level(0.891, {"ci_low": 0.86, "ci_high": 0.92}, 0.85)
+
+    def test_clearing_threshold_with_covering_interval_is_not_distinguishable(self):
+        # An interval that still covers 0.85 has not established the level, however
+        # far the point estimate sits above it.
+        assert adjudicate_level(0.891, {"ci_low": 0.84, "ci_high": 0.93}, 0.85) == (
+            "pass on point estimate, not distinguishable (CI covers the threshold)"
+        )
+
+    def test_below_threshold_with_covering_interval_is_underpowered(self):
+        assert "underpowered" in adjudicate_level(0.83, {"ci_low": 0.79, "ci_high": 0.88}, 0.85)
+
+    def test_below_threshold_with_clear_interval_is_established(self):
+        assert adjudicate_level(0.80, {"ci_low": 0.77, "ci_high": 0.83}, 0.85) == (
+            "fail, established (CI excludes the threshold)"
+        )
+
+    def test_nan_or_missing_value_is_not_adjudicated(self):
+        assert adjudicate_level(None, {"ci_low": 0.8, "ci_high": 0.9}, 0.85) == (
+            "not adjudicated (no point estimate)"
+        )
+        assert adjudicate_level(float("nan"), {"ci_low": 0.8, "ci_high": 0.9}, 0.85) == (
+            "not adjudicated (no point estimate)"
+        )
+
+    def test_suppressed_ci_reports_no_ci(self):
+        assert adjudicate_level(0.9, {"ci_suppressed": True}, 0.85) == "pass, no CI"

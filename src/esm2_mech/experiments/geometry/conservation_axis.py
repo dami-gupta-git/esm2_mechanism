@@ -48,9 +48,16 @@ from esm2_mech.utils.paths import (
 from joblib import Parallel, delayed
 
 from esm2_mech.embeddings.embed_variants import ESM2_MODEL_650M
+from esm2_mech.utils.bootstrap import (
+    adjudicate_diff,
+    adjudicate_level,
+    average_oof_over_seeds,
+    binary_auroc_cluster_bootstrap_ci,
+    family_or_gene_clusters,
+    paired_oof_diff,
+)
 from esm2_mech.utils.constants import AA_ORDER
-from esm2_mech.utils.metrics import mean_std_n
-from esm2_mech.utils.probes import auroc_for_clf
+from esm2_mech.utils.probes import run_logreg_binary_cv
 from esm2_mech.utils.sequences import window_sequence
 from esm2_mech.utils.splits import family_split_cv
 
@@ -66,6 +73,11 @@ CONS_META = CONSERVATION_PATHOGENICITY_META_JSON
 # Pre-registered thresholds
 K1_CONS_MIN = 0.85
 K2_ADD_MIN = 0.02
+
+# The pathogenic class, matching _pathogenicity_label's encoding.
+PATHOGENIC = 1
+# The 1280-d embedding delta needs more iterations than the shared probe default.
+LOGREG_MAX_ITER = 2000
 
 
 # ── Phase 1: masked-LL extraction (GPU) ──────────────────────────────────────
@@ -171,34 +183,39 @@ def _pathogenicity_label(label):
     raise ValueError(f"unexpected pathogenicity label {label!r} (expected 'pathogenic'/'benign')")
 
 
-def _auroc_one_seed(X, y, genes, pfam, seed):
-    """Family-split AUROCs for one seed (all folds). Used by auroc_family_split."""
-    from sklearn.preprocessing import StandardScaler
-    from sklearn.linear_model import LogisticRegression
-
-    vals = []
-    for tr, te in family_split_cv(genes, pfam, seed=seed):
-        if len(set(y[tr])) < 2 or len(set(y[te])) < 2:
-            continue
-        sc = StandardScaler().fit(X[tr])
-        clf = LogisticRegression(max_iter=2000, C=1.0, random_state=seed).fit(
-            sc.transform(X[tr]), y[tr]
-        )
-        vals.append(auroc_for_clf(clf, sc.transform(X[te]), y[te]))
-    return vals
+def _oof_one_seed(X, y, genes, pfam, seed):
+    """Family-split out-of-fold positive-class probabilities for one seed."""
+    splits = list(family_split_cv(genes, pfam, seed=seed))
+    _, oof = run_logreg_binary_cv(
+        X, y, splits, seed=seed, pos_label=PATHOGENIC, genes=genes,
+        return_oof=True, max_iter=LOGREG_MAX_ITER,
+    )
+    return oof
 
 
 def auroc_family_split(X, y, genes, pfam, seeds=range(5), n_jobs=-1):
-    """Mean ± std family-split AUROC over seeds. Seeds run in parallel (each is
-    an independent fold set), since this is the CPU cost of Phase 2."""
+    """Family-split AUROC from seed-averaged OOF, with its family-cluster CI.
+
+    Returns (auroc, ci, oof). The AUROC is computed once over the seed-averaged
+    out-of-fold predictions rather than as a mean of per-fold AUROCs, because the
+    K1/K2/C4 claims are differences between feature sets and a difference needs
+    both arms scored on the same per-variant predictions to be paired. One pooled
+    quantity also keeps the point estimate and its interval measuring the same
+    thing. This is the averaged-OOF convention `classify_by_mechanism` and
+    `esm3_mechanism` already use for the confirmatory claims.
+
+    Seeds run in parallel (each is an independent fold set), since this is the CPU
+    cost of Phase 2. Returns (nan, None, None) if no seed produced a scorable fold.
+    """
     per_seed = Parallel(n_jobs=n_jobs)(
-        delayed(_auroc_one_seed)(X, y, genes, pfam, seed) for seed in seeds
+        delayed(_oof_one_seed)(X, y, genes, pfam, seed) for seed in seeds
     )
-    vals = [v for seed_vals in per_seed for v in seed_vals]
-    # mean_std_n returns (nan, nan, 0) on empty — keep std consistent with mean
-    # (never force std to 0.0 while mean is nan, which reads as a real 0 spread).
-    mean, std, _ = mean_std_n(vals)
-    return (mean, std)
+    oof = average_oof_over_seeds(per_seed)
+    if oof is None:
+        return float("nan"), None, None
+    clusters = family_or_gene_clusters(oof["genes"], pfam, is_family_split=True)
+    ci = binary_auroc_cluster_bootstrap_ci(oof, clusters=clusters, seed=0)
+    return ci["point"], ci, oof
 
 
 def analyse():
@@ -248,31 +265,94 @@ def analyse():
         "masked_marginal_only": masked_marginal.reshape(-1, 1),
     }
     auroc = {}
+    auroc_ci = {}
+    oof_by_feature = {}
     for name, feat in feature_sets.items():
-        mean, std = auroc_family_split(feat, y, genes, pfam)
-        auroc[name] = (mean, std)
-        print(f"  {name:26s} AUROC = {mean:.3f} ± {std:.3f}", flush=True)
+        value, ci, oof = auroc_family_split(feat, y, genes, pfam)
+        auroc[name] = value
+        auroc_ci[name] = ci
+        oof_by_feature[name] = oof
+        if ci is None or ci.get("ci_low") is None:
+            print(f"  {name:26s} AUROC = {value:.3f}  (CI suppressed)", flush=True)
+        else:
+            print(
+                f"  {name:26s} AUROC = {value:.3f} "
+                f"[{ci['ci_low']:.3f}, {ci['ci_high']:.3f}]",
+                flush=True,
+            )
 
-    cons_a = auroc["conservation"][0]
-    both_a = auroc["conservation_plus_delta"][0]
-    delta_a = auroc["delta"][0]
+    # K2, K2b and C4 are DIFFERENCES between feature sets. All four arms are scored
+    # on the same variants under the same family-split folds, so each difference is
+    # a same-fold paired statistic — one family resample per replicate handed to
+    # both arms — not a comparison of two independent intervals.
+    print("\n=== PAIRED DIFFERENCES (family-cluster bootstrap) ===")
+    contrasts = [
+        ("K2_delta_beyond_conservation", "conservation_plus_delta", "conservation", K2_ADD_MIN),
+        ("K2b_conservation_beyond_delta", "conservation_plus_delta", "delta", 0.0),
+        ("C4_conservation_vs_delta", "conservation", "delta", 0.0),
+    ]
+    paired = {}
+    for key, arm_a, arm_b, threshold in contrasts:
+        label = f"{key}: {arm_a} − {arm_b}"
+        diff = paired_oof_diff(
+            oof_by_feature.get(arm_a), oof_by_feature.get(arm_b), pfam, label,
+            metric="auroc_binary", is_family_split=True,
+        )
+        if diff is None:
+            continue
+        paired[key] = diff
+        if diff.get("ci_low") is None:
+            print(f"  {label}: diff={diff['point_diff']:+.4f}  CI suppressed")
+        else:
+            print(
+                f"  {label}: diff={diff['point_diff']:+.4f}  "
+                f"[{diff['ci_low']:+.4f}, {diff['ci_high']:+.4f}]  "
+                f"({diff['n_clusters']} clusters)"
+            )
+
+    cons_a = auroc["conservation"]
+    both_a = auroc["conservation_plus_delta"]
+    delta_a = auroc["delta"]
+    k1_passed = bool(cons_a >= K1_CONS_MIN) if np.isfinite(cons_a) else None
+    k2_diff = paired.get("K2_delta_beyond_conservation")
+    k2_passed = (
+        bool(k2_diff["point_diff"] >= K2_ADD_MIN)
+        if k2_diff and k2_diff.get("point_diff") is not None
+        else None
+    )
     gates = {
         "K1_conservation_is_axis": {
             "value": cons_a,
             "threshold": K1_CONS_MIN,
-            "passed": bool(cons_a >= K1_CONS_MIN),
+            "ci": auroc_ci["conservation"],
+            "passed": k1_passed,
+            # K1 is a level claim, not a difference: it is established when the
+            # interval sits clear of the threshold, not merely above it.
+            "verdict": adjudicate_level(cons_a, auroc_ci["conservation"], K1_CONS_MIN),
         },
         "K2_delta_beyond_conservation": {
-            "value": both_a - cons_a,
+            "value": k2_diff["point_diff"] if k2_diff else None,
             "threshold": K2_ADD_MIN,
             "conservation": cons_a,
             "conservation_plus_delta": both_a,
-            "passed": bool(both_a - cons_a >= K2_ADD_MIN),
+            "paired_diff": k2_diff,
+            "passed": k2_passed,
+            "verdict": adjudicate_diff(k2_passed, k2_diff, K2_ADD_MIN),
         },
         "K2b_conservation_beyond_delta": {
-            "value": both_a - delta_a,
+            "value": (
+                paired["K2b_conservation_beyond_delta"]["point_diff"]
+                if "K2b_conservation_beyond_delta" in paired
+                else None
+            ),
             "delta": delta_a,
             "conservation_plus_delta": both_a,
+            "paired_diff": paired.get("K2b_conservation_beyond_delta"),
+        },
+        "C4_conservation_vs_delta": {
+            "conservation": cons_a,
+            "delta": delta_a,
+            "paired_diff": paired.get("C4_conservation_vs_delta"),
         },
     }
 
@@ -280,8 +360,13 @@ def analyse():
         "n_valid": int(valid.sum()),
         "k3_spearman_axis_vs": k3,
         "auroc_family_split": auroc,
+        "auroc_family_split_ci": auroc_ci,
         "gates": gates,
         "thresholds": {"K1": K1_CONS_MIN, "K2": K2_ADD_MIN},
+        "calibration_note": (
+            "The probes are uncalibrated and measure discrimination only; the "
+            "reported AUROCs are not risk estimates (R7.6)."
+        ),
     }
     atomic_write_json(CONSERVATION_AXIS_JSON, result)
 
@@ -291,17 +376,23 @@ def analyse():
     print(f"  K3 Spearman(axis, masked_marginal) = {k3['masked_marginal']:+.3f}")
     print(f"     Spearman(axis, entropy)         = {k3['entropy']:+.3f}")
     print(f"     Spearman(axis, logP_wt)         = {k3['logP_wt']:+.3f}")
-    print(f"\n  AUROC (family-split):")
-    for k, (m, sd) in auroc.items():
-        print(f"    {k:26s} {m:.3f} ± {sd:.3f}")
+    print(f"\n  AUROC (family-split, seed-averaged OOF):")
+    for name, value in auroc.items():
+        ci = auroc_ci.get(name)
+        interval = (
+            f"[{ci['ci_low']:.3f}, {ci['ci_high']:.3f}]"
+            if ci and ci.get("ci_low") is not None
+            else "(CI suppressed)"
+        )
+        print(f"    {name:26s} {value:.3f} {interval}")
     print(
         f"\n  K1 conservation-alone >= {K1_CONS_MIN}: {cons_a:.3f} -> "
-        f"{'PASS (axis ~ conservation)' if gates['K1_conservation_is_axis']['passed'] else 'FAIL'}"
+        f"{gates['K1_conservation_is_axis']['verdict']}"
     )
-    print(
-        f"  K2 delta adds over conservation >= {K2_ADD_MIN}: {both_a - cons_a:+.3f} -> "
-        f"{'PASS (NOVEL: embedding beyond conservation)' if gates['K2_delta_beyond_conservation']['passed'] else 'FAIL (axis ~ conservation)'}"
-    )
+    k2_value = gates["K2_delta_beyond_conservation"]["value"]
+    k2_shown = f"{k2_value:+.3f}" if k2_value is not None else "no point estimate"
+    print(f"  K2 delta adds over conservation >= {K2_ADD_MIN}: {k2_shown}")
+    print(f"     {gates['K2_delta_beyond_conservation']['verdict']}")
     print(f"\nResults -> {CONSERVATION_AXIS_JSON}")
 
 

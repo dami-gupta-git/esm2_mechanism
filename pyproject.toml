@@ -43,7 +43,9 @@ target-version = ["py310"]
 where = ["src"]
 
 [tool.pytest.ini_options]
-pythonpath = ["src"]
+# "." puts the repo root on the path so tests can import scripts/ (compare_runs),
+# which is a CLI entry point rather than part of the installed package.
+pythonpath = ["src", "."]
 
 testpaths = ["tests"]
 

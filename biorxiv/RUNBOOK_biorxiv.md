@@ -1,8 +1,8 @@
-# Run runbook 5 — run_biorxiv, inferential statistics
+# run_biorxiv runbook — inferential statistics
 
-Purpose: produce `run_biorxiv` end-to-end with dependency-aware confidence intervals, permutation
-p-values, and tested difference claims, so every report carries inferential statistics rather
-than 5-seed fold-jitter error bars.
+Purpose: produce `run_biorxiv` end-to-end so every report carries error bars that account for genes
+in the same family not being independent, p-values where a claim needs one, and a real test behind
+every "beats" claim — in place of run6's 5-seed fold-jitter error bars.
 
 Supersedes `RUNBOOK_4.md` (run6). The experiments, gates, and hypotheses are unchanged — run_biorxiv
 re-scores the same science with correct error bars. Statistical methodology is
@@ -26,16 +26,14 @@ Nothing upstream of the probes changed between run6 and run_biorxiv, so every GP
 skipped and the existing arrays are reused as-is. **Do not re-run `embed_variants`,
 `embed_megascale`, `embed_scan`, or `esm3_mechanism --phase 2`.**
 
-This is safe and requires no copying: embedding paths are keyed by *model*, not by run.
-`EMB_DIR` is `data/embeddings/<ESM2_MODEL>/` and `ESM3_EMB_DIR` is
-`data/embeddings/<ESM3_MODEL>/` (`utils/paths.py:68-69`), neither of which contains `RUN_NAME`.
-The arrays are ~10 GB and are gitignored; duplicating them per run would cost 10 GB for no
-provenance gain, since the model directory already identifies them unambiguously.
+No copying is needed: embedding paths are keyed by *model*, not by run. `EMB_DIR` is
+`data/embeddings/<ESM2_MODEL>/` and `ESM3_EMB_DIR` is `data/embeddings/<ESM3_MODEL>/`
+(`utils/paths.py:68-69`), neither of which contains `RUN_NAME`. The arrays are ~10 GB and
+gitignored, so copying per run would cost the space for no provenance gain.
 
 Recorded consequence: **run_biorxiv result files are scored on embeddings extracted during run6.**
-That is intentional. Each run_biorxiv result JSON records the array fingerprint (the existing
-fingerprint check used by Experiments 2 and 5), so the reuse is recorded in the output rather
-than only in this runbook.
+Each run_biorxiv result JSON records the array fingerprint (the existing check used by Experiments 2
+and 5), so the reuse shows up in the output rather than only in this runbook.
 
 GPU is still required for three steps, which are computed rather than cached:
 
@@ -92,11 +90,11 @@ them wrong means re-running, not just re-reporting.
    genes within one are not independent draws. Family-split CIs will be visibly wider — 1,134
    families but 833 singletons, so far fewer effective clusters than genes. That is correct, not
    a bug. Emit the effective cluster count next to every family-split interval.
-2. **Rare-class AUROC uses BCa, and is flagged regardless.** DN (≈ 9%, ~150–170 genes) and GOF
+2. **Rare-class AUROC is flagged, not bias-corrected.** DN (≈ 9%, ~150–170 genes) and GOF
    (≈ 15%) sit in the regime where percentile bootstrap undercovers for a bounded metric with few
-   clusters. Use BCa where the acceleration estimate is computable, keep the existing degenerate-
-   fold suppression guard, and label rare-class intervals as the least trustworthy in their table
-   either way — with ~150 jackknife clusters, BCa's own correction is noisy.
+   clusters. They use the same percentile cluster bootstrap as everything else, keep the existing
+   degenerate-fold suppression guard, and are labelled the least trustworthy intervals in their
+   table. No confirmatory claim rests on them — per-class AUROCs are exploratory under R7.2.
 
 ### 0b. Paired cluster bootstrap implemented
 
@@ -109,7 +107,7 @@ separated error bars, and the thinnest margins are smaller than a seed of spread
 | ESM-3 seq vs ESM-2 MLP delta_mean | M2 gate clears its 0.430 threshold by 0.008 | `report_esm3_mechanism.md` |
 | Contrastive k-NN vs raw-delta k-NN | +0.041 | `report_contrastive.md` |
 | Conservation vs embedding delta (gate K2) | +0.002 | `report_geometry.md` |
-| Pathogenicity vs mechanism cross-family transfer | 0.85–0.90 vs 0.62–0.64 | `report_geometry.md` |
+| Pathogenicity vs mechanism cross-family transfer | 0.85–0.90 vs 0.62–0.64 | `report_geometry.md` — **not paired**, see below |
 | Contrastive per-class DN "unmoved" | a null asserted from a 0.577 → 0.545 point drop | `report_contrastive.md` |
 | Gene-split minus family-split gap | see below | `report_classifier.md` |
 
@@ -129,15 +127,14 @@ fraction — and says nothing about the observed gap's sampling variability. Use
 bootstrap instead.
 
 **The split-gap CI resamples families, not genes** — its family-split arm's variance is only
-correct under family resampling, so a gene-resampled gap understates it. Resample the coarser of
-the two units; report the gene-resampled interval alongside as a labelled sensitivity check.
+correct under family resampling, so a gene-resampled gap understates it. Report the gene-resampled
+interval alongside as a labelled sensitivity check.
 
-**Two pairing modes, and they are different code paths.** The ESM-3, contrastive, and
-conservation comparisons share a fold assignment. The split-gap comparison does not — gene-split
-and family-split are different CV partitions by definition — so its pairing is at the **gene
-level across two fold assignments**: resample **families** (the coarser unit — see above), then
-recompute each arm under its own partition. Written without distinguishing these, the cross-partition case gets silently
-implemented as the same-fold path and is wrong.
+**Two pairing modes, and they are different code paths.** The ESM-3, contrastive, and conservation
+comparisons share a fold assignment. The split-gap comparison does not — gene-split and family-split
+are different CV partitions by definition — so its pairing is across two fold assignments: resample
+families, then recompute each arm under its own partition. Written without distinguishing these, the
+cross-partition case gets silently implemented as the same-fold path and is wrong.
 
 ### 0b-bis. Pre-registered decision rules written into PREREGISTRATION_run_biorxiv.md
 
@@ -158,13 +155,14 @@ reading and any interpretation chosen afterwards is retro-fitted:
 Both go into `PREREGISTRATION_run_biorxiv.md` with the run6 point estimates recorded, so the
 rules cannot be tuned to the run_biorxiv intervals.
 
-### 0c. Green CI and a pinned environment
+### 0c. A pinned environment
 
-- The test suite (38 files) passes in CI. **Green CI is a precondition for flipping `RUN_NAME`.**
-- Runtime dependencies trimmed to the result path and pinned; `wandb`, `aider-chat`, `openai`,
-  `google-generativeai` and the other exploratory packages removed or moved to an optional extra.
-  The pinned set is recorded in the reports' Provenance — it is what the numbers were produced
-  under.
+- `pytest tests/` passes on the commit that produces the run. **A green suite is a precondition
+  for flipping `RUN_NAME`**, run locally; there is no CI job.
+- Runtime dependencies pinned via `uv.lock`, with the pinned set recorded in the reports'
+  Provenance — it is what the numbers were produced under, and it prevents the sklearn-version
+  hazard documented in `CLAUDE.md` (`multi_class=` removed in ≥ 1.8). Trimming unused exploratory
+  packages is housekeeping, not part of this run.
 - `scripts/compare_runs.py` exists and passes its self-diff invariant (run6 against run6 must
   report zero movement).
 
@@ -174,12 +172,10 @@ rules cannot be tuned to the run_biorxiv intervals.
   line; `RESULTS_DIR`, `RUN_REPORTS_DIR`, and `FIGURES_DIR` all derive from it. **Flip this only
   after 0a and 0b pass their gates** — flipping first means the replay writes CI-less files into
   `results/run_biorxiv/`, and fixing them later either overwrites run_biorxiv provenance or forces a run8.
-- Widen `PERMUTATION_FEATURES` at
-  [`mechanism_delta_family_split.py:108`](../src/esm2_mech/experiments/mechanism/mechanism_delta_family_split.py#L108)
-  from `("delta_mean", "wt_only_mean")` to also include `wt_concat_mut` and `mut_only_mean` —
-  all four above-floor features, plus `delta_mean` retained as the negative control. The four
-  at-floor features are left out: permuting a feature already at chance adds nothing its CI does
-  not show, and costs half the budget.
+- `PERMUTATION_FEATURES` stays at `("delta_mean", "wt_only_mean")`. `delta_mean` is C1's
+  instrument and `wt_only_mean` is the above-floor comparison; the remaining features are
+  exploratory, so each one added costs another 2,000 refits for a p-value no claim reads. The same
+  constant gates which features cache OOF for the split gap, so widening it enlarges that cache too.
 - `PERMUTATION_N_RESAMPLES` already defaults to 1000 in `constants.py`. The 200 in the run6
   files came from a run-time override; do not repeat it. At 200 the smallest resolvable p-value
   is 1/(200+1) = 0.0099, which is exactly what `wt_only_mean` reported — an unresolved floor,
@@ -244,9 +240,8 @@ are NOT re-extracted*). Verify before proceeding: all four `.npy` arrays are `(1
 `family_clustering` gains `--seeds` in run_biorxiv: run6 reported the family-probe accuracy at seed 0
 only, and `STATS_PLAN.md` requires a spread to match the other reports.
 
-`leakage_fraction` reads only the result JSONs above (no model inference), so it runs last. It
-also needs a CI: run6 reported ~40% as a bare point estimate with no interval, and that number
-is quoted in the intro report as a headline.
+`leakage_fraction` reads only the result JSONs above (no model inference), so it runs last, and it
+needs a CI — run6 reported ~40% as a bare point estimate, quoted as a headline in the intro report.
 
 **Stats flags.** `classify_by_mechanism`, `single_source_mechanism`, and
 `mechanism_delta_family_split` accept:
@@ -266,28 +261,22 @@ multiplies per-seed probe time by N and belongs in its own tmux window.
 python -m esm2_mech.experiments.mechanism.classify_by_mechanism --seeds 1 --n_permutations 1000
 ```
 
-**Seed 0 only, deliberately.** A permutation test constructs its own null by shuffling labels;
-running it across 5 seeds mostly re-measures fold jitter, which is precisely what run_biorxiv exists to
-replace. Seed 0 cuts this 5× at no inferential cost.
+**Seed 0 only, deliberately.** A permutation test constructs its own null by shuffling labels, so
+running it across 5 seeds mostly re-measures the fold jitter run_biorxiv exists to replace. Cuts the
+step 5× at no inferential cost.
 
-**Budget split by probe.** The headline claim — `delta_mean` sits at the chance floor — is a
-linear-probe claim, so the linear permutation is load-bearing and the MLP permutation is the
-expensive tail:
+**Linear probe only, at 1,000 permutations.** The headline claim — `delta_mean` sits at the chance
+floor — is a linear-probe claim, so that is the load-bearing test and it runs at full N. The MLP is
+not permutation-tested: no claim rests on an MLP permutation p-value and its refits are the
+expensive tail. Never report a p-value sitting at its resolution floor of 1/(N+1), the unresolved
+`wt_only_mean` = 0.0099 case from run6.
 
-- **Linear probe: 1,000 permutations.** Non-negotiable; this is the tested claim.
-- **MLP: whatever N the measured per-refit cost supports, with N stated explicitly** in the
-  result file and the report. A smaller, honestly-labelled N beats delaying the run for a round
-  number — but never report a p-value sitting at its resolution floor of 1/(N+1), which is
-  exactly the unresolved `wt_only_mean` = 0.0099 case from run6.
+**Before launching, time a single refit on the pod.** At 2 features × 2 splits × 1,000 permutations
+this is 4,000 refits and the per-refit cost has never been measured. It decides whether the step is
+hours or days, and whether it needs joblib parallelism across the pod's cores. This is the run's
+main schedule risk — everything else in run_biorxiv is cheap.
 
-**Before launching either, time a single refit on the pod.** At 4 features × 2 splits × 1,000
-permutations this is 8,000 refits and the per-refit cost has never been measured. It determines
-whether this step is hours or days, whether it needs joblib parallelism across the pod's cores,
-and what N the MLP tail gets. This is the run's main schedule risk — everything else in run_biorxiv is
-cheap.
-
-**This step does NOT cover the split gap.** That is a paired-bootstrap quantity (Stage 0b), not a
-permutation quantity.
+**This step does NOT cover the split gap.** That is a paired-bootstrap quantity (Stage 0b).
 
 ### Step 4 — single-source robustness check (CPU)
 
@@ -303,8 +292,8 @@ python -m esm2_mech.experiments.mechanism.single_source_mechanism --seeds 5
 aggregate.json, naive_baseline.json}`
 
 The run_biorxiv question is narrower than run6's: not whether `delta_mean` sits at the floor, but
-whether its **interval still straddles the floor**, and what the CI on `wt_only`'s
-gene-minus-family gap (0.612 → 0.445) looks like.
+whether its **interval still straddles the floor**, and what the CI on `wt_only`'s gene-minus-family
+gap (0.612 → 0.445) looks like.
 
 ---
 
@@ -336,12 +325,12 @@ python -m esm2_mech.experiments.mechanism.mechanism_within_family --seeds 5
 
 **Output:** `results/<run>/within_family_mechanism.json`
 
-Already imports `utils/bootstrap.py`. Three additions required by `STATS_PLAN.md`, all of which
-change how the table must be *read* rather than what it contains:
+Already imports `utils/bootstrap.py`. Three additions required by `STATS_PLAN.md`, all changing how
+the table is *read* rather than what it contains:
 
-1. **An explicit restatement of the table as an exploratory screen.** The run6 "beats baseline and
-   std < 0.10" highlight is an uncorrected screen and is labelled as one rather than corrected;
-   correcting it would imply it had been a confirmatory test.
+1. **The table is labelled an exploratory screen.** The run6 "beats baseline and std < 0.10"
+   highlight is uncorrected and is labelled rather than corrected; correcting it would imply it had
+   been a confirmatory test.
 2. **Minimal-detectable-effect per family**, so the nulls read as underpowered rather than as
    evidence of absence. At 6–33 genes per family the test cannot establish absence.
 3. **Cluster-bootstrap CIs over genes within each family**, replacing seed-std.
@@ -364,8 +353,8 @@ claim. The geras run is not a matched baseline and must not be used for it.
 
 Gates M1/M2/M3 are unchanged. The run_biorxiv addition is the **paired cluster bootstrap** on `seq` −
 ESM-2 delta and on `seq_struct` − `seq`, over genes on the shared variant set. M2 clears its
-threshold by 0.008, so the current claim is a point-estimate comparison at a margin thinner than
-one seed of spread; run_biorxiv either supports it with a tested gap or does not.
+threshold by 0.008 — a margin thinner than one seed of spread — so run_biorxiv either supports it with
+a tested gap or does not.
 
 ---
 
@@ -400,10 +389,10 @@ GPU-resident but small — ~2 minutes for 5 seeds. Reads the MLP floor live from
 never hardcode it.
 
 run_biorxiv additions: paired cluster bootstrap over genes on the contrastive-vs-raw-kNN gap (+0.041);
-a permutation test for the contrastive macro-F1 against **both** the 0.288 MLP floor and the
-raw-kNN baseline; and gene-cluster CIs on the per-class AUROCs, so run6's honest caveat — that
-the gain is class balance rather than per-class separability, with DN unmoved — is reported as a
-tested null rather than a point drop.
+a permutation test for the contrastive macro-F1 against **both** the 0.288 MLP floor and the raw-kNN
+baseline; and gene-cluster CIs on the per-class AUROCs, so run6's caveat — the gain is class balance
+rather than per-class separability, with DN unmoved — is reported as a tested null rather than a
+point drop.
 
 ---
 
@@ -445,10 +434,16 @@ Machinery exists for all of these; none was implemented in run6.
 
 ## Stage 3 — regenerate reports
 
-All 13 reports in `reports/run6/` are rewritten against run_biorxiv result files into
-`reports/run_biorxiv/`. None of the run6 reports cites a confidence interval, including
-`report_classifier.md` (the headline) and `report_leakage_fraction.md` (no interval on the ~40%
-figure).
+The 14 documents in `reports/run6/` — 11 per-experiment reports plus `ESM2_REPORT.md`,
+`INTRO_REPORT.md`, and `STATS_PLAN.md` — are rewritten against run_biorxiv result files into
+`reports/run_biorxiv/`, with two exceptions and two additions. `report_esm3_mechanism_geras.md` is
+dropped and cited from the run6 archive instead (it is already marked superseded, and regenerating a
+report that must not be cited invites citing it); `STATS_PLAN.md` moves from a plan to a record of
+what was done. The additions are a paired-difference summary table and the run6→run_biorxiv delta note
+generated by `compare_runs.py`.
+
+None of the run6 reports cites a confidence interval, including `report_classifier.md` (the headline)
+and `report_leakage_fraction.md` (no interval on the ~40% figure).
 
 Per the project report rules: a result file and its report share the same `RUN_NAME`, and every
 number traces to a file under `results/run_biorxiv/` cited in Provenance. Where a run_biorxiv report cites a
@@ -473,15 +468,17 @@ Statistics — the point of this run:
 - [ ] **Family-split CIs resample families, gene-split CIs resample genes.** Effective cluster
       count is emitted alongside every family-split interval. Family-split intervals are wider
       than gene-split ones — if they are not, the unit was applied wrongly.
-- [ ] Rare-class (DN, GOF) AUROC intervals use BCa where computable, and are labelled as the
-      least trustworthy in their table regardless of method.
-- [ ] Linear-probe permutation ran at 1,000. MLP permutation N is stated explicitly wherever its
-      p-value appears. No p-value equal to 1/(N+1) is reported as a measurement — that is the
-      resolution floor, not a result.
-- [ ] `PERMUTATION_FEATURES` covers all four above-floor features plus the `delta_mean` control.
-- [ ] All six paired claims (ESM-3 M2, contrastive +0.041, geometry K2, transfer contrast,
-      contrastive DN null, and the gene-vs-family split gap) report a paired cluster-bootstrap CI
-      on the difference, not two separated error bars.
+- [ ] Rare-class (DN, GOF) AUROC intervals are labelled as the least trustworthy in their table.
+- [ ] Linear-probe permutation ran at 1,000, and it is the only permutation test in the run — the
+      MLP is not permutation-tested. No p-value equal to 1/(N+1) is reported as a measurement —
+      that is the resolution floor, not a result.
+- [ ] The five paired claims (ESM-3 M2, contrastive +0.041, contrastive per-class DN null,
+      geometry K2, and the gene-vs-family split gap) report a paired cluster-bootstrap CI on the
+      difference, not two separated error bars.
+- [ ] The pathogenicity-vs-mechanism transfer contrast reports two independent intervals and says
+      so. Its arms are different datasets — ClinVar pathogenicity variants against mechanism
+      variants — with no shared row space, so no pairing is defined over them. It is exploratory
+      and no confirmatory claim reads it.
 - [ ] The gene-vs-family split gap reports a paired-bootstrap CI, **not** a label-permutation
       p-value — the permutation null for that gap is zero by construction.
 - [ ] Paired bootstrap resamples the cluster unit once per replicate and applies the same
@@ -505,5 +502,6 @@ Science — the spine, which should not move:
 - [ ] ESM-3 compared against ESM-2 only on `--dataset merged`.
 - [ ] Any run_biorxiv number that moves materially from run6 is explained, not silently adopted.
 
-- [ ] Environment pinned and recorded in Provenance; CI green on the commit that produced the run.
+- [ ] Environment pinned and recorded in Provenance; `pytest tests/` green on the commit that
+      produced the run.
 - [ ] `git status` clean; results committed.

@@ -44,7 +44,12 @@ from esm2_mech.utils.paths import (
     PFAM_JSON,
     VALID_VARIANTS_JSON,
 )
-from esm2_mech.utils.bootstrap import bootstrap_mechanism_metrics, family_or_gene_clusters
+from esm2_mech.utils.bootstrap import (
+    adjudicate_diff,
+    bootstrap_mechanism_metrics,
+    family_or_gene_clusters,
+    paired_oof_diff,
+)
 from esm2_mech.utils.constants import (
     BOOTSTRAP_N_RESAMPLES,
     CONTRASTIVE_SEED_RESULT_GLOB,
@@ -421,8 +426,8 @@ def run_cv(
     y = le.transform(labels)
     fold_results_contrastive = []
     fold_results_raw_knn = []
-    oof_contrastive = {"y_true": [], "proba": [], "genes": []}
-    oof_raw_knn = {"y_true": [], "proba": [], "genes": []}
+    oof_contrastive = {"y_true": [], "proba": [], "genes": [], "row_ids": []}
+    oof_raw_knn = {"y_true": [], "proba": [], "genes": [], "row_ids": []}
 
     for fold_i, (train_idx, test_idx) in enumerate(splits):
         X_tr, X_te = X[train_idx], X[test_idx]
@@ -457,6 +462,7 @@ def run_cv(
         oof_raw_knn["y_true"].append(labels_te)
         oof_raw_knn["proba"].append(raw_proba)
         oof_raw_knn["genes"].append(genes_te)
+        oof_raw_knn["row_ids"].append(test_idx)
         print(
             f"    raw k-NN:      macro_f1={raw_fm['macro_f1']:.3f}  "
             f"{GOF}={raw_fm.get(f'auroc_{GOF}', float('nan')):.3f}  "
@@ -481,6 +487,7 @@ def run_cv(
         oof_contrastive["y_true"].append(labels_te)
         oof_contrastive["proba"].append(cont_proba)
         oof_contrastive["genes"].append(genes_te)
+        oof_contrastive["row_ids"].append(test_idx)
         print(
             f"    contrastive:   macro_f1={cont_fm['macro_f1']:.3f}  "
             f"{GOF}={cont_fm.get(f'auroc_{GOF}', float('nan')):.3f}  "
@@ -533,6 +540,7 @@ def run_cv(
             "y_true": np.concatenate(oof["y_true"]),
             "proba": np.concatenate(oof["proba"]),
             "genes": np.concatenate(oof["genes"]),
+            "row_ids": np.concatenate(oof["row_ids"]),
         }
 
     return (
@@ -604,6 +612,70 @@ def run(
                     n_resamples=n_boot, seed=seed,
                 )
 
+    # The contrastive gate is a DIFFERENCE (contrastive k-NN − raw-delta k-NN), so
+    # it needs a paired interval, not two independent ones: both arms are scored on
+    # the same folds over the same variants, so one cluster resample per replicate
+    # is handed to both and the fold-to-fold noise they share cancels.
+    paired = {}
+    if compute_ci:
+        print("\n=== PAIRED DIFFERENCES (contrastive − raw k-NN) ===")
+        for split_name, cont_oof, raw_oof, is_family_split in (
+            ("gene_split", gene_cont_oof, gene_raw_oof, False),
+            ("family_split", fam_cont_oof, fam_raw_oof, True),
+        ):
+            diff = paired_oof_diff(
+                cont_oof, raw_oof, pfam_map,
+                f"{split_name}: contrastive − raw_knn",
+                # run_knn returns proba aligned to MECHANISM_CLASSES, not to
+                # le.classes_'s alphabetical order.
+                classes=list(MECHANISM_CLASSES),
+                is_family_split=is_family_split,
+                n_resamples=n_boot,
+                seed=seed,
+            )
+            if diff is None:
+                continue
+            paired[split_name] = {"macro_f1": diff}
+            if diff.get("ci_low") is None:
+                print(f"  {split_name} macro_f1: diff={diff['point_diff']:+.4f}  CI suppressed")
+            else:
+                print(
+                    f"  {split_name} macro_f1: diff={diff['point_diff']:+.4f}  "
+                    f"[{diff['ci_low']:+.4f}, {diff['ci_high']:+.4f}]  "
+                    f"({diff['n_clusters']} clusters) — "
+                    f"{adjudicate_diff(diff['point_diff'] > 0, diff, 0.0)}"
+                )
+
+            # Per-class one-vs-rest differences. The "DN is unmoved by the
+            # contrastive head" reading is a null asserted from a point drop
+            # (0.577 -> 0.545 in run6); stated as a difference with an interval it
+            # can come back as not distinguishable instead of as an established null.
+            for cls in MECHANISM_CLASSES:
+                cls_diff = paired_oof_diff(
+                    cont_oof, raw_oof, pfam_map,
+                    f"{split_name}: contrastive − raw_knn ({cls} AUROC)",
+                    classes=list(MECHANISM_CLASSES),
+                    metric="auroc_one_vs_rest",
+                    pos_class=cls,
+                    is_family_split=is_family_split,
+                    n_resamples=n_boot,
+                    seed=seed,
+                )
+                if cls_diff is None:
+                    continue
+                paired[split_name][f"auroc_{cls}"] = cls_diff
+                if cls_diff.get("ci_low") is None:
+                    print(
+                        f"  {split_name} auroc_{cls}: "
+                        f"diff={cls_diff['point_diff']:+.4f}  CI suppressed"
+                    )
+                else:
+                    print(
+                        f"  {split_name} auroc_{cls}: diff={cls_diff['point_diff']:+.4f}  "
+                        f"[{cls_diff['ci_low']:+.4f}, {cls_diff['ci_high']:+.4f}]  "
+                        f"— {adjudicate_diff(cls_diff['point_diff'] > 0, cls_diff, 0.0)}"
+                    )
+
     results = {
         "description": (
             "Contrastive metric learning with cross-family-only positives. "
@@ -618,10 +690,12 @@ def run(
         "gene_split": {
             "contrastive_knn": gene_cont,
             "raw_knn_baseline": gene_raw,
+            "paired_diff_vs_raw_knn": paired.get("gene_split"),
         },
         "family_split": {
             "contrastive_knn": fam_cont,
             "raw_knn_baseline": fam_raw,
+            "paired_diff_vs_raw_knn": paired.get("family_split"),
         },
     }
 

@@ -33,17 +33,29 @@ point estimate alone.
 
 ### Gates in scope, with run6 point estimates
 
-`m1_threshold` = 0.430 is the ESM-2 family-split floor (0.380) **plus a pre-registered 0.05
-effect-size requirement**. M1 and M2 are recorded in
-`results/run6/esm3_mechanism/merged/summary.json` as `family-split F1 > 0.430`, so their margins
-below are against 0.430 — not against the bare floor. Stated against the bare floor the lifts are
-much larger (seq +0.058, seq_struct +0.072) and the CI question becomes trivial; the two framings
-have opposite robustness and must not be interchanged.
+**`m1_threshold` is a rule, not a number.** It is the ESM-2 family-split floor **plus a
+pre-registered 0.05 effect-size requirement**, and `esm3_mechanism.py` derives it at run time:
+`esm2_family_floor()` reads the floor from that run's own `nonlinear_results_seed*.json` — the MLP,
+`delta_mean`, family-split probe averaged over all five seeds — and raises rather than substituting
+if any seed is missing. What is pre-registered is the rule and the source, so the threshold moves
+with the floor the run measures.
+
+In run6 that evaluated to 0.430 (floor 0.380), which is the value the margins below are stated
+against. The floor is on record elsewhere in the run6 reports as 0.415 and 0.418; those are
+report-text drift rather than competing definitions, and the run_biorxiv floor comes from the single
+source named above. **If the measured floor lands near 0.415, the threshold becomes ~0.465 and M2
+fails.** That is the pre-registered rule operating, not a moved goalpost, and it is the outcome C5
+is most exposed to. `scripts/compare_runs.py` flags the floor's movement so it is read rather than
+absorbed.
+
+Margins are stated against the threshold, never against the bare floor. Against the bare floor the
+lifts look much larger (seq +0.058, seq_struct +0.072) and the CI question becomes trivial; the two
+framings have opposite robustness and must not be interchanged.
 
 | Gate | Criterion as recorded | Run6 value | Margin | Run6 verdict |
 |---|---|---|---|---|
-| M1 | seq_struct family-split F1 > 0.430 | 0.4528 | +0.023 | pass |
-| M2 | seq family-split F1 > 0.430 (scale alone) | 0.4384 | +0.008 | pass |
+| M1 | seq_struct family-split F1 > `m1_threshold` (0.430 in run6) | 0.4528 | +0.023 | pass |
+| M2 | seq family-split F1 > `m1_threshold` (0.430 in run6; scale alone) | 0.4384 | +0.008 | pass |
 | M3 | seq_struct − seq > 0.030 | +0.0143 | −0.016 | fail |
 | K1 | conservation alone AUROC > 0.85 | 0.891 | +0.041 | pass |
 | K2 | conservation + delta improves over conservation by > 0.02 | +0.0023 | −0.018 | fail |
@@ -70,7 +82,7 @@ everything else is labelled exploratory and asserts nothing.
 | C2 | The absolute-embedding gene→family gap is non-zero (homology leakage exists) | paired bootstrap on the split gap |
 | C3 | Pathogenicity clears AUROC 0.85 family-split (positive control) | CI excludes 0.85 |
 | C4 | Conservation alone matches or beats the embedding delta for pathogenicity | paired bootstrap (K1/K2) |
-| C5 | ESM-3 scale lifts the mechanism floor above the pre-registered gate (M2: seq > 0.430) | paired bootstrap |
+| C5 | ESM-3 scale lifts the mechanism floor above the pre-registered gate (M2: seq > `m1_threshold`, the measured floor + 0.05) | paired bootstrap |
 
 C1 and C3 are the load-bearing pair (the dissociation) and C2 is the leakage account. Those three
 are the paper. C4 and C5 are the characterisation payoff; if the confirmatory set must be trimmed,
@@ -84,13 +96,10 @@ scale. If the interval is wider than that, C1 is recorded as **not adjudicated**
 separate a real effect from none — never as confirmed. The permutation test runs on C1 but in one
 direction only: a significant p refutes C1, and a non-significant p does not confirm it.
 
-**No multiplicity correction is applied.** The confirmatory set is five pre-registered claims, and
-no verdict in it turns on multiplicity: C2 and C3 clear their thresholds by margins far wider than
-any correction across a set this size would move, and C5's margin is thin enough (+0.008 in run6)
-that it is expected to read as *not distinguishable* under R7.1 without help from a correction that
-could only push it further the same way. C1 is a null claim, where a correction that raises the bar
-for rejection makes the claim easier to assert rather than harder, so it would be a tailwind rather
-than a safeguard. The enumeration above is the safeguard.
+**No multiplicity correction is applied.** No verdict in a set this size turns on one: C2 and C3
+clear their thresholds by wide margins, C5 already reads as *not distinguishable*, and C1 is a null
+claim, where raising the bar for rejection would make the claim easier to assert rather than harder.
+Enumerating the set in advance is the safeguard.
 
 ### Exploratory (labelled, not corrected)
 
@@ -149,18 +158,21 @@ multiplicity is a correct resampling weight, not an artifact.
 DN (≈ 9%, ~150–170 genes) and GOF (≈ 15%) sit in the regime where percentile bootstrap undercovers
 for a bounded metric near its boundary with few clusters.
 
-- One-vs-rest AUROC for the rare classes uses **BCa** wherever the acceleration estimate is
-  computable.
-- Rare-class intervals are **flagged as the least trustworthy in their table regardless of
-  method** — with a jackknife over ~150 clusters, BCa's own correction is noisy. DN intervals are
-  indicative, not authoritative.
-- The existing degenerate-fold suppression guard is retained; BCa does not replace it.
+- One-vs-rest AUROC for the rare classes uses the same percentile cluster bootstrap as every other
+  interval in the project. No bias correction is applied: over ~150 clusters a correction is itself
+  noisy, so it would trade one inaccuracy for another while implying a precision the panel does not
+  have.
+- Rare-class intervals are **flagged as the least trustworthy in their table.** DN intervals are
+  indicative, not authoritative, and no confirmatory claim rests on them — per-class AUROCs are
+  exploratory under R7.2.
+- The existing degenerate-fold suppression guard is retained.
 
 ## R7.5 — Permutation budget
 
 - **Linear probe: 1,000 permutations**, seed 0. The headline claim (`delta_mean` at the chance
   floor) is a linear-probe claim, so the load-bearing test is fully resolved.
-- **MLP: N set by the measured per-refit cost, stated explicitly** wherever its p-value appears.
+- **The MLP is not permutation-tested.** No claim rests on an MLP permutation p-value, and its
+  refits are the expensive tail; the linear probe is the only permutation test in run_biorxiv.
 - **No p-value is reported at its resolution floor of 1/(N+1)** — that is an unresolved bound, not
   a measurement. The run6 `wt_only_mean` p = 0.0099 at 200 permutations is exactly this case and is
   not carried forward.
@@ -189,6 +201,11 @@ rather than an expectation:
   license the dissociation, and the whole paper weakens.
 - **C5 restated** as *not distinguishable* if M2's paired CI spans zero, which the +0.008 margin
   makes plausible. The scale claim becomes "consistent in direction, not established".
+- **C5 fails outright** if the run's measured floor comes back materially above run6's 0.380, since
+  the threshold is the floor + 0.05 and ESM-3's seq arm sits at 0.438. A floor near 0.415 puts the
+  gate at ~0.465 and M2 fails on its point estimate, which R7.1 reports as failure regardless of the
+  CI. The floor is the run's own measurement, so this is the rule operating rather than a threshold
+  chosen after the fact.
 
 run_biorxiv changes error bars, not point estimates. Any point estimate that moves materially from run6
 is either a bug introduced by the wiring or a finding that needs explaining; `scripts/compare_runs.py`

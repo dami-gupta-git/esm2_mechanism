@@ -36,9 +36,11 @@ from esm2_mech.utils.embed import unpack_run_data
 from esm2_mech.utils.io import atomic_write_json
 from esm2_mech.utils.metrics import align_proba
 from esm2_mech.utils.bootstrap import (
+    adjudicate_diff,
     bootstrap_mechanism_metrics,
     family_or_gene_clusters,
     label_permutation_pvalue,
+    paired_oof_diff,
 )
 
 from sklearn.decomposition import PCA
@@ -316,6 +318,44 @@ def run(
                 f"  Δ(gene − family) macro-F1 = {delta_macro:+.3f}  "
                 f"← positive ⇒ homology leakage"
             )
+
+            # C2's instrument. The gap is a DIFFERENCE across two CV partitions of
+            # the same rows, so it needs the cross-partition paired bootstrap: one
+            # family resample per replicate scored under both partitions. Two
+            # independent intervals would not test whether the gap itself is
+            # non-zero. Masked baselines (tuple entries) are excluded — their splits
+            # run over a row subset with its own local row numbering, so their
+            # row_ids do not identify the same variants as the full-array features.
+            if (
+                compute_ci and not isinstance(entry, tuple)
+                and gs_oof is not None and fs_oof is not None
+            ):
+                gap = paired_oof_diff(
+                    gs_oof, fs_oof, pfam_map,
+                    f"{name}: gene-split − family-split",
+                    classes=list(MECHANISM_CLASSES),
+                    cross_partition=True,
+                    n_resamples=n_boot,
+                    seed=seed,
+                )
+                if gap is not None:
+                    fs["split_gap_paired"] = gap
+                    if gap.get("ci_low") is None:
+                        print(f"  split-gap CI suppressed ({gap['n_clusters']} families)")
+                    else:
+                        sensitivity = gap.get("gene_resampled_sensitivity") or {}
+                        print(
+                            f"  split gap = {gap['point_diff']:+.4f}  "
+                            f"[{gap['ci_low']:+.4f}, {gap['ci_high']:+.4f}]  "
+                            f"({gap['n_clusters']} families) — "
+                            f"{adjudicate_diff(gap['point_diff'] > 0, gap, 0.0)}"
+                        )
+                        if sensitivity.get("ci_low") is not None:
+                            print(
+                                f"    gene-resampled sensitivity (not the primary "
+                                f"interval): [{sensitivity['ci_low']:+.4f}, "
+                                f"{sensitivity['ci_high']:+.4f}]"
+                            )
 
     # ------------------------------------------------------------------
     # 7. Write results

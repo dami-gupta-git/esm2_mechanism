@@ -373,11 +373,16 @@ def _run_binary_cv(
 
 def run_logreg_binary_cv(
     X: np.ndarray, y: np.ndarray, splits: list[tuple], seed: int = 42, pos_label=1,
-    genes: np.ndarray | None = None, return_oof: bool = False,
+    genes: np.ndarray | None = None, return_oof: bool = False, max_iter: int = 1000,
 ):
-    """Binary LogReg CV returning AUROC mean ± std."""
+    """Binary LogReg CV returning AUROC mean ± std.
+
+    `max_iter` is exposed because callers fitting high-dimensional features (the
+    1280-d embedding delta) need more iterations to converge than the default;
+    raising it here rather than for every caller keeps other probes unchanged.
+    """
     return _run_binary_cv(
-        lambda s: LogisticRegression(max_iter=1000, C=1.0, random_state=s),
+        lambda s: LogisticRegression(max_iter=max_iter, C=1.0, random_state=s),
         X, y, splits, seed, pos_label, genes=genes, return_oof=return_oof,
     )
 

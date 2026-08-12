@@ -66,10 +66,11 @@ from esm2_mech.utils.constants import (
 )
 from esm2_mech.fetch_data.uniprot_fetch import TransientFetchError, fetch_with_retries
 from esm2_mech.utils.bootstrap import (
+    adjudicate_diff,
     average_oof_over_seeds,
     bootstrap_mechanism_metrics,
     family_or_gene_clusters,
-    paired_cluster_bootstrap_diff,
+    paired_oof_diff,
 )
 
 # The matched ESM-2 probe for the ESM-3 comparison: MLP, delta_mean, family-split.
@@ -172,100 +173,6 @@ def esm2_matched_delta(n_variants: int, valid_idx: np.ndarray | None) -> np.ndar
         )
     delta = mut - wt
     return delta if valid_idx is None else delta[valid_idx]
-
-
-def paired_family_split_diff(
-    oof_a: dict | None,
-    oof_b: dict | None,
-    pfam_map: dict,
-    n_boot: int,
-    label: str,
-) -> dict | None:
-    """Paired family-cluster bootstrap CI on macro-F1(A) − macro-F1(B).
-
-    Both arms were scored under the same family-split folds over the same variants, so
-    the difference is a same-fold paired statistic: one family resample per replicate,
-    the identical drawn rows handed to both arms. Rows scored in only one arm (a fold
-    skipped there but not here) are dropped, since the pairing is undefined on them.
-    """
-    from sklearn.metrics import f1_score
-
-    if oof_a is None or oof_b is None:
-        print(f"  [paired] {label}: skipped — an arm has no combined OOF")
-        return None
-
-    rows_a = {int(row): pos for pos, row in enumerate(oof_a["row_ids"])}
-    rows_b = {int(row): pos for pos, row in enumerate(oof_b["row_ids"])}
-    shared = sorted(set(rows_a) & set(rows_b))
-    if not shared:
-        print(f"  [paired] {label}: skipped — the arms share no scored variants")
-        return None
-    dropped = (len(rows_a) - len(shared)) + (len(rows_b) - len(shared))
-    if dropped:
-        print(
-            f"  [paired] {label}: {len(shared)} shared variants, "
-            f"{dropped} arm-specific rows dropped"
-        )
-
-    idx_a = np.array([rows_a[row] for row in shared], dtype=int)
-    idx_b = np.array([rows_b[row] for row in shared], dtype=int)
-
-    y_a = np.asarray(oof_a["y_true"])[idx_a]
-    y_b = np.asarray(oof_b["y_true"])[idx_b]
-    if not np.array_equal(y_a, y_b):
-        raise RuntimeError(
-            f"{label}: the two arms disagree on the label of a shared variant — "
-            "the OOF row spaces are not the same variants"
-        )
-
-    def _predictions(oof: dict, idx: np.ndarray) -> np.ndarray:
-        proba = np.asarray(oof["proba"])[idx]
-        return np.array([MECHANISM_CLASSES[col] for col in proba.argmax(axis=1)])
-
-    pred_a = _predictions(oof_a, idx_a)
-    pred_b = _predictions(oof_b, idx_b)
-
-    def _macro_f1(pred: np.ndarray):
-        def _fn(rows: np.ndarray) -> float:
-            return float(
-                f1_score(y_a[rows], pred[rows], average="macro", zero_division=0)
-            )
-        return _fn
-
-    clusters = family_or_gene_clusters(
-        np.asarray(oof_a["genes"], dtype=object)[idx_a], pfam_map, is_family_split=True
-    )
-    out = paired_cluster_bootstrap_diff(
-        clusters,
-        _macro_f1(pred_a),
-        _macro_f1(pred_b),
-        n_resamples=n_boot,
-        seed=0,
-    )
-    out["n_shared"] = len(shared)
-    out["n_dropped"] = dropped
-    return out
-
-
-def adjudicate_diff(passed: bool | None, diff_ci: dict | None, threshold: float) -> str:
-    """R7.1 verdict for a gate, reading its point estimate against its paired CI.
-
-    The point estimate decides pass/fail; the CI decides whether that reading is
-    established or underpowered. A pass whose CI spans zero is reported as consistent
-    in direction but not distinguishable, never as an established effect.
-    """
-    if passed is None:
-        return "not adjudicated (no point estimate)"
-    if diff_ci is None or diff_ci.get("ci_suppressed") or diff_ci.get("ci_low") is None:
-        return f"{'pass' if passed else 'fail'}, no CI"
-    ci_low, ci_high = diff_ci["ci_low"], diff_ci["ci_high"]
-    if passed:
-        if ci_low > 0:
-            return "pass, established (CI excludes zero)"
-        return "pass on point estimate, not distinguishable (CI spans zero)"
-    if ci_high > threshold:
-        return "fail, underpowered (CI spans the pre-registered threshold)"
-    return "fail, established (CI excludes the pre-registered threshold)"
 
 
 def esm2_family_floor(seeds: list[int] = SEEDS) -> tuple[float, str]:
@@ -1036,12 +943,13 @@ def phase3_probes(
         ]
         for gate, arm_a, arm_b, threshold in contrasts:
             label = f"{gate}: {arm_a} − {arm_b}"
-            diff = paired_family_split_diff(
+            diff = paired_oof_diff(
                 oof_by_arm.get((arm_a, "family_split")),
                 oof_by_arm.get((arm_b, "family_split")),
                 pfam_map,
-                n_boot,
                 label,
+                classes=list(MECHANISM_CLASSES),
+                n_resamples=n_boot,
             )
             if diff is None:
                 continue
