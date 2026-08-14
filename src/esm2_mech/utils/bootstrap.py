@@ -34,6 +34,10 @@ from esm2_mech.utils.constants import (
 
 print = functools.partial(print, flush=True)
 
+# Cluster-id prefix for a gene with no Pfam annotation, which is its own singleton
+# family. Pfam accessions are "PF" + digits, so this prefix cannot collide with one.
+UNANNOTATED_CLUSTER_PREFIX = "__no_pfam__:"
+
 
 def average_oof_over_seeds(oof_list: list[dict | None]) -> dict | None:
     """Collapse per-seed out-of-fold predictions to one proba-per-variant.
@@ -86,24 +90,131 @@ def _cluster_to_rows(clusters: np.ndarray) -> tuple[np.ndarray, list[np.ndarray]
     return unique, rows
 
 
-def _bootstrap_resample_value(
-    metric_fn: Callable[[np.ndarray], float | None],
+def _clean_scalar(value) -> float | None:
+    """None for a missing or non-finite metric value, float otherwise."""
+    if value is None or not np.isfinite(value):
+        return None
+    return float(value)
+
+
+def _evaluate_metric_fns(
+    metric_fns: list[Callable[[np.ndarray], dict]], rows: np.ndarray
+) -> dict:
+    """Run every metric fn on one row-index array and flatten to {name: value}.
+
+    Each fn returns a dict of one or more named statistics, so statistics that
+    share intermediate work (AUPRC and its prevalence reference) are computed
+    together in a single call rather than once per statistic.
+    """
+    out: dict = {}
+    for metric_fn in metric_fns:
+        for name, value in metric_fn(rows).items():
+            out[name] = _clean_scalar(value)
+    return out
+
+
+def _multi_bootstrap_resample_values(
+    metric_fns: list[Callable[[np.ndarray], dict]],
     cluster_rows: list[np.ndarray],
     n_clusters: int,
     child_seed: int,
-) -> float | None:
-    """Draw one cluster resample with an independent seeded RNG, return the metric.
+) -> dict:
+    """Draw one cluster resample with an independent seeded RNG, score every metric.
 
     Each call gets its own `RandomState(child_seed)` for reproducible,
-    order-independent resamples under parallel execution.
+    order-independent resamples under parallel execution. All metrics see the
+    SAME drawn rows, so a set of metrics reported together comes from one shared
+    resampling of the clusters instead of one independent bootstrap each.
     """
     rng = np.random.RandomState(child_seed)
     drawn = rng.randint(0, n_clusters, size=n_clusters)
     rows = np.concatenate([cluster_rows[i] for i in drawn])
-    value = metric_fn(rows)
-    if value is not None and np.isfinite(value):
-        return float(value)
-    return None
+    return _evaluate_metric_fns(metric_fns, rows)
+
+
+def _summarize_bootstrap(
+    point: float | None,
+    stats: list[float],
+    n_resamples: int,
+    n_clusters: int,
+    ci_level: float,
+    min_valid_frac: float,
+) -> dict:
+    """Percentile interval and bookkeeping for one metric's surviving replicates."""
+    valid_frac = len(stats) / n_resamples if n_resamples else 0.0
+    base = {
+        "point": point,
+        "n_resamples": len(stats),
+        "n_resamples_total": int(n_resamples),
+        "valid_frac": float(valid_frac),
+        "n_clusters": int(n_clusters),
+    }
+    if not stats or valid_frac < min_valid_frac:
+        return {**base, "ci_low": None, "ci_high": None, "ci_suppressed": True}
+    lo_pct = (1.0 - ci_level) / 2.0 * 100.0
+    hi_pct = (1.0 + ci_level) / 2.0 * 100.0
+    return {
+        **base,
+        "ci_low": float(np.percentile(stats, lo_pct)),
+        "ci_high": float(np.percentile(stats, hi_pct)),
+        "ci_suppressed": False,
+    }
+
+
+def cluster_bootstrap_ci_multi(
+    clusters: np.ndarray,
+    metric_fns: list[Callable[[np.ndarray], dict]],
+    n_resamples: int = BOOTSTRAP_N_RESAMPLES,
+    ci_level: float = BOOTSTRAP_CI_LEVEL,
+    min_valid_frac: float = BOOTSTRAP_MIN_VALID_FRAC,
+    seed: int = 0,
+    n_jobs: int = -1,
+) -> dict:
+    """Cluster-bootstrap CIs for several metrics over ONE shared set of resamples.
+
+    Each entry of `metric_fns` takes a row-index array and returns a dict of named
+    statistics on those rows, using None for any statistic undefined there (e.g. a
+    class absent from the draw). Returns {name: CI dict} with the same keys
+    `cluster_bootstrap_ci` returns, one entry per name any fn produced.
+
+    Metrics reported together nearly always want the same resamples, and drawing
+    them once is both cheaper and the only way a later paired comparison between
+    two of them would be coherent. Grouping several statistics behind one fn also
+    lets them share work: AUPRC and the prevalence it is read against come from a
+    single pass over the drawn rows.
+
+    A statistic is dropped only from its own replicate list, so one metric being
+    undefined on a draw does not shrink another's sample.
+
+    Resamples run in parallel across cores via joblib (n_jobs=-1 = all cores); each
+    draws from its own SeedSequence-spawned RNG, so the CIs match a serial run.
+    """
+    unique, cluster_rows = _cluster_to_rows(np.asarray(clusters))
+    n_clusters = len(unique)
+    all_rows = np.arange(len(clusters))
+    points = _evaluate_metric_fns(metric_fns, all_rows)
+
+    child_seqs = np.random.SeedSequence(seed).spawn(n_resamples)
+    child_seeds = [int(s.generate_state(1)[0]) for s in child_seqs]
+
+    replicates = Parallel(n_jobs=n_jobs)(
+        delayed(_multi_bootstrap_resample_values)(
+            metric_fns, cluster_rows, n_clusters, child_seed
+        )
+        for child_seed in child_seeds
+    )
+
+    return {
+        name: _summarize_bootstrap(
+            points[name],
+            [rep[name] for rep in replicates if rep.get(name) is not None],
+            n_resamples,
+            n_clusters,
+            ci_level,
+            min_valid_frac,
+        )
+        for name in points
+    }
 
 
 def cluster_bootstrap_ci(
@@ -131,43 +242,20 @@ def cluster_bootstrap_ci(
     n_resamples (the count that contributed), n_resamples_total, valid_frac,
     ci_suppressed, n_clusters.
 
-    Resamples run in parallel across cores via joblib (n_jobs=-1 = all cores); each
-    draws from its own SeedSequence-spawned RNG, so the CI matches a serial run.
+    Single-metric front end to `cluster_bootstrap_ci_multi`; use that directly when
+    reporting several metrics on the same rows.
     """
-    unique, cluster_rows = _cluster_to_rows(np.asarray(clusters))
-    n_clusters = len(unique)
-    all_rows = np.arange(len(clusters))
-    point = metric_fn(all_rows)
-
-    child_seqs = np.random.SeedSequence(seed).spawn(n_resamples)
-    child_seeds = [int(s.generate_state(1)[0]) for s in child_seqs]
-
-    values = Parallel(n_jobs=n_jobs)(
-        delayed(_bootstrap_resample_value)(
-            metric_fn, cluster_rows, n_clusters, child_seed
-        )
-        for child_seed in child_seeds
+    key = "metric"
+    out = cluster_bootstrap_ci_multi(
+        clusters,
+        [lambda rows: {key: metric_fn(rows)}],
+        n_resamples=n_resamples,
+        ci_level=ci_level,
+        min_valid_frac=min_valid_frac,
+        seed=seed,
+        n_jobs=n_jobs,
     )
-    stats = [value for value in values if value is not None]
-
-    valid_frac = len(stats) / n_resamples if n_resamples else 0.0
-    base = {
-        "point": float(point) if point is not None and np.isfinite(point) else None,
-        "n_resamples": len(stats),
-        "n_resamples_total": int(n_resamples),
-        "valid_frac": float(valid_frac),
-        "n_clusters": int(n_clusters),
-    }
-    if not stats or valid_frac < min_valid_frac:
-        return {**base, "ci_low": None, "ci_high": None, "ci_suppressed": True}
-    lo_pct = (1.0 - ci_level) / 2.0 * 100.0
-    hi_pct = (1.0 + ci_level) / 2.0 * 100.0
-    return {
-        **base,
-        "ci_low": float(np.percentile(stats, lo_pct)),
-        "ci_high": float(np.percentile(stats, hi_pct)),
-        "ci_suppressed": False,
-    }
+    return out[key]
 
 
 def _subsample_resample_value(
@@ -178,7 +266,7 @@ def _subsample_resample_value(
     child_seed: int,
 ) -> float | None:
     """Draw one cluster SUBSAMPLE (without replacement) with an independent
-    seeded RNG, return the metric. Mirrors `_bootstrap_resample_value` but
+    seeded RNG, return the metric. Mirrors `_multi_bootstrap_resample_values` but
     draws `subsample_size` distinct clusters instead of `n_clusters` with
     replacement, so no cluster's rows are ever duplicated within a replicate.
     """
@@ -469,8 +557,8 @@ def bootstrap_mechanism_metrics(
 ) -> dict:
     """Cluster-bootstrap CIs for macro-F1 and per-class one-vs-rest AUROC and AUPRC.
 
-    `proba` columns must be aligned to `classes` (use utils.metrics.align_proba). Each
-    metric reuses the same resampled clusters via cluster_bootstrap_ci. Returns
+    `proba` columns must be aligned to `classes` (use utils.metrics.align_proba). Every
+    metric is scored on ONE shared set of resampled clusters. Returns
     {"macro_f1": {...}, "auroc_GOF": {...}, "auprc_GOF": {...}, ...} where each value
     is the CI dict.
 
@@ -486,61 +574,40 @@ def bootstrap_mechanism_metrics(
     proba = np.asarray(proba)
     pred = np.array([classes[col] for col in proba.argmax(axis=1)])
 
-    def _macro_f1(rows: np.ndarray) -> float:
-        return float(f1_score(y_true[rows], pred[rows], average="macro", zero_division=0))
-
-    out: dict = {
-        "macro_f1": cluster_bootstrap_ci(
-            clusters, _macro_f1, n_resamples=n_resamples, ci_level=ci_level, seed=seed
-        )
-    }
-
-    for col_idx, cls in enumerate(classes):
-        def _auroc(rows: np.ndarray, _col=col_idx, _cls=cls) -> float | None:
-            y_bin = binary_class_target(y_true[rows], _cls)
-            if y_bin is None:
-                return None
-            return float(roc_auc_score(y_bin, proba[rows, _col]))
-
-        out[f"auroc_{cls}"] = cluster_bootstrap_ci(
-            clusters, _auroc, n_resamples=n_resamples, ci_level=ci_level, seed=seed
-        )
-
-        def _auprc(rows: np.ndarray, _col=col_idx, _cls=cls) -> float | None:
-            y_bin = binary_class_target(y_true[rows], _cls)
-            if y_bin is None:
-                return None
-            return float(average_precision_score(y_bin, proba[rows, _col]))
-
-        out[f"auprc_{cls}"] = cluster_bootstrap_ci(
-            clusters, _auprc, n_resamples=n_resamples, ci_level=ci_level, seed=seed
-        )
-
-        # AUPRC's no-signal reference is the prevalence, which moves with the resample,
-        # so the interval on AUPRC alone still leaves it read against a fixed baseline.
-        # The lift is the quantity that answers "better than no signal", and it is
-        # bootstrapped directly so numerator and reference move together on each draw.
-        def _prevalence(rows: np.ndarray, _cls=cls) -> float | None:
-            y_bin = binary_class_target(y_true[rows], _cls)
-            if y_bin is None:
-                return None
-            return float(y_bin.mean())
-
-        out[f"prevalence_{cls}"] = cluster_bootstrap_ci(
-            clusters, _prevalence, n_resamples=n_resamples, ci_level=ci_level, seed=seed
-        )
-
-        def _auprc_lift(rows: np.ndarray, _col=col_idx, _cls=cls) -> float | None:
-            y_bin = binary_class_target(y_true[rows], _cls)
-            if y_bin is None:
-                return None
-            return float(
-                average_precision_score(y_bin, proba[rows, _col]) - y_bin.mean()
+    def _macro_f1(rows: np.ndarray) -> dict:
+        return {
+            "macro_f1": float(
+                f1_score(y_true[rows], pred[rows], average="macro", zero_division=0)
             )
+        }
 
-        out[f"auprc_lift_{cls}"] = cluster_bootstrap_ci(
-            clusters, _auprc_lift, n_resamples=n_resamples, ci_level=ci_level, seed=seed
-        )
+    # AUPRC's no-signal reference is the prevalence, which moves with the resample, so
+    # the interval on AUPRC alone still leaves it read against a fixed baseline. The
+    # lift is the quantity that answers "better than no signal", and it comes from the
+    # same draw as the AUPRC and prevalence it is built from, so the three move
+    # together rather than being three separately-resampled quantities.
+    def _class_metrics(rows: np.ndarray, *, _col: int, _cls: str) -> dict:
+        names = (f"auroc_{_cls}", f"auprc_{_cls}", f"prevalence_{_cls}", f"auprc_lift_{_cls}")
+        y_bin = binary_class_target(y_true[rows], _cls)
+        if y_bin is None:
+            return dict.fromkeys(names)
+        scores = proba[rows, _col]
+        auprc = float(average_precision_score(y_bin, scores))
+        prevalence = float(y_bin.mean())
+        return {
+            names[0]: float(roc_auc_score(y_bin, scores)),
+            names[1]: auprc,
+            names[2]: prevalence,
+            names[3]: auprc - prevalence,
+        }
+
+    metric_fns = [_macro_f1] + [
+        functools.partial(_class_metrics, _col=col_idx, _cls=cls)
+        for col_idx, cls in enumerate(classes)
+    ]
+    out = cluster_bootstrap_ci_multi(
+        clusters, metric_fns, n_resamples=n_resamples, ci_level=ci_level, seed=seed
+    )
 
     for metric_name, ci in out.items():
         if ci.get("ci_suppressed"):
@@ -561,14 +628,32 @@ def family_or_gene_clusters(
     within one are not independent draws. Gene-split CIs resample genes
     unchanged.
 
-    `genes` is a row-aligned gene-id array (typically an OOF dict's "genes"
-    entry). Only annotated genes ever reach a family-split fold
-    (`family_split_cv` excludes unannotated genes), so `pfam_map[g]` cannot
-    miss when `is_family_split` is True.
+    `genes` is a row-aligned gene-id array. Callers that pass an OOF dict's
+    "genes" entry only ever hold annotated genes, since `family_split_cv`
+    excludes unannotated ones from every fold. The refit permutation test is
+    different: it permutes labels over the FULL row set (its metric closure
+    indexes into the full arrays), so its gene array includes genes missing
+    from `pfam_map`.
+
+    A gene with no Pfam annotation has no known family, so it gets its own
+    singleton cluster rather than being dropped or folded into a shared
+    "unannotated" bucket. Both alternatives would be wrong: dropping breaks the
+    row alignment the caller depends on, and a shared bucket would assert that
+    unrelated unannotated genes are non-independent. The prefix keeps these ids
+    from ever colliding with a real Pfam accession.
+
+    Under the refit permutation these singletons are exchangeable with the
+    single-gene families, so a draw can swap a label between a scored gene and an
+    unannotated one that no family-split fold ever sees. That is a valid draw under
+    the null and it widens the null slightly (the scored subset's class balance
+    varies across draws), so the resulting p-value is conservative, not inflated.
     """
     if not is_family_split:
         return genes
-    return np.array([pfam_map[g] for g in genes])
+    return np.array([
+        pfam_map[gene] if pfam_map.get(gene) else f"{UNANNOTATED_CLUSTER_PREFIX}{gene}"
+        for gene in genes
+    ])
 
 
 def _align_oof_pair(oof_a: dict, oof_b: dict, label: str) -> tuple[np.ndarray, np.ndarray] | None:
@@ -1058,6 +1143,9 @@ def label_permutation_pvalue(
     Permutations run in parallel across cores via joblib (n_jobs=-1 = all cores); each
     draws from its own SeedSequence-spawned RNG, so the null matches a serial run.
     """
+    if clusters is not None and groups is None:
+        raise ValueError("clusters requires groups (the gene-level label unit)")
+
     observed = run_metric_fn(labels)
 
     child_seqs = np.random.SeedSequence(seed).spawn(n_permutations)

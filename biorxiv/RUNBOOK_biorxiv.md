@@ -41,14 +41,12 @@ ssh -i ~/.ssh/id_runpod_2 root@<pod-ip> -p <pod-port>
 
 ## Which embeddings are re-extracted
 
-On 2026-08-11 every ClinVar-derived input was rebuilt from scratch. `data/clinvar_variants.tsv`
-and the per-gene cache under `data/cache/clinvar/` were deleted, so `variants.json` and
-`valid_variants.json` come from a current ClinVar snapshot rather than May's. The pathogenicity
-control set is refetched on the same snapshot: its params sidecar
-`clinvar_pathogenicity_variants.params.json` was lost, and rather than reconstruct a provenance
-record that could not be fully verified, the set is refetched so its provenance is written by the
-run that produced it. The consequence is that no ClinVar-derived array from run6 is reusable, and
-each one is re-extracted.
+On 2026-08-11 these were deleted and had to be re-run
+- `data/clinvar_variants.tsv`
+- files in `data/cache/clinvar/` (per-gene cache under)
+- `variants.json` and `valid_variants.json` need to refetched to stay in sync
+`clinvar_pathogenicity_variants.params.json`
+No ClinVar-derived array from run6 is reusable, and each one is re-extracted.
 
 **Re-extract (GPU):**
 
@@ -64,18 +62,12 @@ each one is re-extracted.
 |---|---|
 | `megascale_{wt,mut}_{mean,pos}.npy` | Tsuboyama-derived, a physical ΔΔG label with no ClinVar dependency |
 
-The megascale *arrays* are unaffected, but the H3 stability-projection test inside
-`megascale_stability` reads `valid_variants.json` and the ESM-2 arrays
-(`megascale_stability.py:487`), so H3 must run after the ESM-2 re-extract.
+The megascale *arrays* are unaffected, but the H3 stability-projection test 
+must run after the ESM-2 re-extract.
 
-Experiment 7 is therefore the only experiment whose inputs are identical to run6, and the only one
-where a run6→run_biorxiv difference is attributable to the new statistics alone. Everywhere else the
-comparison carries two changes at once — new statistics and a refreshed variant set — and the delta
-note must attribute movement to both.
 
 No copying is needed: embedding paths are keyed by *model*, not by run. `EMB_DIR` is
-`data/embeddings/<ESM2_MODEL>/` (`utils/paths.py:68`), which does not contain `RUN_NAME`. The arrays are ~10 GB and
-gitignored, so copying per run would cost the space for no provenance gain.
+`data/embeddings/<ESM2_MODEL>/` (`utils/paths.py:68`), which does not contain `RUN_NAME`. 
 
 Each run_biorxiv result JSON records the array fingerprint (the existing check used by Experiments 2
 and 5), so which arrays a result was scored on shows up in the output rather than only here.
@@ -100,29 +92,14 @@ fix how its results may be read, and 0.7–0.9 protect its provenance. All nine 
 
 ### 0.1. Pathogenicity provenance ✅
 
-run6 already consolidated Experiment 2 onto a single canonical variant set and made
-`pathogenicity_control.py` fingerprint it and refuse to run against non-matching embeddings
-(lines 306, 332, 360), so the two-variant-set ambiguity behind run0's 0.74–0.88 band does not exist
-here. What this precondition covered was documentation: `docs/README.md`'s "pending due to
-provenance issue" note is corrected, and `result_6.md`'s 0.74–0.88 band is marked superseded so it
-cannot be cited by accident. Both are done. The five-seed fingerprint agreement itself can only be
-checked once Experiment 2 runs, and is a verification-checklist item below.
+Run 6 already fixed Experiment 2 by locking it to one canonical variant set. `pathogenicity_control.py` now fingerprints that set and refuses to run on mismatched embeddings, so the earlier two-variant ambiguity (and the 0.74–0.88 band from run 0) is gone.
+The remaining work was  documentation: the “pending due to provenance issue” note in docs/README.md has been corrected, and the old 0.74–0.88 band in result_6.md is marked superseded. Both are done.The five-seed fingerprint agreement can only be verified after Experiment 2 actually runs; that check is still on the verification checklist.
 
 ### 0.2. Stats machinery wired and verified ✅
 
-Every module on the result path imports `utils/bootstrap.py` and emits CI keys: `naive_baseline`,
-`mechanism_delta_family_split`, `mechanism_within_family`, `mechanism/mlp.py`,
-`pathogenicity/pathogenicity_control.py`, `geometry/run_geometry.py`,
-`stability/megascale_stability.py`, `mechanism/family_clustering.py` (`--seeds`, since run6 was
-seed 0 only), and `leakage_fraction.py`. Anything short of that reproduces run6's CI-less result
-files and wastes the run.
-
-`leakage_fraction.py`'s ~40% figure is a headline in `INTRO_REPORT.md` and `ESM2_REPORT.md` §4. It
-is a derived ratio sharing the gene-split term between numerator and denominator, so the whole
-ratio is recomputed once per bootstrap replicate rather than combined from two separate intervals.
-
-`classify_by_mechanism` is the reference implementation: gene/family clusters passed to
-`bootstrap_mechanism_metrics`, `--no_ci` / `--n_boot` flags, CI keys in the result JSON.
+All result-producing scripts are wired to the shared bootstrap code and emit confidence intervals.
+Design and rationale: [`FINDINGS.md`](../docs/FINDINGS.md#bootstrap-wiring) and
+[`FINDINGS.md`](../docs/FINDINGS.md#the-leakage-ratio).
 
 **Verification gate.** Run each module for one seed and confirm `ci_low`/`ci_high` are populated in
 the emitted JSON, not merely that it exited cleanly. Wiring that silently no-ops is the failure this
@@ -133,19 +110,14 @@ under a with-replacement bootstrap, which is why `cluster_subsample_ci` exists (
 
 ### 0.3. Methodology rules the wiring implements ✅
 
-The rules are R7.3 (resampling unit and pairing) and R7.4 (rare-class intervals) of the
-pre-registration. They are properties of the emitted numbers, so getting them wrong means
-re-running, not just re-reporting. The resampling unit is enforced in code by the shared
-`family_or_gene_clusters` helper.
+R7.3 (resampling unit and pairing) and R7.4 (rare-class intervals) of the pre-registration. They
+are properties of the emitted numbers, so getting them wrong means re-running, not just
+re-reporting.
 
 ### 0.4. Paired cluster bootstrap ✅
 
-`utils/bootstrap.py` provides `paired_cluster_bootstrap_diff` (same-fold) and
-`paired_cluster_bootstrap_diff_cross_partition`, with `paired_oof_diff` wrapping both: it aligns two
-arms by `row_ids`, takes the class list as a parameter, and supports macro-F1, binary AUROC and
-one-vs-rest AUROC. `adjudicate_diff` and `adjudicate_level` render the R7.1 verdict for a difference
-and for a level respectively. The call sites are `conservation_axis.py` and
-`mechanism_delta_family_split.py`.
+Implemented in `utils/bootstrap.py`, call sites `conservation_axis.py` and
+`mechanism_delta_family_split.py`. Design: [`FINDINGS.md`](../docs/FINDINGS.md#paired-cluster-bootstrap).
 
 The comparisons below rest on two point estimates with separated error bars, and the thinnest
 margins are smaller than a seed of spread. **Two are paired**; the transfer contrast is not, for
@@ -156,12 +128,6 @@ the reason given in its row:
 | Conservation vs embedding delta (gate K2) | +0.002 | `report_geometry.md` |
 | Pathogenicity vs mechanism cross-family transfer | 0.85–0.90 vs 0.62–0.64 | `report_geometry.md` — **not paired**: different datasets, no shared row space |
 | Gene-split minus family-split gap | the leakage account (C2) | `report_classifier.md` — cross-partition pairing, resampled over families |
-
-The design these must implement — one shared resample per replicate applied to both arms, the
-shared-cluster restriction, family resampling for the split gap with the gene-resampled interval
-alongside as a sensitivity check, and the two pairing modes as separate code paths — is R7.3 of the
-pre-registration. Both modes are implemented, wired into the modules that need them, and asserted
-directly in `tests/utils/test_bootstrap.py` rather than only checked for returning an interval.
 
 ### 0.5 / 0.6. Pre-registered decision rules ✅
 
@@ -286,24 +252,22 @@ command retries exactly those.
 | 7 | `fetch_alphamissense_mechanism` | `alphamissense_scores_full.json` | ✅ 2026-08-12 |
 | 8 | `build_valid_variants` | `valid_variants.json` | ✅ 2026-08-12 |
 
-**Results:** gerasimavicius 10,233 variants / 948 genes. ClinVar 48,152 rows / 2,115 genes. Merged
-`variants.json`: 17,865 variants, 1,937 genes (gerasimavicius=10,233, clinvar_g2p=7,632). Sequences
-fetched for 1,935 genes. Pfam: 1,913/1,937 genes annotated, 24 unannotated. AlphaMissense matched
-17,765 variants. `valid_variants.json`: 17,770 rows.
+**Results:**
 
-**WT-mismatch check flagged 9 genes in the gerasimavicius set (2026-08-12).** The stored
-wild-type residue at the variant position does not match the sequence on file for: MEN1 (38/47
-variants mismatched), CYP21A2 (34/37), and to a lesser extent SHANK3, TUFM, TPI1, ARID1B, FDX2,
-AGT, TRPC3. MEN1 and CYP21A2 account for most of the mismatched variants. For those two, the
-likely cause is that the stored sequence is the wrong transcript isoform — both genes have
-multiple annotated isoforms, which is the exact case the WT-check exists to catch. Not yet
-root-caused for the other seven genes. `build_valid_variants` drops these variants (WT mismatch
-fails `apply_missense`, counted under `skipped_invalid`), so they do not reach the embeddings —
-the cost is coverage, not silent contamination: MEN1 and CYP21A2 lose most of their variants and
-effectively drop out of any per-gene analysis until the isoform mapping is fixed at the
-sequence-fetch step.
+| Stage | Count |
+|---|---|
+| Gerasimavicius | 10,233 variants / 948 genes |
+| ClinVar | 48,152 rows / 2,115 genes |
+| Merged `variants.json` | 17,865 variants, 1,937 genes (gerasimavicius=10,233, clinvar_g2p=7,632) |
+| Sequences fetched | 1,935 genes |
+| Pfam | 1,913/1,937 genes annotated, 24 unannotated |
+| AlphaMissense matched | 17,765 variants |
+| `valid_variants.json` | 17,770 rows |
 
-### Step 2 — embed variants (GPU) ⬜
+**WT-mismatch check flagged 9 genes in the gerasimavicius set (2026-08-12).** Details:
+[`FINDINGS.md`](../docs/FINDINGS.md#wt-mismatch-check-flagged-9-genes-in-the-gerasimavicius-set-2026-08-12).
+
+### Step 2 — embed variants (GPU) ✅ 2026-08-12
 
 **Re-extracted in run_biorxiv** (see *Which embeddings are re-extracted*) — the run6 arrays are aligned
 to the pre-refresh variant list and cannot be reused.
@@ -313,18 +277,24 @@ python -m esm2_mech.embeddings.embed_variants --model esm2_t33_650M_UR50D
 ```
 
 **Output:** `data/embeddings/<ESM2_MODEL>/embeddings_{wt,mut}_{mean,pos}.npy` and
-`embedded_variants.json`. Verify before proceeding: all four `.npy` arrays have the same row count,
-that count equals the number of rows in `embedded_variants.json`, and the width is 1280.
+`embedded_variants.json`. Verified: all four `.npy` arrays are (17770, 1280), matching the 17,770
+rows in both `embedded_variants.json` and `valid_variants.json`, and row-aligned to
+`valid_variants.json` (checked by gene/uniprot_id/position/wt/mut at rows 0, 100, 5000, 17769).
 
 ### Step 3 — run analysis ⬜
 
-| Command | Outputs | Status |
-|---|---|---|
-| `python -m esm2_mech.experiments.mechanism.classify_by_mechanism --seeds 5` | `results/<run>/family_split_baselines_seed{0..4}.json`, `aggregate.json` | ⬜ |
-| `python -m esm2_mech.experiments.mechanism.mlp --seeds 5` | `results/<run>/nonlinear_results_seed{0..4}.json` | ⬜ |
-| `python -m esm2_mech.experiments.mechanism.family_clustering --seeds 5` | `results/<run>/family_clustering.json` | ⬜ |
-| `python -m esm2_mech.experiments.mechanism.naive_baseline` | `results/<run>/naive_baseline.json` — the measured chance floor | ⬜ |
-| `python -m esm2_mech.experiments.mechanism.leakage_fraction` | `results/<run>/leakage_fraction.json` | ⬜ |
+- ⬜ **linear probe, gene- vs family-split, 5 seeds** — `classify_by_mechanism --seeds 5` →
+  `results/<run>/family_split_baselines_seed{0..4}.json`, `aggregate.json`
+- ⬜ **nonlinear (MLP) probe, same splits** — `mlp --seeds 5` →
+  `results/<run>/nonlinear_results_seed{0..4}.json`
+- ⬜ **k-NN family-purity check** — `family_clustering --seeds 5` →
+  `results/<run>/family_clustering.json`
+- ⬜ **majority-class baseline** — `naive_baseline` →
+  `results/<run>/naive_baseline.json` — the measured chance floor
+- ⬜ **gene-vs-family score ratio from the above** — `leakage_fraction` →
+  `results/<run>/leakage_fraction.json`
+
+(All run as `python -m esm2_mech.experiments.mechanism.<name>`.)
 
 `family_clustering` gains `--seeds` in run_biorxiv: run6 reported the family-probe accuracy at seed 0
 only, and `STATS_PLAN.md` requires a spread to match the other reports.
@@ -350,17 +320,10 @@ per-seed probe time by N and belongs in its own tmux window.
 python -m esm2_mech.experiments.mechanism.classify_by_mechanism --seeds 1 --n_permutations 1000
 ```
 
-**The two headline features run different tests** (R7.5, amended 2026-08-12). `wt_only_mean` refits
-per permutation and scores macro-F1. `delta_mean` scores macro one-vs-rest AUROC against the cached
-out-of-fold predictions and refits nothing, because macro-F1 cannot fire for a probe sitting at the
-floor — it predicts the majority class almost everywhere regardless of what the ranking holds, and
-run6 measured it *below* its own shuffled-label mean at p = 1.0. Both tests permute at the family
-level, swapping whole families' label blocks, because both score a family-split metric and the
-permutation unit has to match what the interval clusters on — run6's gene-level shuffle broke the
-label structure homologous genes share and built too tight a null. The pre-registration carries the
-reasoning and the one thing that must reach the reports: the two p-values come from different nulls,
-and each report says which. The emitted result records the statistic, the null type, the permutation
-unit, the null's width, and how many families had no same-size partner to swap with.
+**The two headline features run different tests** (R7.5, amended 2026-08-12). Design and rationale:
+[`FINDINGS.md`](../docs/FINDINGS.md#permutation-tests). run6 measured `wt_only_mean`
+*below* its own shuffled-label mean at p = 1.0, using a gene-level shuffle that built too tight a
+null — run_biorxiv permutes at the family level instead.
 
 **Seed 0 only, deliberately.** A permutation test constructs its own null by shuffling labels, so
 running it across 5 seeds mostly re-measures the fold jitter run_biorxiv exists to replace. Cuts the
@@ -520,17 +483,8 @@ Machinery exists for all of these; none was implemented in run6.
   2026-08-11** in `utils/metrics.py` (`imbalance_metrics`, and the per-class keys emitted by
   `compute_metrics` and `add_flat_class_metrics`), `utils/probes.py` for the binary path, and
   `utils/bootstrap.py`, which now emits an `auprc_<cls>` CI beside every `auroc_<cls>` one. Every
-  probe on the result path picks these up without a per-module change.
-
-  How the numbers are defined, since the reports must explain them: AUPRC's no-signal value is the
-  class prevalence, not 0.5, so the prevalence is emitted next to it as its baseline — with its own
-  interval, and with an interval on the gap between the two computed within each resample, since a
-  fixed baseline under a moving AUPRC is the misreading the pair exists to prevent. The gap is the
-  number to read for "better than no signal". PPV and NPV
-  are read at the prevalence-matched operating point — the top `prevalence × n` scores are called
-  positive, so the predicted positive rate equals the observed one. That point needs only the
-  ranking, not calibrated probabilities, which is what makes it reportable for an uncalibrated
-  probe.
+  probe on the result path picks these up without a per-module change. Metric definitions:
+  [`FINDINGS.md`](../docs/FINDINGS.md#auprc-ppv-and-npv-for-rare-classes).
 
 - ⬜ **Calibration note in every probe report** — the probes are uncalibrated and measure
   discrimination only, not risk. State it rather than fix it; the claims are about
