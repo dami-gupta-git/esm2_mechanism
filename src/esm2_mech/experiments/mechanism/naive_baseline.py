@@ -99,15 +99,15 @@ def _mean_std(values):
     return float(np.mean(vals)), float(np.std(vals))
 
 
-def evaluate(strategy, split_name, labels, genes, pfam_map):
-    """Mean ± std across N_SEEDS for one (strategy, split) cell."""
+def evaluate(strategy, split_name, labels, genes, pfam_map, n_seeds=N_SEEDS, n_folds=N_FOLDS):
+    """Mean ± std across n_seeds for one (strategy, split) cell."""
     per_seed_macro: list[float] = []
     per_seed_auroc: dict[str, list[float]] = {c: [] for c in MECHANISM_CLASSES}
-    for seed in range(N_SEEDS):
+    for seed in range(n_seeds):
         if split_name == "gene":
-            splits = gene_split_cv(genes, n_folds=N_FOLDS, seed=seed)
+            splits = gene_split_cv(genes, n_folds=n_folds, seed=seed)
         else:
-            splits = family_split_cv(genes, pfam_map, n_folds=N_FOLDS, seed=seed)
+            splits = family_split_cv(genes, pfam_map, n_folds=n_folds, seed=seed)
         macro, auroc = _eval_dummy_one_seed(strategy, labels, splits, seed)
         per_seed_macro.append(macro)
         for cls in MECHANISM_CLASSES:
@@ -117,7 +117,7 @@ def evaluate(strategy, split_name, labels, genes, pfam_map):
     result = {
         "macro_f1_mean": macro_mean,
         "macro_f1_std": macro_std,
-        "n_seeds": N_SEEDS,
+        "n_seeds": n_seeds,
     }
     for cls in MECHANISM_CLASSES:
         mean, std = _mean_std(per_seed_auroc[cls])

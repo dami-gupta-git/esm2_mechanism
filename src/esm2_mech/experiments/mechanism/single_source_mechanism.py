@@ -64,16 +64,24 @@ from esm2_mech.utils.seed_aggregation import (
 print = functools.partial(print, flush=True)
 
 
-def compute_subset_floor(labels: np.ndarray, genes: np.ndarray) -> dict:
+def compute_subset_floor(
+    labels: np.ndarray, genes: np.ndarray, n_seeds: int, n_folds: int
+) -> dict:
     """Majority-class (most_frequent DummyClassifier) macro-F1 under gene- and family-split,
     recomputed on the subset because its class balance — and hence the floor — differs from
-    the merged set. Reuses naive_baseline.evaluate so the floor matches the report's method."""
+    the merged set. Reuses naive_baseline.evaluate so the floor matches the report's method.
+    n_seeds/n_folds must match the probe's --seeds/--n_folds so the floor and the probe it's
+    compared against use the same CV setup."""
     with open(PFAM_JSON) as handle:
         pfam_map = json.load(handle)
     floor = {
         "class_distribution": {k: int(v) for k, v in Counter(labels).items()},
-        "gene_split": eval_naive("most_frequent", "gene", labels, genes, pfam_map),
-        "family_split": eval_naive("most_frequent", "family", labels, genes, pfam_map),
+        "gene_split": eval_naive(
+            "most_frequent", "gene", labels, genes, pfam_map, n_seeds=n_seeds, n_folds=n_folds
+        ),
+        "family_split": eval_naive(
+            "most_frequent", "family", labels, genes, pfam_map, n_seeds=n_seeds, n_folds=n_folds
+        ),
     }
     print(
         f"Subset majority-class floor: "
@@ -116,7 +124,9 @@ def main() -> None:
     subset = subset_data(data, mask)
 
     print("\n=== Subset majority-class floor ===")
-    floor = compute_subset_floor(subset["labels_3class"], subset["genes_arr"])
+    floor = compute_subset_floor(
+        subset["labels_3class"], subset["genes_arr"], n_seeds=args.seeds, n_folds=args.n_folds
+    )
     atomic_write_json(SINGLE_SOURCE_NAIVE_BASELINE_JSON, floor)
     print(f"Wrote {SINGLE_SOURCE_NAIVE_BASELINE_JSON}")
 
