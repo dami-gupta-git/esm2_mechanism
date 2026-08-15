@@ -12,6 +12,7 @@ Bugs already found in this codebase. Do not reintroduce them. Prefer an assertio
 - A bounds check or missing-file fallback that silently substitutes a plausible value instead of raising — this is how the row-index bug above went unnoticed for months.
 - A shared contract (helper, canonical file) changed but not every caller/test was updated. Grep all readers after any such change.
 - A `seed` argument that seeds numpy but not torch, so weight init/dropout/shuffling stay random and reported seed variance is meaningless.
+- A cache keyed on file existence alone, not on the parameters that produced the file — e.g. pathogenicity_control.py's per-seed probe cache skips recomputation whenever the seed file exists, without checking it was built with the current `compute_ci`/`n_boot`. Changing those flags between runs (say, adding CIs after a `--no_ci` run) silently reuses the old file and the result comes back missing data with no warning. Any cache check must compare a fingerprint of every parameter that affects the file's content, not just presence.
 
 ## Standing rules
 

@@ -147,6 +147,9 @@ The ClinVar fetch is the slowest step because it queries NCBI once per gene. Gen
 | 5 | `python -m esm2_mech.fetch_data.fetch_annotations --step pfam` | Fetch Pfam families | `variants.json` | `pfam_families.json` |
 | 6 | `python -m esm2_mech.fetch_data.fetch_alphamissense_mechanism` | Fetch AlphaMissense scores | `variants.json` | `alphamissense_scores_full.json` |
 | 7 | `python -m esm2_mech.fetch_data.build_valid_variants` | Build filtered variant list | `variants.json`, `cache/sequences.json` | `valid_variants.json` |
+| 8 | `python -m esm2_mech.fetch_data.fetch_pathogenicity_variants` | Fetch balanced pathogenic/benign ClinVar variants for Experiment 2 (separate from step 2's pathogenic-only fetch) | `variants.json` | `clinvar_pathogenicity_variants.json`, `clinvar_pathogenicity_variants.params.json` |
+
+Step 8 is network-only, so it runs locally rather than on the pod, unlike Experiment 2's embedding step below. It caches its output and only re-fetches if `--max_per_gene_per_class` (default 20) or `--fetch_seed` (default 42) change from what produced the cached file.
 
 ---
 
@@ -259,7 +262,48 @@ result isn't an artifact of merging two differently-curated datasets.
 
 ## Experiment 2 — pathogenicity positive control
 
-TBD
+Tests whether the same delta embeddings that show no mechanism signal in Experiment 1 can still
+tell pathogenic from benign ClinVar variants, confirming they carry usable signal at all. Pass
+criterion: `delta_mean` MLP AUROC ≥ 0.85.
+
+A small neural network (the MLP) is trained to look at a variant's embedding and guess whether it
+is disease-causing or harmless. AUROC is a score from 0.5 to 1 measuring how well it separates the
+two: 0.5 means no better than a coin flip, 1.0 means it always gets it right. The 0.85 threshold is
+set in advance — scoring at least that well is treated as proof the embeddings carry real
+biological signal, since Experiment 1 found mechanism prediction near chance.
+
+This experiment uses its own ClinVar pull, separate from Stage 2's. Stage 2's step 2 fetched
+pathogenic variants only, to label genes by mechanism; Stage 2's step 8
+(`fetch_pathogenicity_variants`) fetches benign variants too, in equal numbers to pathogenic ones
+per gene, to train a pathogenic-vs-benign classifier. Run Stage 2 step 8 before this experiment, if
+not already done — its output is this experiment's input.
+
+One script runs the remaining two phases in sequence: extracting ESM-2 embeddings for the fetched
+variants (GPU), then running the pathogenic-vs-benign probe (CPU). Because the first phase needs a
+GPU, this runs on the pod — copy `clinvar_pathogenicity_variants.json` there first, the same way
+Stage 3 copies its inputs to the pod before embedding:
+
+```bash
+scp -i ~/.ssh/id_runpod_2 -P <pod-port> data/clinvar_pathogenicity_variants.json root@<pod-ip>:/workspace/repo/data/
+python -m esm2_mech.experiments.pathogenicity.pathogenicity_control --model esm2_t33_650M_UR50D
+```
+
+| Command | Description | Inputs | Outputs |
+|---|---|---|---|
+| `python -m esm2_mech.experiments.pathogenicity.pathogenicity_control --model esm2_t33_650M_UR50D` | Embed the fetched pathogenicity variants, run the pathogenic-vs-benign probe | `clinvar_pathogenicity_variants.json`, `cache/sequences.json`, `pfam_families.json` | `data/embeddings/esm2_t33_650M_UR50D/pathogenicity_{wt,mut}_mean.npy`, `data/embeddings/esm2_t33_650M_UR50D/pathogenicity_meta.json`, `results/run_biorxiv/pathogenicity_control.json` |
+
+This script errors immediately if `clinvar_pathogenicity_variants.json` is missing, rather than
+fetching it itself — the fetch is Stage 2 step 8's job, run locally, so pod GPU time is never spent
+on network I/O.
+
+Classes here are balanced by construction (equal pathogenic and benign variants per gene), but
+genes still cluster into protein families, so confidence intervals resample whole genes rather
+than individual variants, the same as in Experiment 1. The resulting report should note that the
+probe measures how well it discriminates pathogenic from benign variants, not a calibrated risk
+estimate for any one variant.
+
+Copy the two embedding arrays and `results/run_biorxiv/pathogenicity_control.json` back to the
+local machine once the script finishes, the same way Stage 3's embeddings were copied back.
 
 ---
 

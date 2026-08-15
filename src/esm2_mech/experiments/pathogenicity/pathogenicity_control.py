@@ -1,34 +1,30 @@
 """
-Pathogenicity positive control — fetch, embed, and probe in one run.
+Pathogenicity positive control — embed and probe.
 
-This is the run-everything entry point for the result_6 control: the same ESM-2
-delta embeddings that classify GOF/DN/LOF at chance should predict ClinVar
+This is the pipeline-check for the result_6 control: the same ESM-2 delta
+embeddings that classify GOF/DN/LOF at chance should predict ClinVar
 pathogenic-vs-benign well (published ESM-2 work: AUROC 0.88–0.94). If they do,
 the mechanism null is a real absence of signal, not a broken pipeline; and the
 gene-split / family-split gap being ~0 shows the pathogenicity signal is
 per-variant biochemistry, not homology leakage.
 
-Three phases run in sequence (designed to run on RunPod, which has both CPU and
-GPU). Phase 1 caches its variant set (re-fetching if the fetch params change),
-Phase 2 skips extraction when the cached embeddings match by content, and
-Phase 3 always recomputes the probes (fast on CPU):
+Reads the variant set fetched by
+`esm2_mech.fetch_data.fetch_pathogenicity_variants` (run that first — this
+module errors if its output is missing) and runs two phases in sequence
+(designed to run on RunPod's GPU). Phase 1 skips extraction when the cached
+embeddings match by content, and Phase 2 always recomputes the probes (fast on
+CPU):
 
-  Phase 1 (CPU, network) — fetch_phase()
-      Download ClinVar variant_summary.txt.gz, keep balanced pathogenic/benign
-      missense variants in the Gerasimavicius gene set (≤ max_per_gene_per_class
-      each), restricted to the GRCh38 assembly (the only place a genome build is
-      selected — see CLINVAR_ASSEMBLY), attach UniProt IDs.
-      → data/clinvar_pathogenicity_variants.json
-
-  Phase 2 (GPU) — embed_phase()
+  Phase 1 (GPU) — embed_phase()
       Extract mean-pooled ESM-2 WT and mutant embeddings for those variants.
       → pathogenicity_{wt,mut}_mean.npy, pathogenicity_meta.json
 
-  Phase 3 (CPU) — probe_phase()
+  Phase 2 (CPU) — probe_phase()
       5-seed logreg + MLP probes on delta_mean and wt_only, under gene-split and
       family-split CV.  → results/<run>/pathogenicity_control.json
 
-  Inputs : data/variants.json, data/cache/sequences.json, data/pfam_families.json
+  Inputs : data/clinvar_pathogenicity_variants.json, data/cache/sequences.json,
+           data/pfam_families.json
   Output : results/<run>/pathogenicity_control.json (paths.PATHOGENICITY_CONTROL_JSON)
 
 Usage (on RunPod, inside tmux):
@@ -40,25 +36,19 @@ from __future__ import annotations
 
 import argparse
 import functools
-import gzip
-import io
 import json
-import re
-import urllib.request
-import zlib
-from collections import Counter, defaultdict
+from collections import defaultdict
 from pathlib import Path
 
 import numpy as np
 from joblib import Parallel, delayed
 
 from esm2_mech.utils.bootstrap import binary_auroc_cluster_bootstrap_ci, family_or_gene_clusters
-from esm2_mech.utils.constants import BOOTSTRAP_N_RESAMPLES, HTTP_USER_AGENT, N_SEEDS
-from esm2_mech.utils.data import load_variants, variants_fingerprint
+from esm2_mech.utils.constants import BOOTSTRAP_N_RESAMPLES, N_SEEDS
+from esm2_mech.utils.data import variants_fingerprint
 from esm2_mech.utils.embed import get_esm2_embeddings_for_pairs
 from esm2_mech.utils.io import atomic_write_json, save_npy
 from esm2_mech.utils.paths import (
-    CLINVAR_PATHOGENICITY_PARAMS_JSON,
     CLINVAR_PATHOGENICITY_VARIANTS_JSON,
     EMB_DIR,
     PATH_EMB_META,
@@ -69,7 +59,6 @@ from esm2_mech.utils.paths import (
     PFAM_JSON,
     RESULTS_DIR,
     SEQUENCES_JSON,
-    VARIANTS_JSON,
 )
 from esm2_mech.utils.probes import run_logreg_binary_cv, run_mlp_binary_cv
 from esm2_mech.utils.sequences import apply_missense, window_sequence
@@ -81,168 +70,25 @@ print = functools.partial(print, flush=True)
 # EMB_DIR, so this control runs on the 650M model only.
 ESM2_MODEL_650M = "esm2_t33_650M_UR50D"
 
-CLINVAR_URL = (
-    "https://ftp.ncbi.nlm.nih.gov/pub/clinvar/tab_delimited/variant_summary.txt.gz"
-)
 
-# variant_summary.txt.gz lists each variant once per genome assembly (GRCh37 and
-# GRCh38). Restrict to GRCh38 — the current standard build — so the same variant
-# is not counted twice. This is the only place in the pipeline a genome build is
-# selected; all other variant data is handled in protein coordinates (UniProt
-# position + amino acid), which are assembly-independent.
-CLINVAR_ASSEMBLY = "GRCh38"
+def load_fetched_variants():
+    """Load the variant set fetch_pathogenicity_variants.py already wrote.
 
-AA3 = {
-    "Ala": "A", "Arg": "R", "Asn": "N", "Asp": "D", "Cys": "C",
-    "Gln": "Q", "Glu": "E", "Gly": "G", "His": "H", "Ile": "I",
-    "Leu": "L", "Lys": "K", "Met": "M", "Phe": "F", "Pro": "P",
-    "Ser": "S", "Thr": "T", "Trp": "W", "Tyr": "Y", "Val": "V",
-}
-HGVSP_PAT = re.compile(r"p\.([A-Z][a-z]{2})(\d+)([A-Z][a-z]{2})(?=[^a-zA-Z]|$)")
+    Does not fetch: this module runs on the pod, where a re-fetch would spend
+    GPU-billed time on network I/O. Run the fetch script locally first.
+    """
+    if not CLINVAR_PATHOGENICITY_VARIANTS_JSON.exists():
+        raise FileNotFoundError(
+            f"{CLINVAR_PATHOGENICITY_VARIANTS_JSON} not found. Run "
+            "`python -m esm2_mech.fetch_data.fetch_pathogenicity_variants` first "
+            "(locally — it's network-only, no GPU needed) and copy its output here."
+        )
+    with open(CLINVAR_PATHOGENICITY_VARIANTS_JSON) as f:
+        return json.load(f)
 
 
 # ===========================================================================
-# Phase 1 — fetch ClinVar pathogenic/benign variants
-# ===========================================================================
-def _fetch_clinvar(target_genes, max_per_gene_per_class, seed):
-    """Download and filter ClinVar to balanced P/B missense variants."""
-    print("  Downloading ClinVar variant_summary.txt.gz (~150 MB compressed) ...")
-    req = urllib.request.Request(CLINVAR_URL, headers={"User-Agent": HTTP_USER_AGENT})
-    with urllib.request.urlopen(req, timeout=600) as resp:
-        raw = resp.read()
-
-    print(f"  Downloaded {len(raw) / 1e6:.0f} MB, decompressing ...")
-    gz = gzip.GzipFile(fileobj=io.BytesIO(raw))
-    text = io.TextIOWrapper(gz, encoding="utf-8", errors="replace")
-    header = text.readline().rstrip("\n").split("\t")
-    col = {(h[1:] if h.startswith("#") else h): i for i, h in enumerate(header)}
-    needed = ["Type", "GeneSymbol", "ClinicalSignificance", "Name", "VariationID", "Assembly"]
-    for c in needed:
-        if c not in col:
-            raise RuntimeError(f"Missing ClinVar column: {c}")
-    max_needed_idx = max(col[c] for c in needed)
-
-    target_set = set(target_genes)
-    by_gene_class = defaultdict(list)
-    n_seen = 0
-    try:
-        for line in text:
-            n_seen += 1
-            parts = line.rstrip("\n").split("\t")
-            # Only the read columns need to be present; guard their max index,
-            # not the full header width (trailing empty fields may be omitted).
-            if len(parts) <= max_needed_idx:
-                continue
-            if parts[col["Type"]] != "single nucleotide variant":
-                continue
-            if parts[col["Assembly"]] != CLINVAR_ASSEMBLY:
-                continue
-            gene = parts[col["GeneSymbol"]].upper()
-            if gene not in target_set:
-                continue
-            sig_low = parts[col["ClinicalSignificance"]].strip().lower()
-            if any(s in sig_low for s in ["conflict", "uncertain", "not provided", "other", "no assertion"]):
-                continue
-            if "pathogenic" in sig_low and "non-pathogenic" not in sig_low:
-                label = "pathogenic"
-            elif "benign" in sig_low:
-                label = "benign"
-            else:
-                continue
-            m = HGVSP_PAT.search(parts[col["Name"]])
-            if not m:
-                continue
-            wt3, pos_s, mut3 = m.groups()
-            if wt3 not in AA3 or mut3 not in AA3 or wt3 == mut3:
-                continue
-            by_gene_class[(gene, label)].append({
-                "gene": gene,
-                "aa_pos": int(pos_s),
-                "aa_wt": AA3[wt3],
-                "aa_mut": AA3[mut3],
-                "label": label,
-                "clinvar_id": parts[col["VariationID"]],
-            })
-    except (EOFError, gzip.BadGzipFile, zlib.error) as exc:
-        # A truncated download decompresses partway then fails. Do NOT return a
-        # partial result that the caller would cache as success.
-        raise RuntimeError(
-            f"ClinVar download appears truncated after {n_seen} rows ({exc}). "
-            "Re-run to retry; nothing was cached."
-        ) from exc
-
-    print(f"  Scanned {n_seen} ClinVar rows; matched {sum(len(v) for v in by_gene_class.values())} variants")
-
-    rng = np.random.RandomState(seed)
-    chosen = []
-    for lst in by_gene_class.values():
-        rng.shuffle(lst)
-        chosen.extend(lst[:max_per_gene_per_class])
-    return chosen
-
-
-def _attach_uniprot_ids(variants, mechanism_variants):
-    gene_to_uid = {
-        v["gene"].upper(): v["uniprot_id"]
-        for v in mechanism_variants
-        if v.get("gene") and v.get("uniprot_id")
-    }
-    out = []
-    for v in variants:
-        uid = gene_to_uid.get(v["gene"].upper())
-        if uid:
-            v["uniprot_id"] = uid
-            out.append(v)
-    print(f"  {len(out)}/{len(variants)} variants mapped to a UniProt ID")
-    return out
-
-
-def fetch_phase(max_per_gene_per_class=20, seed=42):
-    """Phase 1. Returns the variant list; caches to CLINVAR_PATHOGENICITY_VARIANTS_JSON."""
-    print("=== Phase 1: fetch ClinVar pathogenic/benign variants ===")
-    params = {"max_per_gene_per_class": max_per_gene_per_class, "seed": seed}
-    if CLINVAR_PATHOGENICITY_VARIANTS_JSON.exists():
-        cached_params = None
-        if CLINVAR_PATHOGENICITY_PARAMS_JSON.exists():
-            try:
-                with open(CLINVAR_PATHOGENICITY_PARAMS_JSON) as f:
-                    cached_params = json.load(f)
-            except json.JSONDecodeError:
-                cached_params = None
-        if cached_params != params:
-            print(
-                f"  Cache was built with {cached_params}, current params {params} — re-fetching"
-            )
-        else:
-            try:
-                with open(CLINVAR_PATHOGENICITY_VARIANTS_JSON) as f:
-                    cached = json.load(f)
-                print(f"  Loaded cached set: {len(cached)} variants ({Counter(v['label'] for v in cached)})")
-                return cached
-            except json.JSONDecodeError:
-                print("  WARNING: corrupt cache — re-fetching")
-
-    # Merged mechanism variants (Gerasimavicius + G2P) — defines the target gene set
-    # and the gene→UniProt map for the ClinVar pathogenicity fetch.
-    mechanism_variants = load_variants(VARIANTS_JSON)
-    target_genes = sorted({v["gene"].upper() for v in mechanism_variants if v.get("gene")})
-    print(f"  Target gene set: {len(target_genes)} genes")
-
-    variants = _fetch_clinvar(target_genes, max_per_gene_per_class, seed)
-    variants = _attach_uniprot_ids(variants, mechanism_variants)
-    print(
-        f"  Final set: {len(variants)} variants ({Counter(v['label'] for v in variants)}), "
-        f"{len({v['gene'] for v in variants})} genes"
-    )
-
-    CLINVAR_PATHOGENICITY_VARIANTS_JSON.parent.mkdir(parents=True, exist_ok=True)
-    atomic_write_json(CLINVAR_PATHOGENICITY_VARIANTS_JSON, variants)
-    atomic_write_json(CLINVAR_PATHOGENICITY_PARAMS_JSON, params)
-    return variants
-
-
-# ===========================================================================
-# Phase 2 — extract ESM-2 embeddings
+# Phase 1 — extract ESM-2 embeddings
 # ===========================================================================
 def _build_valid_pairs_indexed(variants, seq_cache):
     """Filter to embeddable variants; return original indices for re-alignment."""
@@ -296,8 +142,8 @@ def _embeddings_complete(valid_fingerprint, n_valid):
 
 
 def embed_phase(variants, model, batch_size):
-    """Phase 2. Extract and cache pathogenicity embeddings (GPU)."""
-    print("\n=== Phase 2: extract ESM-2 embeddings ===")
+    """Phase 1. Extract and cache pathogenicity embeddings (GPU)."""
+    print("\n=== Phase 1: extract ESM-2 embeddings ===")
     with open(SEQUENCES_JSON) as f:
         seq_cache = json.load(f)
 
@@ -338,11 +184,11 @@ def embed_phase(variants, model, batch_size):
 
 
 # ===========================================================================
-# Phase 3 — 5-seed probes
+# Phase 2 — 5-seed probes
 # ===========================================================================
 def probe_phase(variants, n_seeds, n_jobs=-1, compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES):
-    """Phase 3. 5-seed logreg + MLP probes on delta_mean and wt_only."""
-    print("\n=== Phase 3: probes ===")
+    """Phase 2. 5-seed logreg + MLP probes on delta_mean and wt_only."""
+    print("\n=== Phase 2: probes ===")
     with open(PATH_EMB_META) as f:
         meta = json.load(f)
     wt_mean = np.load(PATH_EMB_WT_MEAN)
@@ -382,11 +228,27 @@ def probe_phase(variants, n_seeds, n_jobs=-1, compute_ci=True, n_boot=BOOTSTRAP_
     # Run one seed at a time, writing that seed's per-cell AUROCs to its own file
     # as it completes (resume + progress visibility). Within a seed the 8 cells
     # (2 features x 2 probes x 2 splits) are independent, so they run in parallel.
+    # Cache freshness is keyed on more than existence: a seed file built with
+    # --no_ci (or a different --n_boot) looks complete on disk but is missing
+    # CIs a later CI-on run needs, so the params that produced each file are
+    # stored alongside it and checked before treating it as reusable.
+    seed_params = {"compute_ci": compute_ci, "n_boot": n_boot if compute_ci else None}
     for seed in range(n_seeds):
         seed_path = Path(PATHOGENICITY_CONTROL_SEED_JSON.format(seed=seed))
         if seed_path.exists():
-            print(f"  seed {seed}: cached, skipping")
-            continue
+            cached_seed_params = None
+            try:
+                with open(seed_path) as f:
+                    cached_seed_params = json.load(f).get("_params")
+            except json.JSONDecodeError:
+                pass
+            if cached_seed_params == seed_params:
+                print(f"  seed {seed}: cached, skipping")
+                continue
+            print(
+                f"  seed {seed}: cache built with {cached_seed_params}, "
+                f"current params {seed_params} — recomputing"
+            )
 
         gs = gene_split_cv(genes, seed=seed)
         fs = family_split_cv(genes, pfam_map, seed=seed)
@@ -424,7 +286,7 @@ def probe_phase(variants, n_seeds, n_jobs=-1, compute_ci=True, n_boot=BOOTSTRAP_
         # Keep NaN (undefined AUROC: a cell with no valid fold) out of the JSON.
         # json.dump emits the bare token `NaN`, which is invalid JSON; store null
         # so absent data round-trips as None.
-        seed_result = {}
+        seed_result = {"_params": seed_params}
         for fname, pname, split_name, auroc, ci in outcomes:
             key = f"{fname}_{pname}_{split_name}"
             seed_result[key] = None if np.isnan(auroc) else auroc
@@ -451,6 +313,8 @@ def probe_phase(variants, n_seeds, n_jobs=-1, compute_ci=True, n_boot=BOOTSTRAP_
             seed_path.unlink()
             raise
         for key, value in seed_result.items():
+            if key == "_params":
+                continue
             if key.endswith("_ci"):
                 if seed == 0:
                     seed0_ci[key[: -len("_ci")]] = value
@@ -529,8 +393,6 @@ def main():
     parser.add_argument("--model", default=ESM2_MODEL_650M, choices=[ESM2_MODEL_650M])
     parser.add_argument("--batch_size", type=int, default=32)
     parser.add_argument("--seeds", type=int, default=N_SEEDS, help="number of probe seeds (>=1)")
-    parser.add_argument("--max_per_gene_per_class", type=int, default=20)
-    parser.add_argument("--fetch_seed", type=int, default=42)
     parser.add_argument("--n_jobs", type=int, default=-1, help="parallel jobs for probes (-1 = all cores)")
     parser.add_argument("--no_ci", action="store_true", help="skip cluster-bootstrap CIs")
     parser.add_argument("--n_boot", type=int, default=BOOTSTRAP_N_RESAMPLES)
@@ -539,9 +401,7 @@ def main():
     if args.seeds < 1:
         parser.error("--seeds must be >= 1")
 
-    variants = fetch_phase(
-        max_per_gene_per_class=args.max_per_gene_per_class, seed=args.fetch_seed
-    )
+    variants = load_fetched_variants()
     embed_phase(variants, model=args.model, batch_size=args.batch_size)
     results = probe_phase(
         variants, n_seeds=args.seeds, n_jobs=args.n_jobs,
