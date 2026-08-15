@@ -50,9 +50,10 @@ from sklearn.neural_network import MLPClassifier
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.preprocessing import StandardScaler
 from esm2_mech.utils.splits import family_split_indices
-from esm2_mech.utils.constants import MECHANISM_CLASSES
+from esm2_mech.utils.constants import MECHANISM_CLASSES, BOOTSTRAP_N_RESAMPLES
 from esm2_mech.utils.metrics import compute_metrics, mean_std_n, align_proba
 from esm2_mech.utils.probes import run_mlp_cv, run_logreg_cv, run_histgb_cv
+from esm2_mech.utils.bootstrap import bootstrap_mechanism_metrics
 from esm2_mech.utils.data import build_gene_to_row, observed_rows_mask
 from esm2_mech.utils.io import load_variants_and_delta
 from esm2_mech.utils.paths import (
@@ -273,6 +274,24 @@ def aggregate_fold_results(fold_list: list[dict]) -> dict:
 # ---------------------------------------------------------------------------
 
 
+def _attach_ci(agg: dict, oof: dict | None, compute_ci: bool, n_boot: int, seed: int) -> dict:
+    """Attach a cluster-bootstrap CI, resampling whatever unit `oof["genes"]` holds.
+
+    Every caller here passes the actual resampling unit as the `genes` argument
+    to run_mlp_cv/run_logreg_cv/run_histgb_cv — the Pfam family id for a
+    family-split arm, the real gene id for the gene-split leakage diagnostic —
+    so oof["genes"] already IS the cluster array (R7.3: family-split resamples
+    families, not genes). No further mapping through a pfam_map is needed here,
+    unlike mechanism_delta_family_split.py, which handles both split schemes in
+    one function and must derive clusters from raw gene ids each time.
+    """
+    if compute_ci and oof is not None:
+        agg["ci"] = bootstrap_mechanism_metrics(
+            oof["y_true"], oof["proba"], oof["genes"], n_resamples=n_boot, seed=seed,
+        )
+    return agg
+
+
 def run_family_split_mlp(
     X: np.ndarray,
     y: np.ndarray,
@@ -281,9 +300,15 @@ def run_family_split_mlp(
     n_folds: int,
     seed: int,
     label: str,
+    compute_ci: bool = True,
+    n_boot: int = BOOTSTRAP_N_RESAMPLES,
 ) -> dict:
     splits = list(family_split_indices(groups, n_folds, seed))
-    return run_mlp_cv(X, y, splits, hidden=hidden_layer_sizes, seed=seed, label=label)
+    agg, oof = run_mlp_cv(
+        X, y, splits, hidden=hidden_layer_sizes, seed=seed, genes=groups, label=label,
+        return_oof=True,
+    )
+    return _attach_ci(agg, oof, compute_ci, n_boot, seed)
 
 
 def run_family_split_logreg(
@@ -293,9 +318,12 @@ def run_family_split_logreg(
     n_folds: int,
     seed: int,
     label: str,
+    compute_ci: bool = True,
+    n_boot: int = BOOTSTRAP_N_RESAMPLES,
 ) -> dict:
     splits = list(family_split_indices(groups, n_folds, seed))
-    return run_logreg_cv(X, y, splits, seed=seed, label=label)
+    agg, oof = run_logreg_cv(X, y, splits, seed=seed, genes=groups, label=label, return_oof=True)
+    return _attach_ci(agg, oof, compute_ci, n_boot, seed)
 
 
 def run_family_split_histgb(
@@ -305,11 +333,14 @@ def run_family_split_histgb(
     n_folds: int,
     seed: int,
     label: str,
+    compute_ci: bool = True,
+    n_boot: int = BOOTSTRAP_N_RESAMPLES,
 ) -> dict:
     """NaN-native family-split CV — for any arm whose matrix includes the
     proteome block, alone or concatenated with the ESM-2 delta."""
     splits = list(family_split_indices(groups, n_folds, seed))
-    return run_histgb_cv(X, y, splits, seed=seed, label=label)
+    agg, oof = run_histgb_cv(X, y, splits, seed=seed, genes=groups, label=label, return_oof=True)
+    return _attach_ci(agg, oof, compute_ci, n_boot, seed)
 
 
 def run_observed_subset_arm(
@@ -320,6 +351,8 @@ def run_observed_subset_arm(
     seed: int,
     label: str,
     runner,
+    compute_ci: bool = True,
+    n_boot: int = BOOTSTRAP_N_RESAMPLES,
     **runner_kwargs,
 ) -> dict:
     """Run `runner` on the fully-observed rows of X, with folds recomputed there.
@@ -338,14 +371,17 @@ def run_observed_subset_arm(
             "n_observed": n_obs,
             "n_total": int(len(X)),
         }
-    splits = list(family_split_indices(groups[observed], n_folds, seed))
-    result = runner(
-        X[observed], y[observed], splits, seed=seed, label=label, **runner_kwargs
+    groups_obs = groups[observed]
+    splits = list(family_split_indices(groups_obs, n_folds, seed))
+    agg, oof = runner(
+        X[observed], y[observed], splits, seed=seed, genes=groups_obs, label=label,
+        return_oof=True, **runner_kwargs,
     )
-    result["n_observed"] = n_obs
-    result["n_total"] = int(len(X))
-    result["frac_observed"] = float(n_obs / len(X))
-    return result
+    agg = _attach_ci(agg, oof, compute_ci, n_boot, seed)
+    agg["n_observed"] = n_obs
+    agg["n_total"] = int(len(X))
+    agg["frac_observed"] = float(n_obs / len(X))
+    return agg
 
 
 # ---------------------------------------------------------------------------
@@ -360,11 +396,14 @@ def run_family_split_lgbm(
     n_folds: int,
     seed: int,
     label: str,
+    compute_ci: bool = True,
+    n_boot: int = BOOTSTRAP_N_RESAMPLES,
 ) -> dict:
     """5-fold family-split CV with LightGBM multiclass classifier."""
     import lightgbm as lgb
 
     fold_results = []
+    oof_y, oof_proba, oof_groups = [], [], []
 
     for fold_i, (train_idx, test_idx) in enumerate(
         family_split_indices(groups, n_folds, seed)
@@ -402,6 +441,9 @@ def run_family_split_lgbm(
 
         fm = compute_metrics(y_te, pred, proba_aligned)
         fold_results.append(fm)
+        oof_y.append(y_te)
+        oof_proba.append(proba_aligned)
+        oof_groups.append(groups[test_idx])
         print(
             f"    [{label}] Fold {fold_i+1}: macro_f1={fm['macro_f1']:.3f}  "
             + "  ".join(
@@ -414,7 +456,12 @@ def run_family_split_lgbm(
             )
         )
 
-    return aggregate_fold_results(fold_results)
+    agg = aggregate_fold_results(fold_results)
+    oof = (
+        {"y_true": np.concatenate(oof_y), "proba": np.concatenate(oof_proba), "genes": np.concatenate(oof_groups)}
+        if oof_y else None
+    )
+    return _attach_ci(agg, oof, compute_ci, n_boot, seed)
 
 
 # ---------------------------------------------------------------------------
@@ -430,11 +477,18 @@ def run_gene_split_histgb(
     seed: int,
     label: str,
     pfam_map: dict | None = None,
+    compute_ci: bool = True,
+    n_boot: int = BOOTSTRAP_N_RESAMPLES,
 ) -> dict:
     """NaN-native gene-split CV — the leakage-diagnostic counterpart to
-    run_family_split_histgb, for matrices that include the proteome block."""
+    run_family_split_histgb, for matrices that include the proteome block.
+
+    CI resamples genes (not families): this is the gene-split arm, and R7.3's
+    unit is whatever the split scheme actually holds out.
+    """
     splits = list(gene_split_indices(genes, n_folds, seed, pfam_map=pfam_map))
-    return run_histgb_cv(X, y, splits, seed=seed, label=label)
+    agg, oof = run_histgb_cv(X, y, splits, seed=seed, genes=genes, label=label, return_oof=True)
+    return _attach_ci(agg, oof, compute_ci, n_boot, seed)
 
 
 # ---------------------------------------------------------------------------
@@ -619,7 +673,7 @@ def run_knn_v4(
     y_train: np.ndarray,
     y_test: np.ndarray,
     k: int = 10,
-) -> dict:
+) -> tuple[dict, np.ndarray]:
     k_eff = min(k, len(Z_train) - 1)
     knn = KNeighborsClassifier(n_neighbors=k_eff, metric="cosine")
     knn.fit(Z_train, y_train)
@@ -627,7 +681,7 @@ def run_knn_v4(
 
     proba_aligned = align_proba(knn.predict_proba(Z_test), knn.classes_, CLASSES)
 
-    return compute_metrics(y_test, pred, proba_aligned)
+    return compute_metrics(y_test, pred, proba_aligned), proba_aligned
 
 
 def run_v4_family_split(
@@ -641,12 +695,15 @@ def run_v4_family_split(
     n_epochs: int = 30,
     lr: float = 1e-3,
     max_triplets: int = 2000,
+    compute_ci: bool = True,
+    n_boot: int = BOOTSTRAP_N_RESAMPLES,
 ) -> dict:
     """
     V4: contrastive projection head + k-NN under family-split CV.
     Uses the same fold splits as V1–V3 (family_split_indices).
     """
     fold_results = []
+    oof_y, oof_proba, oof_groups = [], [], []
 
     for fold_i, (train_idx, test_idx) in enumerate(
         family_split_indices(groups, n_folds, seed)
@@ -674,8 +731,11 @@ def run_v4_family_split(
         )
         Z_te = project_v4(proj, X_te, mu, std)
 
-        fm = run_knn_v4(Z_tr, Z_te, y_tr, y_te, k=10)
+        fm, proba_aligned = run_knn_v4(Z_tr, Z_te, y_tr, y_te, k=10)
         fold_results.append(fm)
+        oof_y.append(y_te)
+        oof_proba.append(proba_aligned)
+        oof_groups.append(groups[test_idx])
         print(
             f"    [V4] Fold {fold_i+1}: macro_f1={fm['macro_f1']:.3f}  "
             + "  ".join(
@@ -688,12 +748,24 @@ def run_v4_family_split(
             )
         )
 
-    return aggregate_fold_results(fold_results)
+    agg = aggregate_fold_results(fold_results)
+    oof = (
+        {"y_true": np.concatenate(oof_y), "proba": np.concatenate(oof_proba), "genes": np.concatenate(oof_groups)}
+        if oof_y else None
+    )
+    return _attach_ci(agg, oof, compute_ci, n_boot, seed)
 
 
 # ---------------------------------------------------------------------------
 # Single-seed runner
 # ---------------------------------------------------------------------------
+
+
+def _fmt_ci(agg: dict) -> str:
+    ci = agg.get("ci", {}).get("macro_f1")
+    if not ci or ci.get("ci_suppressed"):
+        return ""
+    return f"  CI=[{ci['ci_low']:.4f}, {ci['ci_high']:.4f}] ({ci['n_clusters']} clusters)"
 
 
 def run_seed(
@@ -705,6 +777,8 @@ def run_seed(
     delta: np.ndarray,
     X_prot: np.ndarray,
     pfam_map: dict[str, str],
+    compute_ci: bool = True,
+    n_boot: int = BOOTSTRAP_N_RESAMPLES,
 ) -> dict:
     print(f"\n{'='*60}")
     print(f"SEED {seed}")
@@ -762,11 +836,14 @@ def run_seed(
         n_folds=n_folds,
         seed=seed,
         label="V1",
+        compute_ci=compute_ci,
+        n_boot=n_boot,
     )
     results["V1_family_split"] = v1_res
     v1_f1 = v1_res.get("macro_f1_mean", float("nan"))
     print(
         f"  V1 family-split macro-F1 = {v1_f1:.4f} ± {v1_res.get('macro_f1_std', float('nan')):.4f}"
+        + _fmt_ci(v1_res)
     )
 
     # ------------------------------------------------------------------
@@ -789,6 +866,8 @@ def run_seed(
         n_folds=n_folds,
         seed=seed,
         label="V2-LGBM",
+        compute_ci=compute_ci,
+        n_boot=n_boot,
     )
     results["V2_lgbm_family_split"] = v2_lgbm_res
 
@@ -800,6 +879,8 @@ def run_seed(
         seed=seed,
         label="V2-LR-observed",
         runner=run_logreg_cv,
+        compute_ci=compute_ci,
+        n_boot=n_boot,
     )
     results["V2_logreg_observed_subset"] = v2_logreg_obs_res
 
@@ -812,6 +893,8 @@ def run_seed(
         seed=seed,
         label="V2-HistGB-observed",
         runner=run_histgb_cv,
+        compute_ci=compute_ci,
+        n_boot=n_boot,
     )
     results["V2_histgb_observed_subset"] = v2_histgb_obs_res
 
@@ -822,7 +905,10 @@ def run_seed(
     v2_f1_raw = v2_lgbm_res.get("macro_f1_mean")
     if v2_f1_raw is not None and not np.isnan(v2_f1_raw):
         v2_label, v2_f1 = "LGBM", v2_f1_raw
-        print(f"  V2 family-split macro-F1 = {v2_f1:.4f}  ({v2_label}, all genes)")
+        print(
+            f"  V2 family-split macro-F1 = {v2_f1:.4f}  ({v2_label}, all genes)"
+            + _fmt_ci(v2_lgbm_res)
+        )
     else:
         v2_label, v2_f1 = None, float("nan")
         print("  V2 family-split macro-F1 = N/A (primary model produced no folds)")
@@ -859,11 +945,14 @@ def run_seed(
         n_folds=n_folds,
         seed=seed,
         label="V3",
+        compute_ci=compute_ci,
+        n_boot=n_boot,
     )
     results["V3_family_split"] = v3_family_res
     v3_f1 = v3_family_res.get("macro_f1_mean", float("nan"))
     print(
         f"  V3 family-split macro-F1 = {v3_f1:.4f} ± {v3_family_res.get('macro_f1_std', float('nan')):.4f}"
+        + _fmt_ci(v3_family_res)
     )
 
     # Gene-split for V3 (leakage diagnostic — uses all variants, not just family-annotated)
@@ -876,6 +965,8 @@ def run_seed(
         seed=seed,
         label="V3-GS",
         pfam_map=pfam_map,
+        compute_ci=compute_ci,
+        n_boot=n_boot,
     )
     results["V3_gene_split"] = v3_gene_res
     v3_gs_f1 = v3_gene_res.get("macro_f1_mean", float("nan"))
@@ -951,6 +1042,8 @@ def run_seed(
         n_epochs=30,
         lr=1e-3,
         max_triplets=2000,
+        compute_ci=compute_ci,
+        n_boot=n_boot,
     )
     v4_res["n_observed"] = n_v4
     v4_res["n_total"] = int(len(X_concat))
@@ -960,6 +1053,7 @@ def run_seed(
     print(
         f"  V4 family-split macro-F1 = {v4_f1:.4f} ± {v4_res.get('macro_f1_std', float('nan')):.4f}"
         f"  (n={n_v4}/{len(X_concat)} fully-observed genes)"
+        + _fmt_ci(v4_res)
     )
 
     # V3 on V4's exact rows — the like-for-like comparator for Gate 3.
@@ -970,11 +1064,16 @@ def run_seed(
         n_folds=n_folds,
         seed=seed,
         label="V3-matched-to-V4",
+        compute_ci=compute_ci,
+        n_boot=n_boot,
     )
     v3_matched_res["n_observed"] = n_v4
     results["V3_family_split_matched_to_V4"] = v3_matched_res
     v3_matched_f1 = v3_matched_res.get("macro_f1_mean", float("nan"))
-    print(f"  V3 on the same {n_v4} genes = {v3_matched_f1:.4f} (Gate 3 comparator)")
+    print(
+        f"  V3 on the same {n_v4} genes = {v3_matched_f1:.4f} (Gate 3 comparator)"
+        + _fmt_ci(v3_matched_res)
+    )
 
     # Gate 3 — report only (no hard stop). Compared against V3 on the identical
     # gene subset, not the historical all-genes reference, which was computed on
@@ -1101,6 +1200,21 @@ def aggregate_seeds(all_seed_results: list[dict]) -> dict:
             summary[f"{variant_key}_auroc_{cls}_mean"] = m
             summary[f"{variant_key}_auroc_{cls}_std"] = s
 
+    # Per-seed family/gene-resampled macro-F1 CIs, pooled across seeds. This is
+    # a SEPARATE source of uncertainty from the *_macro_f1_std values above:
+    # those are seed-to-seed spread of the point estimate, this is the average
+    # within-seed resampling uncertainty. Any seed whose CI was suppressed
+    # (too few valid resamples) is skipped for that seed only.
+    for variant_key in [
+        "V1_family_split", "V2_lgbm_family_split", "V2_logreg_observed_subset",
+        "V2_histgb_observed_subset", "V3_family_split", "V3_gene_split",
+        "V4_family_split", "V3_family_split_matched_to_V4",
+    ]:
+        for bound in ("ci_low", "ci_high"):
+            m, s = get_mean_std(f"{variant_key}.ci.macro_f1.{bound}")
+            if m is not None:
+                summary[f"{variant_key}_macro_f1_{bound}_seed_mean"] = m
+
     return summary
 
 
@@ -1136,6 +1250,8 @@ def main():
         "--variants-only", action="store_true", help="Skip V4 contrastive head (faster)"
     )
     parser.add_argument("--n-folds", type=int, default=5)
+    parser.add_argument("--no_ci", action="store_true", help="skip cluster-bootstrap CIs")
+    parser.add_argument("--n_boot", type=int, default=BOOTSTRAP_N_RESAMPLES)
     args = parser.parse_args()
 
     seeds = [args.seed] if args.seed is not None else list(range(5))
@@ -1178,6 +1294,8 @@ def main():
             delta=delta,
             X_prot=X_prot,
             pfam_map=pfam_map,
+            compute_ci=not args.no_ci,
+            n_boot=args.n_boot,
         )
         all_seed_results.append(seed_results)
 

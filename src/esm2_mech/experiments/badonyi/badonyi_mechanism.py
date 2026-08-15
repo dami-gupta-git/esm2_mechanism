@@ -36,10 +36,11 @@ from collections import Counter
 from pathlib import Path
 
 import numpy as np
-from esm2_mech.utils.constants import MECHANISM_CLASSES
+from esm2_mech.utils.constants import MECHANISM_CLASSES, BOOTSTRAP_N_RESAMPLES
 from esm2_mech.utils.data import build_gene_to_row as _build_gene_to_row
 from esm2_mech.utils.splits import family_split_indices
 from esm2_mech.utils.probes import run_mlp_cv, run_logreg_cv, run_histgb_cv
+from esm2_mech.utils.bootstrap import bootstrap_mechanism_metrics, family_or_gene_clusters
 from esm2_mech.utils.paths import (
     RESULTS_DIR,
     VALID_VARIANTS_JSON,
@@ -148,17 +149,45 @@ def broadcast_gene_features(
 # ---------------------------------------------------------------------------
 
 
-def run_logreg_family_split(X, y, genes, groups, n_folds, seed, label) -> dict:
+def _attach_family_split_ci(
+    agg: dict, oof: dict | None, pfam_map: dict, compute_ci: bool, n_boot: int, seed: int
+) -> dict:
+    """Attach a family-resampled cluster-bootstrap CI to a family-split CV result.
+
+    Resamples families, not genes or variants — the family is the unit
+    family-split CV actually holds out, so genes within one family are not
+    independent draws (same reasoning as mechanism_delta_family_split.py, R7.3).
+    No-op if CI computation is off or no fold produced out-of-fold predictions.
+    """
+    if compute_ci and oof is not None:
+        clusters = family_or_gene_clusters(oof["genes"], pfam_map, is_family_split=True)
+        agg["ci"] = bootstrap_mechanism_metrics(
+            oof["y_true"], oof["proba"], clusters, n_resamples=n_boot, seed=seed,
+        )
+    return agg
+
+
+def run_logreg_family_split(
+    X, y, genes, groups, n_folds, seed, label, pfam_map, compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES
+) -> dict:
     splits = list(family_split_indices(groups, n_folds, seed))
-    return run_logreg_cv(X, y, splits, seed=seed, genes=genes, label=label)
+    agg, oof = run_logreg_cv(X, y, splits, seed=seed, genes=genes, label=label, return_oof=True)
+    return _attach_family_split_ci(agg, oof, pfam_map, compute_ci, n_boot, seed)
 
 
-def run_mlp_family_split(X, y, genes, groups, hidden, n_folds, seed, label) -> dict:
+def run_mlp_family_split(
+    X, y, genes, groups, hidden, n_folds, seed, label, pfam_map, compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES
+) -> dict:
     splits = list(family_split_indices(groups, n_folds, seed))
-    return run_mlp_cv(X, y, splits, hidden=hidden, seed=seed, genes=genes, label=label)
+    agg, oof = run_mlp_cv(
+        X, y, splits, hidden=hidden, seed=seed, genes=genes, label=label, return_oof=True
+    )
+    return _attach_family_split_ci(agg, oof, pfam_map, compute_ci, n_boot, seed)
 
 
-def run_histgb_family_split(X, y, genes, groups, n_folds, seed, label) -> dict:
+def run_histgb_family_split(
+    X, y, genes, groups, n_folds, seed, label, pfam_map, compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES
+) -> dict:
     """NaN-native family-split CV — for every arm whose matrix includes the
     proteome or Badonyi block, alone or concatenated onto the ESM-2 delta.
 
@@ -170,7 +199,8 @@ def run_histgb_family_split(X, y, genes, groups, n_folds, seed, label) -> dict:
     one feature, including genes whose ESM-2 embedding is fully observed.
     """
     splits = list(family_split_indices(groups, n_folds, seed))
-    return run_histgb_cv(X, y, splits, seed=seed, genes=genes, label=label)
+    agg, oof = run_histgb_cv(X, y, splits, seed=seed, genes=genes, label=label, return_oof=True)
+    return _attach_family_split_ci(agg, oof, pfam_map, compute_ci, n_boot, seed)
 
 
 # ---------------------------------------------------------------------------
@@ -178,7 +208,10 @@ def run_histgb_family_split(X, y, genes, groups, n_folds, seed, label) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def run_seed(seed, n_folds, labels, genes, delta, X_prot, X_bad_raw, pfam_map) -> dict:
+def run_seed(
+    seed, n_folds, labels, genes, delta, X_prot, X_bad_raw, pfam_map,
+    compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES,
+) -> dict:
     print(f"\n{'='*60}\nSEED {seed}\n{'='*60}")
 
     # y stays string labels — run_logreg_cv/run_mlp_cv key on `classes` (strings).
@@ -218,70 +251,88 @@ def run_seed(seed, n_folds, labels, genes, delta, X_prot, X_bad_raw, pfam_map) -
         "n_total_variants": int(len(y)),
     }
 
+    def _log_ci(agg: dict) -> str:
+        ci = agg.get("ci", {}).get("macro_f1")
+        if not ci or ci.get("ci_suppressed"):
+            return ""
+        return f"  CI=[{ci['ci_low']:.4f}, {ci['ci_high']:.4f}] ({ci['n_clusters']} families)"
+
     # V1 — ESM-2 delta MLP
     print(f"\n--- V1: ESM-2 delta only ---")
     results["V1"] = run_mlp_family_split(
-        X_delta_f, y_f, genes_f, groups, (256, 64), n_folds, seed, "V1"
+        X_delta_f, y_f, genes_f, groups, (256, 64), n_folds, seed, "V1",
+        pfam_map, compute_ci=compute_ci, n_boot=n_boot,
     )
     print(
         f"  V1 macro_f1={results['V1']['macro_f1_mean']:.4f} ± "
         f"{results['V1']['macro_f1_std']:.4f}  "
         f"per_gene={results['V1'].get('per_gene_f1_mean', float('nan')):.4f}"
+        + _log_ci(results["V1"])
     )
 
     # V2 — Proteome only (NaN-native: the proteome block has missing cells)
     print(f"\n--- V2: Proteome only (NaN-native gradient boosting) ---")
     results["V2"] = run_histgb_family_split(
-        X_prot_f, y_f, genes_f, groups, n_folds, seed, "V2"
+        X_prot_f, y_f, genes_f, groups, n_folds, seed, "V2",
+        pfam_map, compute_ci=compute_ci, n_boot=n_boot,
     )
     print(
         f"  V2 macro_f1={results['V2']['macro_f1_mean']:.4f} ± "
         f"{results['V2']['macro_f1_std']:.4f}  "
         f"per_gene={results['V2'].get('per_gene_f1_mean', float('nan')):.4f}"
+        + _log_ci(results["V2"])
     )
 
     # V_bad — Badonyi priors only (3 features: pDN, pGOF, pLOF)
     print(f"\n--- V_bad: Badonyi priors only (3-dim, NaN-native) ---")
     results["V_bad"] = run_histgb_family_split(
-        X_bad_f, y_f, genes_f, groups, n_folds, seed, "V_bad"
+        X_bad_f, y_f, genes_f, groups, n_folds, seed, "V_bad",
+        pfam_map, compute_ci=compute_ci, n_boot=n_boot,
     )
     print(
         f"  V_bad macro_f1={results['V_bad']['macro_f1_mean']:.4f} ± "
         f"{results['V_bad']['macro_f1_std']:.4f}  "
         f"per_gene={results['V_bad'].get('per_gene_f1_mean', float('nan')):.4f}"
+        + _log_ci(results["V_bad"])
     )
 
     # V2+bad — Proteome + Badonyi
     print(f"\n--- V2+bad: Proteome + Badonyi (40-dim, NaN-native) ---")
     results["V2_bad"] = run_histgb_family_split(
-        X_v2bad, y_f, genes_f, groups, n_folds, seed, "V2+bad"
+        X_v2bad, y_f, genes_f, groups, n_folds, seed, "V2+bad",
+        pfam_map, compute_ci=compute_ci, n_boot=n_boot,
     )
     print(
         f"  V2+bad macro_f1={results['V2_bad']['macro_f1_mean']:.4f} ± "
         f"{results['V2_bad']['macro_f1_std']:.4f}  "
         f"per_gene={results['V2_bad'].get('per_gene_f1_mean', float('nan')):.4f}"
+        + _log_ci(results["V2_bad"])
     )
 
     # V1+bad — ESM-2 delta + Badonyi
     print(f"\n--- V1+bad: ESM-2 delta + Badonyi (1283-dim, NaN-native) ---")
     results["V1_bad"] = run_histgb_family_split(
-        X_v1bad, y_f, genes_f, groups, n_folds, seed, "V1+bad"
+        X_v1bad, y_f, genes_f, groups, n_folds, seed, "V1+bad",
+        pfam_map, compute_ci=compute_ci, n_boot=n_boot,
     )
     print(
         f"  V1+bad macro_f1={results['V1_bad']['macro_f1_mean']:.4f} ± "
         f"{results['V1_bad']['macro_f1_std']:.4f}  "
         f"per_gene={results['V1_bad'].get('per_gene_f1_mean', float('nan')):.4f}"
+        + _log_ci(results["V1_bad"])
     )
 
     # V_all — ESM-2 + proteome + Badonyi
     print(f"\n--- V_all: ESM-2 + proteome + Badonyi (1320-dim, NaN-native) ---")
     results["V_all"] = run_histgb_family_split(
-        X_vall, y_f, genes_f, groups, n_folds, seed, "V_all"
+        X_vall, y_f, genes_f, groups, n_folds, seed, "V_all",
+        pfam_map, compute_ci=compute_ci, n_boot=n_boot,
     )
     print(
         f"  V_all macro_f1={results['V_all']['macro_f1_mean']:.4f} ± "
         f"{results['V_all']['macro_f1_std']:.4f}  "
         f"per_gene={results['V_all'].get('per_gene_f1_mean', float('nan')):.4f}"
+        + _log_ci(results["V_all"])
     )
 
     return results
@@ -290,6 +341,22 @@ def run_seed(seed, n_folds, labels, genes, delta, X_prot, X_bad_raw, pfam_map) -
 # ---------------------------------------------------------------------------
 # Aggregate across seeds
 # ---------------------------------------------------------------------------
+
+
+def seed_metric_mean_std(all_results: list[dict], extractor) -> tuple[float | None, float | None, int]:
+    """Pool one metric across seeds: mean/std of the per-seed values, dropping
+    None and NaN (a seed missing a metric is skipped for that metric only).
+
+    `extractor(r)` returns the metric for one seed's result dict, or None.
+    """
+    vals = []
+    for r in all_results:
+        v = extractor(r)
+        if v is not None and not (isinstance(v, float) and np.isnan(v)):
+            vals.append(float(v))
+    if not vals:
+        return None, None, 0
+    return float(np.mean(vals)), float(np.std(vals)), len(vals)
 
 
 def aggregate_seeds(all_results: list[dict]) -> dict:
@@ -312,6 +379,24 @@ def aggregate_seeds(all_results: list[dict]) -> dict:
             if n:
                 summary[f"{key}_auroc_{cls}_mean"] = mean
                 summary[f"{key}_auroc_{cls}_std"] = std
+
+        # Per-seed family-resampled CIs (macro_f1, per-class AUROC), pooled
+        # across seeds the same way as the point estimates above. This is a
+        # SEPARATE source of uncertainty from macro_f1_std: macro_f1_std is
+        # seed-to-seed spread of the point estimate; ci_low/ci_high_seed_mean
+        # is the average family-resampling uncertainty within a seed.
+        for metric_name in ["macro_f1"] + [f"auroc_{cls}" for cls in CLASSES]:
+            for bound in ("ci_low", "ci_high"):
+                def extractor(r, k=key, m=metric_name, b=bound):
+                    ci = r.get(k, {}).get("ci", {}).get(m)
+                    if not ci or ci.get("ci_suppressed"):
+                        return None
+                    return ci.get(b)
+
+                mean, std, n = seed_metric_mean_std(all_results, extractor)
+                if n:
+                    summary[f"{key}_{metric_name}_{bound}_seed_mean"] = mean
+                    summary[f"{key}_{metric_name}_{bound}_n_seeds"] = n
     return summary
 
 
@@ -326,6 +411,8 @@ def main():
     )
     parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--n-folds", type=int, default=5)
+    parser.add_argument("--no_ci", action="store_true", help="skip cluster-bootstrap CIs")
+    parser.add_argument("--n_boot", type=int, default=BOOTSTRAP_N_RESAMPLES)
     args = parser.parse_args()
 
     seeds = [args.seed] if args.seed is not None else list(range(5))
@@ -353,7 +440,8 @@ def main():
     all_results = []
     for seed in seeds:
         res = run_seed(
-            seed, args.n_folds, labels, genes, delta, X_prot, X_bad, pfam_map
+            seed, args.n_folds, labels, genes, delta, X_prot, X_bad, pfam_map,
+            compute_ci=not args.no_ci, n_boot=args.n_boot,
         )
         all_results.append(res)
         path = OUT_DIR / f"badonyi_mechanism_seed{seed}.json"

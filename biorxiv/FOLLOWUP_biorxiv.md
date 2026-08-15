@@ -12,6 +12,14 @@ label-heterogeneity objection without depending on subset size.
 
 ---
 
+## Experiment 3 — within-family mechanism (cut from run_biorxiv scope)
+
+TBD. Was listed as an in-scope experiment in `RUNBOOK_biorxiv.md` alongside Experiments 1, 2, 5,
+and 7, but never scoped beyond the placeholder. Moved here so the runbook only lists experiments
+that are actually specified.
+
+---
+
 ## Task 2b — homology-partition robustness panel (cut from run_biorxiv, committed panel withdrawn)
 
 The mechanism null is measured under the Pfam family partition only. C6 was removed from the
@@ -290,5 +298,15 @@ pairs — real signal, but modest, and measured without a homology-partitioned s
 project's family-split the comparable numbers may well be lower. A modest-but-above-chance
 structural result against an at-floor embedding result is the outcome that most sharpens the
 paper's claim.
+
+**Third arm — DN high-water-mark replication.** A separate, earlier finding (proteome features
+combined with Badonyi structural priors) was previously this project's best DN result. Re-run that
+combination under the current labels and the current family-split statistics (paired cluster
+bootstrap, recomputed floor) to check whether the lift survives the stricter methodology now in
+place. This is not a comparison against the ESM-2 delta like the other two arms — it is a check of
+whether a result obtained under looser statistics still holds. Report it alongside the ΔΔG_rank and
+mLOF arms since all three use the same proteome/Badonyi inputs, but keep the read separate: the
+ΔΔG_rank and mLOF arms answer whether the *labels* carry signal, this arm answers whether a specific
+*prior positive result* replicates.
 
 ---

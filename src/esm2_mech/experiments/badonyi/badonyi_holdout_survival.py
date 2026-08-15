@@ -44,7 +44,8 @@ import functools
 
 print = functools.partial(print, flush=True)
 
-from esm2_mech.utils.constants import MECHANISM_CLASSES, N_FOLDS
+from esm2_mech.utils.constants import MECHANISM_CLASSES, N_FOLDS, BOOTSTRAP_N_RESAMPLES
+from esm2_mech.utils.bootstrap import binary_auroc_cluster_bootstrap_ci
 from esm2_mech.utils.paths import BADONYI_CACHE_DIR, DATA_DIR, GENE_LIST_TSV, RESULTS_DIR
 
 warnings.filterwarnings("ignore")
@@ -142,11 +143,37 @@ def assign_folds(df, group_col, n_folds, seed):
 # ---------------------------------------------------------------------------
 
 
-def compute_aurocs(df, mask=None):
+def _ci_for_binary(sub, y, score_col, cluster_col, compute_ci, n_boot, seed):
+    """Cluster-bootstrap CI for one binary AUROC from raw (unretrained) Badonyi
+    predictions.
+
+    `cluster_col` is the resampling unit (R7.3): the Pfam family or MMseqs2
+    cluster column for a holdout arm, so the CI reflects the same grouping
+    structure the holdout claims robustness against, or None to resample genes
+    directly (baseline / IN-train / OUT-train, which make no partition claim).
+    Every row here already has both a label and a cluster assignment by
+    construction of `sub` in compute_aurocs/run_holdout, so no additional
+    filtering is needed before building the OOF dict.
+    """
+    if not compute_ci:
+        return None
+    genes = sub["gene"].values
+    clusters = sub[cluster_col].values if cluster_col else None
+    oof = {"y_true": y.values.astype(int), "proba": sub[score_col].values, "genes": genes}
+    return binary_auroc_cluster_bootstrap_ci(
+        oof, n_resamples=n_boot, seed=seed, clusters=clusters
+    )
+
+
+def compute_aurocs(
+    df, mask=None, compute_ci=False, n_boot=BOOTSTRAP_N_RESAMPLES, seed=0, cluster_col=None,
+):
     """Three binary AUROCs from raw Badonyi predictions.
 
     mask is a boolean Series subsetting df. If None, use all rows with a label
-    and a Badonyi prediction.
+    and a Badonyi prediction. compute_ci defaults to False: per-fold calls
+    inside run_holdout only need the point estimate, and CI is attached once,
+    on the held-out-across-folds aggregate.
     """
     base = df.copy()
     if mask is not None:
@@ -165,6 +192,9 @@ def compute_aurocs(df, mask=None):
         out["DN_vs_LOF"] = float(roc_auc_score(y, sub["pDN"]))
         out["DN_vs_LOF_n_pos"] = int(y.sum())
         out["DN_vs_LOF_n_neg"] = int((1 - y).sum())
+        ci = _ci_for_binary(sub, y, "pDN", cluster_col, compute_ci, n_boot, seed)
+        if ci is not None:
+            out["DN_vs_LOF_ci"] = ci
     else:
         out["DN_vs_LOF"] = None
 
@@ -175,6 +205,9 @@ def compute_aurocs(df, mask=None):
         out["GOF_vs_LOF"] = float(roc_auc_score(y, sub["pGOF"]))
         out["GOF_vs_LOF_n_pos"] = int(y.sum())
         out["GOF_vs_LOF_n_neg"] = int((1 - y).sum())
+        ci = _ci_for_binary(sub, y, "pGOF", cluster_col, compute_ci, n_boot, seed)
+        if ci is not None:
+            out["GOF_vs_LOF_ci"] = ci
     else:
         out["GOF_vs_LOF"] = None
 
@@ -185,6 +218,9 @@ def compute_aurocs(df, mask=None):
             out["LOF_vs_nonLOF"] = float(roc_auc_score(y, base["pLOF"]))
             out["LOF_vs_nonLOF_n_pos"] = int(y.sum())
             out["LOF_vs_nonLOF_n_neg"] = int((1 - y).sum())
+            ci = _ci_for_binary(base, y, "pLOF", cluster_col, compute_ci, n_boot, seed)
+            if ci is not None:
+                out["LOF_vs_nonLOF_ci"] = ci
         else:
             out["LOF_vs_nonLOF"] = None
     else:
@@ -193,7 +229,7 @@ def compute_aurocs(df, mask=None):
     return out
 
 
-def run_holdout(df, group_col, n_folds, seed):
+def run_holdout(df, group_col, n_folds, seed, compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES):
     """Compute AUROCs after fold assignment by group_col. Held-out predictions
     are concatenated across folds — but since Badonyi's predictions are
     fixed (no retraining), this is equivalent to computing AUROC on the full
@@ -222,8 +258,11 @@ def run_holdout(df, group_col, n_folds, seed):
         fold_results.append(fm)
 
     # Aggregate held-out predictions across folds = full set, since no
-    # retraining
-    agg = compute_aurocs(sub)
+    # retraining. CI resamples group_col (the holdout unit), not genes, so the
+    # interval matches what this holdout arm actually claims robustness to.
+    agg = compute_aurocs(
+        sub, compute_ci=compute_ci, n_boot=n_boot, seed=seed, cluster_col=group_col,
+    )
     # Mean across folds (gives a fold-variance estimate)
     fold_mean = {}
     for key in ["DN_vs_LOF", "GOF_vs_LOF", "LOF_vs_nonLOF"]:
@@ -250,20 +289,21 @@ def _fmt(v):
     return f"{v:.3f}" if v is not None else "N/A"
 
 
-def run_seed(df, seed, n_folds):
+def run_seed(df, seed, n_folds, compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES):
     print(f"\n{'='*72}\nSEED {seed}\n{'='*72}")
     out = {"seed": seed}
 
-    # Baseline: no holdout (whole-set AUROC with Badonyi predictions)
+    # Baseline: no holdout (whole-set AUROC with Badonyi predictions). CI
+    # resamples genes directly — no partition scheme to match.
     print("  Baseline (no holdout) — Badonyi raw on whole labeled set")
-    out["baseline_no_holdout"] = compute_aurocs(df)
+    out["baseline_no_holdout"] = compute_aurocs(df, compute_ci=compute_ci, n_boot=n_boot, seed=seed)
     print(f"    DN-vs-LOF: {_fmt(out['baseline_no_holdout']['DN_vs_LOF'])}")
     print(f"    GOF-vs-LOF: {_fmt(out['baseline_no_holdout']['GOF_vs_LOF'])}")
     print(f"    LOF-vs-nonLOF: {_fmt(out['baseline_no_holdout']['LOF_vs_nonLOF'])}")
 
     # Family-split holdout
     print("\n  Pfam family-split holdout")
-    out["family_holdout"] = run_holdout(df, "pfam", n_folds, seed)
+    out["family_holdout"] = run_holdout(df, "pfam", n_folds, seed, compute_ci=compute_ci, n_boot=n_boot)
     fa = out["family_holdout"]["all_holdout"]
     print(
         f"    All-rows (held-out): DN={_fmt(fa['DN_vs_LOF'])}  "
@@ -272,19 +312,20 @@ def run_seed(df, seed, n_folds):
 
     # MMseqs2-20 holdout
     print("\n  MMseqs2-20 cluster-split holdout")
-    out["mmseqs_holdout"] = run_holdout(df, "cluster", n_folds, seed)
+    out["mmseqs_holdout"] = run_holdout(df, "cluster", n_folds, seed, compute_ci=compute_ci, n_boot=n_boot)
     ma = out["mmseqs_holdout"]["all_holdout"]
     print(
         f"    All-rows (held-out): DN={_fmt(ma['DN_vs_LOF'])}  "
         f"GOF={_fmt(ma['GOF_vs_LOF'])}  LOF={_fmt(ma['LOF_vs_nonLOF'])}"
     )
 
-    # Stratified: IN vs OUT of Badonyi training
+    # Stratified: IN vs OUT of Badonyi training. CI resamples genes directly —
+    # this stratification isn't a holdout scheme either.
     print("\n  Stratified by Badonyi training-set membership (in any classifier)")
     in_mask = df["in_any"] == 1
     out_mask = df["in_any"] == 0
-    out["badonyi_in_train"] = compute_aurocs(df, mask=in_mask)
-    out["badonyi_out_train"] = compute_aurocs(df, mask=out_mask)
+    out["badonyi_in_train"] = compute_aurocs(df, mask=in_mask, compute_ci=compute_ci, n_boot=n_boot, seed=seed)
+    out["badonyi_out_train"] = compute_aurocs(df, mask=out_mask, compute_ci=compute_ci, n_boot=n_boot, seed=seed)
     print(
         f"    IN-Badonyi: n={out['badonyi_in_train']['n_total']}, "
         f"DN={out['badonyi_in_train'].get('DN_vs_LOF', 'NA')}, "
@@ -327,6 +368,21 @@ def aggregate_seeds(all_seed):
                 cur[f"{metric}_mean"] = float(np.mean(vals))
                 cur[f"{metric}_std"] = float(np.std(vals))
                 cur[f"{metric}_n_seeds"] = len(vals)
+
+            # Per-seed cluster-bootstrap CI bounds, pooled across seeds — a
+            # separate source of uncertainty from the seed-to-seed std above.
+            for bound in ("ci_low", "ci_high"):
+                ci_vals = []
+                for s in all_seed:
+                    payload = s[key]
+                    if "all_holdout" in payload:
+                        payload = payload["all_holdout"]
+                    ci = payload.get(f"{metric}_ci")
+                    if ci and not ci.get("ci_suppressed"):
+                        ci_vals.append(ci.get(bound))
+                ci_vals = [v for v in ci_vals if v is not None]
+                if ci_vals:
+                    cur[f"{metric}_{bound}_seed_mean"] = float(np.mean(ci_vals))
         # Also keep ns for context (from first seed only)
         first_payload = all_seed[0][key]
         if "all_holdout" in first_payload:
@@ -410,6 +466,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--seed", type=int, default=None)
     ap.add_argument("--n-folds", type=int, default=N_FOLDS)
+    ap.add_argument("--no_ci", action="store_true", help="skip cluster-bootstrap CIs")
+    ap.add_argument("--n_boot", type=int, default=BOOTSTRAP_N_RESAMPLES)
     args = ap.parse_args()
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -419,7 +477,7 @@ def main():
 
     all_seed_results = []
     for s in seeds:
-        sr = run_seed(df, s, args.n_folds)
+        sr = run_seed(df, s, args.n_folds, compute_ci=not args.no_ci, n_boot=args.n_boot)
         all_seed_results.append(sr)
         path = OUT_DIR / f"badonyi_survival_seed{s}.json"
         path.write_text(json.dumps(sr, indent=2))

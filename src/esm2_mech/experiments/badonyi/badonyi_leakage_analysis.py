@@ -32,10 +32,11 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from esm2_mech.utils.constants import MECHANISM_CLASSES
+from esm2_mech.utils.constants import MECHANISM_CLASSES, BOOTSTRAP_N_RESAMPLES
 from esm2_mech.utils.data import build_gene_to_row as _build_gene_to_row
 from esm2_mech.utils.splits import family_split_indices
 from esm2_mech.utils.probes import run_histgb_cv
+from esm2_mech.utils.bootstrap import bootstrap_mechanism_metrics, family_or_gene_clusters
 from esm2_mech.utils.paths import (
     BADONYI_CACHE_DIR,
     GENE_UNIVERSE,
@@ -152,7 +153,10 @@ def load_badonyi_train_flags():
 # ---------------------------------------------------------------------------
 
 
-def run_probe(X, y, genes, groups, n_folds, seed, label):
+def run_probe(
+    X, y, genes, groups, n_folds, seed, label, pfam_map,
+    compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES,
+):
     """NaN-native family-split CV.
 
     Every arm here reads the proteome or Badonyi block, which carry real
@@ -161,9 +165,20 @@ def run_probe(X, y, genes, groups, n_folds, seed, label):
     measure leakage. Restricting to complete cases instead would shrink the IN
     and OUT regimes unevenly — genes in Badonyi's training set are better
     annotated — which would confound the very contrast being tested.
+
+    CI resamples families, not genes (R7.3) — `genes` here are real gene ids
+    (needed for run_histgb_cv's per_gene_f1), so the cluster array is derived
+    via pfam_map, unlike proteome_mechanism.py where `groups` already IS the
+    cluster id and no mapping step is needed.
     """
     splits = list(family_split_indices(groups, n_folds, seed))
-    return run_histgb_cv(X, y, splits, seed=seed, genes=genes, label=label)
+    agg, oof = run_histgb_cv(X, y, splits, seed=seed, genes=genes, label=label, return_oof=True)
+    if compute_ci and oof is not None:
+        clusters = family_or_gene_clusters(oof["genes"], pfam_map, is_family_split=True)
+        agg["ci"] = bootstrap_mechanism_metrics(
+            oof["y_true"], oof["proba"], clusters, n_resamples=n_boot, seed=seed,
+        )
+    return agg
 
 
 # ---------------------------------------------------------------------------
@@ -171,7 +186,10 @@ def run_probe(X, y, genes, groups, n_folds, seed, label):
 # ---------------------------------------------------------------------------
 
 
-def run_regime(regime_name, mask, X_prot, X_bad, y, genes, groups, n_folds, seed):
+def run_regime(
+    regime_name, mask, X_prot, X_bad, y, genes, groups, n_folds, seed, pfam_map,
+    compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES,
+):
     """Apply mask, run V2, V_bad, V2+bad. Skip if not enough variants."""
     n_var = int(mask.sum())
     if n_var < 100:
@@ -200,16 +218,29 @@ def run_regime(regime_name, mask, X_prot, X_bad, y, genes, groups, n_folds, seed
         "class_dist_variants": cd,
     }
 
+    def _log_ci(agg):
+        ci = agg.get("ci", {}).get("macro_f1")
+        if not ci or ci.get("ci_suppressed"):
+            return ""
+        return f"  CI=[{ci['ci_low']:.4f}, {ci['ci_high']:.4f}] ({ci['n_clusters']} families)"
+
+    kwargs = dict(pfam_map=pfam_map, compute_ci=compute_ci, n_boot=n_boot)
     print(f"    V2 (proteome 37):")
-    res["V2"] = run_probe(X_p, y_m, genes_m, groups_m, n_folds, seed, "V2")
+    res["V2"] = run_probe(X_p, y_m, genes_m, groups_m, n_folds, seed, "V2", **kwargs)
+    print(f"    macro_f1={res['V2'].get('macro_f1_mean', float('nan')):.4f}" + _log_ci(res["V2"]))
     print(f"    V_bad (pDN/pGOF/pLOF):")
-    res["V_bad"] = run_probe(X_b, y_m, genes_m, groups_m, n_folds, seed, "V_bad")
+    res["V_bad"] = run_probe(X_b, y_m, genes_m, groups_m, n_folds, seed, "V_bad", **kwargs)
+    print(f"    macro_f1={res['V_bad'].get('macro_f1_mean', float('nan')):.4f}" + _log_ci(res["V_bad"]))
     print(f"    V2+bad (40):")
-    res["V2_bad"] = run_probe(X_2b, y_m, genes_m, groups_m, n_folds, seed, "V2+bad")
+    res["V2_bad"] = run_probe(X_2b, y_m, genes_m, groups_m, n_folds, seed, "V2+bad", **kwargs)
+    print(f"    macro_f1={res['V2_bad'].get('macro_f1_mean', float('nan')):.4f}" + _log_ci(res["V2_bad"]))
     return res
 
 
-def run_seed(seed, n_folds, y, genes, pfam_map, X_prot, X_bad, train_flag_any):
+def run_seed(
+    seed, n_folds, y, genes, pfam_map, X_prot, X_bad, train_flag_any,
+    compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES,
+):
     print(f"\n{'='*72}\nSEED {seed}\n{'='*72}")
 
     # y stays string labels — the probe runners and compute_metrics key on
@@ -239,7 +270,8 @@ def run_seed(seed, n_folds, y, genes, pfam_map, X_prot, X_bad, train_flag_any):
     seed_results = {"seed": seed, "regimes": {}}
     for name, mask in [("ALL", mask_all), ("IN", mask_in), ("OUT", mask_out)]:
         seed_results["regimes"][name] = run_regime(
-            name, mask, X_prot, X_bad, y, genes, gene_pfam, n_folds, seed
+            name, mask, X_prot, X_bad, y, genes, gene_pfam, n_folds, seed, pfam_map,
+            compute_ci=compute_ci, n_boot=n_boot,
         )
     return seed_results
 
@@ -291,6 +323,21 @@ def aggregate_seeds(all_seed):
                 if vals:
                     out[f"{v}_auroc_{cls}_mean"] = float(np.mean(vals))
                     out[f"{v}_auroc_{cls}_std"] = float(np.std(vals))
+
+            # Per-seed family-resampled macro-F1 CI, pooled across seeds — a
+            # separate source of uncertainty from the seed-to-seed std above
+            # (within-seed resampling uncertainty vs. across-seed spread of the
+            # point estimate). A seed whose CI was suppressed is skipped.
+            for bound in ("ci_low", "ci_high"):
+                vals = [
+                    x[v]["ci"]["macro_f1"].get(bound)
+                    for x in rs
+                    if v in x
+                    and x[v].get("ci", {}).get("macro_f1")
+                    and not x[v]["ci"]["macro_f1"].get("ci_suppressed")
+                ]
+                if vals:
+                    out[f"{v}_macro_f1_{bound}_seed_mean"] = float(np.mean(vals))
         summary["regimes"][r] = out
     return summary
 
@@ -383,6 +430,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--seed", type=int, default=None, help="Single seed; default: 0..4")
     ap.add_argument("--n-folds", type=int, default=5)
+    ap.add_argument("--no_ci", action="store_true", help="skip cluster-bootstrap CIs")
+    ap.add_argument("--n_boot", type=int, default=BOOTSTRAP_N_RESAMPLES)
     args = ap.parse_args()
 
     seeds = [args.seed] if args.seed is not None else list(range(5))
@@ -430,7 +479,8 @@ def main():
     all_seed_results = []
     for s in seeds:
         sr = run_seed(
-            s, args.n_folds, labels, genes, pfam_map, X_prot, X_bad, train_any
+            s, args.n_folds, labels, genes, pfam_map, X_prot, X_bad, train_any,
+            compute_ci=not args.no_ci, n_boot=args.n_boot,
         )
         all_seed_results.append(sr)
         path = OUT_DIR / f"leakage_seed{s}.json"

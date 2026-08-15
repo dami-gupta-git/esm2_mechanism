@@ -38,7 +38,7 @@ ssh -i ~/.ssh/id_runpod_2 root@<pod-ip> -p <pod-port>
 ## Prerequisites — manually placed files
 
 These must be in `data/downloads/` before the pipeline starts. Scoped to what run_biorxiv's
-experiments (1, 2, 3, 5, 7) actually read — the proteome-features and Badonyi downloads in
+experiments (1, 2, 5, 7) actually read — the proteome-features and Badonyi downloads in
 `RUNBOOK_4.md` are for experiments not part of this run.
 
 | File | Source |
@@ -156,10 +156,9 @@ Step 8 is network-only, so it runs locally rather than on the pod, unlike Experi
 ## Stage 3 — embed variants (GPU)
 
 This turns each variant's wildtype and mutant sequence into ESM-2 embeddings. It is a shared
-foundation, not specific to one experiment — Experiment 1 reads it directly, and Experiment 3
-(within-family mechanism) reuses the same arrays. It must be re-extracted whenever Stage 2 (fetch
-variant data) produces a new `valid_variants.json`; an embedding array built from an older variant
-list will not line up with the current one.
+foundation, not specific to one experiment — Experiment 1 reads it directly. It must be
+re-extracted whenever Stage 2 (fetch variant data) produces a new `valid_variants.json`; an
+embedding array built from an older variant list will not line up with the current one.
 
 This script runs on the pod but reads `data/valid_variants.json` and `data/cache/sequences.json`
 from the pod's own filesystem, so copy those two files there first, before launching the script:
@@ -307,21 +306,165 @@ local machine once the script finishes, the same way Stage 3's embeddings were c
 
 ---
 
-## Experiment 3 — within-family mechanism
-
-TBD
-
----
-
 ## Experiment 5 — geometry of the pathogenicity direction
 
-TBD
+Experiment 2 shows the delta embeddings separate pathogenic from benign variants. This experiment
+asks what that pathogenicity direction actually is: whether it is one shared direction across
+protein families or many family-specific ones, whether it is more about how far a variant moves
+the embedding or which way, whether it is explained by simple substitution chemistry (e.g. amino
+acid size or charge change) or by ESM-2's own sense of how conserved a position is, and whether the
+same direction transfers to the stability and mechanism tasks.
+
+This experiment sits downstream of Experiment 2: its first step reads the pathogenicity variant
+set and embedding arrays that earlier steps produced, so run those first.
+
+### Step 1 — build canonical variant list (CPU)
+
+Experiment 2's embedding step drops any variant it cannot embed (missing sequence, position out of
+range, wildtype-residue mismatch), so the `.npy` embedding rows are a subset of the fetched variant
+list, not a 1:1 match. This step is a re-indexing step: it takes the pathogenicity variants and embeddings 
+Experiment 2 already produced and re-materializes them in a row-aligned file for the geometry scripts to read directly.
+
+| Command | Description | Inputs | Outputs |
+|---|---|---|---|
+| `python -m esm2_mech.experiments.geometry.build_canonical_pathogenicity` | Re-index the pathogenicity variant set to match the embedding row order | `clinvar_pathogenicity_variants.json`, `data/embeddings/esm2_t33_650M_UR50D/pathogenicity_{wt,mut}_mean.npy`, `pathogenicity_meta.json` | `pathogenicity_valid_variants_canonical.json` |
+
+### Step 2 — geometry probes (CPU)
+
+One script runs four probes in sequence, each writing its own result file. `--probe` can restrict
+this to a subset (e.g. `--probe magnitude geometry`); the default is all four.
+
+| Probe | What it asks |
+|---|---|
+| magnitude | Does the pathogenicity signal come from how far the delta moves the embedding (magnitude), or which direction it moves in? |
+| geometry | Is pathogenicity carried by a single direction (rank-1) or a higher-dimensional subspace, and does a direction fit on one set of protein families transfer to a disjoint set? |
+| transfer | Under one identical protocol, does a direction fit on one half of the data transfer to the other half, compared for the pathogenicity, stability, and mechanism tasks? |
+| biochem | How much of the direction is explained by context-free substitution chemistry (BLOSUM62 score, and changes in hydropathy, charge, and volume) rather than sequence context? |
+
+| Command | Description | Inputs | Outputs |
+|---|---|---|---|
+| `python -m esm2_mech.experiments.geometry.run_geometry --seeds 5` | Run all four geometry probes | `pathogenicity_valid_variants_canonical.json`, `data/embeddings/esm2_t33_650M_UR50D/pathogenicity_{wt,mut}_mean.npy` | `results/<run>/magnitude_direction/probe_results.json`, `geometry_results.json`, `transfer_contrast.json`, `probe4_axis_identity.json` |
+
+Only the magnitude probe has cluster-bootstrap confidence intervals wired (`--no_ci` / `--n_boot`
+apply to it only); the other three are rank and correlation probes with no CI attached. `--seeds`
+applies to all four.
+
+### Step 3 — conservation extract (GPU)
+
+For each canonical pathogenicity variant, mask its wildtype position and read ESM-2's own predicted
+probability of the wildtype residue, the mutant residue, and the entropy over all 20 amino acids at
+that position — i.e., how confidently the model expects that position to be conserved. This is the
+one GPU step in this experiment; it can share a pod session with any other GPU work already running.
+
+Copy the canonical variant file and sequences to the pod first, the same way Stage 3 copies its
+inputs:
+
+```bash
+scp -i ~/.ssh/id_runpod_2 -P <pod-port> data/pathogenicity_valid_variants_canonical.json root@<pod-ip>:/workspace/repo/data/
+scp -i ~/.ssh/id_runpod_2 -P <pod-port> data/cache/sequences.json root@<pod-ip>:/workspace/repo/data/cache/
+```
+
+| Command | Description | Inputs | Outputs |
+|---|---|---|---|
+| `python -m esm2_mech.experiments.geometry.conservation_axis --extract` | Masked-LM forward pass per variant to score how conserved its position is | `pathogenicity_valid_variants_canonical.json`, `cache/sequences.json` | `data/conservation_pathogenicity.npy`, `data/conservation_pathogenicity_meta.json` |
+
+Copy the two output files back to the local machine once this finishes.
+
+### Step 4 — conservation analysis (CPU)
+
+Compares the conservation features from Step 3 to the pathogenicity direction found in Step 2, on
+the same family-split protocol. Pre-registered gates: K1 conservation alone reaches AUROC ≥ 0.85
+(the axis is mostly conservation); K2 adding the embedding delta on top of conservation improves
+AUROC by ≥ 0.02 (the embedding carries pathogenicity signal beyond conservation).
+
+| Command | Description | Inputs | Outputs |
+|---|---|---|---|
+| `python -m esm2_mech.experiments.geometry.conservation_axis` | Compare conservation features to the embedding-derived pathogenicity direction | `conservation_pathogenicity.npy`, `pathogenicity_valid_variants_canonical.json`, `data/embeddings/esm2_t33_650M_UR50D/pathogenicity_{wt,mut}_mean.npy` | `results/<run>/magnitude_direction/conservation_axis.json` |
+
+run_biorxiv adds gene-cluster confidence intervals to each pathogenicity AUROC in this experiment
+(resampled over genes, not individual variants, the same as Experiments 1 and 2), and a paired
+cluster-bootstrap confidence interval on the K2 gap (conservation-alone AUROC vs. conservation-plus-
+embedding-delta AUROC) and on the pathogenicity-vs-mechanism transfer contrast.
 
 ---
 
 ## Experiment 7 — megascale stability positive control
 
-TBD
+A second positive control, alongside Experiment 2, with a purely physical label instead of a
+clinically curated one: Tsuboyama et al. 2023's measured folding stability change (ΔΔG) for about
+177,000 single point mutations across about 181 natural protein domains. Because this label comes
+from a direct physical measurement rather than expert curation, it rules out the concern that
+Experiment 2's pathogenicity signal is really the embeddings picking up on curation patterns rather
+than biology.
+
+The embedding step is skipped: `megascale_{wt,mut}_{mean,pos}.npy` already exist locally, extracted
+in an earlier run, and are unaffected by this run's ClinVar refresh since this experiment has no
+ClinVar dependency. Step 3's H3 test does read `valid_variants.json` and the Experiment 1
+embeddings, so run Step 3 after Experiment 1 Step 1 has produced a current `valid_variants.json`.
+
+### Step 1 — assign Pfam families (CPU)
+
+Assigns each Tsuboyama domain to a Pfam family via HMMER, so later steps can hold out whole families
+rather than whole domains when testing whether the stability signal generalizes. Needs `hmmscan` on
+the system path and a hmmpress-ed Pfam-A database; skip this step if `megascale_domain_families.json`
+is already present and non-empty (it is, as of this writing).
+
+| Command | Description | Inputs | Outputs |
+|---|---|---|---|
+| `python -m esm2_mech.experiments.stability.build_domain_families` | Assign each Tsuboyama domain to a Pfam family | `megascale_tsuboyama_variants.json`, `downloads/megascale/Pfam-A.hmm` | `data/megascale_domain_families.json` |
+
+### Step 2 — embed variants (GPU) — skipped
+
+Not run in run_biorxiv. `megascale_{wt,mut}_{mean,pos}.npy` under
+`data/embeddings/esm2_t33_650M_UR50D/` are reused from an earlier run.
+
+### Step 3 — linear probe (CPU)
+
+Fits a Ridge regression from the embeddings to ΔΔG under three cross-validation schemes — random
+split, holding out whole domains, and holding out whole Pfam families — and tests four pre-registered
+hypotheses: H1, the random-split correlation (Spearman ρ) reaches at least 0.5; H2, that correlation
+drops by no more than 0.05 when switching to a family-split (a big drop would mean the model is
+recognizing domains rather than learning a general stability signal); H3, projecting the fitted
+stability direction out of Experiment 1's mechanism-classification features does not raise the
+family-split mechanism score by more than 0.01 (stability and mechanism should be separable); H4, the
+per-domain spread in correlation stays tight (standard deviation ≤ 0.10).
+
+| Command | Description | Inputs | Outputs |
+|---|---|---|---|
+| `python -m esm2_mech.experiments.stability.megascale_stability` | Ridge probe from embeddings to ΔΔG under random/domain/family splits | `megascale_tsuboyama_variants.json`, `megascale_domain_families.json`, `data/embeddings/esm2_t33_650M_UR50D/megascale_{wt,mut}_{mean,pos}.npy`, `valid_variants.json` | `results/<run>/megascale_stability/per_protein_spearman.json`, `h3_stability_projection.json`, `summary.json` |
+
+### Step 4 — nonlinear probe (GPU)
+
+Repeats Step 3's three-way split comparison with a small neural network (MLP) alongside Ridge, plus
+two exploratory tree-based models (random forest and gradient-boosted trees), to check whether a
+nonlinear model finds more signal than the linear probe, and whether any such gain survives the
+family-split. Only the Ridge and MLP results are pre-registered; the random forest and
+gradient-boosted-tree numbers are exploratory. `--xgboost` adds the gradient-boosted-tree model,
+which needs a GPU; without it, this step is CPU-only.
+
+| Command | Description | Inputs | Outputs |
+|---|---|---|---|
+| `python -m esm2_mech.experiments.stability.megascale_mlp --xgboost` | MLP/random-forest/gradient-boosted-tree probes on the same three splits | `megascale_tsuboyama_variants.json`, `megascale_domain_families.json`, `data/embeddings/esm2_t33_650M_UR50D/megascale_{wt,mut}_{mean,pos}.npy` | `results/<run>/megascale_stability/mlp_summary_xgb.json` |
+
+### Step 5 — controls (CPU)
+
+Four exploratory checks on the Step 3 linear signal, not part of the pre-registered H1–H4 verdict:
+whether a single feature (the size of the embedding shift, ignoring its direction) recovers most of
+the full signal; the regularization strength chosen by nested cross-validation, so the main probe's
+result isn't an artifact of one fixed setting; a label-shuffle null, where the ΔΔG values are
+randomly permuted and the correlation should collapse to near zero as a leakage check; and how the
+correlation changes as more embedding components are kept, to characterize how many dimensions the
+stability signal actually occupies.
+
+| Command | Description | Inputs | Outputs |
+|---|---|---|---|
+| `python -m esm2_mech.experiments.stability.stability_baselines` | Delta-norm baseline, nested-CV alpha, label-shuffle null, and component sweep | `megascale_tsuboyama_variants.json`, `megascale_domain_families.json`, `data/embeddings/esm2_t33_650M_UR50D/megascale_{wt,mut}_{mean,pos}.npy` | `results/<run>/megascale_stability/baselines.json` |
+
+Gates are unchanged from run6: H1 random-split ρ ≥ 0.5, H2 the random-to-family-split drop stays
+below 0.10, H3 the mechanism-F1 change from projecting out stability stays ≤ +0.01, H4 per-domain ρ
+standard deviation stays tight. run_biorxiv's only addition here is confidence intervals on these
+figures; since this experiment has no ClinVar dependency, it is the one part of this run that
+isolates the effect of the new statistics from any effect of the refreshed ClinVar snapshot.
 
 ---
 
