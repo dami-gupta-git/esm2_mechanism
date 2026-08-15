@@ -29,7 +29,9 @@ Usage:
 
 import argparse
 import functools
+import glob
 import json
+import os
 from collections import Counter
 
 import numpy as np
@@ -109,6 +111,11 @@ def main() -> None:
         parser.error("--seeds must be >= 1")
 
     SINGLE_SOURCE_DIR.mkdir(parents=True, exist_ok=True)
+    stale = glob.glob(os.path.join(str(SINGLE_SOURCE_DIR), SEED_RESULT_GLOB))
+    for path in stale:
+        os.remove(path)
+    if stale:
+        print(f"Removed {len(stale)} stale seed file(s) from a prior run in {SINGLE_SOURCE_DIR}")
 
     data = load_data()
 

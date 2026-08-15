@@ -193,6 +193,12 @@ This experiment tests whether ESM-2 embeddings can predict a variant's mechanism
 whether that prediction still holds once genes from the same protein family are kept out of the
 opposite train/test split, so the model can't just be recognizing the family.
 
+Three scripts used in this experiment (`classify_by_mechanism`, `single_source_mechanism`,
+`mechanism_delta_family_split`) all accept `--no_ci` (skip the confidence-interval computation,
+for faster iteration only), `--n_boot N` (number of bootstrap resamples, default 1000), and
+`--n_permutations N` (run a permutation test, default 0 = off). None of the commands below pass
+`--no_ci`, so confidence intervals are computed by default everywhere in this experiment.
+
 ### Step 1 — run analysis (CPU)
 
 This step runs five scripts. The first four each read the embeddings and write their own result
@@ -219,7 +225,7 @@ and `mechanism_delta_family_split` accepts `--no_ci` (skip the confidence-interv
 faster iteration only), `--n_boot N` (number of bootstrap resamples, default 1000), and
 `--n_permutations N` (run a permutation test, default 0 = off).
 
-### Step 1b — permutation tests (GPU, seed 0 only)
+### Step 2 — permutation tests (CPU, seed 0 only)
 
 A permutation test checks whether the family-split score is better than what pure chance would
 produce, by repeatedly shuffling the labels and re-scoring. Run this separately from Step 1, in its
@@ -239,7 +245,7 @@ powered, and no claim in this run depends on an MLP permutation p-value.
 Before launching on the pod, time a single re-fit so you know whether the full 1,000-permutation
 run will take hours or days.
 
-### Step 2 — single-source robustness check (CPU)
+### Step 3 — single-source robustness check (CPU)
 
 Re-runs the Step 1 probe on the subset of variants that came from a single curation source
 (Gerasimavicius), instead of the merged ClinVar + Gerasimavicius set, as a check that the mechanism
