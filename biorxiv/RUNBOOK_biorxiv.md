@@ -68,17 +68,17 @@ pip install -e .
 emits CI keys. Verify by running each module for one seed and confirming `ci_low`/`ci_high` are
 actually populated, not just that it exited cleanly.
 
-**0.3 — Methodology rules.** R7.3 (resampling unit/pairing) and R7.4 (rare-class intervals) of the
+**0.3 — Methodology rules.** Rule 3 (resampling unit/pairing) and Rule 4 (rare-class intervals) of the
 pre-registration, implemented by the 0.2 wiring.
 
 **0.4 — Paired cluster bootstrap.** Implemented in `utils/bootstrap.py`, call sites
 `conservation_axis.py` and `mechanism_delta_family_split.py`. Covers three paired claims: the
-conservation-vs-embedding-delta gap that gate K2 turns on, the pathogenicity-vs-mechanism
+conservation-vs-embedding-delta gap that gate 1B turns on, the pathogenicity-vs-mechanism
 cross-family transfer contrast (not paired — different datasets, no shared row space), and the
-gene-split-minus-family-split gap (the leakage account, C2).
+gene-split-minus-family-split gap (the leakage account, 2B).
 
-**0.5/0.6 — Pre-registered decision rules.** CI decision rule (R7.1) and confirmatory/exploratory
-split (R7.2), written into
+**0.5/0.6 — Pre-registered decision rules.** CI decision rule (Rule 1) and confirmatory/exploratory
+split (Rule 2), written into
 [`PREREGISTRATION_run_biorxiv.md`](PREREGISTRATION_run_biorxiv.md) before the run.
 
 **0.7 — Pinned environment.** Confirm before the run:
@@ -176,7 +176,7 @@ order.
 
 ---
 
-## 4. ESM-2 delta-embedding mechanism
+## 4. Experiment: ESM-2 delta-embedding mechanism
 
 This experiment tests whether ESM-2 embeddings can predict a variant's mechanism (DN/LOF/GOF), and
 whether that prediction still holds once genes from the same protein family are kept out of the
@@ -245,7 +245,7 @@ result isn't an artifact of merging two differently-curated datasets.
 
 ---
 
-## 5. Pathogenicity positive control
+## 5. Experiment: Pathogenicity positive control
 
 Tests whether the same delta embeddings that show no mechanism signal in section 4 can still
 tell pathogenic from benign ClinVar variants, confirming they carry usable signal at all. Pass
@@ -273,19 +273,17 @@ GPU, this runs on the pod.
 | 5.2 | `python -m esm2_mech.experiments.pathogenicity.pathogenicity_control --model esm2_t33_650M_UR50D` | Embed the fetched pathogenicity variants, run the pathogenic-vs-benign probe. Inputs: `clinvar_pathogenicity_variants.json`, `cache/sequences.json`, `pfam_families.json`. Outputs: `data/embeddings/esm2_t33_650M_UR50D/pathogenicity_{wt,mut}_mean.npy`, `data/embeddings/esm2_t33_650M_UR50D/pathogenicity_meta.json`, `results/run_biorxiv/pathogenicity_control.json` |
 | 5.3 | `scp -i ~/.ssh/id_runpod_2 -P <pod-port> root@<pod-ip>:/workspace/repo/data/embeddings/esm2_t33_650M_UR50D/pathogenicity_*.npy root@<pod-ip>:/workspace/repo/data/embeddings/esm2_t33_650M_UR50D/pathogenicity_meta.json root@<pod-ip>:/workspace/repo/results/run_biorxiv/pathogenicity_control.json data/embeddings/esm2_t33_650M_UR50D/` | Copy embeddings and results back to local machine |
 
-Step 5.2 errors immediately if `clinvar_pathogenicity_variants.json` is missing, rather than
-fetching it itself — the fetch is step 2.8's job, run locally, so pod GPU time is never spent
-on network I/O.
+Step 5.2 errors immediately if `clinvar_pathogenicity_variants.json` is missing.
 
-Classes here are balanced by construction (equal pathogenic and benign variants per gene), but
-genes still cluster into protein families, so confidence intervals resample whole genes rather
-than individual variants, the same as in section 4. The resulting report should note that the
-probe measures how well it discriminates pathogenic from benign variants, not a calibrated risk
-estimate for any one variant.
+Classes are balanced by construction (equal numbers of pathogenic and benign variants per gene).
+However, genes still cluster into protein families, so confidence intervals continue to resample
+whole genes rather than individual variants (as in section 4). The report should also note that the
+probe measures discrimination between pathogenic and benign variants, not a calibrated risk
+estimate for any single variant.
 
 ---
 
-## 6. Geometry of the pathogenicity direction
+## 6. Experiment: Geometry of the pathogenicity direction
 
 Section 5 shows the delta embeddings separate pathogenic from benign variants. This experiment
 asks what that pathogenicity direction actually is: whether it is one shared direction across
@@ -294,8 +292,6 @@ the embedding or which way, whether it is explained by simple substitution chemi
 acid size or charge change) or by ESM-2's own sense of how conserved a position is, and whether the
 same direction transfers to the stability and mechanism tasks.
 
-This experiment sits downstream of section 5: its first step reads the pathogenicity variant
-set and embedding arrays that earlier steps produced, so run those first.
 
 ### Build canonical variant list (CPU)
 
@@ -345,8 +341,8 @@ one GPU step in this experiment; it can share a pod session with any other GPU w
 ### Conservation analysis (CPU)
 
 Compares the conservation features from step 6.5 to the pathogenicity direction found in step 6.2, on
-the same family-split protocol. Pre-registered gates: K1 conservation alone reaches AUROC ≥ 0.85
-(the axis is mostly conservation); K2 adding the embedding delta on top of conservation improves
+the same family-split protocol. Pre-registered gates: 1A conservation alone reaches AUROC ≥ 0.85
+(the axis is mostly conservation); 1B adding the embedding delta on top of conservation improves
 AUROC by ≥ 0.02 (the embedding carries pathogenicity signal beyond conservation).
 
 | Step | Command | Description |
@@ -355,12 +351,12 @@ AUROC by ≥ 0.02 (the embedding carries pathogenicity signal beyond conservatio
 
 run_biorxiv adds gene-cluster confidence intervals to each pathogenicity AUROC in this experiment
 (resampled over genes, not individual variants, the same as sections 4 and 5), and a paired
-cluster-bootstrap confidence interval on the K2 gap (conservation-alone AUROC vs. conservation-plus-
+cluster-bootstrap confidence interval on the 1B gap (conservation-alone AUROC vs. conservation-plus-
 embedding-delta AUROC) and on the pathogenicity-vs-mechanism transfer contrast.
 
 ---
 
-## 7. Megascale stability positive control
+## 7. Experiment: Megascale stability positive control
 
 A second positive control, alongside section 5, with a purely physical label instead of a
 clinically curated one: Tsuboyama et al. 2023's measured folding stability change (ΔΔG) for about

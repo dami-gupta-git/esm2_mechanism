@@ -24,7 +24,7 @@ that are actually specified.
 
 The mechanism null is measured under the Pfam family partition only. C6 was removed from the
 confirmatory set and the coarser-partition check is named in the paper as follow-up work, so the
-paper claims partition-independence nowhere and must not imply it (R7.2).
+paper claims partition-independence nowhere and must not imply it (Rule 2).
 
 **The committed panel is defective and is withdrawn, not amended.** Anyone reviving this starts
 from a rerun, not from `results/run_biorxiv/homology_partition_panel/panel.json`, which is deleted.
@@ -53,9 +53,9 @@ hardcoded stale reference floors (`0.352`, `0.387`) instead of live measured num
 
 ---
 
-## Open — does stability gate H2 get a paired test?
+## Open — does stability gate 1D get a paired test?
 
-H2 (the random→family Spearman drop against the LEAKY threshold of 0.10) is currently descriptive.
+1D (the random→family Spearman drop against the LEAKY threshold of 0.10) is currently descriptive.
 The paired cluster bootstrap exists and could be applied to it. Recommendation: do it if cheap,
 otherwise state explicitly in `report_stability.md` that the gate is descriptive rather than tested.
 This is the only question left open when the run_biorxiv plan was retired; everything else in it was
@@ -67,7 +67,7 @@ either resolved or became code.
 
 Task 2b asks whether the mechanism null survives a **coarser partition**. This asks whether it
 survives **cleaner labels** — same shape, same machinery, same reports section. The objection it
-answers is stated in R7.2 of `PREREGISTRATION_run_biorxiv.md`: one label per gene means some fraction of variants is
+answers is stated in Rule 2 of `PREREGISTRATION_run_biorxiv.md`: one label per gene means some fraction of variants is
 mislabelled by construction, which caps achievable macro-F1, and a reviewer can claim the floor
 result is that cap rather than an absent signal.
 
@@ -122,8 +122,8 @@ made on the *minimum* per-class gene count and its family spread, not on the sub
   0.1's underpowered-null language, and do **not** let it gate the run.
 
 Either way the count itself is reported, so the reader can see what the subset could and could not
-resolve. This is exploratory (it is not in the C1–C4 confirmatory set) but it is the direct answer
-to a confirmatory claim's main threat, so it belongs in the same report as C1.
+resolve. This is exploratory (it is not in the 2A–2D confirmatory set) but it is the direct answer
+to a confirmatory claim's main threat, so it belongs in the same report as 2A.
 
 ★ **Consequence for sequencing: Task 8 likely carries this argument, not Task 2d** — it has no
 subset-size dependency. Task 2d remains worth running for the count it reports, even in the thin
@@ -245,7 +245,7 @@ observed in mechanism annotations does not explain a result sitting at the floor
 label-noise objection is answered quantitatively. If instead the curve collapses to chance at
 realistic noise rates, that is a genuine limitation and must be reported as one — it would mean the
 mechanism null cannot be distinguished from a labelling artifact by this dataset, which is a
-material caveat on C1 rather than a footnote.
+material caveat on 2A rather than a footnote.
 
 **Design notes.**
 

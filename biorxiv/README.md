@@ -12,7 +12,7 @@ states, it references it by name rather than restating it, so a change lands in 
 
 | File | What it is |
 |---|---|
-| `PREREGISTRATION_run_biorxiv.md` | The claims under test (C1–C4), the decision rules, the resampling and pairing rules, what counts as passing, and what would overturn each claim. Frozen before the run. |
+| `PREREGISTRATION_run_biorxiv.md` | The claims under test (2A–2D), the decision rules, the resampling and pairing rules, what counts as passing, and what would overturn each claim. Frozen before the run. |
 | `RUNBOOK_biorxiv.md` | What changed since run6, preconditions, the pinned environment, commands in order with live status, and the verification checklist. |
 | `FOLLOWUP_biorxiv.md` | Deferred and withdrawn work. Gates nothing here. |
 
@@ -38,6 +38,6 @@ alone. Paths are keyed by model, not by run.
 `utils/paths.py`. run6 is preserved untouched as the comparison baseline.
 
 `scripts/compare_runs.py run6 run_biorxiv` diffs every number and flags material movement. Expect
-K1 and K2 to move: conservation now reports one pooled AUROC over seed-averaged out-of-fold
+1A and 1B to move: conservation now reports one pooled AUROC over seed-averaged out-of-fold
 predictions instead of a mean of per-fold AUROCs, since a paired difference needs both arms scored
 on the same per-variant predictions.
