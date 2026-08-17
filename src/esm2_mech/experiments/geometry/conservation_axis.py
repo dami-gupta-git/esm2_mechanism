@@ -1,28 +1,8 @@
-"""
-The conservation decider (plan_conservation_axis.md → result_24).
+"""Conservation decider: is the pathogenicity axis just ESM-2's conservation
+signal, or does the embedding carry pathogenicity beyond masked-LM likelihood?
 
-result_23 found pathogenicity is a single, family-transferable LINEAR direction in
-ESM-2 perturbation space, and Probe 4 ruled out context-free biochemistry as its
-explanation. The remaining question: is that axis just ESM-2's own *conservation*
-signal (masked-LM log-likelihood), or does the embedding direction carry
-pathogenicity information BEYOND the model's likelihood output?
-
-Phase 1 (GPU): for each canonical pathogenicity variant, mask the WT position and
-read log P(aa|context) for all 20 AAs → logP_wt, logP_mut, entropy.
-Phase 2 (CPU): compare the conservation features to the result_23 axis on the same
-variants, same Pfam family-split.
-
-Pre-registered gates (family-split AUROC, 5-seed):
-  K1: conservation-alone AUROC >= 0.85            -> axis ~ conservation
-  K2: AUROC(conservation+delta) - AUROC(conservation) >= 0.02
-      -> embedding carries pathogenicity BEYOND conservation (NOVEL)
-  K3: Spearman(axis projection, masked_marginal)  -> descriptive
-
-Usage:
-  # Phase 1 needs a GPU (RunPod / A100 / H100):
-  python3 scripts/conservation_axis.py --extract
-  # Phase 2 (analysis) runs anywhere once the cache exists:
-  python3 scripts/conservation_axis.py
+Phase 1 (GPU, --extract): mask WT position, read log P over 20 AAs.
+Phase 2 (CPU): compare conservation features to the result_23 axis, same family-split.
 """
 
 import argparse
@@ -74,19 +54,11 @@ CONS_META = CONSERVATION_PATHOGENICITY_META_JSON
 K1_CONS_MIN = 0.85
 K2_ADD_MIN = 0.02
 
-# The pathogenic class, matching _pathogenicity_label's encoding.
 PATHOGENIC = 1
-# The 1280-d embedding delta needs more iterations than the shared probe default.
 LOGREG_MAX_ITER = 2000
 
-
-# ── Phase 1: masked-LL extraction (GPU) ──────────────────────────────────────
-
-
 def extract_conservation(variants, seqs, batch_size=64, ckpt_every=2000):
-    """Per variant: mask the WT position, read log P over 20 AAs at that token.
-    Returns (N,3) array [logP_wt, logP_mut, entropy], aligned by variant index;
-    NaN rows where sequence/position unavailable or WT mismatches."""
+    """Returns (N,3) array [logP_wt, logP_mut, entropy]; NaN where unavailable."""
     import torch
     import esm
 
@@ -112,7 +84,6 @@ def extract_conservation(variants, seqs, batch_size=64, ckpt_every=2000):
     batch_converter = alphabet.get_batch_converter()
     aa_idx = {aa: alphabet.get_idx(aa) for aa in AA_ORDER}
 
-    # Build the work list (index, masked_seq, new_pos, wt_aa, mut_aa); skip done/invalid
     work = []
     skipped = 0
     for i, v in enumerate(variants):
@@ -171,8 +142,6 @@ def extract_conservation(variants, seqs, batch_size=64, ckpt_every=2000):
     return out
 
 
-# ── Phase 2: analysis (CPU) ──────────────────────────────────────────────────
-
 
 def _pathogenicity_label(label):
     """Map a canonical-set label to 1 (pathogenic) / 0 (benign); never a catch-all."""
@@ -194,19 +163,7 @@ def _oof_one_seed(X, y, genes, pfam, seed):
 
 
 def auroc_family_split(X, y, genes, pfam, seeds=range(5), n_jobs=-1):
-    """Family-split AUROC from seed-averaged OOF, with its family-cluster CI.
-
-    Returns (auroc, ci, oof). The AUROC is computed once over the seed-averaged
-    out-of-fold predictions rather than as a mean of per-fold AUROCs, because the
-    K1/K2/C4 claims are differences between feature sets and a difference needs
-    both arms scored on the same per-variant predictions to be paired. One pooled
-    quantity also keeps the point estimate and its interval measuring the same
-    thing. This is the averaged-OOF convention `classify_by_mechanism` and
-    `esm3_mechanism` already use for the confirmatory claims.
-
-    Seeds run in parallel (each is an independent fold set), since this is the CPU
-    cost of Phase 2. Returns (nan, None, None) if no seed produced a scorable fold.
-    """
+    """Family-split AUROC from seed-averaged OOF, with family-cluster CI."""
     per_seed = Parallel(n_jobs=n_jobs)(
         delayed(_oof_one_seed)(X, y, genes, pfam, seed) for seed in seeds
     )
@@ -243,20 +200,17 @@ def analyse():
     masked_marginal = logP_wt - logP_mut
     cons_feats = np.column_stack([logP_wt, logP_mut, entropy, masked_marginal])
 
-    # result_23 axis projection (direction from a single full-data logreg fit)
     Xs = StandardScaler().fit_transform(delta)
     w = LogisticRegression(max_iter=2000, C=1.0).fit(Xs, y).coef_.ravel()
     w /= np.linalg.norm(w) + 1e-12
     s = Xs @ w
 
-    # K3 — correlations
     k3 = {
         "masked_marginal": float(spearmanr(s, masked_marginal).correlation),
         "entropy": float(spearmanr(s, entropy).correlation),
         "logP_wt": float(spearmanr(s, logP_wt).correlation),
     }
 
-    # AUROCs (family-split, 5 seeds). Each feature set printed as it completes.
     print("\nRunning family-split AUROCs (5 seeds)...")
     feature_sets = {
         "conservation": cons_feats,
@@ -281,10 +235,6 @@ def analyse():
                 flush=True,
             )
 
-    # K2, K2b and C4 are DIFFERENCES between feature sets. All four arms are scored
-    # on the same variants under the same family-split folds, so each difference is
-    # a same-fold paired statistic — one family resample per replicate handed to
-    # both arms — not a comparison of two independent intervals.
     print("\n=== PAIRED DIFFERENCES (family-cluster bootstrap) ===")
     contrasts = [
         ("K2_delta_beyond_conservation", "conservation_plus_delta", "conservation", K2_ADD_MIN),
@@ -326,8 +276,6 @@ def analyse():
             "threshold": K1_CONS_MIN,
             "ci": auroc_ci["conservation"],
             "passed": k1_passed,
-            # K1 is a level claim, not a difference: it is established when the
-            # interval sits clear of the threshold, not merely above it.
             "verdict": adjudicate_level(cons_a, auroc_ci["conservation"], K1_CONS_MIN),
         },
         "K2_delta_beyond_conservation": {
@@ -414,8 +362,6 @@ def main():
         print(f"Variants: {len(variants)}  Sequences available: {len(seqs)}")
         extract_conservation(variants, seqs, batch_size=args.batch_size)
 
-    # Phase 2 needs the cached embeddings; skip cleanly if they aren't here
-    # (e.g. running --extract on a GPU pod that doesn't have the embeddings).
     if MUT_EMB.exists() and CONS_CACHE.exists():
         analyse()
     else:

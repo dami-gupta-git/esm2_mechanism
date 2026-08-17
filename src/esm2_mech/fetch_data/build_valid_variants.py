@@ -1,17 +1,4 @@
-"""
-Build the filtered variant list used by embedding and analysis scripts.
-
-Reads variants.json and cache/sequences.json, filters to variants with:
-  - a valid UniProt ID present in the sequence cache
-  - a valid WT/mut window (apply_missense succeeds)
-
-  Input : data/variants.json
-          data/cache/sequences.json
-  Output: data/valid_variants.json
-
-Usage:
-    python -m esm2_mech.fetch_data.build_valid_variants
-"""
+"""Build the filtered variant list used by embedding and analysis scripts."""
 
 import functools
 import json

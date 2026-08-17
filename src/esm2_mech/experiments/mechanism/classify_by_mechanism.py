@@ -1,12 +1,4 @@
-"""
-Classify variants by disease mechanism (GOF/DN/LOF) using ESM-2 embeddings.
-
-Tests whether ESM-2 features (WT-only, delta, per-residue, onehot, FoldX, AlphaMissense)
-carry mechanism signal beyond protein family identity. Runs each feature under gene-split
-and family-split CV across 5 seeds.
-
-Reads from paths.py constants. Writes results to RESULTS_DIR/<run_name>/.
-"""
+"""Classify variants by mechanism (GOF/DN/LOF) using ESM-2 embeddings under gene-split and family-split CV."""
 
 import argparse
 import functools
@@ -40,17 +32,13 @@ OUT_DIR = RESULTS_DIR
 
 
 def load_data() -> dict:
-    """Load and return all shared data needed by the probe experiments."""
+    """Load variants, embeddings, labels, and auxiliary features."""
     print("\n=== Loading valid variants ===")
     valid_variants = load_variants(VALID_VARIANTS_JSON)
     print(f"Valid variant pairs: {len(valid_variants)}")
     if len(valid_variants) < 50:
         print("WARNING: Very few valid variants. Results may not be reliable.")
 
-    # Four embedding arrays, all aligned by row to VALID_VARIANTS_JSON (the same
-    # filtered variant list the embed step re-applies — see paths.py). A row-count
-    # mismatch means the two are no longer aligned and every downstream label
-    # assignment would be silently wrong, so this must raise rather than proceed.
     print("\n=== Loading embeddings ===")
     for path in [EMB_WT_MEAN, EMB_MUT_MEAN, EMB_WT_POS, EMB_MUT_POS]:
         if not os.path.exists(path):
@@ -74,18 +62,15 @@ def load_data() -> dict:
                 f"row-aligned with the embeddings."
             )
 
-    # Build label and metadata arrays aligned to valid_variants.
     labels_3class = np.array([v["label_3class"] for v in valid_variants])
     labels_4class = np.array([v["mechanism"] for v in valid_variants])
     genes_arr = np.array([v["gene"] for v in valid_variants])
-    # FoldX ΔΔG: NaN where missing — never impute, restrict subset at probe time.
     foldx_ddg = np.array(
         [v["foldx_ddg"] if v["foldx_ddg"] is not None else np.nan for v in valid_variants]
     )
     aa_wt_list = [v["aa_wt"] for v in valid_variants]
     aa_mut_list = [v["aa_mut"] for v in valid_variants]
 
-    # AlphaMissense: NaN where score unavailable.
     print("\n=== Loading AlphaMissense scores ===")
     alphamissense_scores = _load_alphamissense_scores(valid_variants)
 
@@ -134,8 +119,6 @@ def main():
             n_permutations=args.n_permutations,
         )
 
-    # Final step: pool the per-seed files into one honest headline figure
-    # (mean ± std ACROSS seeds, not across folds within a seed).
     print("\n=== Aggregating across seeds ===")
     seed_results = load_seed_files(str(OUT_DIR), SEED_RESULT_GLOB)
     if not seed_results:

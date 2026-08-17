@@ -1,25 +1,9 @@
-"""
-Extract ESM-2 embeddings for the Tsuboyama stability variants.
+"""Extract ESM-2 embeddings for Tsuboyama stability variants.
 
 Companion to embed_variants.py (the mechanism dataset). Differs because the
 Tsuboyama records already carry full WT/mutant domain sequences — there is no
 UniProt lookup and no windowing (domains are short, well under ESM-2's 1022-token
 limit), so the WT/mut sequence pairs are read straight from the parsed variants.
-
-The heavy lifting (interleaved WT/mut forward passes, atomic checkpointing,
-resume) is the shared get_esm2_embeddings_for_pairs helper. That helper writes
-fixed filenames into out_dir, so this driver points it at an isolated checkpoint
-subdir (megascale_ckpt, under the --model's embedding directory) to avoid
-colliding with the mechanism embeddings, then promotes the four arrays to
-megascale_*.npy in that same model directory.
-
-Outputs (under data/embeddings/<model>/):
-  megascale_wt_mean.npy   megascale_mut_mean.npy
-  megascale_wt_pos.npy    megascale_mut_pos.npy
-All four are row-aligned to data/megascale_tsuboyama_variants.json.
-
-Usage (requires GPU):
-  python -m esm2_mech.embeddings.embed_megascale --model esm2_t33_650M_UR50D --batch_size 32
 """
 
 import argparse
@@ -50,11 +34,6 @@ from esm2_mech.utils.paths import (
     MEGASCALE_EMB_MUT_POS,
 )
 
-# Filenames the shared helper writes (EMB_ARRAY_NAMES) → the megascale target
-# filename each is promoted to. Filenames are taken from the MEGASCALE_EMB_*
-# path constants (paths.py) so they cannot drift from the canonical naming;
-# the directory they land in is namespaced per --model below, matching
-# embed_variants.py's convention (data/embeddings/<model>/).
 _CKPT_TO_TARGET_FILENAME = dict(zip(
     EMB_ARRAY_NAMES,
     (
@@ -67,12 +46,7 @@ _CKPT_TO_TARGET_FILENAME = dict(zip(
 
 
 def _build_pairs(variants):
-    """WT/mut sequence pairs and 1-indexed positions straight from the records.
-
-    No windowing: a domain longer than ESM-2's limit would be a data error here
-    (Tsuboyama domains are short), so we assert rather than silently truncate —
-    truncation would move the mutation off var_pos and misalign the pos embedding.
-    """
+    """Build WT/mut sequence pairs; raises if any domain exceeds ESM-2's token limit."""
     wt_seqs, mut_seqs, positions = [], [], []
     for variant in variants:
         wt_seq = variant["wt_seq"]
@@ -88,7 +62,7 @@ def _build_pairs(variants):
 
 
 def _promote_checkpoint(ckpt_dir, n_expected, target_dir):
-    """Copy the completed checkpoint arrays to megascale_*.npy under target_dir."""
+    """Promote completed checkpoint arrays to megascale_*.npy under target_dir."""
     for name, target_filename in _CKPT_TO_TARGET_FILENAME.items():
         src = os.path.join(ckpt_dir, name)
         rows = np.load(src, mmap_mode="r").shape[0]
@@ -120,13 +94,10 @@ def main():
     print(f"Embedding {len(wt_seqs)} WT/mut pairs across "
           f"{len({v['protein'] for v in variants})} domains")
 
-    # Namespaced by --model (mirrors embed_variants.py) so different models'
-    # checkpoints and outputs never collide or silently reuse one another.
     target_dir = str(DATA_DIR / "embeddings" / args.model)
     ckpt_dir = os.path.join(target_dir, "megascale_ckpt")
     os.makedirs(ckpt_dir, exist_ok=True)
 
-    # Resume: if a full checkpoint already exists, skip extraction and just promote.
     ckpt_paths = [os.path.join(ckpt_dir, name) for name in _CKPT_TO_TARGET_FILENAME]
     resume_arrays, resume_start = None, 0
     status, payload = inspect_four_array_checkpoint(ckpt_paths, len(wt_seqs))

@@ -1,30 +1,6 @@
-"""
-Log-likelihood scan for mechanism prediction (result_22).
+"""Log-likelihood scan for mechanism prediction (result_22).
 
-For each gene, masks each of the 100 evenly-spaced probe positions in turn and
-reads log P(aa | context) for all 20 amino acids directly from ESM-2's output
-logits. This is the masked language model's native scoring — more principled
-than the embedding L2 distance used in result_20.
-
-Computes 5 pre-registered scalar features per gene from ΔLL scores:
-  1. ll_wt_mean        — mean log P(wt_aa) across positions (conservation)
-  2. ll_delta_mean     — mean ΔLL = mean(log P(wt) - log P(probe)) across Ala/Asp/Trp
-  3. ll_delta_cv       — CV of ΔLL across positions (hotspot concentration)
-  4. ll_hotspot_frac   — fraction of positions with ΔLL > mean + 1σ
-  5. ll_top_entropy    — mean entropy of the 20-AA distribution at top-10 ΔLL positions
-
-Speed: ~198k forward passes (1 per position, all 20 AAs scored simultaneously),
-~3x fewer than the embedding scan (result_20).
-
-Usage:
-  # Phase 2 (GPU required):
-  python3 scripts/ll_scan.py --run_phase 2
-
-  # Phase 3 only (CPU, after scores cached):
-  python3 scripts/ll_scan.py --run_phase 3
-
-  # All phases:
-  python3 scripts/ll_scan.py
+Masks probe positions, reads ESM-2 logits for all 20 AAs, and computes 5 scalar features per gene.
 """
 
 import argparse, functools, json, os, sys, numpy as np
@@ -48,9 +24,6 @@ CHECKPOINT_EVERY = 50  # genes between saves
 MIN_POSITIONS = 3
 
 
-# ── Phase 1: load probe list ──────────────────────────────────────────────────
-
-
 def load_probe_list():
     """Reuse the same probe positions from result_20."""
     probe_cache = SCAN_PROBE_CACHE_JSON
@@ -59,8 +32,7 @@ def load_probe_list():
     probes = d["probes"]
     covered_genes = d["covered_genes"]
 
-    # Build gene → unique positions mapping (deduplicate across Ala/Asp/Trp probes)
-    gene_positions = defaultdict(dict)  # gene → {aa_pos: (wt_aa, seq, uniprot_id)}
+    gene_positions = defaultdict(dict)
     for p in probes:
         gene = p["gene"]
         pos = p["aa_pos"]
@@ -86,18 +58,8 @@ def load_sequences():
     return seqs
 
 
-# ── Phase 2: GPU log-likelihood extraction ────────────────────────────────────
-
-
 def extract_ll_scores(covered_genes, gene_positions, seqs, batch_size=32):
-    """
-    For each gene, mask each probe position in turn and record:
-      - log P(wt_aa | context)
-      - log P(probe_aa | context) for each of Ala, Asp, Trp
-
-    Returns dict: gene → list of dicts with keys:
-      aa_pos, wt_aa, ll_wt, ll_ala, ll_asp, ll_trp
-    """
+    """Mask each probe position and record log P for wt and probe AAs."""
     import torch
     import esm
 
@@ -130,7 +92,6 @@ def extract_ll_scores(covered_genes, gene_positions, seqs, batch_size=32):
     batch_converter = alphabet.get_batch_converter()
     mask_idx = alphabet.mask_idx
 
-    # Map AA char → token index
     aa_to_idx = {aa: alphabet.get_idx(aa) for aa in AA_ORDER}
     probe_aas = ["A", "D", "W"]
 
@@ -147,14 +108,12 @@ def extract_ll_scores(covered_genes, gene_positions, seqs, batch_size=32):
         gene_scores = []
         pos_list = sorted(positions.keys())
 
-        # Process positions in batches — each position needs one masked sequence
         for batch_start in range(0, len(pos_list), batch_size):
             batch_pos = pos_list[batch_start : batch_start + batch_size]
             batch_data = []
 
             for pos in batch_pos:
                 wt_win, new_pos, _ = window_sequence(seq, pos)
-                # Build masked sequence: replace new_pos (1-indexed) with mask token
                 masked = list(wt_win)
                 masked[new_pos - 1] = "<mask>"
                 masked_seq = "".join(masked)
@@ -165,7 +124,7 @@ def extract_ll_scores(covered_genes, gene_positions, seqs, batch_size=32):
 
             with torch.inference_mode():
                 out = model(tokens)
-            logits = out["logits"].cpu().float()  # (B, L+2, vocab)
+            logits = out["logits"].cpu().float()
 
             for i, pos in enumerate(batch_pos):
                 wt_win, new_pos, _ = window_sequence(seq, pos)
@@ -185,7 +144,6 @@ def extract_ll_scores(covered_genes, gene_positions, seqs, batch_size=32):
                 ll_asp = float(log_probs[aa_to_idx["D"]])
                 ll_trp = float(log_probs[aa_to_idx["W"]])
 
-                # Full 20-AA distribution for entropy computation
                 aa_order = AA_ORDER
                 full_probs = [
                     float(np.exp(log_probs[aa_to_idx[aa]])) for aa in aa_order
@@ -211,7 +169,6 @@ def extract_ll_scores(covered_genes, gene_positions, seqs, batch_size=32):
                 json.dump({"done_genes": list(done_genes), "scores": all_scores}, f)
             print(f"  Checkpoint: {len(done_genes)}/{len(covered_genes)} genes")
 
-    # Save final output, remove checkpoint
     with open(out_path, "w") as f:
         json.dump(all_scores, f)
     print(f"Saved LL scores: {out_path}")
@@ -221,14 +178,8 @@ def extract_ll_scores(covered_genes, gene_positions, seqs, batch_size=32):
     return all_scores
 
 
-# ── Phase 3: feature computation ─────────────────────────────────────────────
-
-
 def compute_ll_features(covered_genes, all_scores):
-    """
-    Build 5 pre-registered scalar features per gene from LL scores.
-    Returns: gene_list (array), X (n_genes × 5), feature_names (list)
-    """
+    """Build 5 pre-registered scalar features per gene from LL scores."""
     feature_names = [
         "ll_wt_mean",
         "ll_delta_mean",
@@ -263,7 +214,6 @@ def compute_ll_features(covered_genes, all_scores):
         threshold = delta_mean + delta_std
         hotspot_frac = float(np.mean(delta_vals > threshold))
 
-        # Entropy at top-10 ΔLL positions
         top10_idx = np.argsort(delta_vals)[-10:]
         entropies = []
         for idx in top10_idx:
@@ -291,17 +241,8 @@ def save_features(gene_list, X, feature_names):
     print(f"Saved ll_features.npy ({X.shape})")
 
 
-# ── Phase 4: probe runs ───────────────────────────────────────────────────────
-
-
 def run_probe_analysis():
-    """
-    Logistic regression probe: ll-only, ll+delta, ll+scan, ll+scan+delta.
-    Decision rules (pre-registered, thresholds from result_20):
-      G1: ll-only family-split F1 > 0.282   (scan-only 0.272 + 0.01)
-      G2: ll+delta family-split F1 > 0.385  (scan+delta 0.375 + 0.01)
-      G3: ll+scan family-split F1 > max(ll-only, scan-only) + 0.02
-    """
+    """Logistic regression probe across ll-only, ll+delta, ll+scan, ll+scan+delta."""
     from collections import Counter
 
     from esm2_mech.utils.splits import gene_split_cv, family_split_cv
@@ -342,13 +283,11 @@ def run_probe_analysis():
     ll_X_aligned = np.array([ll_X[ll_idx[g]] for g in gene_list])
     print(f"Genes with LL features: {len(gene_list)}  Classes: {dict(Counter(labels))}")
 
-    # Load mean-pooled delta — use the same variants file as the label map above
     gene_delta = load_gene_delta(VALID_VARIANTS_JSON, EMB_WT_MEAN, EMB_MUT_MEAN)
     delta_X = np.array(
         [np.mean(gene_delta[g], axis=0) for g in gene_list], dtype=np.float32
     )
 
-    # Load scan features (result_20)
     scan_path = SCAN_FEATURES_NPY
     if scan_path.exists():
         scan_X_all = np.load(scan_path)
@@ -365,7 +304,6 @@ def run_probe_analysis():
         scan_mask = None
         print("  scan_features.npy not found — skipping ll+scan combo")
 
-    # Feature combos
     combos = {"ll_only": ll_X_aligned, "ll_delta": np.hstack([ll_X_aligned, delta_X])}
     if scan_X is not None and scan_mask.all():
         combos["ll_scan"] = np.hstack([ll_X_aligned, scan_X])
@@ -455,9 +393,6 @@ def run_probe_analysis():
     with open(out_path, "w") as f:
         json.dump(out, f, indent=2)
     print(f"\nResults → {out_path}")
-
-
-# ── Main ──────────────────────────────────────────────────────────────────────
 
 
 def main():

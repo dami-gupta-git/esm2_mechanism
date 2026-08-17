@@ -1,25 +1,6 @@
-"""
-Nonlinear stability probe — companion to megascale_stability.py.
+"""Nonlinear stability probe (MLP, RF, GBM) companion to megascale_stability.py.
 
-Dataset: full Tsuboyama 2023 point-mutant set, natural domains only (see
-tsuboyama_loader.py). Runs Ridge, MLP (1280→256→64→1), RF and GBM under the
-same three CV schemes (random / domain-holdout / family-holdout) and 5 seeds,
-then compares to check whether nonlinearity adds signal beyond the linear probe.
-Family-holdout uses real Pfam families (build_domain_families.py).
-
-NOTE on pre-registration: only Ridge and MLP are pre-registered (see the plan in
-docs/plans/plan_megascale_stability.md). RF and GBM are EXPLORATORY / post-hoc —
-report them as such, never as confirmed hypotheses.
-
-Same question as result_3/5/7 for mechanism: does the nonlinear lift survive
-family-holdout, or does it evaporate (leakage)?
-
-Usage (embeddings must already be extracted on GPU):
-  cd esm2_mechanism
-  python -m esm2_mech.experiments.stability.megascale_mlp
-
-Outputs:
-  results/<run>/megascale_stability/mlp_summary.json
+RF and GBM are EXPLORATORY / post-hoc — only Ridge and MLP are pre-registered.
 """
 
 import functools
@@ -41,14 +22,6 @@ from esm2_mech.utils.metrics import auroc_at_median, mean_std_n, standardize
 
 os.makedirs(OUT, exist_ok=True)
 
-
-# ---------------------------------------------------------------------------
-# MLP regression probe
-# ---------------------------------------------------------------------------
-# The generic sklearn probe (Ridge/RF/GBM/XGBoost) lives in megascale_stability
-# as run_regression_cv — imported above so the linear and nonlinear probes share
-# one CV loop. The MLP needs its own torch runner (early stopping, on-device
-# minibatching) and is defined below.
 
 
 def run_mlp_regression(
@@ -99,10 +72,8 @@ def run_mlp_regression(
         opt = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=1e-4)
         crit = nn.MSELoss()
 
-        # Move ALL tensors to the device once. The data fits in GPU memory, so we
-        # index minibatches on-device with a per-epoch permutation instead of a
-        # DataLoader — a DataLoader doing torch.tensor(...).to(device) per batch
-        # was the bottleneck (GPU idle ~1%, host-copy bound) on this tiny model.
+        # Move all tensors to device once; per-batch .to(device) via DataLoader
+        # was the bottleneck (GPU idle ~1%, host-copy bound).
         X_fit_t = torch.tensor(X_fit).to(device)
         y_fit_t = torch.tensor(y_tr[fit_idx]).unsqueeze(1).to(device)
         X_val_t = torch.tensor(X_val).to(device)
@@ -157,10 +128,6 @@ def run_mlp_regression(
         "n_folds": n_rho,
     }
 
-
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
 
 
 def main(use_xgboost=False):

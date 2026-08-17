@@ -1,50 +1,7 @@
-"""
-Megascale stability as a second ESM-2 positive control (linear/Ridge probe).
+"""Linear (Ridge) stability probe on Tsuboyama 2023 point-mutant ΔΔG.
 
-Dataset: full Tsuboyama 2023 point-mutant set, natural domains only
-(Tsuboyama2023_Dataset2_Dataset3_20230416.csv). ~177k single-point missense
-variants across ~181 natural domains with physical ΔΔG labels — no curation
-circularity. De novo designs are excluded (no Pfam family); parsing/scope is in
-tsuboyama_loader.py. Family-split uses real Pfam families assigned by HMMER
-(build_domain_families.py); domains with no Pfam hit are excluded from
-family-split only. See for_me/explain_stability.md for the full rationale.
-
-Pre-registered hypotheses (docs/plans/plan_megascale_stability.md):
-  H1: Spearman ρ ≥ 0.5 under random split (stability encoded)
-  H2: ρ drops ≤ 0.05 under family-split CV (family-robust)
-  H3: Stability projected out of mechanism delta_mean does not lift
-      family-split mechanism F1 on the merged mechanism dataset.
-      Protocol: train Ridge on stability → predict stability score for merged
-      variants → compute residuals of delta_mean ⊥ predicted stability
-      (OLS projection-out, one component) → re-run family-split logreg on the
-      residuals vs. on the unprojected features, both in the single stability
-      (sc_s) standardisation space so the projection is the only difference.
-  H4: Per-domain ρ std ≤ 0.10 (tight per-stratum distribution)
-
-Decision table — ordered by informativeness, not by prior probability.
-LEAKY and HETEROGENEOUS are the high-value outcomes; ROBUST is expected:
-
-  LEAKY:         random ρ ≥ 0.5, family-split Δ ≥ 0.10  → stability signal partly family-memorisation;
-                 analogous to mechanism leakage; would reshape central claim
-  HETEROGENEOUS: random ρ ≥ 0.5, Δ ≤ 0.05, per-domain std ≥ 0.15  → works on average, fails on some domains;
-                 matches result_18 AM/ProteinGym pattern; curation vs physical label distinction is real
-  ROBUST:        random ρ ≥ 0.5, Δ ≤ 0.05, per-domain std ≤ 0.10  → expected; strengthens positive-control claim
-  WEAK:          random ρ 0.3–0.5  → partial signal
-  NULL:          random ρ < 0.3  → very unexpected; would undermine central framing
-
-Companion nonlinear probe (Ridge/MLP/RF/GBM): megascale_mlp.py.
-
-Usage (embeddings must already be extracted on GPU):
-  cd esm2_mechanism
-  python -m esm2_mech.experiments.stability.megascale_stability
-
-Outputs:
-  data/megascale_tsuboyama_variants.json
-  data/megascale_domain_families.json
-  data/embeddings/<model>/megascale_{wt,mut}_{mean,pos}.npy
-  results/<run>/megascale_stability/summary.json
-  results/<run>/megascale_stability/per_protein_spearman.json
-  results/<run>/megascale_stability/h3_stability_projection.json
+Pre-registered H1-H4 hypotheses; see docs/plans/plan_megascale_stability.md.
+Companion nonlinear probe: megascale_mlp.py.
 """
 
 import argparse
@@ -84,24 +41,9 @@ os.makedirs(OUT, exist_ok=True)
 os.makedirs(str(_DATA_DIR / "embeddings" / ESM2_MODEL), exist_ok=True)
 
 
-# ---------------------------------------------------------------------------
-# Ridge regression probe
-# ---------------------------------------------------------------------------
-
 
 def run_regression_cv(X, y, splits, clf_fn, with_pearson=True, clusters=None, return_oof=False):
-    """Standardise-fit-predict a regressor over CV folds; return ρ/AUROC (+Pearson).
-
-    Generic over the estimator (clf_fn returns a fresh estimator per fold) so the
-    Ridge linear probe here and the RF/GBM/XGBoost probes in megascale_mlp.py share
-    one implementation. Pearson r is only meaningful for the linear probe, so the
-    nonlinear callers pass with_pearson=False.
-    return_oof : if True, return (agg, oof) with out-of-fold test predictions
-        {"y_true", "pred", "clusters"} for dependency-aware inference (cluster
-        bootstrap on Spearman ρ), or None if no fold was scorable. `clusters`
-        (e.g. protein/domain ids) must be provided for oof to carry cluster ids.
-        Default False keeps the bare-`agg` return for existing callers.
-    """
+    """Standardise-fit-predict a regressor over CV folds; return ρ/AUROC."""
     rhos, pearsons, aurocs = [], [], []
     oof_y, oof_pred, oof_clusters = [], [], []
     for tr, te in splits:
@@ -148,7 +90,7 @@ def run_regression_cv(X, y, splits, clf_fn, with_pearson=True, clusters=None, re
 
 
 def run_ridge_with_auroc(X, y, splits, clusters=None, return_oof=False):
-    """Linear (Ridge, alpha=1.0) stability probe — thin wrapper over run_regression_cv."""
+    """Ridge alpha=1.0 stability probe."""
     return run_regression_cv(
         X, y, splits, lambda: Ridge(alpha=1.0), with_pearson=True,
         clusters=clusters, return_oof=return_oof,
@@ -156,7 +98,7 @@ def run_ridge_with_auroc(X, y, splits, clusters=None, return_oof=False):
 
 
 def spearman_cluster_bootstrap_ci(oof, n_resamples=BOOTSTRAP_N_RESAMPLES, seed=0):
-    """Cluster-bootstrap CI on Spearman ρ from an OOF dict {"y_true","pred","clusters"}."""
+    """Cluster-bootstrap CI on Spearman ρ from OOF predictions."""
     y_true = oof["y_true"]
     pred = oof["pred"]
 
@@ -169,16 +111,9 @@ def spearman_cluster_bootstrap_ci(oof, n_resamples=BOOTSTRAP_N_RESAMPLES, seed=0
     return cluster_bootstrap_ci(oof["clusters"], _rho, n_resamples=n_resamples, seed=seed)
 
 
-# ---------------------------------------------------------------------------
-# Per-protein Spearman distribution
-# ---------------------------------------------------------------------------
-
 
 def per_protein_spearman(X, y, proteins):
-    """
-    For each protein with ≥5 variants, fit Ridge on all others, predict on that protein.
-    Analogous to result_17/18 per-stratum AUROC distributions.
-    """
+    """Leave-one-protein-out Ridge ρ for each protein with ≥5 variants."""
     unique = sorted(set(proteins))
     results = {}
     for prot in unique:
@@ -202,10 +137,6 @@ def per_protein_spearman(X, y, proteins):
     return results
 
 
-# ---------------------------------------------------------------------------
-# H3: stability projection out of mechanism
-# ---------------------------------------------------------------------------
-
 
 def run_h3_stability_projection(
     merged_delta_mean,
@@ -218,25 +149,7 @@ def run_h3_stability_projection(
     n_folds=5,
     n_seeds=5,
 ):
-    """
-    Pre-registered H3 protocol:
-      1. Train Ridge on the stability set (wt_mean, mut_mean) -> ΔΔG.
-      2. Use that Ridge to predict a stability score for each merged-dataset variant
-         from its delta_mean embedding.
-      3. Project stability score out of merged delta_mean via OLS (one component):
-         residuals = delta_mean - (delta_mean @ v) * v  where v is the unit vector
-         of the stability Ridge weights (normalised).
-      4. Re-run family-split logistic regression on residuals, 5 seeds.
-      5. Compare to baseline family-split F1 on the unprojected features. Both arms
-         live in the single sc_s standardisation space (the space the projection
-         vector is defined in) and are NOT re-standardised per task or per fold —
-         re-standardising would reintroduce variance along the removed direction
-         and defeat the test (see the note at the projection step). The baseline is
-         therefore the sc_s-standardised features, not raw delta_mean; the only
-         difference between the two arms is the rank-1 projection.
-
-    Returns dict with baseline_f1, projected_f1, delta_f1, and per-seed values.
-    """
+    """Project stability out of mechanism delta_mean; compare family-split F1."""
     from sklearn.linear_model import LogisticRegression
     from sklearn.preprocessing import LabelEncoder
     from sklearn.metrics import f1_score
@@ -247,28 +160,19 @@ def run_h3_stability_projection(
     ridge = Ridge(alpha=1.0)
     ridge.fit(X_s, stability_ddg)
 
-    # Stability projection vector: unit-normalised Ridge weights (in sc_s feature space)
-    stability_weights = ridge.coef_  # shape (D,)
-    stability_dir = stability_weights / (
-        np.linalg.norm(stability_weights) + 1e-12
-    )  # unit vector in sc_s-scaled feature space
+    # Projection vector is in sc_s feature space (unit-normalised Ridge weights).
+    stability_weights = ridge.coef_
+    stability_dir = stability_weights / (np.linalg.norm(stability_weights) + 1e-12)
 
-    # Project stability out of merged delta_mean — must scale first to match sc_s space.
-    # Both arms live in this single sc_s-standardised space and are NOT re-standardised
-    # per fold: a per-fold StandardScaler rescales each column by its own std, which —
-    # because `residuals` is rank-deficient along the dense vector stability_dir —
-    # reintroduces variance along that direction (the very one we removed), silently
-    # defeating the test. The projection must be the LAST transform the classifier sees.
+    # Both arms stay in sc_s space; a per-fold re-standardisation would reintroduce
+    # variance along the removed direction, defeating the test.
     merged_scaled = sc_s.transform(merged_delta_mean.astype(np.float64)).astype(
         np.float32
     )
     proj = merged_scaled @ stability_dir  # (N,) scalar stability score per variant
     residuals = merged_scaled - np.outer(proj, stability_dir)
 
-    # Verify the projection actually removed the stability direction: the residuals
-    # must have ~zero variance along stability_dir (CLAUDE.md: verify
-    # var(X_final @ v) ≈ 0 after projecting a direction out). The whole H3 test
-    # hinges on this, so assert it rather than trusting the algebra.
+    # H3 hinges on this removal; assert var along stability_dir ≈ 0.
     var_before = float(np.var(merged_scaled.astype(np.float64) @ stability_dir))
     var_after = float(np.var(residuals.astype(np.float64) @ stability_dir))
     if var_after > 1e-6 * var_before + 1e-8:
@@ -319,16 +223,9 @@ def run_h3_stability_projection(
     }
 
 
-# ---------------------------------------------------------------------------
-# Decision rule — ordered by informativeness
-# ---------------------------------------------------------------------------
-
 
 def apply_decision_rule(random_rho, protein_rho, per_prot_std):
-    """
-    Ordered by informativeness (most surprising first), not by prior probability.
-    ROBUST is the expected outcome; LEAKY and HETEROGENEOUS are the high-value findings.
-    """
+    """Apply pre-registered decision rule, ordered by informativeness."""
     delta = random_rho - protein_rho
     # Check in order of informativeness
     if random_rho >= 0.5 and delta >= 0.10:
@@ -344,15 +241,8 @@ def apply_decision_rule(random_rho, protein_rho, per_prot_std):
     return f"INTERMEDIATE (rho={random_rho:.3f}, delta={delta:.3f}, std={per_prot_std:.3f})"
 
 
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
-
 
 def main(compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES):
-    # ── 1. Shared inputs: variants, ΔΔG, Pfam family map, embedding deltas ─────
-    # The linear probe needs the per-residue delta too (include_pos=True). Orphan
-    # domains (no Pfam hit) are absent from family_map → excluded from family-split.
     inputs = load_stability_inputs(include_pos=True)
     variants = inputs.variants
     proteins = inputs.proteins
@@ -364,9 +254,6 @@ def main(compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES):
 
     print(f"Embeddings: delta_mean {delta_mean.shape}, delta_pos {delta_pos.shape}")
 
-    # ── 4. Multi-seed CV ──────────────────────────────────────────────────────
-    # Three schemes: random (in-distribution), domain-holdout (never train+test on
-    # the same domain), family-holdout (never train+test on related Pfam families).
     results_by_seed = []
     for seed in range(N_SEEDS):
         print(f"\n── Seed {seed} ──")
@@ -378,19 +265,9 @@ def main(compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES):
         for feat_name, X in [("delta_mean", delta_mean), ("delta_pos", delta_pos)]:
             for split_name, splits in splits_by_name.items():
                 key = f"{feat_name}_{split_name}"
-                # CI from seed 0's OOF only: each seed reshuffles the CV fold
-                # assignment, so seed 0 is the coherent unit for a cluster
-                # bootstrap rather than merging predictions across seeds (R7.5's
-                # "seed 0" convention; H2 is a descriptive gate, not confirmatory).
                 if compute_ci and seed == 0:
-                    # R7.3: the CI resampling unit matches the unit the split
-                    # holds out — random/domain splits hold out domains
-                    # (proteins), so they resample proteins; the family split
-                    # holds out whole Pfam families, so it must resample
-                    # families instead. Orphan domains (absent from family_map)
-                    # never appear in a family-split fold (family_split_cv
-                    # excludes them), so the sentinel value for them is never
-                    # actually selected into that split's OOF.
+                    # CI resampling unit matches the split's holdout unit:
+                    # proteins for random/domain, Pfam families for family split.
                     ci_clusters = (
                         np.array(
                             [family_map.get(p, f"__orphan__{p}") for p in proteins]
@@ -416,14 +293,10 @@ def main(compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES):
 
         results_by_seed.append(seed_result)
 
-    # ── 5. Per-protein Spearman distribution ──────────────────────────────────
     print("\nPer-protein Spearman (leave-one-protein-out)...")
     per_prot = per_protein_spearman(delta_mean, ddg, proteins)
     prot_rhos = [entry["spearman"] for entry in per_prot.values()]
-    # spearmanr returns NaN for a protein whose held-out ΔΔG or predictions are
-    # constant. Aggregate with mean_std_n (NaN-filtering) and guard min/max on the
-    # finite subset — a single NaN must not poison per_prot_std, which feeds the
-    # HETEROGENEOUS branch of the verdict (CLAUDE.md: NaN-guard every reducer).
+    # NaN-guard: constant predictions yield NaN which must not poison per_prot_std.
     per_prot_mean, per_prot_std, n_finite_prot = mean_std_n(prot_rhos)
     finite_rhos = [rho for rho in prot_rhos if np.isfinite(rho)]
     if finite_rhos:
@@ -437,7 +310,6 @@ def main(compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES):
 
     atomic_write_json(os.path.join(OUT, "per_protein_spearman.json"), per_prot)
 
-    # ── 6. Aggregate across seeds ─────────────────────────────────────────────
     summary = {}
     all_keys = set()
     for seed_result in results_by_seed:
@@ -463,8 +335,7 @@ def main(compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES):
             "auroc_std": au_std,
             "n_seeds": n_seeds_used,
         }
-        # Seed 0's cluster-bootstrap CI on Spearman ρ (see the compute_ci branch
-        # above) carried through to the cross-seed summary — the file reports read.
+        # Seed 0's cluster-bootstrap CI carries through to the summary.
         seed0_ci = results_by_seed[0].get(key, {}).get("ci") if results_by_seed else None
         if seed0_ci is not None:
             summary[key]["ci"] = seed0_ci
@@ -476,11 +347,6 @@ def main(compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES):
         "n_proteins_finite": n_finite_prot,
     }
 
-    # ── 7. H3 — stability projection out of mechanism ─────────────────────────
-    # Use the canonical mechanism loader, which labels every variant GOF/DN/LOF
-    # (raising on an unexpected mechanism rather than defaulting to LOF) and
-    # asserts the embeddings are row-aligned to the variant list — no fallback
-    # labels, no blind length truncation.
     h3_result = None
     if all(
         os.path.exists(path)
@@ -515,8 +381,6 @@ def main(compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES):
     else:
         print("\nSkipping H3 (merged embeddings not found — run on pod with full data)")
 
-    # ── 8. Decision rule ──────────────────────────────────────────────────────
-    # Pre-registered H2 tests robustness under FAMILY-holdout (random − family Δ).
     dm_random = summary.get("delta_mean_random", {}).get("spearman_mean", float("nan"))
     dm_family = summary.get("delta_mean_family", {}).get("spearman_mean", float("nan"))
 

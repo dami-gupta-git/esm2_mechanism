@@ -1,36 +1,4 @@
-"""
-Pathogenicity positive control — embed and probe.
-
-This is the pipeline-check for the result_6 control: the same ESM-2 delta
-embeddings that classify GOF/DN/LOF at chance should predict ClinVar
-pathogenic-vs-benign well (published ESM-2 work: AUROC 0.88–0.94). If they do,
-the mechanism null is a real absence of signal, not a broken pipeline; and the
-gene-split / family-split gap being ~0 shows the pathogenicity signal is
-per-variant biochemistry, not homology leakage.
-
-Reads the variant set fetched by
-`esm2_mech.fetch_data.fetch_pathogenicity_variants` (run that first — this
-module errors if its output is missing) and runs two phases in sequence
-(designed to run on RunPod's GPU). Phase 1 skips extraction when the cached
-embeddings match by content, and Phase 2 always recomputes the probes (fast on
-CPU):
-
-  Phase 1 (GPU) — embed_phase()
-      Extract mean-pooled ESM-2 WT and mutant embeddings for those variants.
-      → pathogenicity_{wt,mut}_mean.npy, pathogenicity_meta.json
-
-  Phase 2 (CPU) — probe_phase()
-      5-seed logreg + MLP probes on delta_mean and wt_only, under gene-split and
-      family-split CV.  → results/<run>/pathogenicity_control.json
-
-  Inputs : data/clinvar_pathogenicity_variants.json, data/cache/sequences.json,
-           data/pfam_families.json
-  Output : results/<run>/pathogenicity_control.json (paths.PATHOGENICITY_CONTROL_JSON)
-
-Usage (on RunPod, inside tmux):
-    python -m esm2_mech.experiments.pathogenicity.pathogenicity_control
-        --model esm2_t33_650M_UR50D --batch_size 32
-"""
+"""Pathogenicity positive control: embed ClinVar variants and probe pathogenic-vs-benign as a pipeline check."""
 
 from __future__ import annotations
 
@@ -66,17 +34,11 @@ from esm2_mech.utils.splits import family_split_cv, gene_split_cv
 
 print = functools.partial(print, flush=True)
 
-# The pathogenicity embedding path constants (PATH_EMB_*) live under the 650M
-# EMB_DIR, so this control runs on the 650M model only.
 ESM2_MODEL_650M = "esm2_t33_650M_UR50D"
 
 
 def load_fetched_variants():
-    """Load the variant set fetch_pathogenicity_variants.py already wrote.
-
-    Does not fetch: this module runs on the pod, where a re-fetch would spend
-    GPU-billed time on network I/O. Run the fetch script locally first.
-    """
+    """Load the variant set written by fetch_pathogenicity_variants.py."""
     if not CLINVAR_PATHOGENICITY_VARIANTS_JSON.exists():
         raise FileNotFoundError(
             f"{CLINVAR_PATHOGENICITY_VARIANTS_JSON} not found. Run "
@@ -87,9 +49,6 @@ def load_fetched_variants():
         return json.load(f)
 
 
-# ===========================================================================
-# Phase 1 — extract ESM-2 embeddings
-# ===========================================================================
 def _build_valid_pairs_indexed(variants, seq_cache):
     """Filter to embeddable variants; return original indices for re-alignment."""
     valid_indices, valid, wt_seqs, mut_seqs, positions = [], [], [], [], []
@@ -120,11 +79,7 @@ def _build_valid_pairs_indexed(variants, seq_cache):
 
 
 def _embeddings_complete(valid_fingerprint, n_valid):
-    """True only if cached embeddings match the current valid set by content.
-
-    Compares a content fingerprint, not just counts, so a seed/cap change that
-    happens to yield the same n_valid does not reuse stale embeddings.
-    """
+    """True only if cached embeddings match the current valid set by content fingerprint."""
     if not all(p.exists() for p in [PATH_EMB_WT_MEAN, PATH_EMB_MUT_MEAN, PATH_EMB_META]):
         return False
     try:

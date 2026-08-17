@@ -1,21 +1,6 @@
-"""
-Nonlinear classifier probes on ESM-2 delta embeddings.
+"""Nonlinear classifier probes (MLP, GBM, RF, kNN) on ESM-2 delta embeddings.
 
-Tests whether mechanism signal (GOF/DN/LOF) is nonlinearly separable in delta
-space where the linear probe was at chance. Runs MLP, GBM, RF, and kNN under
-both gene-split and family-split CV.
-
-Features:
-  delta_mean — (mutant - wildtype) embedding averaged across all residues in the
-               protein. Captures how the mutation shifts the global representation
-               of the protein.
-  delta_pos  — (mutant - wildtype) embedding at the specific mutated residue position.
-               Captures the local perturbation at the mutation site.
-
-  Input : data/valid_variants.json
-          data/embeddings/esm2_t33_650M_UR50D/embeddings_*.npy
-          data/pfam_families.json
-  Output: results/<run_name>/nonlinear_results_seed{seed}.json
+Tests mechanism separability (GOF/DN/LOF) under gene-split and family-split CV.
 """
 
 import argparse
@@ -100,8 +85,7 @@ def run_seed(seed, args, labels, genes, delta_mean, delta_pos, pfam_map):
     ]
 
     def run_tree_knn(feat_name, X, split_name, splits, results):
-        """Run GBM/RF/kNN for one feature under one split, storing into results.
-        Keys are symmetric with the MLP keys: <model>_<feat>_<split>."""
+        """Run GBM/RF/kNN for one feature under one split, storing into results."""
         for model_key, model_label, clf_fn, probe_fn, extra_kwargs in TREE_KNN_MODELS:
             print(f"\n=== {model_label} {split_name}-split: {feat_name} ===")
             key = nonlinear_key(model_key, feat_name, split_name)
@@ -117,8 +101,6 @@ def run_seed(seed, args, labels, genes, delta_mean, delta_pos, pfam_map):
     feature_arrays = [(DELTA_MEAN_FEATURE, delta_mean), (DELTA_POS_FEATURE, delta_pos)]
     splits_by_name = [(SPLIT_GENE, gene_splits), (SPLIT_FAMILY, family_splits)]
 
-    # Merge mode: compute only the new GBM/RF/kNN family-split arms and fold them
-    # into the existing result file, leaving every existing key untouched.
     if args.only_new_family_arms:
         with open(out_path) as f:
             existing = json.load(f)
@@ -148,7 +130,6 @@ def run_seed(seed, args, labels, genes, delta_mean, delta_pos, pfam_map):
             results[key] = _attach_ci(agg, oof, split_name)
             print(f"  macro_f1={results[key].get('macro_f1_mean', float('nan')):.3f}")
 
-        # GBM/RF/kNN under both gene-split and family-split.
         for split_name, splits in splits_by_name:
             run_tree_knn(feat_name, X, split_name, splits, results)
 

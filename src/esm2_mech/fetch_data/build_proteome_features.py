@@ -1,33 +1,4 @@
-"""
-Phase 1 + 2 feature collection — Experiment 11
-===============================================
-
-Collects gene-level proteome features for all genes in
-data/gene_universe.tsv.  Sources:
-
-  1. gnomAD v4.1 constraint  (pLI, LOEUF, mis_z)
-  2. Ensembl Compara         (paralog_count)
-  3. Human Protein Atlas     (tissue_specificity_tau)
-  4. PaxDb integrated human  (log_abundance_ppm)
-  5. BioPlex 3.0 PPI network (PPI_degree)
-  6. GeneBayes s_het         (s_het) — replaces ClinGen HI/TS (80%/63% missing)
-
-Missing-data policy:
-  - Binary <feature>_missing indicator for every numerical feature.
-  - No imputation — raw NaN kept in both the .npy matrix and the TSV.
-    Consumers must restrict to the observed subset per feature and recompute
-    CV splits on that subset (never fabricate a value for a missing cell).
-  - Family-mean-centred residuals computed for every continuous feature.
-
-Outputs:
-  data/gene_proteome_features.tsv          human-readable gene × feature table
-  data/proteome_features_aligned.npy       float32 matrix aligned to gene_universe.tsv order
-  data/proteome_feature_columns.json       column metadata
-
-Usage:
-  python -m esm2_mech.fetch_data.build_proteome_features
-  python -m esm2_mech.fetch_data.build_proteome_features --force-redownload
-"""
+"""Collect gene-level proteome features for all genes in gene_universe.tsv."""
 
 from __future__ import annotations
 
@@ -63,9 +34,6 @@ from esm2_mech.utils.io import atomic_write_json, save_npy
 
 print = functools.partial(print, flush=True)
 
-# ---------------------------------------------------------------------------
-# Paths
-# ---------------------------------------------------------------------------
 CACHE_DIR = PROTEOME_FEATURES_CACHE_DIR
 PILOT_CACHE_DIR = PROTEOME_PILOT_CACHE_DIR
 PILOT_PARALOG_CACHE = PILOT_CACHE_DIR / "paralogs"
@@ -74,9 +42,6 @@ OUT_TSV = PROTEOME_FEATURES_TSV
 OUT_NPY = PROTEOME_FEATURES_ALIGNED
 OUT_COLS = PROTEOME_FEATURE_COLUMNS_JSON
 
-# ---------------------------------------------------------------------------
-# Source URLs
-# ---------------------------------------------------------------------------
 GNOMAD_CONSTRAINT_URL = (
     "https://storage.googleapis.com/gcp-public-data--gnomad/release/4.1/"
     "constraint/gnomad.v4.1.constraint_metrics.tsv"
@@ -96,7 +61,6 @@ PAXDB_URL = (
     "https://pax-db.org/download/5.0/datasets/9606/9606-WHOLE_ORGANISM-integrated.txt"
 )
 PAXDB_CACHE = CACHE_DIR / "paxdb_9606_integrated.txt"
-# Manually placed file (PaxDb blocks automated download)
 PAXDB_MANUAL = PAXDB_FILE
 
 BIOPLEX_URL = (
@@ -104,20 +68,14 @@ BIOPLEX_URL = (
 )
 BIOPLEX_CACHE = CACHE_DIR / "BioPlex_293T_Network_10K.tsv"
 
-# Manually placed file (Zeng et al. 2023 GeneBayes, https://doi.org/10.5281/zenodo.7939767)
 SHET_MANUAL = S_HET_FILE
 
-# gnomAD v2.1.1 — used only to build ensg→gene_symbol map for s_het join
-# (gnomAD v4.1 gene_id column is a bare integer, not an Ensembl ID)
 GNOMAD_V2_MANUAL = GNOMAD_LOF_FILE
 GNOMAD_V2_ENSG_CACHE = CACHE_DIR / "gnomad_v2.1.1_ensg_symbol.json"
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
 def _download_file(url: str, dest: Path, force: bool = False) -> bool:
-    """Download url → dest.  Returns True on success."""
+    """Download url to dest; returns True on success."""
     if dest.exists() and dest.stat().st_size > 1_000_000 and not force:
         print(f"  cached: {dest} ({dest.stat().st_size/1e6:.1f} MB)")
         return True
@@ -146,14 +104,8 @@ def _fnum(v: str) -> Optional[float]:
         return None
 
 
-# ---------------------------------------------------------------------------
-# Step 1 — Load gene universe from gene_universe.tsv
-# ---------------------------------------------------------------------------
 def load_gene_universe(tsv_path: Path) -> tuple[list[str], dict[str, str]]:
-    """
-    Return (genes_in_order, {gene: pfam_family}) from gene_universe.tsv.
-    All genes in the file have a pfam_family (filtered upstream by build_gene_universe.py).
-    """
+    """Return (genes_in_order, {gene: pfam_family}) from gene_universe.tsv."""
     genes: list[str] = []
     families: dict[str, str] = {}
     with open(tsv_path) as f:
@@ -167,14 +119,10 @@ def load_gene_universe(tsv_path: Path) -> tuple[list[str], dict[str, str]]:
     return genes, families
 
 
-# ---------------------------------------------------------------------------
-# Source 1 — gnomAD v4.1 constraint
-# ---------------------------------------------------------------------------
 def get_gnomad_constraint(force: bool = False) -> dict[str, dict]:
-    """Returns {gene: {pLI, LOEUF, mis_z}}."""
+    """Return {gene: {pLI, LOEUF, mis_z}}."""
     print("=== gnomAD v4.1 constraint ===")
 
-    # Reuse pilot cache if it exists and is large enough
     cache_path = GNOMAD_CACHE
     if not cache_path.exists() or force:
         if (
@@ -192,7 +140,6 @@ def get_gnomad_constraint(force: bool = False) -> dict[str, dict]:
                 )
                 return {}
     elif GNOMAD_CACHE.stat().st_size <= 1_000_000:
-        # Stale/partial cache, try pilot
         if (
             PILOT_GNOMAD_CACHE.exists()
             and PILOT_GNOMAD_CACHE.stat().st_size > 1_000_000
@@ -236,9 +183,6 @@ def get_gnomad_constraint(force: bool = False) -> dict[str, dict]:
 
     by_gene: dict[str, dict] = {}
     n_rows = 0
-    # Every column index we will dereference per row, including the optional
-    # _mane and lof.exp tie-break columns — a row must be long enough for all
-    # of them or we skip it (otherwise parts[idx_mane]/parts[idx_lof_exp] raises).
     needed = max(
         i
         for i in (idx_gene, idx_pli, idx_loeuf, idx_misz, idx_mane, idx_lof_exp)
@@ -289,18 +233,8 @@ def get_gnomad_constraint(force: bool = False) -> dict[str, dict]:
     return by_gene
 
 
-# ---------------------------------------------------------------------------
-# Source 2 — Ensembl Compara paralog count
-# ---------------------------------------------------------------------------
 def _load_paralog_cache(cache_file: Path) -> tuple[bool, Optional[int]]:
-    """
-    Read a paralog cache file. Returns (is_usable, paralog_count).
-
-    A cache entry is only usable if it represents a real REST success: an int
-    count >= 0 with no "error" tag. Anything else — parse error, count=None,
-    or tagged "error" — returns (False, None) so callers re-fetch instead of
-    treating a poisoned zero/None as truth.
-    """
+    """Read a paralog cache file; returns (is_usable, paralog_count)."""
     if not cache_file.exists():
         return False, None
     try:
@@ -316,7 +250,7 @@ def _load_paralog_cache(cache_file: Path) -> tuple[bool, Optional[int]]:
 
 
 def _fetch_paralog_count_rest(gene: str, own_cache_dir: Path) -> Optional[int]:
-    """Single REST call; writes to own_cache_dir/{gene}.json."""
+    """Single REST call; caches to own_cache_dir/{gene}.json."""
     cache_file = own_cache_dir / f"{gene}.json"
     usable, cached = _load_paralog_cache(cache_file)
     if usable:
@@ -328,10 +262,7 @@ def _fetch_paralog_count_rest(gene: str, own_cache_dir: Path) -> Optional[int]:
         with urllib.request.urlopen(req, timeout=15) as r:
             body = r.read().decode()
         data = json.loads(body)
-        # An empty "data" list means the gene symbol resolved to no entry —
-        # could be a real "no paralogs" answer OR a transient Ensembl hiccup.
-        # We can't tell them apart, so write an error-tagged sentinel that the
-        # next run will retry, rather than caching a permanent 0.
+        # Empty "data" is ambiguous (no paralogs vs transient hiccup); write error-tagged sentinel to retry.
         entries = data.get("data")
         if not entries:
             err = "empty data payload (HTTP 200 but no entries)"
@@ -352,19 +283,13 @@ def _fetch_paralog_count_rest(gene: str, own_cache_dir: Path) -> Optional[int]:
 
 
 def get_paralogs(genes: list[str]) -> dict[str, Optional[int]]:
-    """
-    Reuse pilot cache (data/cache/proteome_pilot/paralogs/) where available.
-    Fetch missing genes via REST at 10 req/s.
-    """
+    """Reuse pilot cache where available; fetch missing genes via REST at 10 req/s."""
     print("=== Ensembl Compara paralogs ===")
     own_cache = CACHE_DIR / "paralogs"
     out: dict[str, Optional[int]] = {}
     to_fetch: list[str] = []
 
     for gene in genes:
-        # Check pilot cache first, then own. Both go through _load_paralog_cache
-        # so that error-tagged or malformed entries fall through to a re-fetch
-        # instead of silently propagating None.
         pilot_file = PILOT_PARALOG_CACHE / f"{gene}.json"
         own_file = own_cache / f"{gene}.json"
         usable, cached = _load_paralog_cache(pilot_file)
@@ -391,18 +316,8 @@ def get_paralogs(genes: list[str]) -> dict[str, Optional[int]]:
     return out
 
 
-# ---------------------------------------------------------------------------
-# Source 3 — Human Protein Atlas
-# ---------------------------------------------------------------------------
 def get_hpa_features(genes: list[str], force: bool = False) -> dict[str, dict]:
-    """
-    Returns {gene: {tissue_specificity_tau: float|None}}.
-
-    Downloads proteinatlas.tsv.zip (bulk export).  Parses:
-      - "RNA tissue specificity" column  → tau proxy via text label mapping
-
-    Falls back gracefully if download fails or columns are absent.
-    """
+    """Return {gene: {tissue_specificity_tau: float|None}} from HPA bulk export."""
     print("=== Human Protein Atlas ===")
     result: dict[str, dict] = {g: {"tissue_specificity_tau": None} for g in genes}
     genes_set = set(genes)
@@ -412,8 +327,6 @@ def get_hpa_features(genes: list[str], force: bool = False) -> dict[str, dict]:
         "group enriched": 0.7,
         "tissue enhanced": 0.6,
         "low tissue specificity": 0.2,
-        # "not detected" is absent from the map — it means no tissue data, not tau=0.
-        # Leaving it unmapped returns None, which the _missing indicator will flag correctly.
     }
 
     ok = _download_file(HPA_PROTEINATLAS_URL, HPA_PROTEINATLAS_CACHE, force=force)
@@ -440,9 +353,6 @@ def get_hpa_features(genes: list[str], force: bool = False) -> dict[str, dict]:
                 fieldnames = reader.fieldnames or []
                 print(f"  HPA columns ({len(fieldnames)}): {fieldnames[:10]}")
 
-                # Find gene name column and text specificity label column only.
-                # "RNA tissue specificity score" is NOT Yanai τ — it is an HPA-internal
-                # integer (range 0–∞); we use only the text label mapped to [0, 0.8].
                 col_gene = None
                 col_tau_text = None
                 for name in fieldnames:
@@ -486,30 +396,14 @@ def get_hpa_features(genes: list[str], force: bool = False) -> dict[str, dict]:
     return result
 
 
-# ---------------------------------------------------------------------------
-# Source 4 — PaxDb protein abundance
-# ---------------------------------------------------------------------------
 def get_paxdb_abundance(
     genes: list[str], force: bool = False
 ) -> dict[str, Optional[float]]:
-    """
-    Returns {gene: log10(abundance_ppm)} or {gene: None}.
-    Genes with abundance_ppm < 1e-3 (below detection floor) are returned as None.
-
-    The manually placed file (data/downloads/9606-WHOLE_ORGANISM-integrated.txt)
-    has been pre-processed to: gene_symbol\tstring_id\tabundance_ppm.
-    This differs from the raw PaxDb download which has numeric internal IDs in col 0.
-
-    File resolution order:
-      1. PAXDB_MANUAL (data/9606-WHOLE_ORGANISM-integrated.txt) — manually placed
-      2. PAXDB_CACHE   (data/cache/proteome_features/...)        — previously downloaded
-      3. HTTP download (blocked by PaxDb as of 2026-05)
-    """
+    """Return {gene: log10(abundance_ppm)} or {gene: None}."""
     print("=== PaxDb abundance ===")
     result: dict[str, Optional[float]] = {g: None for g in genes}
     genes_set = set(genes)
 
-    # Resolve file path
     paxdb_path = None
     if PAXDB_MANUAL.exists() and PAXDB_MANUAL.stat().st_size > 1000:
         paxdb_path = PAXDB_MANUAL
@@ -559,16 +453,10 @@ def get_paxdb_abundance(
         return result
 
 
-# ---------------------------------------------------------------------------
-# Source 5 — BioPlex 3.0 PPI degree
-# ---------------------------------------------------------------------------
 def get_bioplex_degree(
     genes: list[str], force: bool = False
 ) -> dict[str, Optional[int]]:
-    """
-    Returns {gene: degree} (number of unique interaction partners).
-    Handles TSV with GeneA/GeneB columns (gene symbols).
-    """
+    """Return {gene: degree} (number of unique interaction partners)."""
     print("=== BioPlex 3.0 PPI ===")
     result: dict[str, Optional[int]] = {g: None for g in genes}
     genes_set = set(genes)
@@ -585,9 +473,6 @@ def get_bioplex_degree(
         with open(BIOPLEX_CACHE) as f:
             reader = csv.DictReader(f, delimiter="\t")
             fieldnames = reader.fieldnames or []
-            # Strict exact-name match only. Substring fallbacks ("gene" in name)
-            # are unsafe — they can pair an ID column with a description column
-            # and silently produce garbage degrees.
             col_a = None
             col_b = None
             for name in fieldnames:
@@ -622,13 +507,9 @@ def get_bioplex_degree(
                 gb = row.get(col_b, "").strip()
                 if not ga or not gb:
                     continue
-                # Count degree for all genes (not just our universe) then filter
                 degree.setdefault(ga, set()).add(gb)
                 degree.setdefault(gb, set()).add(ga)
 
-        # Sanity check: verify matched column values look like HGNC gene symbols,
-        # not database IDs (ENSG*, 6-char UniProt). Sample the first 50 keys from
-        # the degree dict — they come directly from the matched columns.
         _ENSG_RE = re.compile(r"^ENSG\d{8,}$")
         _UNIPROT_RE = re.compile(r"^[A-NR-Z]\d[A-Z\d]{3}\d$|^[OPQ]\d[A-Z\d]{3}\d$")
         _sample = list(itertools.islice(degree, 50))
@@ -653,16 +534,8 @@ def get_bioplex_degree(
     return result
 
 
-# ---------------------------------------------------------------------------
-# Source 6 — GeneBayes s_het (Zeng et al. 2023)
-# ---------------------------------------------------------------------------
 def _load_ensg_to_symbol() -> dict[str, str]:
-    """
-    Returns {ensg: gene_symbol} built from gnomAD v2.1.1 (which uses proper
-    ENSG IDs in its gene_id column, unlike v4.1 which uses bare integers).
-    Result is cached to GNOMAD_V2_ENSG_CACHE as JSON to avoid re-parsing.
-    Reads from GNOMAD_V2_MANUAL (manually placed bgz file).
-    """
+    """Return {ensg: gene_symbol} from gnomAD v2.1.1; cached to JSON."""
     if GNOMAD_V2_ENSG_CACHE.exists() and GNOMAD_V2_ENSG_CACHE.stat().st_size > 1000:
         print(f"  ensg→symbol map: loading from cache {GNOMAD_V2_ENSG_CACHE}")
         try:
@@ -710,12 +583,7 @@ def _load_ensg_to_symbol() -> dict[str, str]:
 
 
 def get_shet(genes: list[str]) -> dict[str, Optional[float]]:
-    """
-    Returns {gene: s_het_post_mean} or {gene: None}.
-
-    Reads data/downloads/s_het_estimates.genebayes.tsv (manually placed).
-    Joins on Ensembl gene ID via the gnomAD v2.1.1 ensg→symbol map.
-    """
+    """Return {gene: s_het_post_mean} or {gene: None}."""
     print("=== GeneBayes s_het ===")
     result: dict[str, Optional[float]] = {g: None for g in genes}
 
@@ -752,20 +620,15 @@ def get_shet(genes: list[str]) -> dict[str, Optional[float]]:
     return result
 
 
-# ---------------------------------------------------------------------------
-# Phase 2 — Build feature table and aligned matrix
-# ---------------------------------------------------------------------------
-# Raw continuous feature columns (in the order they'll appear in the TSV)
 CONT_FEATURES = [
     "pLI",
     "LOEUF",
     "mis_z",
     "paralog_count",
-    "tissue_specificity_tau",  # HPA text label mapped to {0, 0.2, 0.6, 0.7, 0.8}
-    # n_tissues_expressed: dropped — not in HPA bulk export (0% coverage)
-    "log_abundance_ppm",  # PaxDb integrated human, manually downloaded
+    "tissue_specificity_tau",
+    "log_abundance_ppm",
     "PPI_degree",
-    "s_het",  # GeneBayes posterior mean (Zeng et al. 2023); replaces ClinGen HI/TS
+    "s_het",
 ]
 
 
@@ -779,16 +642,7 @@ def build_feature_table(
     bioplex: dict[str, Optional[int]],
     shet: dict[str, Optional[float]],
 ) -> tuple[list[dict], list[str]]:
-    """
-    Build per-gene row dicts with:
-      - raw continuous features (NaN where missing)
-      - family-mean-centred residuals  (<feature>_familyresid)
-      - missingness indicators         (<feature>_missing)
-      - is_singleton_family indicator
-
-    Returns (rows, column_names) — rows are dicts, columns are ordered.
-    TSV contains raw values (NaN as empty); residuals and missingness also included.
-    """
+    """Build per-gene feature rows with raw values, family residuals, and missingness indicators."""
     rows: list[dict] = []
 
     for gene in genes:
@@ -797,27 +651,18 @@ def build_feature_table(
             "gene": gene,
             "pfam_family": family if family is not None else "",
         }
-        # gnomAD
         g = gnomad.get(gene, {})
         row["pLI"] = g.get("pLI")
         row["LOEUF"] = g.get("LOEUF")
         row["mis_z"] = g.get("mis_z")
-        # paralogs
         row["paralog_count"] = paralogs.get(gene)
-        # HPA — text-label specificity category mapped to {0, 0.2, 0.6, 0.7, 0.8}
         h = hpa.get(gene, {})
         row["tissue_specificity_tau"] = h.get("tissue_specificity_tau")
-        # n_tissues_expressed dropped — not in HPA bulk export (0% coverage)
-        # PaxDb abundance
         row["log_abundance_ppm"] = paxdb.get(gene)
-        # BioPlex
         row["PPI_degree"] = bioplex.get(gene)
-        # GeneBayes s_het
         row["s_het"] = shet.get(gene)
         rows.append(row)
 
-    # --- Family-mean-centred residuals ---
-    # Group genes by family; compute family mean for each continuous feature
     family_groups: dict[str, list[int]] = {}  # family → list of row indices
     for i, row in enumerate(rows):
         fam = row["pfam_family"]
@@ -829,9 +674,7 @@ def build_feature_table(
     }
 
     for feat in CONT_FEATURES:
-        # Family means: {family: mean_value_or_None}. Require ≥2 observed members
-        # so a single observed gene doesn't produce a zero residual that's
-        # indistinguishable from "no signal" downstream.
+        # Require >=2 observed members so a singleton doesn't produce a zero residual.
         fam_means: dict[str, Optional[float]] = {}
         for fam, idxs in family_groups.items():
             vals = [rows[i][feat] for i in idxs if rows[i][feat] is not None]
@@ -843,18 +686,13 @@ def build_feature_table(
             if fam and fam_means.get(fam) is not None and raw is not None:
                 row[f"{feat}_familyresid"] = raw - fam_means[fam]
             else:
-                # Singletons, families with <2 observed members, no-family genes,
-                # or missing raw values: residual is undefined — leave None (not 0.0)
-                # so _familyresid_missing flags it as missing downstream.
                 row[f"{feat}_familyresid"] = None
 
-    # --- is_singleton_family indicator ---
     for row in rows:
         row["is_singleton_family"] = (
             1 if row["pfam_family"] in singleton_families else 0
         )
 
-    # --- Missingness indicators ---
     for feat in CONT_FEATURES:
         for row in rows:
             row[f"{feat}_missing"] = 0 if row[feat] is not None else 1
@@ -863,7 +701,6 @@ def build_feature_table(
                 0 if row.get(f"{feat}_familyresid") is not None else 1
             )
 
-    # Build column list in a defined order
     col_names: list[str] = ["gene", "pfam_family", "is_singleton_family"]
     for feat in CONT_FEATURES:
         col_names.append(feat)
@@ -894,15 +731,7 @@ def build_aligned_matrix(
     rows: list[dict],
     col_names: list[str],
 ) -> tuple[np.ndarray, list[str]]:
-    """
-    Build float32 matrix.  Numerical columns only (skip 'gene', 'pfam_family').
-    Missing values are left as NaN — no imputation. A whole-dataset median
-    computed before any CV split leaks test-fold statistics into training,
-    and the imputed cells are indistinguishable from real measurements in the
-    matrix (the *_missing flag alone doesn't fix that). Consumers must restrict
-    to the observed subset per feature and recompute splits on that subset.
-    Returns (matrix, numerical_col_names).
-    """
+    """Build float32 matrix from numerical columns; missing values left as NaN."""
     num_cols = [c for c in col_names if c not in ("gene", "pfam_family")]
 
     X = np.full((len(rows), len(num_cols)), np.nan, dtype=np.float64)
@@ -915,11 +744,6 @@ def build_aligned_matrix(
                 except (ValueError, TypeError):
                     pass
 
-    # Report per-column coverage. Without imputation a source that failed
-    # entirely leaves an all-NaN column, which the NaN-native probes consume
-    # without complaint — the feature would silently vanish from every arm
-    # rather than erroring. Name those columns explicitly so a failed fetch is
-    # visible here, at the point it happened.
     empty_cols = []
     for j, col in enumerate(num_cols):
         n_obs = int((~np.isnan(X[:, j])).sum())
@@ -936,7 +760,7 @@ def build_aligned_matrix(
 
 
 def print_coverage_summary(rows: list[dict], genes: list[str]):
-    """Print per-source coverage table to stdout."""
+    """Print per-source coverage table."""
     n = len(genes)
     sources = {
         "gnomAD (pLI)": "pLI",
@@ -959,9 +783,6 @@ def print_coverage_summary(rows: list[dict], genes: list[str]):
     print("=" * 55 + "\n")
 
 
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
 def main():
     parser = argparse.ArgumentParser(
         description="Build gene-level proteome feature matrix for Experiment 11."
@@ -987,11 +808,9 @@ def main():
     print("build_proteome_features.py — Experiment 11 Phase 1+2")
     print("=" * 60)
 
-    # 1. Gene universe + Pfam families (gene_universe.tsv already filtered to Pfam-annotated genes)
     genes, families = load_gene_universe(GENE_UNIVERSE)
     print(f"Proceeding with {len(genes)} genes")
 
-    # 3. Sources — each wrapped in try/except so one failure doesn't abort
     gnomad: dict[str, dict] = {}
     try:
         gnomad = get_gnomad_constraint(force=force)
@@ -1032,22 +851,18 @@ def main():
     except Exception as e:
         print(f"WARNING: s_het source failed entirely: {e} — using None for all genes")
 
-    # 4. Phase 2: build feature table
     print("=== Phase 2: building feature table ===")
     rows, col_names = build_feature_table(
         genes, families, gnomad, paralogs, hpa, paxdb, bioplex, shet
     )
 
-    # 5. Save TSV (raw values, NaN as empty string)
     save_tsv(rows, col_names, OUT_TSV)
 
-    # 6. Build aligned numpy matrix (raw values, NaN preserved)
     print("=== Building aligned numpy matrix ===")
     X, num_cols = build_aligned_matrix(rows, col_names)
     save_npy(OUT_NPY, X)
     print(f"Wrote numpy matrix: {OUT_NPY} shape={X.shape} dtype={X.dtype}")
 
-    # 7. Save column metadata
     col_metadata = {
         "all_columns": col_names,
         "numerical_columns": num_cols,
@@ -1065,7 +880,6 @@ def main():
     atomic_write_json(OUT_COLS, col_metadata, indent=2)
     print(f"Wrote column metadata: {OUT_COLS}")
 
-    # 8. Coverage summary
     print_coverage_summary(rows, genes)
 
     print("Done.")

@@ -1,15 +1,4 @@
-"""
-Follow-up analysis: run all baselines (WT-only, one-hot AA, FoldX ΔΔG,
-AlphaMissense) AND the delta probe under BOTH gene-split and family-split CV,
-using the cached embeddings and Pfam map from a prior `experiment.py` run.
-
-Headline question: does the WT-only baseline's macro-F1 (~0.58 under gene-split)
-survive family-split CV? If not, the apparent mechanism signal is paralog/
-homology leakage from gene-split alone.
-
-Usage:
-    python family_split_baselines.py --run_dir run_0 --model esm2_t33_650M_UR50D
-"""
+"""Run all baselines and delta probe under gene-split and family-split CV."""
 
 import argparse
 import json
@@ -55,16 +44,7 @@ print = functools.partial(print, flush=True)
 
 
 def run_probe_on_splits(X, y, splits, genes=None, seed=42):
-    """Run logistic regression across a pre-computed list of (train, test) splits.
-
-    Returns (agg, oof). `agg` is the per-fold mean ± std metric dict (unchanged).
-    `oof` collects the out-of-fold test predictions for dependency-aware inference:
-    {"y_true", "proba" (aligned to MECHANISM_CLASSES), "genes", "row_ids"}, or None
-    when `genes` is not supplied or no fold ran. Each variant appears once (one
-    held-out fold). `row_ids` (the original row index into X/y) lets a downstream
-    consumer align this split's OOF against another split scheme's OOF over the
-    same underlying rows (e.g. leakage_fraction.py's joint gene/family bootstrap).
-    """
+    """Run logistic regression across splits. Returns (agg, oof)."""
     fold_results = []
     oof_y, oof_proba, oof_genes, oof_rows = [], [], [], []
     for train_idx, test_idx in splits:
@@ -119,22 +99,9 @@ def run_probe_on_splits(X, y, splits, genes=None, seed=42):
     return agg, oof
 
 
-PERMUTATION_FEATURES = ("delta_mean", "wt_only_mean")  # headline features: permutation tests + OOF cache
+PERMUTATION_FEATURES = ("delta_mean", "wt_only_mean")
 
-# The two headline features get different permutation tests, per R7.5 of
-# biorxiv/PREREGISTRATION_run_biorxiv.md.
-#
-# wt_only_mean refits the probe per permutation and scores macro-F1: it is the
-# above-floor comparison, its p-value is the load-bearing one, and run6 left it
-# unresolved at the 1/(N+1) floor.
-#
-# delta_mean scores macro one-vs-rest AUROC against the cached out-of-fold
-# predictions instead, so it costs no refits. Macro-F1 is a weak instrument for
-# C1: a probe at the chance floor predicts the majority class almost everywhere,
-# which pins macro-F1 near the floor whether or not the ranking carries signal —
-# run6 measured delta_mean BELOW its own shuffled-label mean (0.289 vs 0.319,
-# p = 1.0). AUROC reads the ranking directly, so it can fire on a small effect
-# macro-F1 would miss, which is what C1's refutation test needs.
+# wt_only_mean: refit permutation (macro-F1). delta_mean: OOF permutation (AUROC).
 REFIT_PERMUTATION_FEATURES = ("wt_only_mean",)
 OOF_PERMUTATION_FEATURES = ("delta_mean",)
 
@@ -148,9 +115,6 @@ def run(
     n_boot: int = BOOTSTRAP_N_RESAMPLES,
     n_permutations: int = 0,
 ) -> dict:
-    # ------------------------------------------------------------------
-    # 1–3. Extract pre-loaded data
-    # ------------------------------------------------------------------
     data = unpack_run_data(data)
     valid_variants = data["valid_variants"]
     emb_wt_mean = data["emb_wt_mean"]
@@ -170,16 +134,9 @@ def run(
     print(f"Class distribution: {dict(Counter(labels_3class))}")
     print(f"Unique genes: {len(set(genes_arr))}")
 
-    # ------------------------------------------------------------------
-    # 4. Build feature matrices
-    # ------------------------------------------------------------------
-    # FoldX and AlphaMissense: restrict to variants with observed values only.
-    # 0.0 is a plausible real ΔΔG — imputing NaN with 0.0 fabricates observations.
     foldx_mask = ~np.isnan(foldx_ddg)
     am_mask = ~np.isnan(alphamissense_scores)
 
-    # Reduce high-dimensional embeddings with PCA before probing.
-    # Fit PCA on the full set (no label leakage — PCA is unsupervised).
     print(f"\n=== PCA reduction to {PCA_COMPONENTS} components ===")
     pca = PCA(n_components=PCA_COMPONENTS, random_state=seed)
     emb_wt_mean_pca = pca.fit_transform(emb_wt_mean)
@@ -197,7 +154,6 @@ def run(
         "onehot_aa": build_wt_mut_onehot(aa_wt_list, aa_mut_list),
     }
 
-    # Masked baselines — rebuild splits on the observed subset so CV is valid
     if foldx_mask.sum() >= 20:
         features["foldx_ddg"] = (foldx_ddg[foldx_mask].reshape(-1, 1),
                                   labels_3class[foldx_mask], genes_arr[foldx_mask])
@@ -210,9 +166,6 @@ def run(
     else:
         print(f"  [skip alphamissense: only {am_mask.sum()} observed values]")
 
-    # ------------------------------------------------------------------
-    # 5. Build splits — gene-split AND family-split
-    # ------------------------------------------------------------------
     print("\n=== Building CV splits ===")
     if not PFAM_JSON.exists():
         raise FileNotFoundError(f"{PFAM_JSON} not found — run fetch_data/fetch_annotations --step pfam first")
@@ -225,14 +178,10 @@ def run(
 
     print(f"Gene-split folds:   {len(gene_splits)}")
     print(f"Family-split folds: {len(family_splits)}")
-    # Count families actually represented in the dataset genes, not every family
-    # in pfam_map (which includes families with no gene in this variant set).
+    # Only families with genes in the variant set.
     n_families = len({pfam_map.get(g) for g in genes_arr} - {None})
     print(f"Unique Pfam families: {n_families}")
 
-    # ------------------------------------------------------------------
-    # 6. Run every feature under both split schemes
-    # ------------------------------------------------------------------
     results = {
         "n_variants": len(valid_variants),
         "n_genes": int(len(set(genes_arr))),
@@ -242,15 +191,9 @@ def run(
         "family_split": {},
     }
 
-    # Seed-0 gene-split/family-split OOF cache for leakage_fraction.py's joint
-    # bootstrap on the leakage-fraction RATIO. Restricted to the unmasked
-    # PERMUTATION_FEATURES (delta_mean, wt_only_mean): masked baselines (FoldX,
-    # AlphaMissense) run their splits over a row-subset with its own local row
-    # numbering, so their row_ids are not comparable across the two split schemes.
     oof_cache: dict = {}
 
     for name, entry in features.items():
-        # Masked baselines carry their own subset labels/genes; others use full arrays
         if isinstance(entry, tuple):
             X, feat_labels, feat_genes = entry
             feat_gene_splits = gene_split_cv(feat_genes, n_folds=n_folds, seed=seed)
@@ -289,10 +232,6 @@ def run(
                     fs_oof["y_true"], fs_oof["proba"], fs_clusters,
                     n_resamples=n_boot, seed=seed,
                 )
-            # Both permutation tests score a FAMILY-split metric, so the exchangeable
-            # unit is the family, matching what the interval clusters on (R7.3).
-            # Shuffling one label per gene would break the label structure shared by
-            # homologous genes and build a null narrower than the truth.
             if n_permutations > 0 and name in REFIT_PERMUTATION_FEATURES:
                 def _family_macro_f1(perm_labels, _X=X, _splits=feat_family_splits, _genes=feat_genes):
                     agg_perm, _ = run_probe_on_splits(_X, perm_labels, _splits, _genes, seed=seed)
@@ -356,13 +295,6 @@ def run(
                 f"← positive ⇒ homology leakage"
             )
 
-            # C2's instrument. The gap is a DIFFERENCE across two CV partitions of
-            # the same rows, so it needs the cross-partition paired bootstrap: one
-            # family resample per replicate scored under both partitions. Two
-            # independent intervals would not test whether the gap itself is
-            # non-zero. Masked baselines (tuple entries) are excluded — their splits
-            # run over a row subset with its own local row numbering, so their
-            # row_ids do not identify the same variants as the full-array features.
             if (
                 compute_ci and not isinstance(entry, tuple)
                 and gs_oof is not None and fs_oof is not None
@@ -394,9 +326,6 @@ def run(
                                 f"{sensitivity['ci_high']:+.4f}]"
                             )
 
-    # ------------------------------------------------------------------
-    # 7. Write results
-    # ------------------------------------------------------------------
     out_path = os.path.join(out_dir, seed_result_filename(seed))
     with open(out_path, "w") as f:
         json.dump(results, f, indent=2)
@@ -411,7 +340,7 @@ def run(
 
 
 def _load_data_inline() -> dict:
-    """Load all data needed by run(). Used by main() for standalone execution."""
+    """Load all data needed by run() for standalone execution."""
     from esm2_mech.utils.data import load_variants as _load_variants
     from esm2_mech.experiments.mechanism.mechanism_delta_probe import _load_alphamissense_scores
 

@@ -1,21 +1,4 @@
-"""
-Per-Pfam-family AUROC analysis of AlphaMissense on ClinVar pathogenic/benign.
-
-Inputs:
-- data/pathogenicity_valid_variants.json   (17,236 variants, label: pathogenic|benign)
-- data/alphamissense_scores_full.json      (variant_key -> AM score; produced by fetch_alphamissense.py)
-- data/pfam_families.json                  (gene -> Pfam ID)
-
-Outputs:
-- results/alphamissense_family/overall.json       (overall AUROC / PR-AUC / N)
-- results/alphamissense_family/per_family.json    (family -> {n_pos, n_neg, auroc, pr_auc})
-- results/alphamissense_family/summary.json       (mean / median / quartiles of per-family AUROCs)
-
-The right framing for a fixed published predictor:
-not a "holdout drop" but the *distribution of per-family AUROCs*.
-A family-robust predictor has a tight distribution around the overall AUROC.
-A predictor that inherits family-correlated training has a heavy tail.
-"""
+"""Per-Pfam-family AUROC analysis of AlphaMissense on ClinVar pathogenic/benign."""
 
 from __future__ import annotations
 
@@ -53,8 +36,7 @@ def main() -> int:
     with open(DATA / "pfam_families.json") as _f:
         pfam = json.load(_f)
 
-    # Assemble (label, score, family) rows. AlphaMissense score is already
-    # oriented higher = more pathogenic.
+    # AM score is already oriented higher = more pathogenic.
     rows = []
     miss_score = miss_pfam = 0
     for v in variants:

@@ -1,24 +1,4 @@
-"""
-Per-DMS AlphaMissense AUROC + Spearman analysis on ProteinGym human assays.
-
-Approach (no ProteinGym precomputed AM scores available; we use our own
-local AM bulk file from result_17):
-
-1. Read ProteinGym DMS index, filter to taxon=Human.
-2. For each human assay, read the DMS CSV to get the list of variants + labels.
-3. Map UniProt mnemonics (e.g. "A4_HUMAN") -> accessions (e.g. "P05067")
-   via UniProt REST (cached locally as data/cache/proteingym/mnemonic_to_acc.json).
-4. Stream the local AM bulk file (data/cache/AlphaMissense_aa_substitutions.tsv.gz)
-   once, collecting scores for every (accession, variant) we need.
-5. Per assay: compute AUROC vs DMS_score_bin and Spearman vs DMS_score.
-6. Aggregate to per-assay distribution.
-
-Outputs:
-- data/cache/proteingym/mnemonic_to_acc.json
-- data/cache/proteingym/am_scores_proteingym.json
-- results/proteingym_alphamissense/per_assay.json
-- results/proteingym_alphamissense/summary.json
-"""
+"""Per-DMS AlphaMissense AUROC and Spearman analysis on ProteinGym human assays."""
 
 from __future__ import annotations
 
@@ -91,11 +71,7 @@ def load_mnemonic_map(mnemonics: list[str]) -> dict[str, str]:
 def collect_target_keys(
     assays: list[dict], acc_map: dict[str, str]
 ) -> tuple[dict[tuple[str, str], list[tuple[str, str]]], dict]:
-    """
-    Returns:
-      index: (accession, protein_variant) -> list of (dms_id, mutant_string)
-      meta:  per-assay metadata for later analysis
-    """
+    """Build (accession, variant) lookup index and per-assay metadata."""
     index: dict[tuple[str, str], list[tuple[str, str]]] = {}
     meta: dict[str, dict] = {}
     for a in assays:
@@ -114,7 +90,6 @@ def collect_target_keys(
         except Exception as e:
             meta[dms_id] = {"skipped": True, "reason": f"dms_read: {e}"}
             continue
-        # Only single-mutant rows (mutant string has no ':' separator).
         df = df[~df["mutant"].astype(str).str.contains(":")].reset_index(drop=True)
         if df.empty:
             meta[dms_id] = {"skipped": True, "reason": "no_single_mutants"}
@@ -198,7 +173,6 @@ def main() -> int:
             json.dump({f"{a}|{v}": s for (a, v), s in scores.items()}, _f)
         print(f"cached {len(scores):,} scores to {SCORE_CACHE}")
 
-    # Per-assay metrics.
     per_assay = {}
     for dms_id, m in meta.items():
         if m["skipped"]:
@@ -212,10 +186,7 @@ def main() -> int:
         if n < args.min_variants:
             per_assay[dms_id] = {"skipped": True, "reason": "too_few", "n": n}
             continue
-        # ProteinGym convention: DMS_score_bin == 1 means functional, == 0 means damaging.
-        # AlphaMissense convention: high score == pathogenic / damaging.
-        # We score AUROC with damaging as the positive class so the metric matches
-        # result_17 ClinVar convention (pathogenic = positive).
+        # DMS_score_bin==1 is functional; we invert so damaging=positive, matching ClinVar convention.
         bin_dmg = (df["DMS_score_bin"].astype(int).to_numpy()[mask] == 0).astype(int)
         sc = df["DMS_score"].to_numpy()[mask]
         ss = s[mask].astype(float)
@@ -227,8 +198,7 @@ def main() -> int:
             )
         except Exception:
             auroc = None
-        # Spearman: AM_score vs DMS_score. Conventionally AM should anti-correlate
-        # with fitness, so we report -spearman so positive == agreement.
+        # Negate Spearman so positive means AM agrees with low fitness.
         rho_raw, _ = spearmanr(sc, ss)
         rho = -rho_raw if rho_raw == rho_raw else None
         per_assay[dms_id] = {

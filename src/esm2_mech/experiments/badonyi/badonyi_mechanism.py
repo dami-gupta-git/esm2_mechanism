@@ -1,31 +1,4 @@
-"""
-Result 15 — Badonyi 2024 predictions as a modality comparison
-
-Adds Badonyi & Marsh 2024 PLOS One per-gene SVM probabilities (pDN, pGOF, pLOF)
-as a new modality and tests them alongside ESM-2 delta and proteome features.
-
-Model variants (all under 5-fold family-split CV, 5 seeds, per-gene T2 scoring):
-
-  V1      ESM-2 delta only (1280-dim)                   MLP 1280→256→64→3
-  V2      Proteome only (37-dim)                        NaN-native boosting
-  V_bad   Badonyi priors only (3-dim: pDN,pGOF,pLOF)    NaN-native boosting
-  V2+bad  Proteome + Badonyi (50-dim)                   NaN-native boosting
-  V1+bad  ESM-2 delta + Badonyi (1293-dim)              NaN-native boosting
-  V_all   ESM-2 delta + proteome + Badonyi (1330-dim)   NaN-native boosting
-
-Missing-data policy. The proteome and Badonyi blocks carry real NaN — a gene
-with no Badonyi row, or a proteome family-residual undefined for a singleton
-family — and nothing is imputed. V1 is delta-only and fully observed, so it
-keeps its MLP. Every other arm includes one of those blocks (V1+bad and V_all
-concatenate them onto the dense delta, where a few missing columns would
-otherwise make the whole row unusable), so all of them use a model that
-consumes NaN directly and keeps every gene.
-
-Usage:
-    python scripts/badonyi_mechanism.py               # all 5 seeds
-    python scripts/badonyi_mechanism.py --seed 0      # single seed
-    python scripts/badonyi_mechanism.py
-"""
+"""Compare Badonyi 2024 pDN/pGOF/pLOF as a modality against ESM-2 delta and proteome features."""
 
 from __future__ import annotations
 
@@ -63,9 +36,6 @@ OUT_DIR = RESULTS_DIR
 
 warnings.filterwarnings("ignore")
 
-# ---------------------------------------------------------------------------
-# Paths
-# ---------------------------------------------------------------------------
 MERGED_VALID_VARIANTS = VALID_VARIANTS_JSON
 MERGED_WT_MEAN = EMB_WT_MEAN
 MERGED_MUT_MEAN = EMB_MUT_MEAN
@@ -74,19 +44,11 @@ PROTEOME_FEATURES = PROTEOME_FEATURES_ALIGNED
 BADONYI_FEATURES = BADONYI_FEATURES_ALIGNED
 BADONYI_RAW_COLS = [0, 1, 2]  # pDN, pGOF, pLOF only
 
-# Row index for the aligned feature matrices. MUST be GENE_UNIVERSE, not
-# GENE_LIST_TSV: build_proteome_features/build_badonyi_features write their
-# .npy rows in gene_universe.tsv order, and gene_list.tsv is a longer,
-# differently-ordered superset (see paths.GENE_UNIVERSE).
+# MUST be GENE_UNIVERSE, not GENE_LIST_TSV: .npy rows are in gene_universe.tsv order.
 MERGED_GENE_LIST = GENE_UNIVERSE
 PFAM_FAMILIES = PFAM_JSON
 
 CLASSES = MECHANISM_CLASSES
-
-
-# ---------------------------------------------------------------------------
-# Data loading
-# ---------------------------------------------------------------------------
 
 
 def load_data():
@@ -112,17 +74,11 @@ def build_gene_to_row() -> dict[str, int]:
     return _build_gene_to_row(MERGED_GENE_LIST)
 
 
+# NaN not 0.0 for missing genes: 0.0 is a plausible real observation.
 def broadcast_gene_features(
     genes: np.ndarray, matrix: np.ndarray, gene_to_row: dict[str, int]
 ) -> np.ndarray:
-    """Broadcast per-gene features to variant rows, NaN where the gene has no row.
-
-    A gene absent from the feature matrix gets NaN, not 0.0: these are
-    probability scores and constraint metrics where 0.0 is a plausible real
-    observation, so a zero-filled row would be indistinguishable from a real
-    measurement of zero. Downstream arms either consume the NaN natively or
-    restrict to the observed rows.
-    """
+    """Broadcast per-gene features to variant rows, NaN where the gene has no row."""
     n, n_feats = len(genes), matrix.shape[1]
     X = np.full((n, n_feats), np.nan, dtype=np.float32)
     n_missing = 0
@@ -140,25 +96,11 @@ def broadcast_gene_features(
     return X
 
 
-# ---------------------------------------------------------------------------
-# Per-gene T2 scoring (aggregate variant-level proba → gene-level)
-# ---------------------------------------------------------------------------
-
-# ---------------------------------------------------------------------------
-# Runners
-# ---------------------------------------------------------------------------
-
-
+# Resamples families not genes: genes within one family are not independent draws.
 def _attach_family_split_ci(
     agg: dict, oof: dict | None, pfam_map: dict, compute_ci: bool, n_boot: int, seed: int
 ) -> dict:
-    """Attach a family-resampled cluster-bootstrap CI to a family-split CV result.
-
-    Resamples families, not genes or variants — the family is the unit
-    family-split CV actually holds out, so genes within one family are not
-    independent draws (same reasoning as mechanism_delta_family_split.py, R7.3).
-    No-op if CI computation is off or no fold produced out-of-fold predictions.
-    """
+    """Attach a family-resampled cluster-bootstrap CI to a family-split CV result."""
     if compute_ci and oof is not None:
         clusters = family_or_gene_clusters(oof["genes"], pfam_map, is_family_split=True)
         agg["ci"] = bootstrap_mechanism_metrics(
@@ -185,27 +127,14 @@ def run_mlp_family_split(
     return _attach_family_split_ci(agg, oof, pfam_map, compute_ci, n_boot, seed)
 
 
+# Nothing is imputed: filling before the split would leak test-fold statistics into training.
 def run_histgb_family_split(
     X, y, genes, groups, n_folds, seed, label, pfam_map, compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES
 ) -> dict:
-    """NaN-native family-split CV — for every arm whose matrix includes the
-    proteome or Badonyi block, alone or concatenated onto the ESM-2 delta.
-
-    Those blocks carry real missing cells (a gene with no Badonyi row, or a
-    proteome family-residual that is undefined for a singleton family). Nothing
-    is imputed: a filled-in value computed before the CV split would leak
-    test-fold statistics into training and be indistinguishable from a real
-    score afterwards. Restricting instead would discard every gene missing any
-    one feature, including genes whose ESM-2 embedding is fully observed.
-    """
+    """NaN-native family-split CV for arms with proteome or Badonyi blocks."""
     splits = list(family_split_indices(groups, n_folds, seed))
     agg, oof = run_histgb_cv(X, y, splits, seed=seed, genes=genes, label=label, return_oof=True)
     return _attach_family_split_ci(agg, oof, pfam_map, compute_ci, n_boot, seed)
-
-
-# ---------------------------------------------------------------------------
-# Single-seed runner
-# ---------------------------------------------------------------------------
 
 
 def run_seed(
@@ -338,17 +267,8 @@ def run_seed(
     return results
 
 
-# ---------------------------------------------------------------------------
-# Aggregate across seeds
-# ---------------------------------------------------------------------------
-
-
 def seed_metric_mean_std(all_results: list[dict], extractor) -> tuple[float | None, float | None, int]:
-    """Pool one metric across seeds: mean/std of the per-seed values, dropping
-    None and NaN (a seed missing a metric is skipped for that metric only).
-
-    `extractor(r)` returns the metric for one seed's result dict, or None.
-    """
+    """Mean/std of one metric across seeds, skipping None and NaN."""
     vals = []
     for r in all_results:
         v = extractor(r)
@@ -380,11 +300,7 @@ def aggregate_seeds(all_results: list[dict]) -> dict:
                 summary[f"{key}_auroc_{cls}_mean"] = mean
                 summary[f"{key}_auroc_{cls}_std"] = std
 
-        # Per-seed family-resampled CIs (macro_f1, per-class AUROC), pooled
-        # across seeds the same way as the point estimates above. This is a
-        # SEPARATE source of uncertainty from macro_f1_std: macro_f1_std is
-        # seed-to-seed spread of the point estimate; ci_low/ci_high_seed_mean
-        # is the average family-resampling uncertainty within a seed.
+        # CI bounds pooled across seeds — separate from seed-to-seed std.
         for metric_name in ["macro_f1"] + [f"auroc_{cls}" for cls in CLASSES]:
             for bound in ("ci_low", "ci_high"):
                 def extractor(r, k=key, m=metric_name, b=bound):
@@ -398,11 +314,6 @@ def aggregate_seeds(all_results: list[dict]) -> dict:
                     summary[f"{key}_{metric_name}_{bound}_seed_mean"] = mean
                     summary[f"{key}_{metric_name}_{bound}_n_seeds"] = n
     return summary
-
-
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
 
 
 def main():
@@ -432,7 +343,6 @@ def main():
 
     print("\n=== Broadcasting Badonyi features (pDN, pGOF, pLOF only) ===")
     bad_matrix_full = np.load(BADONYI_FEATURES).astype(np.float32)
-    # Only use the 3 raw probability columns (indices 0,1,2 = pDN, pGOF, pLOF)
     bad_matrix = bad_matrix_full[:, BADONYI_RAW_COLS]
     X_bad = broadcast_gene_features(genes, bad_matrix, gene_to_row)
     print(f"  Badonyi: {X_bad.shape}  (pDN, pGOF, pLOF)")

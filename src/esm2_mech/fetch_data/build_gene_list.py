@@ -1,17 +1,4 @@
-"""
-Build gene_list.tsv — step 1 of the gene universe pipeline.
-
-Merges Gerasimavicius et al. (DiseaseMech_Stability_VEPS.xlsx) and G2P
-(AllG2P.csv) into a single gene list with canonical mechanism labels.
-
-Inputs : data/downloads/DiseaseMech_Stability_VEPS.xlsx
-         data/downloads/AllG2P.csv
-Output : data/gene_list.tsv
-         Columns: gene, mechanism, uniprot_id, source, g2p_disagrees
-
-Usage:
-    python -m esm2_mech.fetch_data.build_gene_list
-"""
+"""Build gene_list.tsv by merging Gerasimavicius and G2P into a canonical gene list."""
 
 from __future__ import annotations
 
@@ -79,8 +66,6 @@ def _load_clinvar_gene_level(wb) -> tuple[dict[str, str], dict[str, str]]:
     ws = wb["ClinVar_gene_level"]
     uid_map: dict[str, str] = {}
     mech_raw: dict[str, list[str]] = {}
-    # A gene can span multiple rows; collect distinct non-empty UniProt IDs so a
-    # conflict is surfaced rather than silently resolved by last-write-wins.
     uid_seen: dict[str, set[str]] = {}
     for row in ws.iter_rows(min_row=2, values_only=True):
         if len(row) < 10:
@@ -109,12 +94,7 @@ def _load_clinvar_gene_level(wb) -> tuple[dict[str, str], dict[str, str]]:
 
 
 def _load_g2p(path: Path) -> dict[str, str]:
-    """Gene → mechanism from G2P (definitive/strong confidence only).
-
-    Tiebreaking: if a gene has conflicting mechanisms, use only its 'definitive'
-    entries. If that resolves to a single mechanism, accept it. If the conflict
-    persists even at definitive confidence, exclude the gene.
-    """
+    """Gene -> mechanism from G2P (definitive/strong confidence only)."""
     df = pd.read_csv(path)
     filtered = df[
         df["confidence"].isin(G2P_CONFIDENCE_KEEP)

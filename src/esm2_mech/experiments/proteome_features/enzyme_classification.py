@@ -1,25 +1,5 @@
-"""
-Enzyme type classification from ESM-2 WT mean-pooled embeddings.
-
-Classifies genes into 4 classes (kinase / protease / oxidoreductase / non-enzyme)
-using frozen ESM-2 WT embeddings — no mutation delta needed.
-
-This is a positive control experiment paralleling the mechanism arc (results 1–10):
-  - Gene-split vs family-split CV quantifies family-recognition leakage
-  - Comparison to mechanism floor (F1 ~0.38) shows whether mechanism null is task-specific
-
-Probes run:
-  1. LogReg gene-split (5-fold, 5-seed)
-  2. LogReg family-split (5-fold, 5-seed)   ← primary metric
-  3. MLP family-split (5-fold, 5-seed)       ← tests whether nonlinearity helps
-  4. Proteome-features family-split          ← does gene biology predict enzyme class?
-  5. Majority baseline
-
-Usage:
-    python enzyme_classification.py [--data_dir ../data] [--emb_dir ../data/embeddings]
-                                    [--seeds 5]
-
-Output: results/enzyme_classification/enzyme_classification_summary.json
+"""Enzyme type classification (kinase/protease/oxidoreductase/non-enzyme) from
+ESM-2 WT mean-pooled embeddings, as a positive control for the mechanism arc.
 """
 
 from __future__ import annotations
@@ -63,16 +43,8 @@ MECHANISM_FAMILY_SPLIT_F1 = 0.385  # merged dataset, 5-seed (result 7)
 MECHANISM_GENE_SPLIT_F1 = 0.415  # merged dataset, MLP, seed 0 (result 7)
 
 
-# ---------------------------------------------------------------------------
-# Data loading
-# ---------------------------------------------------------------------------
-
-
 def load_gene_embeddings() -> tuple:
-    """
-    Load per-gene WT embeddings by taking the first variant's embedding for each gene.
-    Returns (X, gene_list, uniprot_list) where X has shape (n_genes, 1280).
-    """
+    """Load per-gene WT embeddings by taking the first variant's embedding for each gene."""
     with open(VALID_VARIANTS_JSON) as f:
         variants = json.load(f)
 
@@ -116,12 +88,7 @@ def load_pfam() -> dict:
 
 
 def load_proteome_features() -> tuple:
-    """Load the proteome feature matrix and the gene list its rows are aligned to.
-
-    The row order is gene_universe.tsv, not gene_list.tsv — the latter is a
-    longer, differently-ordered superset, so indexing the matrix by it silently
-    reads the wrong gene's features.
-    """
+    """Load the proteome feature matrix aligned to gene_universe.tsv row order."""
     X = np.load(PROTEOME_FEATURES_ALIGNED).astype(np.float32)
     with open(PROTEOME_FEATURE_COLUMNS_JSON) as f:
         cols = json.load(f)
@@ -135,11 +102,6 @@ def load_proteome_features() -> tuple:
     return X, genes
 
 
-# ---------------------------------------------------------------------------
-# Probe runners
-# ---------------------------------------------------------------------------
-
-
 def _run_cv(
     clf_factory,
     scale: bool,
@@ -149,12 +111,9 @@ def _run_cv(
     classes: list[str],
     seed: int = 42,
 ) -> dict:
-    """Shared CV body for the three probe runners, which differ only in the
-    estimator and whether the features need standardizing.
+    """Shared CV body; estimator and scaling differ per probe.
 
-    scale=False is used by the NaN-native runner: gradient-boosted trees are
-    invariant to monotone rescaling, and StandardScaler would need its own
-    missing-value handling anyway.
+    scale=False for NaN-native: trees are rescaling-invariant, and StandardScaler would need its own missing-value handling.
     """
     n_cls = len(classes)
     fold_f1s, fold_aurocs = [], {c: [] for c in classes}
@@ -199,7 +158,7 @@ def _run_cv(
 
 
 def run_logreg(X, y, splits, classes, seed: int = 42) -> dict:
-    """Linear probe. Requires fully-observed X (see run_histgb for NaN input)."""
+    """Linear probe (requires fully-observed X)."""
     from sklearn.linear_model import LogisticRegression
 
     return _run_cv(
@@ -211,7 +170,7 @@ def run_logreg(X, y, splits, classes, seed: int = 42) -> dict:
 
 
 def run_mlp(X, y, splits, classes, seed: int = 42) -> dict:
-    """Nonlinear probe. Requires fully-observed X (see run_histgb for NaN input)."""
+    """Nonlinear probe (requires fully-observed X)."""
     return _run_cv(
         lambda s: MLPClassifier(
             hidden_layer_sizes=(256, 64),
@@ -228,10 +187,7 @@ def run_mlp(X, y, splits, classes, seed: int = 42) -> dict:
 
 
 def run_histgb(X, y, splits, classes, seed: int = 42) -> dict:
-    """NaN-native probe — for the proteome matrix, which has real missing cells.
-
-    Consumes NaN directly, so no value is fabricated and no gene is dropped.
-    """
+    """NaN-native probe for the proteome matrix, which has real missing cells."""
     from sklearn.ensemble import HistGradientBoostingClassifier
 
     return _run_cv(
@@ -248,11 +204,6 @@ def majority_baseline_f1(y: np.ndarray) -> float:
     return float(f1_score(y, pred, average="macro", zero_division=0))
 
 
-# ---------------------------------------------------------------------------
-# Multi-seed runner
-# ---------------------------------------------------------------------------
-
-
 def run_multiseed(
     X: np.ndarray,
     y: np.ndarray,
@@ -263,14 +214,7 @@ def run_multiseed(
     n_folds: int = 5,
     nan_native: bool = False,
 ) -> dict:
-    """Run the linear and nonlinear probes across seeds.
-
-    nan_native : set for a feature matrix with missing cells (the proteome
-        block). Both probes then use the NaN-native booster, which consumes
-        missing values directly rather than having them imputed — imputation
-        before the CV split would leak test-fold statistics into training. The
-        dense embedding arm leaves this False and keeps LogReg/MLP.
-    """
+    """Run linear and nonlinear probes across seeds; nan_native=True uses NaN-native booster."""
     linear_probe = run_histgb if nan_native else run_logreg
     nonlinear_probe = run_histgb if nan_native else run_mlp
     classes = list(le.classes_)
@@ -390,11 +334,6 @@ def run_multiseed(
     }
 
 
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
-
-
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--seeds", type=int, default=N_SEEDS,
@@ -416,7 +355,6 @@ def main():
     enzyme_labels = load_enzyme_labels()
     pfam_map = load_pfam()
 
-    # Align labels to gene_list order
     missing = [g for g in gene_list if g not in enzyme_labels]
     if missing:
         print(
@@ -437,9 +375,6 @@ def main():
         f"Pfam-annotated genes: {sum(1 for g in gene_list if pfam_map.get(g))}/{len(gene_list)}"
     )
 
-    # -----------------------------------------------------------------------
-    # ESM-2 WT embedding probes
-    # -----------------------------------------------------------------------
     print("\n" + "=" * 60)
     print("PART 1: ESM-2 WT embedding (1280-dim)")
     print("=" * 60)
@@ -447,9 +382,6 @@ def main():
         X_emb, y, gene_list, pfam_map, le, seeds=seeds, n_folds=args.n_folds
     )
 
-    # -----------------------------------------------------------------------
-    # Proteome feature baseline
-    # -----------------------------------------------------------------------
     print("\n" + "=" * 60)
     print("PART 2: Proteome features (37-dim) — baseline comparison")
     print("=" * 60)
@@ -463,11 +395,8 @@ def main():
     prot_aligned_y = y[[gene_list.index(g) for g in prot_aligned_genes]]
     X_prot_aligned = X_prot[prot_aligned_idxs]
 
-    # The proteome matrix carries real NaN — nothing is imputed at build time,
-    # because a value filled in before the CV split leaks test-fold statistics
-    # into training and is indistinguishable from a real measurement after.
-    # run_multiseed therefore uses the NaN-native probes, which consume the
-    # missing cells directly and keep every gene.
+    # The proteome matrix carries real NaN — nothing is imputed, because pre-CV
+    # imputation leaks test-fold statistics and is indistinguishable from real data.
     n_nan = int(np.isnan(X_prot_aligned).sum())
     if n_nan:
         n_rows = int(np.isnan(X_prot_aligned).any(axis=1).sum())
@@ -488,9 +417,6 @@ def main():
         nan_native=True,
     )
 
-    # -----------------------------------------------------------------------
-    # Decision rule evaluation (pre-registered)
-    # -----------------------------------------------------------------------
     print("\n" + "=" * 60)
     print("PRE-REGISTERED DECISION RULES")
     print("=" * 60)
@@ -514,9 +440,6 @@ def main():
         f"(ΔMLP-LR={mlp_f1 - fs_f1:+.3f})"
     )
 
-    # -----------------------------------------------------------------------
-    # Save results
-    # -----------------------------------------------------------------------
     output = {
         "description": (
             "Enzyme type classification (kinase/protease/oxidoreductase/non-enzyme) "

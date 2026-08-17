@@ -1,21 +1,5 @@
-"""
-ESM-2 delta-embedding mechanism geometry experiment.
-
-Tests whether ESM-2 delta-embeddings (mutant - wildtype) organize by molecular
-disease mechanism class (GOF / DN / LOF) after removing protein stability signal.
-
-Data: variants.json (built by fetch_data/fetch_variants.py --step merge)
-  - Gerasimavicius et al. 2022 + ClinVar missense variants, gene-level mechanism labels
-  - GOF, DN, HI, AR classes; FoldX ΔΔG provided
-  - Primary: 3-class GOF / DN / LOF (HI+AR collapsed)
-
-Pipeline:
-  1. Load variants.json
-  2. Load embeddings from data/embeddings/<model>/ (built by embed_variants.py)
-  3. Compute delta-embeddings (mutant - WT), mean-pooled and per-residue
-  4. Fit stability nuisance subspace on Megascale data; validate transfer
-  5. Linear probe (LR) with gene-split CV
-  6. Baselines, negative controls, probe direction orthogonality analysis
+"""ESM-2 delta-embedding mechanism geometry experiment (GOF/DN/LOF probing
+with stability subspace removal).
 """
 
 import hashlib
@@ -68,39 +52,19 @@ from esm2_mech.utils.paths import (
 
 warnings.filterwarnings("ignore")
 
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
-
 ESM2_MODEL_3B = "esm2_t36_3B_UR50D"
 
 CLASSES_3 = MECHANISM_CLASSES
 
-# Pre-registered thresholds
-STABILITY_TRANSFER_RHO_THRESHOLD = (
-    0.3  # Spearman ρ for Megascale→Gerasimavicius transfer
-)
-SCALE_INVARIANT_THRESHOLD = 0.03  # macro-F1 difference 650M vs 3B
+STABILITY_TRANSFER_RHO_THRESHOLD = 0.3
+SCALE_INVARIANT_THRESHOLD = 0.03
 SCALE_EMERGENT_THRESHOLD = 0.05
-VARIANCE_ASYMMETRY_THRESHOLD = 0.30  # GOF ≥ 30% less variance explained than HI+AR
-BENIGN_LEAK_THRESHOLD = 0.50  # benign AUROC as fraction of pathogenic AUROC
-
-
-# ---------------------------------------------------------------------------
-# Stability nuisance subspace
-# ---------------------------------------------------------------------------
+VARIANCE_ASYMMETRY_THRESHOLD = 0.30
+BENIGN_LEAK_THRESHOLD = 0.50
 
 
 def stability_subspace_fingerprint(ddg, n_components):
-    """Identity of the Megascale inputs a cached stability subspace was fitted from.
-
-    Covers the fitted target exactly (a content hash of the ΔΔG vector, which
-    pins both the variant set and its labels) and the two embedding files that
-    supply the deltas, by size and mtime — hashing 1.8 GB of embeddings on every
-    call would cost more than the refit the cache exists to avoid. Row alignment
-    between the embeddings and the variant table is enforced separately by
-    stability_data._check_alignment.
-    """
+    """Content+mtime fingerprint of the Megascale inputs for cache validation."""
     digest = hashlib.sha256()
     digest.update(np.ascontiguousarray(ddg, dtype=np.float64).tobytes())
     for path in (MEGASCALE_EMB_WT_MEAN, MEGASCALE_EMB_MUT_MEAN):
@@ -114,12 +78,7 @@ def stability_subspace_fingerprint(ddg, n_components):
 
 
 def load_cached_stability_subspace(fingerprint):
-    """Return the cached subspace if it was fitted from `fingerprint`, else None.
-
-    A cache with a missing, corrupt, or non-matching sidecar is a miss: the array
-    alone carries no record of its inputs, so it cannot be verified and must not
-    be trusted.
-    """
+    """Return the cached subspace if it matches `fingerprint`, else None."""
     if not os.path.exists(STABILITY_SUBSPACE):
         return None
     recorded = load_json_or_discard(STABILITY_SUBSPACE_PARAMS_JSON)
@@ -143,15 +102,7 @@ def load_cached_stability_subspace(fingerprint):
 def fit_stability_subspace_megascale(
     n_components=10
 ):
-    """
-    Fit a stability nuisance subspace using the Megascale dataset
-    (Tsuboyama et al. 2023, zenodo.org/records/7844779).
-
-    Returns the projection matrix (n_components, D) or None if unavailable.
-    """
-    # The ΔΔG vector comes from the variant table alone, so the cache key is
-    # computed without touching the 1.8 GB of embeddings — a hit skips the load
-    # as well as the fit.
+    """Fit stability subspace on Megascale data. Returns (n_components, D) or None."""
     try:
         variants = load_tsuboyama_variants()
         ddg = np.array([variant["ddg"] for variant in variants], dtype=np.float64)
@@ -167,11 +118,6 @@ def fit_stability_subspace_megascale(
     if cached is not None:
         return cached
 
-    # Deltas come from the shared Tsuboyama loader, which derives
-    # delta_mean = mut_mean − wt_mean from the megascale embeddings and checks
-    # both are row-aligned to the variant table. It previously read two .npy
-    # files (megascale_deltas / megascale_ddg) that no script in the pipeline
-    # ever wrote, so this branch always fell through to the Gerasimavicius fit.
     inputs = load_stability_inputs()
 
     print("Fitting stability subspace on Megascale delta embeddings...")
@@ -199,20 +145,14 @@ def fit_stability_subspace_megascale(
     subspace = np.vstack([stability_dir.reshape(1, -1), pca.components_])
     subspace = subspace[:n_components]
 
-    # Array first, then the sidecar: an interrupt between the two leaves a cache
-    # with no sidecar, which reads as a miss and refits. The reverse order would
-    # leave a sidecar vouching for a stale array.
+    # Array first, then sidecar: interrupt leaves a miss, not a stale-vouched array.
     save_npy(STABILITY_SUBSPACE, subspace)
     atomic_write_json(STABILITY_SUBSPACE_PARAMS_JSON, fingerprint, indent=2)
     return subspace
 
 
 def fit_stability_subspace_direct(deltas, foldx_ddg, n_components=10, genes=None):
-    """
-    Fit stability subspace directly on Gerasimavicius variants using FoldX ΔΔG.
-    Used as fallback when Megascale transfer fails.
-    Returns projection matrix (n_components, D).
-    """
+    """Fit stability subspace directly using FoldX ΔΔG. Fallback for Megascale."""
     from sklearn.linear_model import Ridge
 
     valid = ~np.isnan(foldx_ddg)
@@ -260,10 +200,7 @@ def fit_stability_subspace_direct(deltas, foldx_ddg, n_components=10, genes=None
 
 
 def validate_stability_transfer(subspace, deltas_geras, foldx_ddg_geras):
-    """Validate Megascale-fit subspace against FoldX ΔΔG on Gerasimavicius variants.
-
-    Returns Spearman ρ.
-    """
+    """Spearman rho of Megascale subspace projection vs FoldX ΔΔG."""
     valid = ~np.isnan(foldx_ddg_geras)
     if valid.sum() < 20:
         return 0.0

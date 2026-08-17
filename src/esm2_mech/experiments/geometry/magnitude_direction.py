@@ -1,33 +1,7 @@
-"""
-Magnitude-vs-direction decomposition of ESM-2 deltas (plan_magnitude_direction.md).
+"""Magnitude-vs-direction decomposition of ESM-2 deltas (plan_magnitude_direction.md).
 
-Question: result_6 shows the same ESM-2 delta embeddings predict pathogenicity
-(AUROC 0.886) but not mechanism (chance). This script asks *why* by splitting
-each delta d = mut_emb - wt_emb into:
-
-    magnitude m = ||d||           (one scalar: how much the rep is disturbed)
-    direction u = d / ||d||        (unit vector: which way it is disturbed)
-
-and re-running the result_6 / result_4 probes on {full delta, magnitude only,
-direction only}.
-
-Probes (pre-registered):
-  A  single-scalar magnitude:  m -> pathogenicity (A1) and mechanism (A2)
-  B  direction only:           u -> pathogenicity (B1) and mechanism (B2)
-  C  biophysical direction:    S1724 signed ddG  (C1 magnitude<->|ddG|,
-                               C2 direction<->sign(ddG))  [needs result_21 cache]
-
-Decision rules (pre-registered, family-split):
-  P1: A1 magnitude-only pathogenicity AUROC >= 0.85   (pathogenicity is magnitude)
-  P2: B1 direction-only pathogenicity AUROC <= 0.70   (confirms P1 from the other side)
-  P3: B2 direction-only mechanism macro-F1 <= chance_floor + 0.02 (direction carries no mechanism)
-  P4: C2 sign(ddG) AUROC >= 0.65 AND C1 Spearman >= 0.30 (ESM-2 has biophysical direction)
-
-All embeddings are cached locally — no GPU required.
-
-Usage:
-  python -m esm2_mech.experiments.geometry.magnitude_direction
-  python -m esm2_mech.experiments.geometry.magnitude_direction --seeds 0 1 2  # fewer seeds, faster
+Splits each delta into magnitude and direction, re-runs pathogenicity/mechanism
+probes on each component, and evaluates pre-registered gates P1–P4.
 """
 
 import argparse
@@ -66,19 +40,12 @@ from esm2_mech.utils.probes import run_logreg_binary_cv
 
 GEOMETRY_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
-# ── Pre-registered thresholds ────────────────────────────────────────────────
-P1_PATH_MAG_MIN = 0.85  # magnitude-only pathogenicity AUROC, family-split
-P2_PATH_DIR_MAX = 0.70  # direction-only pathogenicity AUROC, family-split
-P3_MECH_MARGIN = 0.02  # direction-only mechanism F1 vs chance floor, family-split
-P4_SIGN_AUROC_MIN = 0.65  # S1724 sign(ddG) AUROC
-P4_MAG_SPEARMAN_MIN = 0.30  # S1724 Spearman(||d||, |ddG|)
+P1_PATH_MAG_MIN = 0.85
+P2_PATH_DIR_MAX = 0.70
+P3_MECH_MARGIN = 0.02
+P4_SIGN_AUROC_MIN = 0.65
+P4_MAG_SPEARMAN_MIN = 0.30
 
-# Stability biophysical-direction arm (Probe C / P4). Configurable on dataset:
-#   "none"      — skip (default; no stability variants JSON is built by the pipeline)
-#   "tsuboyama" — the Tsuboyama mega-scale set (megascale_stability.py / Experiment 7)
-# Each entry is (variants_json, wt_emb, mut_emb); the embeddings are row-aligned to
-# the JSON by their producing script. The mean .npy arrays are shared by name, so the
-# selected variants JSON is what pins the arm to a dataset.
 STABILITY_DATASETS = {
     "none": None,
     "tsuboyama": (
@@ -89,19 +56,13 @@ STABILITY_DATASETS = {
 }
 DEFAULT_STABILITY_DATASET = "none"
 
-# Canonical pathogenicity set (the one result_6's 0.884 family-split AUROC was
-# computed on — n=16,576).
 PATH_CANON_VARIANTS = PATHOGENICITY_CANONICAL_VARIANTS_JSON
 PATH_CANON_WT_EMB = PATH_EMB_WT_MEAN
 PATH_CANON_MUT_EMB = PATH_EMB_MUT_MEAN
 
 
 def _pathogenicity_label(label):
-    """Map a canonical-set label to 1 (pathogenic) / 0 (benign).
-
-    Explicit lookup — never a catch-all `else 0` that could silently absorb a
-    missing or unexpected label as benign.
-    """
+    """Map a canonical-set label to 1 (pathogenic) / 0 (benign); never a catch-all."""
     if label == "pathogenic":
         return 1
     if label == "benign":
@@ -116,9 +77,6 @@ def load_pathogenicity_canonical():
     wt = np.load(PATH_CANON_WT_EMB)
     mut = np.load(PATH_CANON_MUT_EMB)
     delta = mut - wt
-    # The canonical variant list is guaranteed row-aligned to the embeddings by
-    # build_canonical_pathogenicity (fingerprint-checked). Assert it anyway so a
-    # stale/mismatched file fails loudly rather than misaligning labels.
     if not (len(variants) == delta.shape[0]):
         raise ValueError(
             f"variant/embedding row mismatch: {len(variants)} variants vs "
@@ -133,8 +91,6 @@ def load_pathogenicity_canonical():
     return delta, y, genes
 
 
-# ── Feature transforms ───────────────────────────────────────────────────────
-
 
 def decompose(delta):
     """Return {'full': delta, 'mag': ||d|| (N,1), 'dir': d/||d|| (N,1280)}."""
@@ -143,15 +99,6 @@ def decompose(delta):
     direction = (delta / (norm + 1e-8)).astype(np.float32)
     return {"full": delta.astype(np.float32), "mag": mag, "dir": direction}
 
-
-# ── Multiclass logreg probe (macro-F1 + per-class AUROC) ─────────────────────
-
-# Minimum distinct classes a fold's train split must have to be scored. A
-# classifier only needs two classes to fit, so a fold where a rare class (e.g.
-# DN) falls entirely in test is still valid. This single constant is shared by
-# the logreg probe (via run_logreg_cv), the MLP probe (already skips at < 2), and
-# the chance floor below — so the probe and its baseline are averaged over the
-# SAME folds (CLAUDE.md: flags and computed values must use the same condition).
 
 
 def run_logreg_multi(X, labels, splits, seed=42, genes=None, return_oof=False):
@@ -162,15 +109,7 @@ def run_logreg_multi(X, labels, splits, seed=42, genes=None, return_oof=False):
 
 
 def _read_chance_floor(strategy="most_frequent"):
-    """Read the measured mechanism chance floor from naive_baseline.json.
-
-    Returns {gene_split: {mean,std}, family_split: {mean,std}}. Uses the
-    'most_frequent' (majority-class) floor — macro-F1 ≈ 0.288 — to match the
-    single chance value the run6 reports cite (report_classifier / report_control);
-    a frequency-weighted floor would be ~0.33 and put two "chance" numbers in the
-    same document. Reading the committed result avoids a parallel recomputation
-    that could silently diverge.
-    """
+    """Read the measured mechanism chance floor from naive_baseline.json."""
     with open(NAIVE_BASELINE_JSON) as handle:
         nb = json.load(handle)
     strat = nb["by_strategy"][strategy]
@@ -186,22 +125,12 @@ def _read_chance_floor(strategy="most_frequent"):
     }
 
 
-# ── Aggregation across seeds ─────────────────────────────────────────────────
-
 
 def agg_seeds(per_seed_vals):
     mean, std, n = mean_std_n(per_seed_vals)
     return {"mean": mean, "std": std, "n": n}
 
-
-# ── Probe A + B: pathogenicity (binary) ──────────────────────────────────────
-
-
 def _pathogenicity_one_seed(seed, feats, y, genes, pfam_map):
-    """All feature × split × probe AUROCs (+ OOF) for one seed. Independent across
-    seeds, so seeds are dispatched in parallel. Returns
-    {(fname, split, probe): (auroc, oof)}; oof is {"y_true","proba","genes"} for
-    dependency-aware inference, or None if no fold was scorable."""
     print(f"  [pathogenicity] seed {seed} started", flush=True)
     gs = gene_split_cv(genes, seed=seed)
     fs = family_split_cv(genes, pfam_map, seed=seed)
@@ -234,9 +163,6 @@ def run_pathogenicity(pfam_map, seeds, n_jobs=-1, compute_ci=True, n_boot=BOOTST
     delta, y, genes = load_pathogenicity_canonical()
     feats = decompose(delta)
 
-    # Seeds are independent — dispatch them across cores (the per-seed MLP fits
-    # are the cost). Each seed re-derives its own splits from its seed, so results
-    # are deterministic regardless of worker scheduling.
     per_seed = Parallel(n_jobs=n_jobs, verbose=10)(
         delayed(_pathogenicity_one_seed)(seed, feats, y, genes, pfam_map)
         for seed in seeds
@@ -261,10 +187,6 @@ def run_pathogenicity(pfam_map, seeds, n_jobs=-1, compute_ci=True, n_boot=BOOTST
             }
             if compute_ci:
                 for probe in ("logreg", "mlp"):
-                    # Each seed reshuffles the CV fold assignment, so per-seed OOF
-                    # is first collapsed to one proba-per-variant (matching
-                    # classify_by_mechanism's cross-seed CI convention) before the
-                    # cluster bootstrap runs once over the combined OOF.
                     combined = average_oof_over_seeds(oof_collect[fname][split_name][probe])
                     if combined is not None:
                         clusters = family_or_gene_clusters(
@@ -279,12 +201,7 @@ def run_pathogenicity(pfam_map, seeds, n_jobs=-1, compute_ci=True, n_boot=BOOTST
                         )
     return out
 
-
-# ── Probe A + B: mechanism (3-class) ─────────────────────────────────────────
-
-
 def _mechanism_one_seed(seed, feats, labels, genes, pfam_map):
-    """All feature × split probe results (+ OOF) for one seed (parallel)."""
     print(f"  [mechanism] seed {seed} started", flush=True)
     gs = gene_split_cv(genes, seed=seed)
     fs = family_split_cv(genes, pfam_map, seed=seed)
@@ -341,11 +258,6 @@ def run_mechanism(pfam_map, seeds, n_jobs=-1, compute_ci=True, n_boot=BOOTSTRAP_
                 f"F1(lr={_f(cell['logreg_f1'])} mlp={_f(cell['mlp_f1'])})"
             )
 
-    # Chance floor is read from the measured naive baseline (results/<run>/
-    # naive_baseline.json), NOT recomputed here — so the gate compares against the
-    # same floor the rest of the project cites, with no parallel computation that
-    # could silently diverge. The stratified (prior-weighted random) strategy is
-    # the apt comparator for a probabilistic classifier.
     out = {"chance_floor": _read_chance_floor()}
     for fname in feats:
         out[fname] = {}
@@ -359,9 +271,6 @@ def run_mechanism(pfam_map, seeds, n_jobs=-1, compute_ci=True, n_boot=BOOTSTRAP_
             }
             if compute_ci:
                 for probe, out_key in (("logreg", "logreg_macro_f1"), ("mlp", "mlp_macro_f1")):
-                    # Per-seed OOF is collapsed to one proba-per-variant first
-                    # (each seed reshuffles the fold assignment), then the cluster
-                    # bootstrap runs once over the combined OOF.
                     combined = average_oof_over_seeds(oof_collect[fname][split_name][probe])
                     if combined is not None:
                         clusters = family_or_gene_clusters(
@@ -375,8 +284,6 @@ def run_mechanism(pfam_map, seeds, n_jobs=-1, compute_ci=True, n_boot=BOOTSTRAP_
             out[fname][split_name] = cell
     return out
 
-
-# ── Probe C: biophysical direction on S1724 signed ddG ───────────────────────
 
 
 def run_biophysical_direction(seeds, stability_dataset=DEFAULT_STABILITY_DATASET):
@@ -404,10 +311,6 @@ def run_biophysical_direction(seeds, stability_dataset=DEFAULT_STABILITY_DATASET
 
     with open(variants_json) as _f:
         variants = json.load(_f)
-    # ddG is a scientific scalar: a missing/None/"nan" value would parse to NaN,
-    # poison the Spearman correlation, and label as stabilising via (nan > 0)==False.
-    # Keep None while building, then restrict to the finite-ddG subset — never
-    # let a non-finite value enter as a real observation.
     ddg = np.array(
         [v["ddg"] if v["ddg"] is not None else np.nan for v in variants],
         dtype=np.float64,
@@ -430,10 +333,8 @@ def run_biophysical_direction(seeds, stability_dataset=DEFAULT_STABILITY_DATASET
     feats = decompose(delta)
     mag = feats["mag"].ravel()
 
-    # C1: global Spearman(||d||, |ddG|)
     c1_rho = float(spearmanr(mag, np.abs(ddg)).correlation)
 
-    # C2: AUROC for sign(ddG) (destabilising vs stabilising), protein-holdout
     y_sign = (ddg > 0).astype(int)
     c2 = {}
     for fname in ("full", "dir"):
@@ -462,29 +363,18 @@ def _f(x):
 
 
 def _best(path_block, split, metric_lr, metric_mlp):
-    """Best of logreg/mlp mean for a pathogenicity feature/split."""
     lr = path_block[split][metric_lr]["mean"]
     mlp = path_block[split][metric_mlp]["mean"]
     vals = [v for v in (lr, mlp) if not np.isnan(v)]
     return max(vals) if vals else float("nan")
 
-
-# ── Gates ────────────────────────────────────────────────────────────────────
-
-
 def _is_missing(x):
-    """True if a gate input is absent (None) or unscorable (NaN).
-
-    A gate built from such a value must report passed=None (SKIP), never a
-    real True/False — an all-NaN probe is missing data, not a genuine FAIL.
-    """
     return x is None or (isinstance(x, float) and np.isnan(x))
 
 
 def evaluate_gates(path_res, mech_res, bio_res):
     gates = {}
 
-    # P1: magnitude-only pathogenicity AUROC >= 0.85 (family-split, best probe)
     p1_val = _best(path_res["mag"], "family_split", "logreg_auroc", "mlp_auroc")
     gates["P1"] = {
         "desc": "magnitude-only pathogenicity AUROC >= 0.85 (family-split)",
@@ -493,7 +383,6 @@ def evaluate_gates(path_res, mech_res, bio_res):
         "passed": None if _is_missing(p1_val) else bool(p1_val >= P1_PATH_MAG_MIN),
     }
 
-    # P2: direction-only pathogenicity AUROC <= 0.70 (family-split, best probe)
     p2_val = _best(path_res["dir"], "family_split", "logreg_auroc", "mlp_auroc")
     gates["P2"] = {
         "desc": "direction-only pathogenicity AUROC <= 0.70 (family-split)",
@@ -502,7 +391,6 @@ def evaluate_gates(path_res, mech_res, bio_res):
         "passed": None if _is_missing(p2_val) else bool(p2_val <= P2_PATH_DIR_MAX),
     }
 
-    # P3: direction-only mechanism F1 <= chance_floor + 0.02 (family-split, MLP)
     floor = mech_res["chance_floor"]["family_split"]["mean"]
     p3_val = mech_res["dir"]["family_split"]["mlp_macro_f1"]["mean"]
     p3_missing = _is_missing(floor) or _is_missing(p3_val)
@@ -515,7 +403,6 @@ def evaluate_gates(path_res, mech_res, bio_res):
         "passed": None if p3_missing else bool(p3_val <= p3_thr),
     }
 
-    # P4: S1724 sign(ddG) AUROC >= 0.65 AND Spearman(||d||,|ddG|) >= 0.30
     if bio_res is not None:
         full_mean = bio_res["c2_sign_auroc"]["full"]["mean"]
         dir_mean = bio_res["c2_sign_auroc"]["dir"]["mean"]
@@ -584,7 +471,6 @@ def _run_seeds(
 
     gates = evaluate_gates(path_res, mech_res, bio_res)
 
-    # ── Headline ────────────────────────────────────────────────────────────
     print("\n" + "=" * 60)
     print("HEADLINE — magnitude vs direction (family-split)")
     print("=" * 60)

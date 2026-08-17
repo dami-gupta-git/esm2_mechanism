@@ -1,25 +1,6 @@
-"""
-Clan-level holdout evaluation: does ESM-2 mechanism signal generalise to
-completely unseen protein clans, or is it clan-level memorisation?
+"""Leave-one-Pfam-clan-out evaluation of ESM-2 mechanism signal.
 
-Design:
-  - Load merged delta embeddings (cached .npy, no GPU needed)
-  - Map each gene to its Pfam clan (one level above family)
-  - Leave-one-clan-out: train contrastive projection head + MLP probe on
-    all variants EXCEPT clan X, evaluate on clan X
-  - Also run standard family-split as reference
-  - Key question: does performance on fully held-out clans match or beat
-    the cross-family family-split floor (~0.40 F1)?
-
-Interpretation:
-  - If clan-holdout F1 ≈ family-split F1 → signal generalises, not memorisation
-  - If clan-holdout F1 ≈ chance → all signal is clan/family lookup
-
-Usage:
-    python clan_holdout.py --data_dir ../data --emb_dir ../data/embeddings \
-        --clan_file /tmp/pfam_clans.tsv.gz --out_dir ../results/20260524_baseline_run/run_0
-
-Output: clan_holdout_results_seed0.json
+Tests whether delta mechanism signal generalises to unseen clans or is clan-level memorisation.
 """
 
 import argparse
@@ -55,11 +36,6 @@ print = functools.partial(print, flush=True)
 warnings.filterwarnings("ignore")
 
 
-# ---------------------------------------------------------------------------
-# Data loading
-# ---------------------------------------------------------------------------
-
-
 def load_data(data_dir, emb_dir):
     variants, labels, genes, delta, _ = load_variants_and_delta(
         VALID_VARIANTS_JSON, EMB_WT_MEAN, EMB_MUT_MEAN
@@ -73,7 +49,7 @@ def load_pfam(data_dir=None):
 
 
 def load_clan_map(clan_file):
-    """Parse Pfam-A.clans.tsv.gz -> {pfam_acc: (clan_id, clan_name)}."""
+    """Parse Pfam-A.clans.tsv.gz into pfam_acc->clan_id and clan_id->clan_name maps."""
     result = subprocess.run(
         ["gunzip", "-c", clan_file], capture_output=True, check=True
     )
@@ -87,11 +63,6 @@ def load_clan_map(clan_file):
             clan_names[clan_id] = clan_name
     print(f"Loaded {len(clan_map)} Pfam->clan mappings, {len(clan_names)} clans")
     return clan_map, clan_names
-
-
-# ---------------------------------------------------------------------------
-# Probe: MLP with same architecture as result_7
-# ---------------------------------------------------------------------------
 
 
 def train_mlp(X_train, y_train, seed=42):
@@ -110,10 +81,7 @@ def train_mlp(X_train, y_train, seed=42):
 
 
 def evaluate_probe(clf, X_test, y_test, le):
-    """Returns (results, proba_aligned). `proba_aligned` has one column per
-    MECHANISM_CLASSES entry (align_proba backfills a class absent from this
-    clan's train fold as an all-zero column), for the cross-clan OOF CI.
-    """
+    """Returns (results, proba_aligned) with proba columns aligned to MECHANISM_CLASSES."""
     pred = clf.predict(X_test)
     proba = clf.predict_proba(X_test)
     classes = list(clf.classes_)
@@ -139,17 +107,7 @@ def evaluate_probe(clf, X_test, y_test, le):
 
 
 def _read_live_family_split_refs():
-    """Live measured family-split reference floors, replacing the old
-    result_7/result_9 hardcoded literals (0.352, 0.387) that this file
-    used to compare clan-holdout against.
-
-    Read from the same result files the rest of the project cites — mlp.py's
-    nonlinear MLP delta_mean family-split arm (NONLINEAR_RESULTS_SEED_JSON) and
-    contrastive_mechanism.py's pooled contrastive-kNN family-split arm
-    (CONTRASTIVE_AGGREGATE_JSON) — so this can never silently diverge from the
-    numbers the rest of the paper cites. Either value is None if its source
-    file has not been produced yet (no fallback/default substituted).
-    """
+    """Read live family-split F1 floors from MLP and contrastive result files. None if not yet produced."""
     mlp_f1 = None
     mlp_path = str(NONLINEAR_RESULTS_SEED_JSON).format(seed=0)
     if os.path.exists(mlp_path):
@@ -170,25 +128,11 @@ def _read_live_family_split_refs():
     return mlp_f1, contrastive_f1
 
 
-# ---------------------------------------------------------------------------
-# Main experiment
-# ---------------------------------------------------------------------------
-
-
 def run_clan_holdout(delta, labels, genes, gene_clan, clan_names, le, seed=42, n_boot=BOOTSTRAP_N_RESAMPLES):
-    """
-    Leave-one-clan-out: for each qualifying clan, train on everything else,
-    test on the held-out clan.
-
-    Also collects out-of-fold (y_true, proba, clan) across every qualifying
-    clan and attaches a clan-resampled cluster-bootstrap CI (R7.3: the
-    resampling unit is the clan, the unit this split actually holds out — not
-    genes and not families) to the returned aggregate under "ci".
-    """
+    """Leave-one-clan-out CV with clan-resampled cluster-bootstrap CI."""
     y = le.transform(labels)
     all_classes = list(le.classes_)
 
-    # Identify qualifying clans
     clan_to_idx = defaultdict(list)
     for i, g in enumerate(genes):
         clan = gene_clan.get(g)
@@ -236,12 +180,10 @@ def run_clan_holdout(delta, labels, genes, gene_clan, clan_names, le, seed=42, n
         y_tr = y[train_idx]
         y_te = y[test_idx]
 
-        # Skip if test set missing a class that appears in train
         if len(set(y_te)) < 2:
             print(f"  {clan}: skipped (single class in test)")
             continue
 
-        # Normalise on train stats
         mu = delta[train_idx].mean(0)
         std = delta[train_idx].std(0) + 1e-8
         X_tr = (delta[train_idx] - mu) / std
@@ -253,12 +195,9 @@ def run_clan_holdout(delta, labels, genes, gene_clan, clan_names, le, seed=42, n
             f"test_mechs={dict(Counter(labels[test_idx]))}"
         )
 
-        # MLP probe
         try:
             clf = train_mlp(X_tr, y_tr, seed=seed)
             mlp_res, proba_aligned = evaluate_probe(clf, X_te, y_te, le)
-            # Held-out-clan OOF for the cross-clan CI: this clan's own id is the
-            # resampling unit for every row it contributed (R7.3).
             oof_y.append(labels[test_idx])
             oof_proba.append(proba_aligned)
             oof_clan.append(np.full(len(test_idx), clan, dtype=object))
@@ -267,7 +206,6 @@ def run_clan_holdout(delta, labels, genes, gene_clan, clan_names, le, seed=42, n
             print(f"    MLP failed: {e}")
             mlp_res = {"error": str(e)}
 
-        # k-NN baseline (no learning)
         try:
             k = min(10, len(X_tr) - 1)
             knn = KNeighborsClassifier(n_neighbors=k, metric="cosine")
@@ -277,7 +215,6 @@ def run_clan_holdout(delta, labels, genes, gene_clan, clan_names, le, seed=42, n
         except Exception as e:
             knn_f1 = float("nan")
 
-        # Majority baseline
         maj_f1, _ = majority_baseline_f1(y_tr, y_te)
 
         print(
@@ -326,11 +263,7 @@ def run_clan_holdout(delta, labels, genes, gene_clan, clan_names, le, seed=42, n
 
 
 def aggregate(clan_results, ci=None):
-    """Weighted and unweighted aggregates across qualifying clans.
-
-    `ci` is the clan-resampled cluster-bootstrap CI from run_clan_holdout
-    (or None if no clan contributed OOF), attached unchanged under "ci".
-    """
+    """Weighted and unweighted aggregates across qualifying clans."""
     mlp_f1s = [
         r["mlp"].get("macro_f1", float("nan"))
         for r in clan_results
@@ -363,8 +296,6 @@ def aggregate(clan_results, ci=None):
             float(np.nanmean(maj_f1s)) if maj_f1s else float("nan")
         ),
         "per_class_auroc_mean": {
-            # np.nanmean for consistency with the macro-F1 reducers above (vs is
-            # already NaN-filtered, but siblings must use the same guard).
             cls: float(np.nanmean(vs)) for cls, vs in per_class.items() if vs
         },
         "ci": ci,
@@ -388,7 +319,6 @@ def main():
     pfam_map = load_pfam()
     clan_map, clan_names = load_clan_map(args.clan_file)
 
-    # Build gene -> clan
     gene_clan = {}
     for gene, pfam_acc in pfam_map.items():
         if pfam_acc in clan_map:
@@ -421,9 +351,6 @@ def main():
     )
     print(f"  Per-class AUROC: {agg['per_class_auroc_mean']}")
 
-    # Live measured family-split reference floors (never hardcoded — see
-    # _read_live_family_split_refs docstring). Either can be None if its
-    # source file has not been produced yet.
     family_split_mlp_f1, family_split_contrastive_f1 = _read_live_family_split_refs()
     refs = {}
     if family_split_mlp_f1 is not None:

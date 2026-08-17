@@ -1,34 +1,5 @@
-"""
-Compute the leakage fraction for the run6 mechanism dataset.
-
-The leakage fraction (LF) measures what proportion of a feature's above-chance
-gene-split signal disappears under family-split CV — i.e. how much of the
-gene-split score is family recognition rather than transferable mechanism signal:
-
-    LF = (gene_split_macro_f1 - family_split_macro_f1) / (gene_split_macro_f1 - chance)
-
-A high LF means the gene-split number is mostly homology leakage; a low (or
-negative/undefined) LF means the feature carries little family-mediated signal
-to begin with. LF is only meaningful for features that score above chance on
-gene-split — for a feature already at the floor the denominator is ~0 and the
-ratio is noise, so it is reported as undefined.
-
-`chance` is the measured majority-class floor from naive_baseline.json (NOT a
-hardcoded 1/3), so the denominator matches the actual task floor.
-
-LF is computed from the across-seed mean gene/family macro-F1 (average the F1s,
-then take the ratio) — not by averaging per-seed ratios, which are unstable
-because each divides by the small, noisy (gene_f1 - chance). Per-seed F1 spread
-is reported separately. Structural quantities the LF derives from (within-family
-mechanism agreement, class balance) are recorded alongside for context.
-
-  Input : results/run6/family_split_baselines_seed{0..4}.json (gene/family macro-F1 per feature)
-          results/run6/naive_baseline.json                    (measured chance floor)
-          results/run6/family_clustering.json                 (within-family agreement; optional)
-  Output: results/run6/leakage_fraction.json + stdout table
-
-Usage:
-    python -m esm2_mech.experiments.mechanism.leakage_fraction
+"""Compute the leakage fraction: how much of each feature's gene-split signal
+is family recognition rather than transferable mechanism signal.
 """
 
 from __future__ import annotations
@@ -57,13 +28,12 @@ print = functools.partial(print, flush=True)
 
 BASELINES_GLOB = str(RESULTS_DIR / "family_split_baselines_seed*.json")
 
-# A feature must clear chance by at least this margin on gene-split for its LF to
-# be defined; below it the denominator is ~0 and the ratio is meaningless noise.
+# Below this margin the denominator is ~0 and the ratio is noise.
 MIN_ABOVE_CHANCE = 0.02
 
 
 def _load_seed_baselines():
-    """Per-seed gene/family macro-F1 for every feature, from the baseline files."""
+    """Per-seed gene/family macro-F1 for every feature."""
     files = sorted(glob.glob(BASELINES_GLOB))
     if not files:
         raise FileNotFoundError(BASELINES_GLOB)
@@ -75,24 +45,15 @@ def _load_seed_baselines():
 
 
 def _measured_chance():
-    """Majority-class macro-F1 floor (gene-split) from the naive baseline."""
+    """Majority-class macro-F1 floor (gene-split)."""
     with open(NAIVE_BASELINE_JSON) as fh:
         nb = json.load(fh)
     return float(nb["by_strategy"]["most_frequent"]["gene"]["macro_f1_mean"])
 
 
 def leakage_fraction_per_feature(seeds, feature, chance):
-    """Leakage fraction for one feature, from seed-averaged macro-F1.
-
-    LF is computed from the across-seed mean gene/family macro-F1, not by
-    averaging per-seed ratios. Per-seed ratios are unstable: each divides by
-    (gene_f1 - chance), a small noisy quantity, so a single lucky-high gene seed
-    inflates that seed's ratio. Averaging the F1s first removes that artefact.
-    Per-seed F1 spread is reported separately for context.
-    """
-    # macro_f1_mean can be None (a seed where no fold scored) — use the
-    # None/NaN-filtering reducer rather than plain np.mean, which would crash
-    # (object dtype) or silently poison the average.
+    """Leakage fraction for one feature, from seed-averaged macro-F1."""
+    # Averaged from seed-level F1s (not per-seed ratios, which are unstable).
     gene_f1 = [s["gene_split"][feature]["macro_f1_mean"] for s in seeds]
     family_f1 = [s["family_split"][feature]["macro_f1_mean"] for s in seeds]
     gene_mean, gene_std, gene_n = mean_std_n(gene_f1)
@@ -106,7 +67,6 @@ def leakage_fraction_per_feature(seeds, feature, chance):
         "drop_mean": gene_mean - family_mean,
     }
     if gene_n == 0:
-        # No scorable gene-split seed for this feature; LF undefined.
         result["leakage_fraction"] = None
         result["note"] = "no scorable gene-split seed; LF undefined"
         return result
@@ -114,31 +74,13 @@ def leakage_fraction_per_feature(seeds, feature, chance):
     if denom > MIN_ABOVE_CHANCE:
         result["leakage_fraction"] = (gene_mean - family_mean) / denom
     else:
-        # Feature is at/near the chance floor on gene-split; LF undefined
-        # (no above-chance signal to attribute to leakage).
         result["leakage_fraction"] = None
         result["note"] = "gene-split score not meaningfully above chance; LF undefined"
     return result
 
 
 def leakage_fraction_ci(oof_cache_entry, pfam_map, chance, n_resamples, seed=0):
-    """Cluster-bootstrap CI on the leakage-fraction RATIO, resampled once per
-    replicate and shared across both arms.
-
-    The ratio's numerator and denominator both depend on the gene-split macro-F1,
-    so combining two separately-computed CIs (one on gene_f1, one on family_f1)
-    would ignore that dependence. Instead this draws ONE resample of the shared
-    row set per replicate and recomputes gene_f1, family_f1, and the ratio
-    together on that resample — gene-split and family-split are different CV
-    partitions of the same underlying variants, so this is the cross-partition
-    case (Task 1 / R7.3): the resampling unit is family, the coarser of the two
-    arms' units, not gene.
-
-    `oof_cache_entry` is {"gene_split": {...}, "family_split": {...}} as written
-    by mechanism_delta_family_split.run's seed-0 OOF cache (row_ids, y_true,
-    pred, genes for each arm). Restricted to the intersection of row_ids present
-    in both arms before resampling, per Task 1's shared-subset requirement.
-    """
+    """Cluster-bootstrap CI on the LF ratio, resampling family clusters shared across both arms."""
     gene_arm = oof_cache_entry["gene_split"]
     family_arm = oof_cache_entry["family_split"]
 
@@ -156,8 +98,7 @@ def leakage_fraction_ci(oof_cache_entry, pfam_map, chance, n_resamples, seed=0):
 
     gene_positions = np.array([gene_pos_by_row[row] for row in shared_rows])
     family_positions = np.array([family_pos_by_row[row] for row in shared_rows])
-    # Cluster on Pfam family (the coarser unit) per shared row; a gene with no
-    # Pfam annotation falls back to its own gene id as a singleton cluster.
+    # Cluster on Pfam family; orphan genes become singleton clusters.
     row_genes = gene_names[gene_positions]
     clusters = np.array([pfam_map.get(g) or f"__orphan__{g}" for g in row_genes])
 
@@ -194,7 +135,6 @@ def main(compute_ci: bool = True, n_boot: int = BOOTSTRAP_N_RESAMPLES) -> None:
         "by_feature": {},
     }
 
-    # Structural context (optional — present once family_clustering has run).
     if FAMILY_CLUSTERING_JSON.exists():
         with open(FAMILY_CLUSTERING_JSON) as fh:
             fc = json.load(fh)
@@ -202,9 +142,6 @@ def main(compute_ci: bool = True, n_boot: int = BOOTSTRAP_N_RESAMPLES) -> None:
             fc["by_view"]["wt_mean"].get("frac_gene_mech_matches_family_majority")
         )
 
-    # Seed-0 OOF cache (delta_mean, wt_only_mean) for the joint ratio bootstrap.
-    # Optional: absent when mechanism_delta_family_split was run with --no_ci or
-    # before this cache existed, in which case the LF ratio CI is simply omitted.
     oof_cache_path = os.path.join(RESULTS_DIR, mechanism_oof_cache_filename(0))
     oof_cache = None
     pfam_map = None

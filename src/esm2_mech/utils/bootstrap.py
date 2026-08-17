@@ -1,18 +1,4 @@
-"""Dependency-aware inference: cluster bootstrap and label-permutation tests.
-
-Mechanism labels are gene-level and variants cluster within genes (genes within
-families), so the effective sample size is the cluster count, not the variant count.
-
-  - cluster_bootstrap_ci: CI that resamples whole clusters with replacement.
-  - paired_cluster_bootstrap_diff / _cross_partition: CI on the DIFFERENCE between
-    two metrics on a shared resample.
-  - label_permutation_pvalue: p-value from cluster-aware label shuffling, refitting
-    the probe per permutation.
-  - oof_permutation_pvalue: the same shuffling against FIXED out-of-fold predictions,
-    scored by macro one-vs-rest AUROC. No refits.
-
-See reports/run6/STATS_PLAN.md for the full rationale.
-"""
+"""Cluster bootstrap CIs and label-permutation tests for gene/family-clustered data."""
 
 from __future__ import annotations
 
@@ -34,21 +20,12 @@ from esm2_mech.utils.constants import (
 
 print = functools.partial(print, flush=True)
 
-# Cluster-id prefix for a gene with no Pfam annotation, which is its own singleton
-# family. Pfam accessions are "PF" + digits, so this prefix cannot collide with one.
+# Cannot collide with a real Pfam accession ("PF" + digits).
 UNANNOTATED_CLUSTER_PREFIX = "__no_pfam__:"
 
 
 def average_oof_over_seeds(oof_list: list[dict | None]) -> dict | None:
-    """Collapse per-seed out-of-fold predictions to one proba-per-variant.
-
-    Each entry is a probe's OOF dict {"y_true", "proba", "genes", "row_ids"} from one
-    seed. Averaging proba across seeds gives one de-duplicated prediction per variant,
-    so a downstream gene-cluster bootstrap counts each variant once, not n_seeds times.
-
-    None entries (seeds with no scorable fold) are skipped. Returns a single OOF dict
-    keyed back to unique row_ids (sorted), or None if no entry had data.
-    """
+    """Average per-seed OOF probas to one prediction per variant."""
     valid = [oof for oof in oof_list if oof is not None and len(oof["row_ids"])]
     if not valid:
         return None
@@ -81,7 +58,7 @@ def average_oof_over_seeds(oof_list: list[dict | None]) -> dict | None:
 
 
 def _cluster_to_rows(clusters: np.ndarray) -> tuple[np.ndarray, list[np.ndarray]]:
-    """Group row indices by cluster id. Returns (unique_clusters, row_arrays) aligned."""
+    """Group row indices by cluster id."""
     order: dict = {}
     for row, cluster in enumerate(clusters):
         order.setdefault(cluster, []).append(row)
@@ -91,7 +68,7 @@ def _cluster_to_rows(clusters: np.ndarray) -> tuple[np.ndarray, list[np.ndarray]
 
 
 def _clean_scalar(value) -> float | None:
-    """None for a missing or non-finite metric value, float otherwise."""
+    """Return float or None for non-finite values."""
     if value is None or not np.isfinite(value):
         return None
     return float(value)
@@ -100,12 +77,7 @@ def _clean_scalar(value) -> float | None:
 def _evaluate_metric_fns(
     metric_fns: list[Callable[[np.ndarray], dict]], rows: np.ndarray
 ) -> dict:
-    """Run every metric fn on one row-index array and flatten to {name: value}.
-
-    Each fn returns a dict of one or more named statistics, so statistics that
-    share intermediate work (AUPRC and its prevalence reference) are computed
-    together in a single call rather than once per statistic.
-    """
+    """Run every metric fn on one row-index array and flatten to {name: value}."""
     out: dict = {}
     for metric_fn in metric_fns:
         for name, value in metric_fn(rows).items():
@@ -119,13 +91,7 @@ def _multi_bootstrap_resample_values(
     n_clusters: int,
     child_seed: int,
 ) -> dict:
-    """Draw one cluster resample with an independent seeded RNG, score every metric.
-
-    Each call gets its own `RandomState(child_seed)` for reproducible,
-    order-independent resamples under parallel execution. All metrics see the
-    SAME drawn rows, so a set of metrics reported together comes from one shared
-    resampling of the clusters instead of one independent bootstrap each.
-    """
+    """Draw one cluster resample and score every metric on the same drawn rows."""
     rng = np.random.RandomState(child_seed)
     drawn = rng.randint(0, n_clusters, size=n_clusters)
     rows = np.concatenate([cluster_rows[i] for i in drawn])
@@ -140,7 +106,7 @@ def _summarize_bootstrap(
     ci_level: float,
     min_valid_frac: float,
 ) -> dict:
-    """Percentile interval and bookkeeping for one metric's surviving replicates."""
+    """Percentile CI from surviving replicates of one metric."""
     valid_frac = len(stats) / n_resamples if n_resamples else 0.0
     base = {
         "point": point,
@@ -170,25 +136,7 @@ def cluster_bootstrap_ci_multi(
     seed: int = 0,
     n_jobs: int = -1,
 ) -> dict:
-    """Cluster-bootstrap CIs for several metrics over ONE shared set of resamples.
-
-    Each entry of `metric_fns` takes a row-index array and returns a dict of named
-    statistics on those rows, using None for any statistic undefined there (e.g. a
-    class absent from the draw). Returns {name: CI dict} with the same keys
-    `cluster_bootstrap_ci` returns, one entry per name any fn produced.
-
-    Metrics reported together nearly always want the same resamples, and drawing
-    them once is both cheaper and the only way a later paired comparison between
-    two of them would be coherent. Grouping several statistics behind one fn also
-    lets them share work: AUPRC and the prevalence it is read against come from a
-    single pass over the drawn rows.
-
-    A statistic is dropped only from its own replicate list, so one metric being
-    undefined on a draw does not shrink another's sample.
-
-    Resamples run in parallel across cores via joblib (n_jobs=-1 = all cores); each
-    draws from its own SeedSequence-spawned RNG, so the CIs match a serial run.
-    """
+    """Cluster-bootstrap CIs for several metrics over one shared set of resamples."""
     unique, cluster_rows = _cluster_to_rows(np.asarray(clusters))
     n_clusters = len(unique)
     all_rows = np.arange(len(clusters))
@@ -226,25 +174,7 @@ def cluster_bootstrap_ci(
     seed: int = 0,
     n_jobs: int = -1,
 ) -> dict:
-    """Percentile CI for a metric via a cluster bootstrap.
-
-    `clusters` is a per-row array of cluster ids (e.g. gene or Pfam family). Each
-    resample draws len(unique clusters) clusters with replacement, gathers all their
-    rows, and calls `metric_fn(row_indices)`, which returns the metric on those rows
-    or None/NaN when undefined (e.g. a class absent). Undefined resamples are dropped,
-    not imputed.
-
-    When the surviving fraction falls below `min_valid_frac`, no CI is returned
-    (ci_low/ci_high = None) and `ci_suppressed` is set, so the dropout is visible
-    rather than silently narrowing the interval.
-
-    The point estimate is metric_fn over all rows. Returns point, ci_low, ci_high,
-    n_resamples (the count that contributed), n_resamples_total, valid_frac,
-    ci_suppressed, n_clusters.
-
-    Single-metric front end to `cluster_bootstrap_ci_multi`; use that directly when
-    reporting several metrics on the same rows.
-    """
+    """Single-metric front end to cluster_bootstrap_ci_multi."""
     key = "metric"
     out = cluster_bootstrap_ci_multi(
         clusters,
@@ -265,11 +195,7 @@ def _subsample_resample_value(
     subsample_size: int,
     child_seed: int,
 ) -> float | None:
-    """Draw one cluster SUBSAMPLE (without replacement) with an independent
-    seeded RNG, return the metric. Mirrors `_multi_bootstrap_resample_values` but
-    draws `subsample_size` distinct clusters instead of `n_clusters` with
-    replacement, so no cluster's rows are ever duplicated within a replicate.
-    """
+    """Draw one cluster subsample (without replacement) and return the metric."""
     rng = np.random.RandomState(child_seed)
     drawn = rng.choice(n_clusters, size=subsample_size, replace=False)
     rows = np.concatenate([cluster_rows[i] for i in drawn])
@@ -289,33 +215,7 @@ def cluster_subsample_ci(
     seed: int = 0,
     n_jobs: int = -1,
 ) -> dict:
-    """Percentile CI via an m-out-of-n cluster SUBSAMPLE (without replacement).
-
-    Use this instead of `cluster_bootstrap_ci` for statistics that break under
-    literal duplicate points — nearest-neighbor purity, pairwise-distance
-    ratios, or any other distance/graph statistic where "this observation
-    counts twice" has no coherent meaning. A standard with-replacement cluster
-    bootstrap puts the SAME rows into a replicate more than once whenever a
-    cluster is drawn more than once; for a k-NN or pairwise-distance metric
-    those duplicate points sit at distance exactly 0 from each other, which
-    inflates same-cluster neighbor purity and deflates within-cluster mean
-    distance. Subsampling `subsample_frac` of clusters WITHOUT replacement
-    never duplicates a point, so that artifact cannot occur. (Metrics that are
-    additive over rows — F1, AUROC, macro_f1, Spearman rho — do not have this
-    problem and should keep using `cluster_bootstrap_ci`, where draw
-    multiplicity is a meaningful, correct resampling weight.)
-
-    `subsample_frac` defaults to 0.632 (~ 1 - 1/e), the expected fraction of
-    distinct clusters included in a same-size with-replacement bootstrap —
-    the standard choice for an m-out-of-n subsample meant to approximate a
-    bootstrap's resampling variability without its duplication.
-
-    Still resamples whole clusters, never splits one, same as
-    `cluster_bootstrap_ci`. Returns the same keys (point, ci_low, ci_high,
-    n_resamples, n_resamples_total, valid_frac, ci_suppressed, n_clusters)
-    plus `subsample_size` (the number of clusters actually drawn per
-    replicate, since it differs from `n_clusters`).
-    """
+    """CI via without-replacement cluster subsample, for distance/graph metrics that break under duplicate points."""
     unique, cluster_rows = _cluster_to_rows(np.asarray(clusters))
     n_clusters = len(unique)
     subsample_size = max(1, round(subsample_frac * n_clusters))
@@ -361,12 +261,7 @@ def _paired_bootstrap_resample_values(
     n_clusters: int,
     child_seed: int,
 ) -> tuple[float | None, float | None]:
-    """Draw one cluster resample and score BOTH arms on the identical drawn rows.
-
-    The single `rng.randint` draw is the pairing: both metric_fn_a and metric_fn_b
-    see the same resampled row-index array, so the difference is a paired statistic,
-    not two independently-resampled ones.
-    """
+    """Draw one cluster resample and score both arms on the identical drawn rows."""
     rng = np.random.RandomState(child_seed)
     drawn = rng.randint(0, n_clusters, size=n_clusters)
     rows = np.concatenate([cluster_rows[i] for i in drawn])
@@ -387,14 +282,7 @@ def _paired_cluster_bootstrap_diff_ci(
     seed: int,
     n_jobs: int,
 ) -> dict:
-    """Shared resampling machinery for both pairing modes.
-
-    `resample_clusters` is the resampling unit (row-aligned cluster ids); the two
-    public functions differ only in what that unit means (a shared fold assignment
-    for same-fold pairing, or the coarser of two CV partitions for cross-partition
-    pairing) and what `metric_fn_a`/`metric_fn_b` do with the row-index array each
-    replicate.
-    """
+    """Shared resampling machinery for both pairing modes."""
     unique, cluster_rows = _cluster_to_rows(np.asarray(resample_clusters))
     n_clusters = len(unique)
     all_rows = np.arange(len(resample_clusters))
@@ -413,7 +301,6 @@ def _paired_cluster_bootstrap_diff_ci(
         )
         for child_seed in child_seeds
     )
-    # A replicate contributes only if BOTH arms were defined on it.
     diffs = [
         value_a - value_b
         for value_a, value_b in paired_values
@@ -452,25 +339,7 @@ def paired_cluster_bootstrap_diff(
     seed: int = 0,
     n_jobs: int = -1,
 ) -> dict:
-    """Percentile CI on the difference between two metrics under one shared fold.
-
-    Same-fold pairing mode: both arms are already scored under one fold assignment
-    (e.g. ESM-3 seq-track vs ESM-2 delta_mean on the same family-split folds).
-    `clusters` is that fold assignment's cluster id per row; `metric_fn_a` and
-    `metric_fn_b` are closures over each arm's fixed predictions, called with the
-    SAME resampled row-index array on every replicate, making the difference a
-    paired statistic. `clusters` must already be restricted to rows present in both
-    arms — this function does not intersect the arms itself.
-
-    For the gene-split-minus-family-split gap (two different CV partitions), use
-    `paired_cluster_bootstrap_diff_cross_partition` instead.
-
-    Returns point_a, point_b, point_diff (= point_a - point_b, over all rows),
-    ci_low, ci_high (percentile CI on the diff), n_resamples (contributing
-    replicates), n_resamples_total, valid_frac, ci_suppressed, n_clusters. A
-    replicate is dropped when either arm is undefined on it; below `min_valid_frac`
-    surviving, no CI is returned and `ci_suppressed` is set.
-    """
+    """Paired CI on metric_a minus metric_b under one shared fold assignment."""
     return _paired_cluster_bootstrap_diff_ci(
         clusters,
         metric_fn_a,
@@ -494,33 +363,10 @@ def paired_cluster_bootstrap_diff_cross_partition(
     seed: int = 0,
     n_jobs: int = -1,
 ) -> dict:
-    """Percentile CI on a difference between two arms scored under DIFFERENT partitions.
+    """Paired CI on a difference between arms scored under different CV partitions.
 
-    Cross-partition pairing mode: for the gene-split-minus-family-split gap, arm A
-    and arm B are not evaluated under a shared fold assignment — gene-split and
-    family-split are different CV partitions of the same rows. `metric_fn_a` and
-    `metric_fn_b` must each be self-contained closures that recompute their OWN
-    arm's metric under their OWN partition given a row-index array.
-
-    The pairing is still preserved: `resample_clusters` is resampled ONCE per
-    replicate and the identical drawn row-index array is handed to both metric fns.
-
-    `resample_clusters` must be the COARSER of the two arms' units — for the split
-    gap this is the family, never the gene: the family-split arm's variance is only
-    correct under family resampling, and a family resample induces a valid gene
-    resample but not the reverse. Passing gene clusters here silently understates
-    the family-split arm's true variance.
-
-    `resample_clusters` (and `sensitivity_clusters`, if given) must already be
-    restricted to rows present in both arms — this function does not intersect the
-    arms itself.
-
-    If `sensitivity_clusters` (the finer unit, e.g. gene) is given, a second CI is
-    computed at that finer granularity and returned under `gene_resampled_sensitivity`
-    — a labelled sensitivity check, never the primary result (R7.3).
-
-    Return shape matches `paired_cluster_bootstrap_diff`, plus
-    `gene_resampled_sensitivity` when requested.
+    resample_clusters must be the COARSER unit (family, not gene) so the
+    family-split arm's variance is not understated.
     """
     primary = _paired_cluster_bootstrap_diff_ci(
         resample_clusters,
@@ -555,21 +401,7 @@ def bootstrap_mechanism_metrics(
     ci_level: float = BOOTSTRAP_CI_LEVEL,
     seed: int = 0,
 ) -> dict:
-    """Cluster-bootstrap CIs for macro-F1 and per-class one-vs-rest AUROC and AUPRC.
-
-    `proba` columns must be aligned to `classes` (use utils.metrics.align_proba). Every
-    metric is scored on ONE shared set of resampled clusters. Returns
-    {"macro_f1": {...}, "auroc_GOF": {...}, "auprc_GOF": {...}, ...} where each value
-    is the CI dict.
-
-    AUPRC gets an interval because its no-signal reference is the class prevalence,
-    which itself varies across resamples — reading the point estimate against a fixed
-    prevalence would understate the uncertainty for the rare classes. For that reason
-    the prevalence is bootstrapped too (`prevalence_<cls>`), and so is the gap between
-    them (`auprc_lift_<cls>`, AUPRC minus prevalence on each draw, so the two move
-    together). The lift is the interval to read for "better than no signal"; comparing
-    the AUPRC interval against one fixed prevalence is the thing this avoids.
-    """
+    """Cluster-bootstrap CIs for macro-F1, per-class AUROC, AUPRC, prevalence and lift."""
     y_true = np.asarray(y_true)
     proba = np.asarray(proba)
     pred = np.array([classes[col] for col in proba.argmax(axis=1)])
@@ -581,11 +413,6 @@ def bootstrap_mechanism_metrics(
             )
         }
 
-    # AUPRC's no-signal reference is the prevalence, which moves with the resample, so
-    # the interval on AUPRC alone still leaves it read against a fixed baseline. The
-    # lift is the quantity that answers "better than no signal", and it comes from the
-    # same draw as the AUPRC and prevalence it is built from, so the three move
-    # together rather than being three separately-resampled quantities.
     def _class_metrics(rows: np.ndarray, *, _col: int, _cls: str) -> dict:
         names = (f"auroc_{_cls}", f"auprc_{_cls}", f"prevalence_{_cls}", f"auprc_lift_{_cls}")
         y_bin = binary_class_target(y_true[rows], _cls)
@@ -623,30 +450,10 @@ def bootstrap_mechanism_metrics(
 def family_or_gene_clusters(
     genes: np.ndarray, pfam_map: dict, is_family_split: bool
 ) -> np.ndarray:
-    """The R7.3 resampling-unit choice: family-split CIs resample families, not
-    genes — the family is the unit family-split CV actually holds out, so genes
-    within one are not independent draws. Gene-split CIs resample genes
-    unchanged.
+    """Map genes to resampling clusters: families for family-split, genes for gene-split.
 
-    `genes` is a row-aligned gene-id array. Callers that pass an OOF dict's
-    "genes" entry only ever hold annotated genes, since `family_split_cv`
-    excludes unannotated ones from every fold. The refit permutation test is
-    different: it permutes labels over the FULL row set (its metric closure
-    indexes into the full arrays), so its gene array includes genes missing
-    from `pfam_map`.
-
-    A gene with no Pfam annotation has no known family, so it gets its own
-    singleton cluster rather than being dropped or folded into a shared
-    "unannotated" bucket. Both alternatives would be wrong: dropping breaks the
-    row alignment the caller depends on, and a shared bucket would assert that
-    unrelated unannotated genes are non-independent. The prefix keeps these ids
-    from ever colliding with a real Pfam accession.
-
-    Under the refit permutation these singletons are exchangeable with the
-    single-gene families, so a draw can swap a label between a scored gene and an
-    unannotated one that no family-split fold ever sees. That is a valid draw under
-    the null and it widens the null slightly (the scored subset's class balance
-    varies across draws), so the resulting p-value is conservative, not inflated.
+    Unannotated genes get singleton clusters (not dropped or shared) to preserve
+    row alignment and avoid asserting unrelated genes are non-independent.
     """
     if not is_family_split:
         return genes
@@ -657,13 +464,7 @@ def family_or_gene_clusters(
 
 
 def _align_oof_pair(oof_a: dict, oof_b: dict, label: str) -> tuple[np.ndarray, np.ndarray] | None:
-    """Positions into each arm for the variants both arms scored, in one order.
-
-    Pairing is defined only on rows both arms scored: a fold skipped in one arm
-    (missing class) but not the other leaves rows with no counterpart. Both OOF
-    dicts must carry "row_ids" — positional alignment is not assumed, because two
-    arms can drop different folds and still produce equal-length arrays.
-    """
+    """Index positions into each arm for variants both arms scored."""
     for name, oof in (("a", oof_a), ("b", oof_b)):
         if "row_ids" not in oof:
             raise KeyError(
@@ -708,38 +509,7 @@ def paired_oof_diff(
     n_resamples: int = BOOTSTRAP_N_RESAMPLES,
     seed: int = 0,
 ) -> dict | None:
-    """Paired cluster-bootstrap CI on metric(A) − metric(B) for two OOF arms.
-
-    Same-fold pairing (the default): both arms were scored over the same variants
-    under the same split, so one cluster resample per replicate is handed to both
-    arms and the difference is paired rather than a comparison of two independent
-    intervals. This is the instrument behind the C4/C5 and contrastive claims.
-
-    `cross_partition=True` is the C2 case — the gene-split-minus-family-split gap,
-    where the arms were scored under two DIFFERENT CV partitions of the same rows.
-    The resampling unit is then the family (R7.3: the coarser of the two arms; a
-    family resample induces a valid gene resample, not the reverse), and the
-    gene-resampled interval is returned alongside under
-    `gene_resampled_sensitivity` as a labelled sensitivity check, never the primary
-    result. `is_family_split` is ignored in this mode.
-
-    `metric` selects what the arms are compared on:
-
-      - "macro_f1"    — `proba` is an (n, n_classes) matrix whose columns are
-                        aligned to `classes` (required); predictions are its argmax.
-      - "auroc_binary" — `proba` is the 1-D positive-class probability and `y_true`
-                        is 0/1, the shape `binary_auroc_cluster_bootstrap_ci` takes.
-      - "auroc_one_vs_rest" — one class's column out of the (n, n_classes) matrix
-                        against all others; `classes` and `pos_class` are both
-                        required. This is how a per-class null ("DN is unmoved") is
-                        tested as a difference rather than asserted from two point
-                        estimates.
-
-    `classes` is a parameter rather than a closed-over constant because callers
-    pass 2-, 3- and 4-class label lists; a hardcoded list would index the wrong
-    label or raise. Returns None when either arm is missing or the arms share no
-    rows; otherwise the `paired_cluster_bootstrap_diff` shape plus n_shared.
-    """
+    """Paired cluster-bootstrap CI on metric(A) minus metric(B) for two OOF arms."""
     if oof_a is None or oof_b is None:
         print(f"  [paired] {label}: skipped — an arm has no OOF")
         return None
@@ -784,8 +554,6 @@ def paired_oof_diff(
 
         def _auroc(rows: np.ndarray) -> float | None:
             y_bin = y_bin_all[rows]
-            # A resample with no positives (or no negatives) leaves AUROC undefined;
-            # the replicate is dropped, never scored as 0.5.
             if len(np.unique(y_bin)) < 2:
                 return None
             return float(roc_auc_score(y_bin, column[rows]))
@@ -815,12 +583,7 @@ def paired_oof_diff(
 
 
 def adjudicate_diff(passed: bool | None, diff_ci: dict | None, threshold: float) -> str:
-    """R7.1 verdict for a gate, reading its point estimate against its paired CI.
-
-    The point estimate decides pass/fail; the CI decides whether that reading is
-    established or underpowered. A pass whose CI spans zero is reported as consistent
-    in direction but not distinguishable, never as an established effect.
-    """
+    """R7.1 verdict: point estimate decides pass/fail, CI decides established vs underpowered."""
     if passed is None:
         return "not adjudicated (no point estimate)"
     if diff_ci is None or diff_ci.get("ci_suppressed") or diff_ci.get("ci_low") is None:
@@ -836,13 +599,7 @@ def adjudicate_diff(passed: bool | None, diff_ci: dict | None, threshold: float)
 
 
 def adjudicate_level(value: float | None, ci: dict | None, threshold: float) -> str:
-    """R7.1 verdict for a claim about a LEVEL rather than a difference.
-
-    K1 ("conservation alone clears 0.85") and C3 ("pathogenicity clears 0.85") are
-    claims that one score sits above a threshold, so the interval is read against
-    that threshold rather than against zero. Clearing on the point estimate while
-    the interval still covers the threshold is not an established result.
-    """
+    """R7.1 verdict for a level claim: is the value above the threshold."""
     if value is None or not np.isfinite(value):
         return "not adjudicated (no point estimate)"
     passed = value >= threshold
@@ -864,19 +621,7 @@ def binary_auroc_cluster_bootstrap_ci(
     seed: int = 0,
     clusters: np.ndarray | None = None,
 ) -> dict:
-    """Cluster-bootstrap CI on a binary AUROC from an OOF dict.
-
-    `oof` is {"y_true" (0/1), "proba" (positive-class probability, 1-D), "genes"}
-    — the shape returned by run_logreg_binary_cv/run_mlp_binary_cv/
-    _run_sklearn_probe_impl with return_oof=True on a binary target (e.g. the
-    pathogenicity control's pathogenic-vs-benign probe). Distinct from
-    bootstrap_mechanism_metrics, which is specific to the 3-class GOF/DN/LOF
-    mechanism labels.
-
-    Resamples `oof["genes"]` by default. Pass `clusters` explicitly to resample
-    a different unit instead (R7.3: a family-split arm must resample families,
-    not genes — the family is the unit family-split CV actually holds out).
-    """
+    """Cluster-bootstrap CI on a binary AUROC from an OOF dict."""
     y_true = oof["y_true"]
     proba = oof["proba"]
 
@@ -895,12 +640,7 @@ def binary_auroc_cluster_bootstrap_ci(
 def _permute_labels(
     labels: np.ndarray, groups: np.ndarray | None, rng: np.random.RandomState
 ) -> np.ndarray:
-    """Permute labels. With `groups`, shuffle one label per group then broadcast back.
-
-    Mechanism labels are constant within a gene, so a variant-level shuffle would break
-    that structure and build an unrealistically easy null; groups=genes shuffles at the
-    gene level instead, so each gene keeps a single (permuted) label across its variants.
-    """
+    """Permute labels; with groups, shuffle at the group level to preserve within-group structure."""
     if groups is None:
         return rng.permutation(labels)
     groups = np.asarray(groups)
@@ -917,25 +657,11 @@ def _permute_labels_by_cluster(
     clusters: np.ndarray,
     rng: np.random.RandomState,
 ) -> tuple[np.ndarray, int]:
-    """Permute whole clusters' label blocks between clusters of the same size.
+    """Swap whole clusters' label blocks between same-size clusters.
 
-    The permutation unit must match the unit the interval clusters on (R7.3). Under
-    family-split the unit is the Pfam family: homologous genes are not independent, and
-    if related genes tend to share a mechanism then shuffling one label per gene
-    destroys that shared structure and builds a null narrower than the truth, which
-    makes any p-value smaller than it deserves.
-
-    Swapping whole label blocks preserves the observed degree of within-family label
-    mixing. The alternative — one shuffled label per family, broadcast to its genes —
-    would force every family to be homogeneous, which is MORE clustered than reality
-    and widens the null instead, costing the test the power it needs to refute a null
-    claim. Blocks are only exchangeable with blocks of the same length, so clusters are
-    stratified by gene count; a cluster whose size is unique in the data has no partner
-    and keeps its own labels. That count is returned so it can be reported rather than
-    silently reducing how much of the data actually moves.
-
-    `groups` is the row-aligned label unit (genes; labels are constant within one) and
-    `clusters` the row-aligned exchangeable unit (families).
+    Preserves within-cluster label mixing (unlike one-label-per-cluster
+    broadcast, which would widen the null). Clusters with unique gene counts
+    have no swap partner and keep their labels; that count is returned.
     """
     labels = np.asarray(labels)
     groups = np.asarray(groups)
@@ -984,7 +710,7 @@ def _permutation_null_value(
     child_seed: int,
     clusters: np.ndarray | None = None,
 ) -> float | None:
-    """Shuffle labels with an independent seeded RNG, then recompute the metric."""
+    """Shuffle labels and recompute the metric for one permutation draw."""
     rng = np.random.RandomState(child_seed)
     if clusters is not None:
         permuted, _ = _permute_labels_by_cluster(
@@ -1003,12 +729,8 @@ def macro_ovr_auroc(
 ) -> tuple[float | None, tuple[str, ...]]:
     """Macro one-vs-rest AUROC and the classes it averaged over.
 
-    `proba` columns must be aligned to `classes`. Classes absent from `y_true` (or
-    covering all of it) have no defined AUROC and are dropped. The scored classes come
-    back with the value because a three-class average and a two-class average are not
-    the same statistic and must not be compared — a caller mixing them would be
-    building a null out of two different quantities. Returns (None, ()) if no class is
-    scorable.
+    Returns scored classes alongside the value because a 3-class and 2-class
+    average are different statistics and must not be mixed in a null.
     """
     y_true = np.asarray(y_true)
     values, scored = [], []
@@ -1032,28 +754,11 @@ def oof_permutation_pvalue(
     n_permutations: int = PERMUTATION_N_RESAMPLES,
     seed: int = 0,
 ) -> dict:
-    """Permutation p-value for macro one-vs-rest AUROC against FIXED OOF predictions.
+    """Permutation p-value for macro OVR AUROC against fixed OOF predictions (no refit).
 
-    Shuffles the labels and re-scores the same held-out predictions, so no probe is
-    refit — the cost is a re-scoring per permutation rather than a full cross-validated
-    fit.
-
-    `groups` is the label unit (genes). `clusters` is the exchangeable unit and must
-    match what the interval clusters on: pass families for a family-split metric, so
-    whole families' label blocks swap (see `_permute_labels_by_cluster`). Omitting it
-    shuffles one label per gene, which is only correct when genes are the clustering
-    unit — a gene-level shuffle under a family-split metric builds too tight a null.
-
-    This tests a different null from `label_permutation_pvalue`: it conditions on the
-    model that was fit on the real labels and asks whether that model's held-out
-    predictions carry label information. The predictions are out-of-fold, so the test
-    is not circular, but reports must say which of the two was run.
-
-    Macro AUROC rather than macro-F1 because a probe sitting at the chance floor
-    predicts the majority class almost everywhere, which pins macro-F1 near the floor
-    whether or not the ranking carries signal. AUROC reads the ranking directly and so
-    can detect a small effect that macro-F1 cannot — which is what a refutation test
-    for a null claim needs.
+    Uses AUROC rather than macro-F1 because a chance-floor probe predicts
+    majority class everywhere, pinning F1 near the floor regardless of ranking
+    signal.
     """
     y_true = np.asarray(y_true)
     proba = np.asarray(proba, dtype=float)
@@ -1073,8 +778,7 @@ def oof_permutation_pvalue(
         value, scored = macro_ovr_auroc(permuted, proba, classes)
         if value is None or not np.isfinite(value):
             continue
-        # A draw that scores a different class set is a different statistic; averaging
-        # it into the null would compare a 3-class observed value against 2-class draws.
+        # A draw scoring a different class set is a different statistic.
         if scored != observed_classes:
             dropped_class_mismatch += 1
             continue
@@ -1088,8 +792,6 @@ def oof_permutation_pvalue(
         "classes_scored": list(observed_classes),
         "n_permutations": int(len(null_arr)),
         "n_dropped_class_mismatch": dropped_class_mismatch,
-        # Clusters with a unique gene count have no same-size partner and keep their
-        # own labels; reported so it is visible how much of the data actually moved.
         "n_clusters_immovable": immovable,
     }
     if observed is None or not np.isfinite(observed) or len(null_arr) == 0:
@@ -1106,8 +808,6 @@ def oof_permutation_pvalue(
         "observed": float(observed),
         "p_value": float((1 + extreme) / (1 + len(null_arr))),
         "null_mean": float(np.mean(null_arr)),
-        # The null's spread is what the cluster-level shuffle widens relative to a
-        # row-level one; reported so a narrow null is visible rather than implicit.
         "null_std": float(np.std(null_arr)),
     }
 
@@ -1123,26 +823,7 @@ def label_permutation_pvalue(
     alternative: str = "greater",
     n_jobs: int = -1,
 ) -> dict:
-    """One-sided permutation p-value for a metric against the label-shuffled null.
-
-    `run_metric_fn(labels)` must recompute the FULL cross-validated metric for a label
-    vector — i.e. it refits the probe — since this can't be computed from fixed
-    out-of-fold predictions. The p-value is (1 + #{null >= observed}) / (1 + n) for
-    alternative="greater".
-
-    `groups` is the label unit (genes). `clusters` is the exchangeable unit and must
-    match what the metric's interval clusters on: pass families for a family-split
-    metric, so whole families' label blocks swap rather than one label per gene, which
-    would build too tight a null (see `_permute_labels_by_cluster`).
-
-    `statistic` names what `run_metric_fn` computes and is stamped into the result, so
-    a report can say which quantity the p-value is on. It is required and has no
-    default: only the caller knows what its function measures, and a default would
-    silently mislabel every caller that computes something else.
-
-    Permutations run in parallel across cores via joblib (n_jobs=-1 = all cores); each
-    draws from its own SeedSequence-spawned RNG, so the null matches a serial run.
-    """
+    """One-sided permutation p-value with full refit per permutation."""
     if clusters is not None and groups is None:
         raise ValueError("clusters requires groups (the gene-level label unit)")
 

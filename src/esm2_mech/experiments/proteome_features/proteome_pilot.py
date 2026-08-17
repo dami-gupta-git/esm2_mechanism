@@ -1,41 +1,6 @@
-"""
-Stage 0 pilot — Experiment 11
-================================
-
-Tests whether a minimal set of public gene-level features carries any
-mechanism (GOF / DN / LOF) signal under family-split CV.  This is the
-sanity-check / pipeline-bug gate that precedes the full Phase 1 data pull.
-
-Features pulled here:
-  1. pLI            (gnomAD v4 constraint)
-  2. LOEUF          (gnomAD v4 constraint)
-  3. mis_z          (gnomAD v4 constraint)
-  4. paralog_count  (Ensembl Compara REST, paralogues type)
-
-Models compared (all under 5-fold family-split CV, seed=0, gene-level):
-  - majority baseline
-  - logistic regression
-  - tiny MLP (16 → 8 → 3)
-
-Labels:  gene-level mechanism collapsed to 3 classes
-         GOF → GOF, DN → DN, HI → LOF, LOF → LOF, AR → dropped
-
-Decision rules (see docs/plan_experiment.md):
-  V2-pilot family-split macro-F1 ≥ 0.40   → strong; proceed to full Phase 1
-  V2-pilot ≈ majority (~0.31)             → weak; proceed but expectations down
-  V2-pilot well below majority            → pipeline bug; debug
-
-Runtime ≈ 20 minutes including downloads and paralog REST calls.  CPU only.
-
-Outputs:
-  data/cache/proteome_pilot/                   raw downloads + per-gene paralog cache
-  data/gene_features_pilot.tsv                 human-readable per-gene feature table
-  results/proteome_pilot/pilot_results.json    metrics, decision flag, settings
-
-Usage:
-  python scripts/proteome_pilot.py                  # full run
-  python scripts/proteome_pilot.py --skip-paralogs  # use NaN paralogs (fast, no REST)
-  python scripts/proteome_pilot.py --gerasimavicius # restrict to 948 Geras genes
+"""Stage 0 pilot (Experiment 11) — tests whether a minimal set of public
+gene-level features (pLI, LOEUF, mis_z, paralog_count) carries any mechanism
+signal under family-split CV.
 """
 
 from __future__ import annotations
@@ -59,9 +24,6 @@ from esm2_mech.utils.splits import family_split_indices
 from esm2_mech.utils.paths import DATA_DIR, GENE_LIST_TSV, PROTEOME_PILOT_CACHE_DIR, RESULTS_DIR as _PROJECT_RESULTS_DIR
 from esm2_mech.utils.constants import MECHANISM_CLASSES
 
-# ---------------------------------------------------------------------------
-# Paths
-# ---------------------------------------------------------------------------
 CACHE_DIR = PROTEOME_PILOT_CACHE_DIR
 PARALOG_CACHE = CACHE_DIR / "paralogs"
 RESULTS_DIR = _PROJECT_RESULTS_DIR / "proteome_pilot"
@@ -81,9 +43,6 @@ def results_json_path(seed: int) -> Path:
     return RESULTS_DIR / f"pilot_results_seed{seed}.json"
 
 
-# ---------------------------------------------------------------------------
-# Data sources — pinned URLs
-# ---------------------------------------------------------------------------
 # gnomAD v4.1 constraint metrics (per gene, plain TSV ~30MB)
 GNOMAD_CONSTRAINT_URL = (
     "https://storage.googleapis.com/gcp-public-data--gnomad/release/4.1/"
@@ -96,22 +55,9 @@ ENSEMBL_PARALOG_URL = (
     "?type=paralogues;format=condensed"
 )
 
-# ---------------------------------------------------------------------------
-# Label collapse: 5-way mechanism -> 3-class
-# ---------------------------------------------------------------------------
-# AR handling — KNOWN DIVERGENCE FROM THE RUNBOOK PIPELINE.
-# This proteome experiment maps AR -> None, i.e. AR (autosomal-recessive) variants
-# are DROPPED from the 3-class task entirely. The runbook experiments
-# (mechanism/loaders.py `_label_3class` and esm3/esm3_mechanism.py, used in
-# RUNBOOK_4 Experiments 1/3/4) instead collapse AR -> LOF, keeping those variants
-# in the LOF class. So the runbook pipeline and these proteome scripts train on
-# DIFFERENT populations: AR variants are LOF examples there, absent here.
-# This is deliberate and left as-is: the proteome_features experiments are NOT part
-# of RUNBOOK_4 (they are older/exploratory), so they are not reconciled to the
-# live pipeline's AR->LOF rule. If these scripts are ever promoted into the runbook,
-# decide AR's fate once and route this through a single shared collapse helper in
-# utils/constants.py rather than this local map. Treating AR as a zygosity/inheritance
-# descriptor rather than part of the dominant 3-way mechanism problem is the rationale.
+# AR handling — KNOWN DIVERGENCE. These proteome experiments drop AR entirely;
+# the runbook pipeline (RUNBOOK_4) collapses AR -> LOF. Not reconciled because
+# these scripts are exploratory, not part of the runbook.
 LABEL_MAP = {
     "GOF": "GOF",
     "DN": "DN",
@@ -123,11 +69,8 @@ LABEL_MAP = {
 CLASSES = MECHANISM_CLASSES
 
 
-# ---------------------------------------------------------------------------
-# Step 1 — Load gene list with mechanism labels
-# ---------------------------------------------------------------------------
 def load_gene_labels(tsv_path: Path) -> dict[str, str]:
-    """Return {gene_symbol: 3class_label}.  Drops AR and unlabeled genes."""
+    """Return {gene_symbol: 3class_label}, dropping AR and unlabeled genes."""
     labels: dict[str, str] = {}
     with open(tsv_path) as f:
         reader = csv.DictReader(f, delimiter="\t")
@@ -147,9 +90,6 @@ def load_gene_labels(tsv_path: Path) -> dict[str, str]:
     return labels
 
 
-# ---------------------------------------------------------------------------
-# Step 2 — Load Pfam families (for family-split CV)
-# ---------------------------------------------------------------------------
 def load_pfam_families() -> dict[str, str]:
     with open(PFAM_FAMILIES) as f:
         d = json.load(f)
@@ -157,9 +97,6 @@ def load_pfam_families() -> dict[str, str]:
     return d
 
 
-# ---------------------------------------------------------------------------
-# Step 3 — gnomAD constraint download + parse
-# ---------------------------------------------------------------------------
 def download_gnomad_constraint() -> Path:
     """Download gnomAD v4.1 constraint TSV to cache."""
     if GNOMAD_CACHE.exists() and GNOMAD_CACHE.stat().st_size > 1_000_000:
@@ -179,15 +116,8 @@ def download_gnomad_constraint() -> Path:
 
 
 def parse_gnomad_constraint(path: Path) -> dict[str, dict[str, float]]:
-    """
-    Parse gnomAD constraint TSV.  Returns {gene_symbol: {pLI, LOEUF, mis_z}}.
-
-    The v4 constraint TSV has one row per (gene, transcript, mane).
-    We take the canonical/MANE_SELECT row per gene where available, otherwise
-    the row with the highest lof.exp (most observation power).
-    """
+    """Parse gnomAD constraint TSV, returning {gene_symbol: {pLI, LOEUF, mis_z}}."""
     print(f"Parsing gnomAD constraint from {path}")
-    # Inspect header
     with open(path) as f:
         header = f.readline().rstrip("\n").split("\t")
     print(f"  gnomAD columns: {len(header)} (first 8: {header[:8]})")
@@ -263,9 +193,7 @@ def parse_gnomad_constraint(path: Path) -> dict[str, dict[str, float]]:
                 ),
                 "_lof_exp": fnum(idx_lof_exp),
             }
-            # Prefer MANE-select transcript; else keep the row with highest lof.exp.
-            # A missing _lof_exp must NOT be coerced to 0.0 — it would silently win
-            # any tie-break against a real 0.0 ("highest" depends on real numbers).
+            # A missing _lof_exp must NOT be coerced to 0.0 — it would silently win any tie-break.
             prev = by_gene.get(gene)
             if prev is None:
                 by_gene[gene] = row
@@ -285,11 +213,8 @@ def parse_gnomad_constraint(path: Path) -> dict[str, dict[str, float]]:
     return by_gene
 
 
-# ---------------------------------------------------------------------------
-# Step 4 — Ensembl paralog count
-# ---------------------------------------------------------------------------
 def fetch_paralog_count(gene: str, session=None) -> Optional[int]:
-    """One Ensembl REST call per gene.  Resume-safe via per-gene cache file."""
+    """One Ensembl REST call per gene, resume-safe via per-gene cache file."""
     cache_file = PARALOG_CACHE / f"{gene}.json"
     if cache_file.exists():
         try:
@@ -307,10 +232,7 @@ def fetch_paralog_count(gene: str, session=None) -> Optional[int]:
         homologies = []
         for entry in data.get("data", []):
             homologies.extend(entry.get("homologies", []))
-        # We asked the REST endpoint for ?type=paralogues, so everything in
-        # `homologies` should already be a paralog.  Filter strictly on the
-        # `type` field rather than `species` — the condensed format's `species`
-        # field refers to the target species and can mislead.
+        # Filter on the `type` field, not `species` — the condensed format's `species` field can mislead.
         paralog_count = sum(
             1 for h in homologies if "paralog" in h.get("type", "").lower()
         )
@@ -355,9 +277,6 @@ def fetch_paralogs_for_genes(genes: list[str]) -> dict[str, Optional[int]]:
     return out
 
 
-# ---------------------------------------------------------------------------
-# Step 5 — Build per-gene feature matrix
-# ---------------------------------------------------------------------------
 FEATURE_COLS = ["pLI", "LOEUF", "mis_z", "paralog_count"]
 
 
@@ -367,13 +286,7 @@ def build_feature_table(
     gnomad: dict[str, dict],
     paralogs: dict[str, Optional[int]],
 ) -> tuple[list[dict], np.ndarray, np.ndarray, np.ndarray]:
-    """
-    Return:
-        rows  : list of dicts, one per gene with label + family + raw features
-        X     : (n, 2*n_features) array — features + binary missingness indicators
-        y     : (n,) array of class indices
-        groups: (n,) array of family ids for family-split CV
-    """
+    """Build feature matrix with missingness indicators; return (rows, X, y, groups)."""
     rows = []
     keep_genes = [g for g in labels if families.get(g) is not None]
     print(
@@ -403,15 +316,12 @@ def build_feature_table(
             f"({100*n_present/len(rows):.1f}%)"
         )
 
-    # Build X with missingness indicators and median imputation
     X_raw = np.array(
         [[r[c] if r[c] is not None else np.nan for c in FEATURE_COLS] for r in rows],
         dtype=float,
     )
     miss = np.isnan(X_raw).astype(float)
-    # Impute per-column median.  This is a model-input handling choice, not a
-    # fabricated scientific value — the missingness indicator preserves the
-    # information that the original measurement was unavailable.
+    # Median imputation is model-input handling, not a fabricated value — the missingness indicator preserves the information.
     col_medians = np.nanmedian(X_raw, axis=0)
     for j in range(X_raw.shape[1]):
         if np.isnan(col_medians[j]):
@@ -432,11 +342,6 @@ def build_feature_table(
     return rows, X, y, groups
 
 
-# ---------------------------------------------------------------------------
-# Step 6 — Family-split CV models
-# ---------------------------------------------------------------------------
-
-
 def evaluate_model(
     model,
     X: np.ndarray,
@@ -445,7 +350,7 @@ def evaluate_model(
     n_folds: int = 5,
     seed: int = 0,
 ) -> dict:
-    """5-fold family-split CV.  Returns dict of metrics."""
+    """5-fold family-split CV returning a dict of metrics."""
     from sklearn.metrics import f1_score, roc_auc_score
     from sklearn.preprocessing import StandardScaler
     from sklearn.base import clone
@@ -514,9 +419,6 @@ def majority_baseline(
     return {"macro_f1": float(f1_score(y_true, y_pred, average="macro"))}
 
 
-# ---------------------------------------------------------------------------
-# Step 7 — Save artifacts
-# ---------------------------------------------------------------------------
 def save_feature_table(rows: list[dict], path: Path):
     with open(path, "w", newline="") as f:
         writer = csv.DictWriter(
@@ -528,9 +430,6 @@ def save_feature_table(rows: list[dict], path: Path):
     print(f"Wrote feature table: {path}")
 
 
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -647,10 +546,7 @@ def main():
     results["models"]["mlp"] = mlp_res
 
     # 7. Decision flag
-    # Branch order: BUG check fires first so that ANY underperformance vs the
-    # trivial majority baseline gets flagged.  A working model has no reason
-    # to be worse than majority; that signals a real problem (label bug,
-    # leakage in the wrong direction, scaler misalignment, etc.).
+    # BUG check fires first: any model below majority signals a real problem (label bug, leakage, etc.).
     best_f1 = max(lr_res["macro_f1"], mlp_res["macro_f1"])
     maj_f1 = maj["macro_f1"]
     if best_f1 < maj_f1:

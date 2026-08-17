@@ -1,23 +1,7 @@
-"""
-Multi-seed replication of v1 headline numbers.
+"""Multi-seed replication of v1 headline numbers.
 
-Runs seeds 1–4 (seed 0 already exists) for:
-  1. Mechanism MLP probe (delta_mean, delta_pos) — gene-split + family-split
-     on both Gerasimavicius and merged datasets.
-  2. Pathogenicity control (delta_mean MLP + logreg) — gene-split + family-split.
-
-All embeddings are cached locally — no GPU required.
-
-Outputs:
-  results/v1_multiseed/mechanism_geras_seed{N}.json
-  results/v1_multiseed/mechanism_merged_seed{N}.json
-  results/v1_multiseed/pathogenicity_seed{N}.json
-  results/v1_multiseed/summary.json   ← 5-seed mean ± std across all headline numbers
-
-Usage:
-  cd esm2_mechanism
-  python scripts/multiseed_v1.py                       # seeds 0..4 (seed 0 from disk)
-  python scripts/multiseed_v1.py --seeds 5 --include_seed0   # re-run all including seed 0
+Runs mechanism MLP and pathogenicity probes across seeds 0..N on Gerasimavicius
+and merged datasets under gene-split and family-split CV.
 """
 
 import argparse
@@ -45,18 +29,11 @@ from esm2_mech.utils.paths import (
     V1_MULTISEED_SEED0_DIR,
 )
 
-# Nonlinear-result keys this experiment writes and reads, built via the shared
-# helper so the <model>_<feat>_<split> format lives in one place (constants.py).
 MLP_DELTA_MEAN_GENE = nonlinear_key("mlp", DELTA_MEAN_FEATURE, SPLIT_GENE)
 MLP_DELTA_MEAN_FAMILY = nonlinear_key("mlp", DELTA_MEAN_FEATURE, SPLIT_FAMILY)
 
-# ── paths ────────────────────────────────────────────────────────────────────
-
 OUT_DIR = str(V1_MULTISEED_DIR)
 SEED0_DIR = str(V1_MULTISEED_SEED0_DIR)
-
-
-# ── CV helpers ───────────────────────────────────────────────────────────────
 
 
 
@@ -102,7 +79,6 @@ def run_seed(seed, pfam_map, out_dir):
     print(f"SEED {seed}")
     print(f"{'='*60}")
 
-    # ── 1. Gerasimavicius mechanism ──────────────────────────────────────────
     geras_out = os.path.join(out_dir, f"mechanism_geras_seed{seed}.json")
     geras_results = load_json_or_discard(geras_out)
     if geras_results is not None:
@@ -125,7 +101,6 @@ def run_seed(seed, pfam_map, out_dir):
         atomic_write_json(geras_out, geras_results, indent=2)
         print(f"  -> {geras_out}")
 
-    # ── 2. Merged dataset mechanism ──────────────────────────────────────────
     merged_out = os.path.join(out_dir, f"mechanism_merged_seed{seed}.json")
     merged_results = load_json_or_discard(merged_out)
     if merged_results is not None:
@@ -147,7 +122,6 @@ def run_seed(seed, pfam_map, out_dir):
         atomic_write_json(merged_out, merged_results, indent=2)
         print(f"  -> {merged_out}")
 
-    # ── 3. Pathogenicity control ─────────────────────────────────────────────
     path_out = os.path.join(out_dir, f"pathogenicity_seed{seed}.json")
     path_results = load_json_or_discard(path_out)
     if path_results is not None:
@@ -155,7 +129,6 @@ def run_seed(seed, pfam_map, out_dir):
     else:
         print("\n--- Pathogenicity control ---")
         delta, y, genes = load_pathogenicity(pfam_map)
-        # Use gene-symbol based pfam lookup for pathogenicity genes
         gs = gene_split_cv(genes, seed=seed)
         fs = family_split_cv(genes, pfam_map, seed=seed)
         path_results = {}
@@ -174,7 +147,7 @@ def run_seed(seed, pfam_map, out_dir):
 
 
 def summarise(all_seeds, out_dir):
-    """Aggregate across seeds. all_seeds: list of (seed, geras, merged, path) tuples."""
+    """Aggregate across seeds."""
 
     def agg(values):
         v = [x for x in values if x is not None and not np.isnan(x)]
@@ -268,14 +241,11 @@ def summarise(all_seeds, out_dir):
                 f"  {k:<60s}  {mean:.3f} ± {std:.3f}  (n={summary['aggregate'][k]['n']})"
             )
 
-    # Headline leakage fraction
     gf_vals = metrics["mechanism_geras_mlp_delta_mean_gene_macro_f1"]
     fs_vals = metrics["mechanism_geras_mlp_delta_mean_family_macro_f1"]
     chance = 0.333
     leakage_fracs = []
     for gf, fs in zip(gf_vals, fs_vals):
-        # A stored macro-F1 can be None or NaN (a seed where no fold scored);
-        # both must be excluded before the ratio and the np.mean/std below.
         if gf is None or fs is None or np.isnan(gf) or np.isnan(fs):
             continue
         if (gf - chance) > 0:
@@ -332,13 +302,9 @@ def main():
         pfam_map = json.load(f)
     print(f"Pfam map loaded: {len(pfam_map)} genes")
 
-    # Seeds 0..seeds-1. Seed 0 is always sourced from the existing on-disk results
-    # below and skipped in the compute loop unless --include_seed0 forces a rerun.
     seeds = list(range(args.seeds))
-
     all_seeds = []
 
-    # Always include seed 0 from existing results
     with open(os.path.join(SEED0_DIR, "mlp_results_seed0.json")) as _f:
         seed0_geras = json.load(_f)
     with open(os.path.join(SEED0_DIR, "mlp_merged_results_seed0.json")) as _f:
@@ -346,7 +312,6 @@ def main():
     with open(os.path.join(SEED0_DIR, "pathogenicity_control.json")) as _f:
         seed0_path = json.load(_f)
 
-    # Reformat seed 0 pathogenicity to match our schema
     def reformat_path_seed0(d):
         bf = d.get("by_feature", {})
         dm = bf.get("delta_mean", {})
@@ -363,9 +328,6 @@ def main():
             },
         }
 
-    # Seed 0 comes from the existing on-disk results unless --include_seed0 forces a
-    # fresh recompute below, in which case the loop produces it instead (don't add it
-    # twice — that would double-weight seed 0 in the across-seed summary).
     if not args.include_seed0:
         all_seeds.append((0, seed0_geras, seed0_merged, reformat_path_seed0(seed0_path)))
 
@@ -378,7 +340,7 @@ def main():
     else:
         for seed in seeds:
             if seed == 0 and not args.include_seed0:
-                continue  # seed 0 already added from the existing results above
+                continue
             gf = os.path.join(OUT_DIR, f"mechanism_geras_seed{seed}.json")
             mf = os.path.join(OUT_DIR, f"mechanism_merged_seed{seed}.json")
             pf = os.path.join(OUT_DIR, f"pathogenicity_seed{seed}.json")

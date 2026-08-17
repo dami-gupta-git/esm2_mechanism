@@ -1,24 +1,7 @@
-"""
-Probe 4 (follow-up to result_23): what IS the pathogenicity direction?
+"""Probe 4: what is the pathogenicity direction?
 
-result_23 found pathogenicity is a single, family-transferable linear direction
-in ESM-2 perturbation space. This asks what that axis corresponds to, using
-CONTEXT-FREE substitution biochemistry (computable from wt->mut identity with no
-GPU): BLOSUM62, and changes in hydropathy / charge / volume.
-
-  A. Correlate the axis-projection score with each biochemical feature.
-  B. Regress the axis score on all biochemical features (Ridge R^2) — how much of
-     the axis is explained by context-free biochemistry.
-  C. Pathogenicity AUROC from context-free features ALONE (family-split) vs ESM-2
-     (0.884) — how much pathogenicity is substitution identity vs context.
-
-NOTE: this tests context-FREE biochemistry. Position-specific *conservation*
-(ESM-2 masked log-likelihood / entropy at the variant position) is the natural
-GPU follow-up (plan_loglik) and is NOT covered here.
-
-Pure CPU. Usage:
-  cd esm2_mechanism
-  python3 scripts/probe4_axis_identity.py
+Tests context-free substitution biochemistry (BLOSUM62, hydropathy, charge, volume)
+against the ESM-2 axis. Does not cover position-specific conservation (see conservation_axis).
 """
 
 import json
@@ -45,7 +28,6 @@ GEOMETRY_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
 AA = "ARNDCQEGHILKMFPSTWYV"
 
-# BLOSUM62 lower-triangle (incl. diagonal), rows in AA order
 _BL = [
     [4],
     [-1, 5],
@@ -195,13 +177,10 @@ def run(n_seeds=N_SEEDS):
     mag = np.linalg.norm(delta, axis=1)
     print(f"Variants with biochem features: {len(keep)} / {len(v)}")
 
-    # ── axis-projection score (direction from a single full-data logreg fit) ──
     Xs = StandardScaler().fit_transform(delta)
     w = LogisticRegression(max_iter=2000, C=1.0).fit(Xs, y).coef_.ravel()
     w /= np.linalg.norm(w) + 1e-12
-    s = Xs @ w  # pathogenicity-axis projection per variant
-
-    # ── A. correlations ──────────────────────────────────────────────────────
+    s = Xs @ w
     print("\n=== A. Spearman(axis score, feature) ===")
     corrA = {}
     for j, name in enumerate(FEAT_NAMES):
@@ -213,7 +192,6 @@ def run(n_seeds=N_SEEDS):
     print(f"  {'magnitude ||d||':14s} rho = {rho_mag:+.3f}")
     print(f"  {'(label)':14s} rho = {rho_y:+.3f}  (sanity: axis aligns with label)")
 
-    # ── B. how much of the axis is context-free biochemistry (Ridge R^2) ─────
     print("\n=== B. predict axis score from biochem features (Ridge, 5-fold) ===")
     bs = StandardScaler().fit_transform(bio)
     r2s = []
@@ -226,7 +204,6 @@ def run(n_seeds=N_SEEDS):
         f"({'mostly context-free biochemistry' if r2 > 0.5 else 'mostly context-dependent (beyond AA identity)'})"
     )
 
-    # ── C. pathogenicity AUROC: context-free vs ESM-2 (family-split) ─────────
     print("\n=== C. pathogenicity AUROC, family-split (5 seeds) ===")
 
     def auroc_cv(X, splits, seed):

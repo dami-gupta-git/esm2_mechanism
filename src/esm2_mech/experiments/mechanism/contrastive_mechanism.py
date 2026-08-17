@@ -1,25 +1,7 @@
-"""
-Contrastive metric learning on ESM-2 delta embeddings for mechanism classification.
+"""Contrastive metric learning on ESM-2 delta embeddings for mechanism classification.
 
-Trains a small MLP projection head with supervised contrastive (SupCon) loss where:
-  - Positives: same-mechanism variants from DIFFERENT Pfam families
-  - Within-family pairs excluded from positives (prevents leaking family identity)
-  - Negatives: different-mechanism variants
-
-Then evaluates k-NN classification in the learned 64-d space under family-split CV,
-compared to k-NN in raw 1280-d delta space.
-
-Key question: if we explicitly force the projection to be family-invariant, does
-mechanism signal emerge that the standard MLP (which has no such constraint) could not find?
-
-Runs the merged dataset (VALID_VARIANTS_JSON) across seeds 0-4 and pools the
-per-seed files into an across-seed headline (mean ± std ACROSS seeds), mirroring
-classify_by_mechanism. Per-seed files: contrastive_results_seed{seed}.json under
-RESULTS_DIR; pooled into contrastive_aggregate.json.
-
-Usage:
-    python contrastive_mechanism.py            # all 5 seeds + aggregate
-    python contrastive_mechanism.py --seed 2   # single seed, no aggregation
+Trains a projection head with cross-family-only positives (SupCon triplet loss), then
+evaluates k-NN in the projected space under family-split CV vs raw-delta k-NN.
 """
 
 import argparse
@@ -73,13 +55,7 @@ print = functools.partial(print, flush=True)
 
 warnings.filterwarnings("ignore")
 
-# ---------------------------------------------------------------------------
-# Data loading
-# ---------------------------------------------------------------------------
-
-
 def load_data():
-    """Load the merged Gerasimavicius + G2P variants and their delta embeddings."""
     variants, labels, genes, delta_mean, _ = load_variants_and_delta(
         VALID_VARIANTS_JSON, EMB_WT_MEAN, EMB_MUT_MEAN
     )
@@ -95,30 +71,18 @@ def load_pfam(genes):
     return gene_pfam, pfam_map
 
 
-# ---------------------------------------------------------------------------
-# Supervised contrastive loss
-# ---------------------------------------------------------------------------
-
-
 def build_cross_family_pairs(labels, gene_pfam, le, max_pairs_per_anchor=10, seed=42):
-    """
-    Vectorised triplet construction. For each anchor, sample positives from
-    same mechanism + different Pfam family; negatives from different mechanism.
-    Within-family pairs are excluded from positives.
-    """
+    """Build triplets with cross-family-only positives and different-mechanism negatives."""
     rng = np.random.RandomState(seed)
     y = le.transform(labels)
     n = len(labels)
     n_classes = len(le.classes_)
 
-    # Encode family strings to integers for fast comparison
     unique_fams = list({f for f in gene_pfam if f is not None})
     fam_to_int = {f: i for i, f in enumerate(unique_fams)}
     fam_int = np.array([fam_to_int.get(f, -1) for f in gene_pfam], dtype=np.int32)
 
-    # Pre-build index arrays per (class, family) — avoids repeated scanning
     by_mech = {c: np.where(y == c)[0] for c in range(n_classes)}
-    # For each class, indices grouped by family: dict[(class, fam_int)] -> array
     by_mech_fam = {}
     for c in range(n_classes):
         for idx in by_mech[c]:
@@ -126,30 +90,22 @@ def build_cross_family_pairs(labels, gene_pfam, le, max_pairs_per_anchor=10, see
             by_mech_fam.setdefault(key, []).append(idx)
     by_mech_fam = {k: np.array(v) for k, v in by_mech_fam.items()}
 
-    # Pre-build negative pool per class (all variants of other classes)
     neg_by_class = {}
     for c in range(n_classes):
         neg_by_class[c] = np.concatenate(
             [by_mech[o] for o in range(n_classes) if o != c]
         )
 
-    # For each class, build a flat positive pool excluding each family —
-    # do this per unique (class, family) combination rather than per anchor
-    # so O(unique_combos) not O(n_variants)
     by_class_arr = {c: np.array(by_mech[c]) for c in range(n_classes)}
 
-    # Map each variant to its per-class positive pool (same mech, diff family)
-    # We group anchors by (class, family) and assign the same pool to all in group
     anchor_list, pos_list, neg_list = [], [], []
 
     unique_combos = set()
     for i in range(n):
         unique_combos.add((int(y[i]), int(fam_int[i])))
 
-    # For each unique (class, fam) build the cross-family positive pool once
     combo_pos_pool = {}
     for c, fam in unique_combos:
-        # All variants of class c whose family != fam
         class_idxs = by_class_arr[c]
         class_fams = fam_int[class_idxs]
         cross_fam_mask = (class_fams != fam) & (class_fams != -1)
@@ -191,11 +147,6 @@ def build_cross_family_pairs(labels, gene_pfam, le, max_pairs_per_anchor=10, see
     return anchors, positives, negatives
 
 
-# ---------------------------------------------------------------------------
-# Contrastive projection head (PyTorch)
-# ---------------------------------------------------------------------------
-
-
 def train_projection_head(
     X_train,
     labels_train,
@@ -214,20 +165,16 @@ def train_projection_head(
     import torch
     import torch.nn as nn
 
-    # Normalize
     mu = X_train.mean(0)
     std = X_train.std(0) + 1e-8
     X_norm = ((X_train - mu) / std).astype(np.float32)
 
-    # Build triplets from training data
     anchors, positives, negatives = build_cross_family_pairs(
         labels_train, gene_pfam_train, le, max_pairs_per_anchor=8, seed=seed
     )
 
     if len(anchors) < 50:
-        # The experiment is defined by cross-family-only positives (see module
-        # docstring). Silently substituting all-family positives would change
-        # what is being measured, so refuse rather than degrade quietly.
+        # Substituting all-family positives would change what this experiment measures.
         raise ValueError(
             f"Only {len(anchors)} cross-family triplets available (need >= 50); "
             "cannot train the family-invariant projection head on this fold."
@@ -235,12 +182,9 @@ def train_projection_head(
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # Seed torch before the head is built: weight init and dropout masks draw
-    # from the global RNG (the epoch-shuffle generator below covers only the
-    # permutation), so without this the same seed is not reproducible.
+    # Weight init and dropout draw from the global RNG, so seed before building the head.
     torch.manual_seed(seed)
 
-    # Build MLP projection head
     layers = []
     prev = X_norm.shape[1]
     for h in hidden:
@@ -251,21 +195,15 @@ def train_projection_head(
     optimizer = torch.optim.Adam(proj.parameters(), lr=lr, weight_decay=1e-4)
     triplet_loss = nn.TripletMarginLoss(margin=margin, p=2)
 
-    # Keep the full normalized feature matrix resident on the device once. It is
-    # only ~N*1280*4 bytes (≈91 MB for the merged set), so indexing happens
-    # on-device and we avoid a host→device copy of every triplet batch — the
-    # previous CPU-gather-then-copy pattern left the GPU idle and pegged ~30 cores.
+    # Full matrix on-device avoids per-batch host→device copies.
     X_t = torch.tensor(X_norm, dtype=torch.float32, device=device)
 
-    # Validation: hold out ~15% of triplets
     n_val = min(max(10, len(anchors) // 7), len(anchors) - 1)
     rng_val = np.random.RandomState(seed + 99)
     val_idx = rng_val.choice(len(anchors), size=n_val, replace=False)
     train_idx_mask = np.ones(len(anchors), dtype=bool)
     train_idx_mask[val_idx] = False
 
-    # Triplet index tensors live on the device too, so per-batch slicing never
-    # touches the host. anc/pos/neg are row indices into X_t.
     anc_tr = torch.as_tensor(anchors[train_idx_mask], dtype=torch.long, device=device)
     pos_tr = torch.as_tensor(positives[train_idx_mask], dtype=torch.long, device=device)
     neg_tr = torch.as_tensor(negatives[train_idx_mask], dtype=torch.long, device=device)
@@ -274,8 +212,6 @@ def train_projection_head(
     neg_val = torch.as_tensor(negatives[val_idx], dtype=torch.long, device=device)
     n_train_triplets = anc_tr.shape[0]
 
-    # Per-epoch shuffle generator (seeded) replaces the CPU DataLoader: with all
-    # tensors on-device, a permutation + contiguous slices is the efficient path.
     gen = torch.Generator(device=device).manual_seed(seed + 7)
 
     best_loss = float("inf")
@@ -289,15 +225,10 @@ def train_projection_head(
         f"on {device.type}"
     )
 
-    # Count of epochs actually run (0 if max_epochs == 0), so the return below
-    # is well-defined even when the loop body never executes.
     epochs_run = 0
     for epoch in range(max_epochs):
         epochs_run = epoch + 1
         proj.train()
-        # Shuffle triplet order each epoch on-device, then iterate contiguous
-        # batches — same per-epoch shuffling as the old DataLoader(shuffle=True),
-        # without any host involvement.
         perm = torch.randperm(n_train_triplets, generator=gen, device=device)
         for start in range(0, n_train_triplets, batch_size):
             batch_idx = perm[start : start + batch_size]
@@ -324,8 +255,6 @@ def train_projection_head(
         else:
             patience_count += 1
 
-        # Heartbeat so the training loop is not silent for the bulk of each fold:
-        # log on the first epoch, every log_every epochs, and the last epoch.
         if epoch == 0 or epochs_run % log_every == 0 or patience_count >= patience:
             print(
                 f"      epoch {epochs_run}/{max_epochs}  "
@@ -342,8 +271,6 @@ def train_projection_head(
 
     proj.eval()
     with torch.no_grad():
-        # X_t is already on `device`; forward the whole matrix and bring the
-        # projected embeddings back to host for the sklearn k-NN evaluation.
         Z = proj(X_t).cpu().numpy()
 
     return proj, Z, mu, std, epochs_run
@@ -360,36 +287,20 @@ def project_test(proj, X_test, mu, std):
     return Z
 
 
-# ---------------------------------------------------------------------------
-# k-NN evaluation
-# ---------------------------------------------------------------------------
-
-
 def run_knn(Z_train, Z_test, y_train, y_test, le, k=10):
-    """Returns (fm, proba_mechanism_order): fm is the per-fold metric dict; the
-    second value is predict_proba aligned to MECHANISM_CLASSES order (not
-    `le.classes_`'s alphabetical order) for downstream cluster-bootstrap CIs,
-    which key their proba columns to MECHANISM_CLASSES.
-    """
-    # Clamp k to training set size
+    """Returns (metrics_dict, proba aligned to MECHANISM_CLASSES order)."""
     k_eff = min(k, len(Z_train) - 1)
     knn = KNeighborsClassifier(n_neighbors=k_eff, metric="cosine")
     knn.fit(Z_train, y_train)
     pred = knn.predict(Z_test)
 
-    # Reorder the k-NN proba columns to canonical class order. knn.classes_ are
-    # integer-encoded (training labels are ints); decode to strings so the shared
-    # align_proba helper can map them onto le.classes_.
-    raw_proba = knn.predict_proba(Z_test)  # shape (n_test, n_train_classes)
-    all_classes = list(le.classes_)  # string names in canonical order
+    raw_proba = knn.predict_proba(Z_test)
+    all_classes = list(le.classes_)
     train_cls_str = le.classes_[np.asarray(knn.classes_)]
     proba = align_proba(raw_proba, train_cls_str, all_classes)
     proba_mechanism_order = align_proba(raw_proba, train_cls_str, MECHANISM_CLASSES)
 
     fm = {"macro_f1": float(f1_score(y_test, pred, average="macro", zero_division=0))}
-    # A class whose AUROC is undefined on this fold (absent from test, or all-equal
-    # neighbour votes) is recorded by name so the caller can see that this fold's
-    # per-class metric rests on fewer folds than n_folds — never silently dropped.
     auroc_skipped = {}
     for all_i, cls_str in enumerate(all_classes):
         cls_int = le.transform([cls_str])[0]
@@ -403,11 +314,6 @@ def run_knn(Z_train, Z_test, y_train, y_test, le, k=10):
     if auroc_skipped:
         fm["auroc_skipped"] = auroc_skipped
     return fm, proba_mechanism_order
-
-
-# ---------------------------------------------------------------------------
-# Main CV loop
-# ---------------------------------------------------------------------------
 
 
 def run_cv(
@@ -436,10 +342,7 @@ def run_cv(
         gene_pfam_tr = gene_pfam[train_idx]
         genes_te = genes[test_idx]
 
-        # fold_i is the split index (position in `splits`); it advances even when
-        # a split is skipped, so the seed offset (seed + fold_i) stays stable. The
-        # number of folds that actually contribute is len(fold_results_*), which
-        # can be < len(splits) — reported as n_folds in the aggregate.
+        # fold_i advances even when skipped, keeping seed offset (seed + fold_i) stable.
         if len(set(y_tr)) < 2 or len(set(y_te)) < 2:
             print(f"  Split {fold_i+1}/{len(splits)}: skipped (missing class)")
             continue
@@ -451,8 +354,6 @@ def run_cv(
         )
         print(f"    train classes: {dict(Counter(labels_tr))}")
 
-        # --- Raw k-NN baseline (no learning) ---
-        # Normalize on train stats
         mu_raw = X_tr.mean(0)
         std_raw = X_tr.std(0) + 1e-8
         Z_tr_raw = (X_tr - mu_raw) / std_raw
@@ -469,7 +370,6 @@ def run_cv(
             f"{DN}={raw_fm.get(f'auroc_{DN}', float('nan')):.3f}"
         )
 
-        # --- Contrastive projection head ---
         proj, Z_tr_proj, mu, std, epochs = train_projection_head(
             X_tr,
             labels_tr,
@@ -498,12 +398,7 @@ def run_cv(
     def agg(fold_list):
         if not fold_list:
             return {"error": "no folds"}
-        # Only aggregate float-valued per-fold metrics (macro_f1, per-class AUROC).
-        # Restricting to float (not int/bool) means a future count or boolean
-        # per-fold field is never meaned into a _mean/_std, and the np.isnan guard
-        # below only ever sees floats. The "auroc_skipped" bookkeeping dict is
-        # pooled separately so the caller can see how many folds each per-class
-        # AUROC actually rests on.
+        # Only aggregate float-valued per-fold metrics, so int/bool fields are never meaned.
         metric_keys = set()
         for fold in fold_list:
             for key, value in fold.items():
@@ -519,10 +414,7 @@ def run_cv(
             if vals:
                 out[f"{key}_mean"] = float(np.mean(vals))
                 out[f"{key}_std"] = float(np.std(vals))
-                # Count of folds contributing to this metric (may be < n_folds
-                # when a per-class AUROC was undefined on some folds).
                 out[f"{key}_n_folds"] = len(vals)
-        # Pool per-class AUROC skip reasons across folds, counted by reason.
         skip_counts = Counter()
         for fold in fold_list:
             for cls_str, reason in fold.get("auroc_skipped", {}).items():
@@ -551,21 +443,11 @@ def run_cv(
     )
 
 
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
-
-
 def run(
     data, out_dir, seed, n_folds=5, proj_dim=64, batch_size=512,
     compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES,
 ):
-    """Run gene-split and family-split contrastive CV for one seed.
-
-    `data` is the preloaded dict from load_all_data() (loaded once and shared
-    across seeds so the embeddings are not re-read five times). Writes one
-    per-seed JSON to out_dir and returns the results dict.
-    """
+    """Run gene-split and family-split contrastive CV for one seed."""
     labels = data["labels"]
     genes = data["genes"]
     delta_mean = data["delta_mean"]
@@ -612,10 +494,6 @@ def run(
                     n_resamples=n_boot, seed=seed,
                 )
 
-    # The contrastive gate is a DIFFERENCE (contrastive k-NN − raw-delta k-NN), so
-    # it needs a paired interval, not two independent ones: both arms are scored on
-    # the same folds over the same variants, so one cluster resample per replicate
-    # is handed to both and the fold-to-fold noise they share cancels.
     paired = {}
     if compute_ci:
         print("\n=== PAIRED DIFFERENCES (contrastive − raw k-NN) ===")
@@ -626,8 +504,6 @@ def run(
             diff = paired_oof_diff(
                 cont_oof, raw_oof, pfam_map,
                 f"{split_name}: contrastive − raw_knn",
-                # run_knn returns proba aligned to MECHANISM_CLASSES, not to
-                # le.classes_'s alphabetical order.
                 classes=list(MECHANISM_CLASSES),
                 is_family_split=is_family_split,
                 n_resamples=n_boot,
@@ -646,10 +522,6 @@ def run(
                     f"{adjudicate_diff(diff['point_diff'] > 0, diff, 0.0)}"
                 )
 
-            # Per-class one-vs-rest differences. The "DN is unmoved by the
-            # contrastive head" reading is a null asserted from a point drop
-            # (0.577 -> 0.545 in run6); stated as a difference with an interval it
-            # can come back as not distinguishable instead of as an established null.
             for cls in MECHANISM_CLASSES:
                 cls_diff = paired_oof_diff(
                     cont_oof, raw_oof, pfam_map,
@@ -699,7 +571,6 @@ def run(
         },
     }
 
-    # Per-seed headline summary
     print("\n\n" + "=" * 60)
     print(f"SEED {seed} HEADLINE SUMMARY")
     print("=" * 60)
@@ -730,7 +601,6 @@ def run(
         )
         print(f"  Δ contrastive − raw: {delta_f1:+.3f}")
 
-    # Per-seed file written as each seed completes (resume + progress).
     os.makedirs(out_dir, exist_ok=True)
     out_path = os.path.join(out_dir, contrastive_seed_result_filename(seed))
     atomic_write_json(out_path, results)
@@ -739,7 +609,6 @@ def run(
 
 
 def load_all_data():
-    """Load variants, Pfam map, deltas, and a fitted label encoder once."""
     print("=== Loading data ===")
     variants, labels, genes, delta_mean = load_data()
 
@@ -762,11 +631,7 @@ def load_all_data():
 
 
 def print_interpretation(aggregated):
-    """Print the across-seed verdict against the MLP delta_mean family floor.
-
-    The floor is read live from the run's mechanism aggregate.json (never
-    hardcoded), so it tracks whatever the current run's MLP baseline is.
-    """
+    """Print across-seed verdict against the live MLP delta_mean family floor."""
     fam = aggregated.get(FAMILY_SPLIT, {})
     cont = fam.get("contrastive_knn", {})
     raw = fam.get("raw_knn_baseline", {})
@@ -778,9 +643,7 @@ def print_interpretation(aggregated):
 
     print("\n=== Across-seed interpretation (family-split) ===")
     print(f"  MLP delta_mean floor (from aggregate.json): {floor:.3f}")
-    # Distinguish "data missing" from a genuine negative: a NaN in any operand
-    # makes every > comparison False, which would otherwise be misreported as the
-    # "no signal" verdict. Report the missing data explicitly instead.
+    # NaN makes > False, which would silently report "no signal" — check explicitly.
     if not all(np.isfinite(value) for value in (cont_f1, raw_f1, floor)):
         print(
             "  ? Verdict undefined — a required value is missing/NaN: "
@@ -838,11 +701,8 @@ def main():
         )
 
     if args.seed is not None:
-        # Single-seed run: skip aggregation (would pool only one seed).
         return
 
-    # Pool the per-seed files into one across-seed headline (mean ± std ACROSS
-    # seeds), mirroring classify_by_mechanism.main.
     print("\n=== Aggregating across seeds ===")
     seed_results = load_seed_files(out_dir, CONTRASTIVE_SEED_RESULT_GLOB)
     if not seed_results:

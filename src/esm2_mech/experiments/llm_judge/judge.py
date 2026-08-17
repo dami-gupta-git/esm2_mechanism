@@ -1,14 +1,4 @@
-"""LLM-as-judge that predicts a variant's mechanism class (label_3class).
-
-For each variant the model is shown the gene, the amino-acid substitution and its
-FoldX ddG, and must return one of MECHANISM_CLASSES via a forced tool call. Every
-model call is traced to Langfuse so latency, retries, token cost and structured-
-output failures are observable per variant.
-
-This is an eval / benchmarking harness, not part of the probe pipeline: it scores
-the model's predictions against the ground-truth label_3class already in the
-variant records.
-"""
+"""LLM-as-judge that predicts a variant's mechanism class via forced tool call, traced to Langfuse."""
 
 import functools
 import os
@@ -34,9 +24,7 @@ class TransientProviderError(Exception):
     """A retryable provider failure (429 / 5xx / overloaded / timeout)."""
 
 
-# Forced tool schema: the model MUST return one of the canonical classes. We never
-# accept a free-text answer — the class set comes from MECHANISM_CLASSES, never
-# hardcoded inline.
+# Class set comes from MECHANISM_CLASSES, never hardcoded inline.
 _MECHANISM_TOOL = {
     "name": LLM_JUDGE_TOOL_NAME,
     "description": (
@@ -63,7 +51,7 @@ _MECHANISM_TOOL = {
 
 
 def _build_prompt(variant: dict) -> str:
-    """Render a single variant into the judge prompt."""
+    """Render a single variant into the judge prompt text."""
     ddg = variant.get("foldx_ddg")
     ddg_line = (
         f"FoldX folding stability change (ddG): {ddg:.2f} kcal/mol"
@@ -82,7 +70,7 @@ def _build_prompt(variant: dict) -> str:
 
 
 def _classify_provider_error(err: Exception) -> bool:
-    """Return True if `err` is transient and worth retrying."""
+    """Return True if err is transient and worth retrying."""
     if isinstance(err, (anthropic.RateLimitError, anthropic.InternalServerError)):
         return True
     if isinstance(err, anthropic.APIStatusError):
@@ -94,12 +82,7 @@ def _classify_provider_error(err: Exception) -> bool:
 
 @observe(name="judge_variant")
 def judge_variant(client: anthropic.Anthropic, variant: dict) -> dict:
-    """Predict one variant's mechanism, with linear-backoff retry on transient errors.
-
-    Returns a dict with the predicted class, rationale, the ground-truth label,
-    whether they match, and per-call observability fields (attempts, latency,
-    token usage). The Langfuse trace for this call carries the same metadata.
-    """
+    """Predict one variant's mechanism with linear-backoff retry on transient errors."""
     prompt = _build_prompt(variant)
     langfuse = get_client()
     truth = variant.get(LABEL_3CLASS_FIELD)
@@ -135,9 +118,6 @@ def judge_variant(client: anthropic.Anthropic, variant: dict) -> dict:
 
     latency_ms = (time.monotonic() - started) * 1000.0
 
-    # Pull the forced tool call out of the response. A well-formed forced tool
-    # call always yields a tool_use block; if it does not, that is itself an
-    # observable structured-output failure we record rather than silently drop.
     predicted = None
     rationale = None
     for block in response.content:
@@ -156,8 +136,7 @@ def judge_variant(client: anthropic.Anthropic, variant: dict) -> dict:
         "truth": truth,
         "predicted": predicted,
         "rationale": rationale,
-        # correct is None when there is no ground truth or no valid prediction —
-        # never coerce an unanswerable case to False.
+        # None when no ground truth or no valid prediction — never coerce unanswerable to False.
         "correct": (predicted == truth) if (structured_ok and truth) else None,
         "structured_ok": structured_ok,
         "attempts": attempt,
@@ -180,7 +159,7 @@ def judge_variant(client: anthropic.Anthropic, variant: dict) -> dict:
 
 
 def make_client() -> anthropic.Anthropic:
-    """Construct the Anthropic client, failing loudly if the key is absent."""
+    """Construct the Anthropic client, raising if ANTHROPIC_API_KEY is absent."""
     if not os.environ.get("ANTHROPIC_API_KEY"):
         raise RuntimeError("ANTHROPIC_API_KEY is not set in the environment")
     return anthropic.Anthropic()

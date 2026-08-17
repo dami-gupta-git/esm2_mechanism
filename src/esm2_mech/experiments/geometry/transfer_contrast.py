@@ -1,26 +1,5 @@
-"""
-The decider for result_23's geometric story: does a *linear direction* fit on
-one group of proteins/families TRANSFER to a disjoint group — for pathogenicity,
-stability, and mechanism, under one identical protocol and metric?
-
-Protocol (same as direction_geometry.py Probe 2):
-  - one shared StandardScaler per task (common coordinate frame)
-  - split the task's grouping variable (Pfam family, or protein) into two
-    disjoint halves, fit L2 logistic on half A, score half B (and B->A), AUROC
-  - average over n_partitions random half-splits
-  - report transfer AUROC vs a pooled (random-split) reference
-
-Tasks (all binary so the AUROC is comparable):
-  - pathogenicity : group=Pfam family, y = pathogenic           (canonical n=16,576)
-  - stability     : group=protein,     y = ΔΔG > median         (S1724 n=1,277)
-  - mechanism     : group=Pfam family, y = GOF vs rest          (Gerasimavicius)
-
-Expectation if the geometry unifies the project:
-  pathogenicity transfers (~0.81), stability drops, mechanism ~chance.
-
-Pure CPU. Usage:
-  cd esm2_mechanism
-  python3 scripts/transfer_contrast.py
+"""Transfer contrast: does a linear direction fit on one group of proteins/families
+transfer to a disjoint group, for pathogenicity, stability, and mechanism?
 """
 
 import json
@@ -42,8 +21,6 @@ from esm2_mech.utils.paths import (
     MEGASCALE_EMB_MUT_MEAN,
 )
 
-# Stability transfer arm — configurable on dataset (default "none" = skip). See
-# magnitude_direction.STABILITY_DATASETS for the same mapping.
 STABILITY_DATASETS = {
     "none": None,
     "tsuboyama": (
@@ -83,12 +60,7 @@ def transfer_test(delta, y, groups, kind="linear", n_partitions=10, seed=0, min_
     from sklearn.model_selection import StratifiedKFold
 
     y = np.asarray(y).astype(int)
-    # Deliberate: fit the scaler ONCE on all rows so every group-half is scored in
-    # one shared coordinate frame (matches direction_geometry Probe 2). The probe
-    # tests whether a learned DIRECTION transfers across groups, which requires a
-    # common frame — not a per-fold refit. Standardization leakage is negligible
-    # here and is the intended design, not a train/test bug. Do not "fix" to
-    # train-only without changing the experiment's meaning.
+    # Scaler fit on all rows deliberately — shared coordinate frame for direction transfer.
     Xs = StandardScaler().fit_transform(delta)
     groups = np.asarray(groups)
     uniq = np.array(sorted(set(groups.tolist())))
@@ -102,10 +74,6 @@ def transfer_test(delta, y, groups, kind="linear", n_partitions=10, seed=0, min_
         a = np.array([g in half for g in groups])
         b = ~a
         for tr, te in [(a, b), (b, a)]:
-            # min_pos in BOTH train and test guarantees both classes are present
-            # on each side. This guard is load-bearing: auroc_for_clf ->
-            # _pos_class_col raises if the fitted clf never saw the positive class
-            # (a single-class GBM/logreg fit sets classes_=[0]). Keep min_pos >= 1.
             if y[tr].sum() < min_pos or (1 - y[tr]).sum() < min_pos:
                 continue
             if y[te].sum() < min_pos or (1 - y[te]).sum() < min_pos:
@@ -113,11 +81,7 @@ def transfer_test(delta, y, groups, kind="linear", n_partitions=10, seed=0, min_
             clf = _make_clf(kind, seed).fit(Xs[tr], y[tr])
             transfer.append(auroc_for_clf(clf, Xs[te], y[te]))
 
-    # Pooled (random-split) reference. StratifiedKFold(n_splits=k) raises if the
-    # minority class has fewer than k members task-wide (e.g. rare GOF in the
-    # mechanism task), so cap n_splits at the minority-class count and skip
-    # entirely if even a 2-fold split is impossible — degrade gracefully like the
-    # transfer block rather than crashing the whole task.
+    # Cap n_splits at minority-class count to avoid StratifiedKFold raising.
     pooled = []
     minority = int(min(y.sum(), (1 - y).sum()))
     n_splits = min(5, minority)
@@ -128,15 +92,11 @@ def transfer_test(delta, y, groups, kind="linear", n_partitions=10, seed=0, min_
             pooled.append(auroc_for_clf(clf, Xs[te], y[te]))
 
     def agg(v):
-        # mean_std_n returns (nan, nan, 0) on empty — keep std consistent with
-        # mean rather than forcing a misleading 0.0 spread alongside a nan mean.
         mean, std, n = mean_std_n(v)
         return (mean, std, n)
 
     return {"transfer_auroc": agg(transfer), "pooled_auroc": agg(pooled)}
 
-
-# ── Task loaders ─────────────────────────────────────────────────────────────
 
 
 def _pathogenicity_label(label):
@@ -181,8 +141,6 @@ def load_stability(stability_dataset=DEFAULT_STABILITY_DATASET):
             f"row mismatch in {variants_json.name}: {len(delta)} embedding rows vs "
             f"{len(v)} variants — not row-aligned."
         )
-    # ddG missing/None/"nan" parses to NaN, poisons the median, and yields a
-    # wrong binary split. Restrict to the finite-ddG subset before the median.
     ddg = np.array(
         [x["ddg"] if x["ddg"] is not None else np.nan for x in v], dtype=float
     )
@@ -207,8 +165,6 @@ def load_mechanism_gof():
 
 
 def run(n_seeds=N_SEEDS, stability_dataset=DEFAULT_STABILITY_DATASET):
-    """Run the transfer contrast across tasks. Each seed reshuffles the group
-    half-splits; results are pooled over all n_seeds × partitions."""
     tasks = {}
     print("Loading tasks...")
     tasks["pathogenicity (path vs benign, family-split)"] = load_pathogenicity()
@@ -227,10 +183,8 @@ def run(n_seeds=N_SEEDS, stability_dataset=DEFAULT_STABILITY_DATASET):
     print("=" * 86)
     for name, (delta, y, groups) in tasks.items():
         results[name] = {}
-        # GBM on the big tasks is heavy; fewer partitions there.
         npart = 5 if len(y) > 5000 else 10
         for kind in ("linear", "gbm"):
-            # Pool transfer + pooled AUROCs across seeds (each seed = fresh splits).
             transfer_vals, pooled_vals = [], []
             for seed in range(n_seeds):
                 r = transfer_test(delta, y, groups, kind=kind, n_partitions=npart, seed=seed)

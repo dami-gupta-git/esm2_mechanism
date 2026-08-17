@@ -1,19 +1,4 @@
-"""
-Per-Pfam-family AUROC analysis of ESM-1v ΔLL on ClinVar pathogenic/benign.
-
-Mirrors alphamissense_family_split.py — same framing, same metrics, same
-output structure — so the two results are directly comparable.
-
-Inputs:
-  data/pathogenicity_valid_variants.json  (17,236 variants)
-  data/esm1v_scores_full.json             (variant_key -> ΔLL; from score_esm1v.py)
-  data/pfam_families.json                 (gene -> Pfam ID)
-
-Outputs:
-  results/esm1v_family/overall.json
-  results/esm1v_family/per_family.json
-  results/esm1v_family/summary.json
-"""
+"""Per-Pfam-family AUROC analysis of ESM-1v delta-LL on ClinVar pathogenic/benign."""
 
 from __future__ import annotations
 
@@ -59,8 +44,7 @@ def main() -> int:
     with open(DATA / "pfam_families.json") as _f:
         pfam = json.load(_f)
 
-    # Assemble (label, score, family) rows. ESM-1v ΔLL is lower-is-pathogenic,
-    # so negate it to orient higher = more pathogenic for the shared evaluator.
+    # Negate ESM-1v ΔLL so higher = more pathogenic for the shared evaluator.
     rows = []
     miss_score = miss_pfam = 0
     for v in variants:

@@ -1,39 +1,6 @@
-"""
-In-silico perturbation scan for mechanism prediction.
+"""In-silico perturbation scan for mechanism prediction.
 
-For each gene in the merged dataset, mutates 100 evenly-spaced positions
-to 3 probe amino acids (Ala, Asp, Trp), extracts ESM-2 650M mean-pooled
-delta embeddings, and computes 5 pre-registered scalar features per gene.
-
-Phases:
-  1. CPU: build probe variant list, check sequence coverage
-  3. CPU: compute features from cached embeddings, save to data/scan_features.npy
-
-Embedding extraction (GPU) is a separate step:
-  python -m esm2_mech.embeddings.embed_scan
-
-Pre-registered features (plan_perturb.md):
-  1. scan_mag_mean        — mean ||delta|| across positions and substitutions
-  2. scan_mag_cv          — coefficient of variation of magnitudes (hotspot concentration)
-  3. scan_hotspot_frac    — fraction of positions with magnitude > mean + 1σ
-  4. scan_pc1_var         — variance explained by PC1 of the N×1280 delta matrix
-  5. scan_sub_variance    — mean per-position variance across (Ala, Asp, Trp) magnitudes
-
-Ablation features (only computed if --ablation flag set):
-  6. scan_mag_skew
-  7. scan_hotspot_spacing_cv
-  8. scan_top5_range
-  9. scan_pc1_pc2_ratio
-
-Usage:
-  # Phase 1+2 (GPU required):
-  python3 scripts/perturbation_scan.py --run_phase 12
-
-  # Phase 3 only (CPU, after embeddings cached):
-  python3 scripts/perturbation_scan.py --run_phase 3
-
-  # All phases:
-  python3 scripts/perturbation_scan.py
+Mutates probe positions to Ala/Asp/Trp, extracts ESM-2 deltas, and computes per-gene scalar features.
 """
 
 import argparse, json, os, sys, numpy as np
@@ -65,9 +32,6 @@ N_POSITIONS = 100  # evenly-spaced positions per gene
 MIN_GENE_LEN = 10  # skip very short sequences
 
 
-# ── Phase 1: build probe list ─────────────────────────────────────────────────
-
-
 def load_sequences():
     """Merge sequences.json + extended cache."""
     with open(SEQUENCES_JSON) as f:
@@ -80,11 +44,10 @@ def load_sequences():
 
 
 def build_probe_list(seqs):
-    """For each gene: sample N_POSITIONS evenly, create Ala/Asp/Trp probes."""
+    """Sample N_POSITIONS per gene and create Ala/Asp/Trp probes."""
     with open(VALID_VARIANTS_JSON) as f:
         variants = json.load(f)
 
-    # Gene → UniProt ID mapping
     gene_to_uniprot = {}
     for v in variants:
         g = v.get("gene", "").upper()
@@ -92,9 +55,7 @@ def build_probe_list(seqs):
         if g and u:
             gene_to_uniprot[g] = u
 
-    probes = (
-        []
-    )  # list of dicts: gene, uniprot_id, aa_pos, probe_aa, probe_name, seq_len
+    probes = []
     covered_genes = []
     missing_genes = []
 
@@ -107,16 +68,15 @@ def build_probe_list(seqs):
         if L < MIN_GENE_LEN:
             continue
 
-        # Sample positions evenly; include first and last
         n_pos = min(N_POSITIONS, L)
         positions = np.linspace(1, L, n_pos, dtype=int).tolist()
-        positions = sorted(set(positions))  # remove duplicates at short seqs
+        positions = sorted(set(positions))
 
         for pos in positions:
             wt_aa = seq[pos - 1]
             for probe_aa, probe_name in zip(PROBE_AAS, PROBE_NAMES):
                 if probe_aa == wt_aa:
-                    continue  # skip if WT is already the probe AA
+                    continue
                 probes.append(
                     {
                         "gene": gene,
@@ -148,18 +108,8 @@ def _load_scan_embeddings():
     return np.load(SCAN_EMB_WT), np.load(SCAN_EMB_MUT)
 
 
-# ── Phase 3: feature computation ─────────────────────────────────────────────
-
-
 def _top_explained_variance_ratios(mat: np.ndarray, k: int = 2) -> np.ndarray:
-    """Explained-variance ratio of the top-k principal components of `mat`.
-
-    Equivalent to sklearn PCA's `explained_variance_ratio_[:k]`, but computed with
-    a single torch SVD on the centered matrix. PCA variance is the squared singular
-    values normalized by the total (the sum over all singular values squared), so
-    we only need the singular values, not the full PCA object — this avoids
-    constructing a fresh sklearn estimator per gene across thousands of genes.
-    """
+    """Top-k PCA explained-variance ratios via torch SVD."""
     import torch
 
     centered = torch.from_numpy(np.ascontiguousarray(mat, dtype=np.float32))
@@ -172,13 +122,9 @@ def _top_explained_variance_ratios(mat: np.ndarray, k: int = 2) -> np.ndarray:
 
 
 def compute_scan_features(probes, wt_emb, mut_emb, covered_genes, ablation=False):
-    """
-    Build per-gene feature vectors from the probe embedding deltas.
-    Returns: gene_list (array), X (n_genes × n_features), feature_names (list)
-    """
+    """Build per-gene feature vectors from probe embedding deltas."""
     deltas = mut_emb - wt_emb  # (n_probes, 1280)
 
-    # Group probes by gene
     gene_probe_idx = defaultdict(list)
     for i, p in enumerate(probes):
         gene_probe_idx[p["gene"]].append(i)
@@ -208,8 +154,7 @@ def compute_scan_features(probes, wt_emb, mut_emb, covered_genes, ablation=False
         gene_probes = [probes[i] for i in idxs]
         gene_deltas = deltas[idxs]  # (n, 1280)
 
-        # Magnitudes per probe
-        mags = np.linalg.norm(gene_deltas, axis=1)  # (n,)
+        mags = np.linalg.norm(gene_deltas, axis=1)
 
         # --- Pre-registered features ---
         mag_mean = float(np.mean(mags))

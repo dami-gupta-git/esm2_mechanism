@@ -1,23 +1,6 @@
-"""
-Probe runs for perturbation scan features.
+"""Probe runs for perturbation scan features.
 
-Loads scan_features.npy (output of perturbation_scan.py phase 3) and runs
-logistic regression under gene-split and family-split CV, comparing:
-
-  - Baseline: mean-pooled delta (result_7 / result_18 baseline)
-  - Scan features only (5 pre-registered)
-  - Scan + mean-pooled delta
-  - Scan + proteome features (result_13)
-  - Scan + Badonyi features (result_15)
-
-Decision rules (pre-registered in plan_perturb.md):
-  G1: scan-only family-split F1 > 0.368  (ClinVar-pattern + 0.02)
-  G2: scan+delta family-split F1 > 0.419  (result_18 combined + 0.02)
-  G3: scan+proteome family-split F1 > 0.405  (proteome-only + 0.02)
-
-Usage:
-  cd esm2_mechanism
-  python3 scripts/perturbation_probe.py
+Compares scan features against baselines under gene-split and family-split CV.
 """
 
 import functools
@@ -54,33 +37,23 @@ DECISION_RULES = {
 
 
 def load_all_features(gene_list):
-    """Load all feature matrices aligned to gene_list.
-
-    All returned arrays are row-aligned to the same filtered gene list.
-    The second return value (gene_mask) maps rows back to gene_list.
-    """
+    """Load all feature matrices aligned to gene_list."""
     features = {}
 
-    # 1. Scan features (phase 3 output). Row order is pinned by the meta file's
-    # own gene list, not by gene_universe.
+    # Row order pinned by meta file's gene list, not gene_universe
     scan_X = np.load(SCAN_FEATURES_NPY)
     with open(SCAN_FEATURES_META_JSON) as f:
         scan_meta = json.load(f)
     scan_idx = {g: i for i, g in enumerate(scan_meta["genes"])}
 
-    # 2. Mean-pooled delta index
     gene_delta = load_gene_delta(VALID_VARIANTS_JSON, EMB_WT_MEAN, EMB_MUT_MEAN)
 
-    # 3. Proteome gene→row index. The matrix rows are in gene_universe.tsv order
-    # (see paths.GENE_UNIVERSE); gene_list.tsv is a longer, differently-ordered
-    # superset and indexing by it reads the wrong gene's features.
+    # Proteome rows are in gene_universe.tsv order; gene_list.tsv is a differently-ordered superset
     pg_idx: dict = {}
     if PROTEOME_FEATURES_ALIGNED.exists():
         pg_idx = build_gene_to_row(GENE_UNIVERSE)
 
-    # Determine which genes have ALL required features so every array has the
-    # same row count (previously each source filtered independently, making
-    # np.hstack silently produce misaligned concatenations).
+    # Require all features present so np.hstack rows stay aligned
     def _has_all(g):
         if g not in scan_idx:
             return False
@@ -114,7 +87,6 @@ def load_all_features(gene_list):
     else:
         print(f"  {PROTEOME_FEATURES_ALIGNED} not found — skipping proteome features")
 
-    # Sanity check: all feature arrays must have the same number of rows
     row_counts = {name: X.shape[0] for name, X in features.items()}
     if len(set(row_counts.values())) > 1:
         raise RuntimeError(f"Feature row count mismatch after alignment: {row_counts}")
@@ -122,19 +94,12 @@ def load_all_features(gene_list):
     return features, gene_mask
 
 
-# Combos whose matrix includes the proteome block, which carries real NaN.
-# These route to the NaN-native runner; the dense scan/delta combos keep LogReg
-# so the linear read on them is unchanged.
+# Proteome block carries NaN; route these combos to the NaN-native runner
 NAN_BEARING_COMBOS = {"scan_proteome"}
 
 
 def run_probe(X, labels, splits, seed=42, combo_name=""):
-    """Route by whether this combo's matrix can contain missing cells.
-
-    The proteome block is sparse, and hstacking it onto the dense scan block
-    means a few missing proteome columns would otherwise make the whole row
-    unusable. Nothing is imputed and no gene is dropped.
-    """
+    """Route to NaN-native runner if combo contains proteome block."""
     if combo_name in NAN_BEARING_COMBOS:
         return run_histgb_cv(X, labels, splits, seed=seed)
     return run_logreg_cv(X, labels, splits, seed=seed)
@@ -143,7 +108,6 @@ def run_probe(X, labels, splits, seed=42, combo_name=""):
 def main():
     print("=== Loading data ===")
 
-    # Gene list and labels from merged dataset
     with open(VALID_VARIANTS_JSON) as f:
         variants = json.load(f)
     for v in variants:
@@ -154,7 +118,6 @@ def main():
                 else v.get("mechanism", "LOF")
             )
 
-    # Gene-level: one label per gene (majority vote)
     from collections import Counter, defaultdict
 
     gene_labels = defaultdict(list)
@@ -168,16 +131,13 @@ def main():
     # Load features
     features, gene_mask = load_all_features(gene_list)
 
-    # Filter to genes with scan features
     gene_list_scan = gene_list[gene_mask]
     labels_scan = labels[gene_mask]
     print(f"Genes with scan features: {len(gene_list_scan)}")
 
-    # Pfam map
     with open(PFAM_JSON) as f:
         pfam_map = json.load(f)
 
-    # Feature combinations to test
     scan_X = features["scan"]
     delta_X = features["delta"] if "delta" in features else None
     proteome_X = features.get("proteome")
@@ -192,7 +152,6 @@ def main():
     }
     combos = {k: v for k, v in combos.items() if v is not None}
 
-    # 5-seed runs
     all_results = {}
     for seed in range(5):
         print(f"\n=== Seed {seed} ===")
@@ -209,7 +168,6 @@ def main():
                 print(f"  {key}: F1={f1:.3f}  GOF={gof:.3f}")
         all_results[seed] = seed_res
 
-    # Summary
     print("\n=== 5-SEED SUMMARY ===")
     summary = {}
     for key in all_results[0].keys():
@@ -230,7 +188,6 @@ def main():
             f"  GOF={summary[key]['auroc_GOF_mean']:.3f}±{summary[key]['auroc_GOF_std']:.3f}"
         )
 
-    # Decision rules
     print("\n=== DECISION RULES ===")
     gate_results = {}
     for gate, (key, metric, threshold) in DECISION_RULES.items():
@@ -248,7 +205,6 @@ def main():
         )
         print("  Do not proceed to G2/G3 analysis.")
 
-    # Save
     out = {
         "summary": summary,
         "gate_results": gate_results,

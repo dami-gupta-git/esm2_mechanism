@@ -1,31 +1,4 @@
-"""
-Validate the cached UniProt sequences against the variants that reference them.
-
-Two independent checks are run over data/cache/sequences.json (plus the optional
-uniprot_sequences_extended.json overlay):
-
-  1. Sequence sanity — every cached sequence is non-empty and contains only valid
-     amino-acid letters (the 20 standard residues plus U = selenocysteine, the
-     only non-standard residue UniProt encodes inline).
-
-  2. WT-residue agreement — for each variant in variants.json, the cached
-     sequence for its uniprot_id must carry the stated wild-type amino acid at
-     the 1-indexed aa_pos. A disagreement means the cached sequence is a
-     different isoform than the one the variant was numbered against. Such
-     variants are silently dropped downstream (apply_missense returns None), so
-     this check surfaces how many — and which proteins — are affected.
-
-Disagreements are grouped per protein because isoform mismatches are systematic
-(all/most variants of one protein fail together), not scattered errors.
-
-This is a diagnostic, not a gate: WT mismatches are expected for a few proteins
-and are handled safely downstream. The script still exits non-zero if a cached
-sequence fails the sanity check (an invalid sequence is a real corruption), so
-it can guard a pipeline run against that case.
-
-Usage:
-    python -m esm2_mech.fetch_data.check_sequence_cache
-"""
+"""Validate cached UniProt sequences against variants that reference them."""
 
 from __future__ import annotations
 
@@ -43,14 +16,12 @@ from esm2_mech.utils.paths import (
 
 print = functools.partial(print, flush=True)
 
-# 20 standard amino acids + U (selenocysteine), the only non-standard residue
-# UniProt writes inline in canonical sequences.
 VALID_AA = set("ACDEFGHIKLMNPQRSTVWYU")
 MAX_EXAMPLES = 15
 
 
 def load_json(path: Path):
-    """Load a JSON file, surfacing a clear error if it is missing or corrupt."""
+    """Load a JSON file; raise on missing or corrupt."""
     if not path.exists():
         raise FileNotFoundError(f"required input not found: {path}")
     try:
@@ -63,7 +34,7 @@ def load_json(path: Path):
 def load_sequences(
     seq_path: Path, ext_path: Path
 ) -> dict[str, str]:
-    """Return uniprot_id -> sequence, with the extended overlay taking precedence."""
+    """Return uniprot_id -> sequence, extended overlay taking precedence."""
     sequences: dict[str, str] = dict(load_json(seq_path))
     if ext_path.exists():
         extended = load_json(ext_path)
@@ -73,7 +44,7 @@ def load_sequences(
 
 
 def check_sequence_sanity(sequences: dict[str, str]) -> list[str]:
-    """Return a list of uniprot_ids whose sequence is empty or has invalid letters."""
+    """Return uniprot_ids with empty or invalid-letter sequences."""
     bad: list[str] = []
     for uniprot_id, seq in sequences.items():
         if not seq:
@@ -91,12 +62,7 @@ def check_sequence_sanity(sequences: dict[str, str]) -> list[str]:
 def check_wt_agreement(
     sequences: dict[str, str], variants: list[dict]
 ) -> tuple[int, int, int, int, dict[str, list[int]]]:
-    """Cross-check each variant's WT residue against the cached sequence.
-
-    Returns (checked, missing_seq, out_of_bounds, mismatched, per_protein) where
-    per_protein maps uniprot_id -> [total_checked, mismatched] for proteins with
-    at least one mismatch.
-    """
+    """Cross-check each variant's WT residue against the cached sequence."""
     checked = missing_seq = out_of_bounds = mismatched = 0
     per_protein: dict[str, list[int]] = defaultdict(lambda: [0, 0])
 
@@ -178,8 +144,6 @@ def main() -> int:
     print(f"  WT mismatches:       {mismatched} across {len(mismatched_proteins)} proteins")
     print(f"  out-of-bounds:       {out_of_bounds}")
 
-    # Only invalid sequences are a hard failure. WT mismatches are expected for a
-    # few isoform-shifted proteins and are handled safely downstream.
     if bad_sequences:
         print("  RESULT: FAIL — cached sequences contain invalid/empty entries.")
         return 1

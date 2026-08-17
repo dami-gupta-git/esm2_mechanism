@@ -1,13 +1,4 @@
-"""Batched, Langfuse-traced run of the LLM-as-judge over a sample of variants.
-
-Loads variants, restricts to those with a ground-truth label_3class, fans out the
-judge across LLM_JUDGE_CONCURRENCY workers, streams each prediction to a JSONL
-file as it completes (resume + progress), and writes a scored summary. Every model
-call is traced to Langfuse via the @observe decorator on judge_variant.
-
-Usage:
-    python -m esm2_mech.experiments.llm_judge.run --n 200 --seed 0
-"""
+"""Batched, Langfuse-traced run of the LLM-as-judge over a sample of variants."""
 
 import argparse
 import functools
@@ -37,7 +28,7 @@ print = functools.partial(print, flush=True)
 
 
 def _load_labelled_variants() -> list:
-    """Load variants that carry a usable ground-truth mechanism class."""
+    """Load variants with a usable ground-truth mechanism class."""
     with open(VARIANTS_JSON) as handle:
         variants = json.load(handle)
     labelled = [
@@ -57,7 +48,7 @@ def _sample(variants: list, n_items: int, seed: int) -> list:
 
 
 def _summarize(records: list) -> dict:
-    """Score predictions against ground truth and roll up observability metrics."""
+    """Score predictions against ground truth and return observability metrics."""
     scored = [rec for rec in records if rec["correct"] is not None]
     n_correct = sum(1 for rec in scored if rec["correct"])
     structured_failures = [rec for rec in records if not rec["structured_ok"]]
@@ -70,7 +61,6 @@ def _summarize(records: list) -> dict:
         idx = min(len(sorted_vals) - 1, int(frac * len(sorted_vals)))
         return sorted_vals[idx]
 
-    # Per-class counts so a degenerate "always predicts LOF" judge is visible.
     pred_counts = {cls: 0 for cls in MECHANISM_CLASSES}
     for rec in records:
         if rec["predicted"] in pred_counts:
@@ -92,7 +82,7 @@ def _summarize(records: list) -> dict:
 
 
 def main() -> None:
-    # Load LANGFUSE_* / ANTHROPIC_API_KEY from .env before any SDK client reads them.
+    # Load LANGFUSE_* / ANTHROPIC_API_KEY from .env before any SDK client initialises.
     load_dotenv()
 
     parser = argparse.ArgumentParser(description=__doc__)
@@ -128,7 +118,6 @@ def main() -> None:
                 if done % 25 == 0 or done == len(variants):
                     print(f"[run] {done}/{len(variants)} done")
 
-    # Flush buffered traces to Langfuse before we exit.
     langfuse.flush()
 
     summary = _summarize(records)

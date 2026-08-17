@@ -1,29 +1,4 @@
-"""
-ESM-2 log-likelihood on ProteinGym DMS assays (human, all selection types).
-
-For each single-mutant variant:
-  ΔLL = log P(wt_aa | context) − log P(mut_aa | context)
-scored by ESM-2 650M masked language model.
-
-Per-assay Spearman ρ and AUROC, stratified by selection type and Pfam family.
-Compared to AlphaMissense (result_18) to test whether conservation-based scoring
-has lower per-assay variance than supervised pathogenicity scoring.
-
-Decision rules (pre-registered):
-  G1: median Spearman ≥ 0.40   (replicate ESM-1v published baseline)
-  G2: frac assays with ρ < 0.20 ≤ 0.25  (tighter than AM's 0.32)
-  G3: ESM-2 LL median Spearman > AM median + 0.05
-
-Phases:
-  --phase 1   CPU: parse DMS index, build job list
-  --phase 2   GPU: compute ΔLL for all variants (A100, ~1-2 hours)
-  --phase 3   CPU: Spearman/AUROC, stratification, decision rules
-  (default: all phases)
-
-Usage:
-  python3 scripts/proteingym_esm2_ll.py --phase 2   # GPU
-  python3 scripts/proteingym_esm2_ll.py --phase 3   # CPU after phase 2
-"""
+"""ESM-2 masked-LM delta-LL scoring on ProteinGym human DMS assays, with per-assay Spearman/AUROC."""
 
 from __future__ import annotations
 
@@ -59,11 +34,8 @@ CHECKPOINT_EVERY = 10  # assays between GPU saves
 MIN_VARIANTS = 20  # minimum scored variants to include an assay
 
 
-# ── helpers ───────────────────────────────────────────────────────────────────
-
-
 def parse_mutant(mut_str: str) -> tuple[str, int, str] | None:
-    """Parse 'A673C' → (wt_aa='A', pos=673, mut_aa='C'). Returns None on failure."""
+    """Parse 'A673C' into (wt_aa, pos, mut_aa) or None."""
     m = re.match(r"^([A-Z])(\d+)([A-Z])$", mut_str.strip())
     if not m:
         return None
@@ -71,11 +43,7 @@ def parse_mutant(mut_str: str) -> tuple[str, int, str] | None:
 
 
 def window_sequence(seq: str, pos_1indexed: int, window: int = 1000) -> tuple[str, int]:
-    """
-    Return (windowed_seq, new_pos_1indexed).
-    Replicates experiment.py window_sequence: centre on pos, clamp to ends.
-    If seq fits in window, return unchanged.
-    """
+    """Return (windowed_seq, new_pos_1indexed) centred on pos, clamped to ends."""
     L = len(seq)
     if L <= window:
         return seq, pos_1indexed
@@ -89,15 +57,8 @@ def window_sequence(seq: str, pos_1indexed: int, window: int = 1000) -> tuple[st
     return seq[start:end], new_pos
 
 
-# ── Phase 1: build job list ───────────────────────────────────────────────────
-
-
 def phase1_build_jobs() -> list[dict]:
-    """
-    For each human assay, parse the DMS CSV and collect every single-mutant variant.
-    Returns a job list: one entry per assay with all variants and the WT sequence.
-    Caches to JOBS_CACHE.
-    """
+    """Parse human DMS assays into a cached job list of single-mutant variants."""
     if JOBS_CACHE.exists():
         print(f"Loading cached jobs from {JOBS_CACHE}")
         with open(JOBS_CACHE) as f:
@@ -125,7 +86,6 @@ def phase1_build_jobs() -> list[dict]:
             skipped += 1
             continue
 
-        # Single mutants only (no ':' in the mutant string)
         df = df[~df["mutant"].astype(str).str.contains(":")].reset_index(drop=True)
         if df.empty:
             skipped += 1
@@ -146,7 +106,7 @@ def phase1_build_jobs() -> list[dict]:
                 continue
             seq_wt_aa = wt_seq[pos - 1].upper()
             if seq_wt_aa != wt_aa:
-                # Some assays use an offset; skip mismatched residues
+                # Some assays use an offset that shifts positions; skip mismatches.
                 parse_failures += 1
                 continue
             variants.append(
@@ -189,20 +149,10 @@ def phase1_build_jobs() -> list[dict]:
     return jobs
 
 
-# ── Phase 2: GPU ΔLL extraction ────────────────────────────────────────────────
-
-
 def phase2_extract_ll(
     jobs: list[dict], batch_size: int = 32
 ) -> dict[str, dict[str, float]]:
-    """
-    For each assay, for each unique position in the WT sequence:
-      - mask that position
-      - run one ESM-2 forward pass
-      - record log P(wt_aa) and log P(mut_aa) for every variant at that position
-
-    Returns: {DMS_id: {mutant_str: delta_ll}}
-    """
+    """Compute masked-LM delta-LL for all variants on GPU; returns {DMS_id: {mutant: dll}}."""
     import torch
     import esm as esm_lib
 
@@ -242,7 +192,6 @@ def phase2_extract_ll(
         wt_seq = job["wt_seq"]
         variants = job["variants"]
 
-        # Group variants by position — one forward pass per unique position
         pos_to_variants: dict[int, list[dict]] = defaultdict(list)
         for v in variants:
             pos_to_variants[v["pos"]].append(v)
@@ -312,9 +261,6 @@ def phase2_extract_ll(
     return all_scores
 
 
-# ── Phase 3: analysis ──────────────────────────────────────────────────────────
-
-
 def phase3_analyse(jobs: list[dict], all_scores: dict[str, dict[str, float]]) -> None:
     OUT.mkdir(parents=True, exist_ok=True)
 
@@ -364,13 +310,10 @@ def phase3_analyse(jobs: list[dict], all_scores: dict[str, dict[str, float]]) ->
         dms_score_arr = np.array(dms_scores)
         dms_bin_arr = np.array(dms_bins, dtype=int)
 
-        # Spearman: ΔLL vs DMS_score
-        # High ΔLL = model surprised by mutation = low fitness expected
-        # So we expect negative raw correlation; report as positive by flipping
+        # Negate Spearman so positive means high ΔLL predicts low fitness.
         rho_raw, pval = spearmanr(dms_score_arr, delta_ll_arr)
         spearman = -float(rho_raw)  # positive = agreement (ΔLL predicts low fitness)
 
-        # AUROC: damaging (bin==0) as positive class, ΔLL as score
         bin_dmg = (dms_bin_arr == 0).astype(int)
         auroc = None
         if len(np.unique(bin_dmg)) >= 2:
@@ -379,9 +322,7 @@ def phase3_analyse(jobs: list[dict], all_scores: dict[str, dict[str, float]]) ->
             except Exception:
                 pass
 
-        # Pfam family of this protein — pfam_map is keyed by gene symbol.
-        # Try molecule_name (often the gene symbol), then the mnemonic prefix
-        # (e.g. "ACE2" from "ACE2_HUMAN"), as the UniProt mnemonic never matches.
+        # pfam_map is keyed by gene symbol; try molecule_name then mnemonic prefix.
         uniprot_id = job["UniProt_ID"]
         mol_name = job.get("molecule_name", "")
         mnemonic_prefix = uniprot_id.split("_")[0]
@@ -400,8 +341,6 @@ def phase3_analyse(jobs: list[dict], all_scores: dict[str, dict[str, float]]) ->
             "auroc": auroc,
             "pfam_family": pfam_family,
         }
-
-    # ── summary stats ──────────────────────────────────────────────────────────
 
     ok = [v for v in per_assay.values() if not v.get("skipped")]
     skipped = [v for v in per_assay.values() if v.get("skipped")]
@@ -446,7 +385,6 @@ def phase3_analyse(jobs: list[dict], all_scores: dict[str, dict[str, float]]) ->
     spearman_dist = dist(rhos, "Spearman ρ (ESM-2 ΔLL)")
     auroc_dist = dist(aurocs, "AUROC     (ESM-2 ΔLL)")
 
-    # ── by selection type ──────────────────────────────────────────────────────
     sel_types = sorted({v["coarse_selection_type"] for v in ok})
     by_sel: dict[str, dict] = {}
     print("\n=== By selection type ===")
@@ -455,9 +393,6 @@ def phase3_analyse(jobs: list[dict], all_scores: dict[str, dict[str, float]]) ->
         if sel_rhos:
             by_sel[sel] = dist(sel_rhos, f"  {sel} (n={len(sel_rhos)})")
 
-    # ── AM comparison ──────────────────────────────────────────────────────────
-    # Result_18 summary: AM median Spearman on human ProteinGym = 0.748 AUROC (not spearman directly)
-    # We load per_assay from result_18 if available for direct comparison
     am_per_assay_path = _RESULTS_DIR / "proteingym_alphamissense" / "per_assay.json"
     am_comparison: dict = {}
     if am_per_assay_path.exists():
@@ -486,7 +421,6 @@ def phase3_analyse(jobs: list[dict], all_scores: dict[str, dict[str, float]]) ->
                 f"frac<0.20={spearman_dist.get('frac_below_0_20', float('nan')):.2f}  (n={len(rhos)})"
             )
 
-    # ── decision rules ──────────────────────────────────────────────────────────
     esm2_median = spearman_dist.get("median", float("nan"))
     esm2_frac020 = spearman_dist.get("frac_below_0_20", float("nan"))
     am_median = am_comparison.get("median", float("nan"))
@@ -507,7 +441,6 @@ def phase3_analyse(jobs: list[dict], all_scores: dict[str, dict[str, float]]) ->
             f"  G3: ESM2 median − AM median ≥ 0.05 → {esm2_median-am_median:.3f} → {'PASS ✓' if g3 else 'FAIL ✗'}"
         )
 
-    # ── worst/best 5 ──────────────────────────────────────────────────────────
     ranked = sorted(
         [(k, v) for k, v in per_assay.items() if not v.get("skipped")],
         key=lambda kv: kv[1]["spearman"],
@@ -525,7 +458,6 @@ def phase3_analyse(jobs: list[dict], all_scores: dict[str, dict[str, float]]) ->
             f"type={v['coarse_selection_type']}"
         )
 
-    # ── write outputs ──────────────────────────────────────────────────────────
     summary = {
         "n_assays_indexed": len(jobs),
         "n_assays_scored": len(ok),
@@ -565,9 +497,6 @@ def phase3_analyse(jobs: list[dict], all_scores: dict[str, dict[str, float]]) ->
 
     print(f"\nWrote → {OUT}/per_assay.json")
     print(f"Wrote → {OUT}/summary.json")
-
-
-# ── main ──────────────────────────────────────────────────────────────────────
 
 
 def main() -> None:

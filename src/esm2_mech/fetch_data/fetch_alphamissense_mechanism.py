@@ -1,17 +1,4 @@
-"""
-Fetch AlphaMissense scores for mechanism variants.
-
-Streams the AlphaMissense bulk file and extracts scores for all variants in
-data/variants.json.
-
-  Input : data/variants.json
-          data/cache/AlphaMissense_aa_substitutions.tsv.gz  (auto-downloaded)
-  Output: data/alphamissense_scores_full.json
-
-Usage:
-    python -m esm2_mech.fetch_data.fetch_alphamissense_mechanism
-    python -m esm2_mech.fetch_data.fetch_alphamissense_mechanism --no-download --am-file /path/to/file.tsv.gz
-"""
+"""Fetch AlphaMissense scores for mechanism variants."""
 
 from __future__ import annotations
 

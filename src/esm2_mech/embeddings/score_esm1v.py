@@ -1,22 +1,4 @@
-"""
-Score ClinVar pathogenic/benign variants with ESM-1v masked-marginal ΔLL.
-
-For each variant:
-  ΔLL = mean_over_checkpoints( log P(mut_aa | context) − log P(wt_aa | context) )
-
-using ESM-1v checkpoints 1 and 2 (esm1v_t33_650M_UR90S_1/2).
-
-Inputs:
-  data/pathogenicity_valid_variants.json  (17,236 variants)
-  data/valid_variants.json                (gene -> uniprot_id mapping)
-  data/sequences.json                     (uniprot_id -> sequence)
-
-Output:
-  data/esm1v_scores_full.json             (variant_key -> ΔLL, same format as
-                                           alphamissense_scores_full.json)
-
-Requires GPU. Checkpoints are saved every --checkpoint-every genes.
-"""
+"""Score ClinVar pathogenic/benign variants with ESM-1v masked-marginal delta-LL."""
 
 from __future__ import annotations
 
@@ -44,7 +26,7 @@ CHECKPOINT_EVERY = 50  # genes between saves
 
 
 def build_gene_maps() -> tuple[dict[str, str], dict[str, str]]:
-    """Return (gene->uniprot, uniprot->sequence)."""
+    """Return (gene -> uniprot, uniprot -> sequence)."""
     with open(VALID_VARIANTS_JSON) as _f:
         merged = json.load(_f)
     g2u: dict[str, str] = {}
@@ -64,12 +46,7 @@ def score_variants_single_model(
     seqs: dict[str, str],
     batch_size: int,
 ) -> tuple[dict[str, float], set[str]]:
-    """
-    Score all variants for one model checkpoint.
-    Returns ({variant_key: delta_ll}, genes_without_sequence).
-    Genes without a sequence are not scored and must not be marked done in the
-    checkpoint — they should be retried if sequences.json is updated.
-    """
+    """Score all variants for one model checkpoint."""
     import torch
 
     batch_converter = alphabet.get_batch_converter()
@@ -85,7 +62,6 @@ def score_variants_single_model(
             genes_without_sequence.add(gene)
             continue
 
-        # Group by position — one forward pass per unique position.
         from collections import defaultdict
 
         pos_to_variants: dict[int, list[dict]] = defaultdict(list)
@@ -110,10 +86,10 @@ def score_variants_single_model(
 
             with torch.inference_mode():
                 out = model(tokens, repr_layers=[], return_contacts=False)
-            logits = out["logits"].cpu().float()  # (B, L+2, vocab)
+            logits = out["logits"].cpu().float()
 
             for i, (pos, new_pos) in enumerate(batch_meta):
-                tok_idx = new_pos  # 1-indexed; BOS at position 0, so correct
+                tok_idx = new_pos
                 log_probs = torch.log_softmax(logits[i, tok_idx], dim=-1).numpy()
                 for v in pos_to_variants[pos]:
                     wt_aa, mut_aa = v["wt_aa"], v["mut_aa"]
@@ -159,7 +135,6 @@ def main() -> int:
         variants_raw: list[dict] = json.load(_f)
     print(f"variants: {len(variants_raw):,}")
 
-    # Index by gene.
     from collections import defaultdict
 
     gene_variants: dict[str, list[dict]] = defaultdict(list)
@@ -177,9 +152,7 @@ def main() -> int:
     print(f"genes: {len(gene_variants):,}")
 
     ckpt_path = DATA / "esm1v_scores_ckpt.json"
-    # Accumulate per-checkpoint scores: {ckpt_name: {vkey: delta_ll}}
     per_ckpt: dict[str, dict[str, float]] = {c: {} for c in CHECKPOINTS}
-    # Track which genes have been scored by each individual checkpoint model
     ckpt_done: dict[str, set[str]] = {c: set() for c in CHECKPOINTS}
 
     if ckpt_path.exists():
@@ -230,9 +203,7 @@ def main() -> int:
                     args.batch_size,
                 )
                 per_ckpt[ckpt_name].update(new_scores)
-                # Only mark genes done when they were actually scored. Genes
-                # without a sequence are left out of ckpt_done so they are
-                # retried if sequences.json is updated between runs.
+                # Genes without a sequence are left out of ckpt_done so they are retried if sequences.json is updated.
                 ckpt_done[ckpt_name].update(g for g in gene_batch if g not in no_seq_genes)
                 n_ok = sum(1 for v in new_scores.values() if not np.isnan(v))
                 print(
@@ -241,7 +212,6 @@ def main() -> int:
                 )
                 gene_batch = []
 
-                # Save intermediate checkpoint so progress survives crashes
                 all_fully_done = set.intersection(*[ckpt_done[c] for c in CHECKPOINTS])
                 ckpt_state = {
                     "done_genes": list(all_fully_done),
@@ -262,7 +232,6 @@ def main() -> int:
         except Exception:
             pass
 
-    # Average across checkpoints; mark gene as done after both models ran.
     all_vkeys = set()
     for c in CHECKPOINTS:
         all_vkeys.update(per_ckpt[c].keys())

@@ -1,33 +1,4 @@
-"""
-Badonyi-survives-holdouts (plan_badonyi.md)
-
-Tests whether Badonyi & Marsh 2024's published gene-level mechanism predictor
-(pDN, pGOF, pLOF) maintains its reported AUROCs under the project's strict
-holdout protocols.
-
-Distinct from result_15's V_bad — we use Badonyi's raw published predictions
-directly, no retrained LogReg. The published model is the model on test.
-
-For each holdout protocol H ∈ {none-as-baseline, Pfam family, MMseqs2-20}:
-  1. Split labeled genes into 5 folds holding out entire groups (families/clusters)
-  2. For each held-out gene, take its raw pDN/pGOF/pLOF as the prediction
-  3. Concatenate across folds → one prediction per gene
-  4. Compute three binary AUROCs as in Badonyi 2024:
-       DN-vs-LOF:        among DN+LOF genes, AUROC(pDN,  true=DN)
-       GOF-vs-LOF:       among GOF+LOF genes, AUROC(pGOF, true=GOF)
-       LOF-vs-non-LOF:   among all labeled,   AUROC(pLOF, true=LOF)
-  5. 5 seeds, report mean ± std
-
-Also: stratified by Badonyi training-set membership (IN vs OUT) under
-each holdout, to separate generalisation from train-leakage.
-
-Outputs:
-  results/badonyi_survival/badonyi_survival_summary.json
-  results/badonyi_survival/badonyi_survival_seed{0..4}.json
-
-Usage:
-  python3 scripts/badonyi_holdout_survival.py
-"""
+"""Test whether Badonyi 2024's raw published pDN/pGOF/pLOF AUROCs hold under family and cluster holdouts."""
 
 from __future__ import annotations
 
@@ -60,14 +31,8 @@ OUT_DIR = RESULTS_DIR / "badonyi_survival"
 CLASSES_3 = MECHANISM_CLASSES
 
 
-# ---------------------------------------------------------------------------
-# Data
-# ---------------------------------------------------------------------------
-
-
 def load_gene_table():
-    """Per-gene table with raw Badonyi pDN/pGOF/pLOF, family, cluster,
-    training-set membership, 3-class label."""
+    """Per-gene table with raw Badonyi predictions, family, cluster, train flag, and label."""
     print(f"Loading merged gene list...")
     ml = pd.read_csv(MERGED_GENE_LIST, sep="\t", dtype=str)
     print(f"  {len(ml)} merged genes")
@@ -75,7 +40,6 @@ def load_gene_table():
     print(f"Loading Badonyi S3...")
     s3 = pd.read_excel(BADONYI_S3, sheet_name="table_S3")
 
-    # Parse train flag "DN|GOF|LOF"
     def parse(s):
         if pd.isna(s):
             return (0, 0, 0)
@@ -94,7 +58,6 @@ def load_gene_table():
     with open(MMSEQS_CLUSTERS) as f:
         gene_to_cluster = json.load(f)["gene_to_cluster"]
 
-    # Build per-gene table
     df = ml[["gene", "mechanism"]].drop_duplicates(subset=["gene"]).copy()
 
     def collapse(m):
@@ -123,14 +86,8 @@ def load_gene_table():
     return df
 
 
-# ---------------------------------------------------------------------------
-# Group-based holdout
-# ---------------------------------------------------------------------------
-
-
 def assign_folds(df, group_col, n_folds, seed):
-    """Return per-row fold assignment. Rows where group_col is None get
-    fold=-1 (excluded from CV)."""
+    """Return per-row fold assignment; rows where group_col is None get fold=-1."""
     groups_present = sorted([g for g in df[group_col].dropna().unique()])
     rng = np.random.RandomState(seed)
     rng.shuffle(groups_present)
@@ -138,23 +95,9 @@ def assign_folds(df, group_col, n_folds, seed):
     return df[group_col].map(lambda g: fold_of_group.get(g, -1)).values.astype(int)
 
 
-# ---------------------------------------------------------------------------
-# AUROC evaluation
-# ---------------------------------------------------------------------------
-
-
+# cluster_col is the resampling unit: family or cluster for holdout arms, None for baseline/IN/OUT.
 def _ci_for_binary(sub, y, score_col, cluster_col, compute_ci, n_boot, seed):
-    """Cluster-bootstrap CI for one binary AUROC from raw (unretrained) Badonyi
-    predictions.
-
-    `cluster_col` is the resampling unit (R7.3): the Pfam family or MMseqs2
-    cluster column for a holdout arm, so the CI reflects the same grouping
-    structure the holdout claims robustness against, or None to resample genes
-    directly (baseline / IN-train / OUT-train, which make no partition claim).
-    Every row here already has both a label and a cluster assignment by
-    construction of `sub` in compute_aurocs/run_holdout, so no additional
-    filtering is needed before building the OOF dict.
-    """
+    """Cluster-bootstrap CI for one binary AUROC."""
     if not compute_ci:
         return None
     genes = sub["gene"].values
@@ -168,13 +111,7 @@ def _ci_for_binary(sub, y, score_col, cluster_col, compute_ci, n_boot, seed):
 def compute_aurocs(
     df, mask=None, compute_ci=False, n_boot=BOOTSTRAP_N_RESAMPLES, seed=0, cluster_col=None,
 ):
-    """Three binary AUROCs from raw Badonyi predictions.
-
-    mask is a boolean Series subsetting df. If None, use all rows with a label
-    and a Badonyi prediction. compute_ci defaults to False: per-fold calls
-    inside run_holdout only need the point estimate, and CI is attached once,
-    on the held-out-across-folds aggregate.
-    """
+    """Three binary AUROCs (DN-vs-LOF, GOF-vs-LOF, LOF-vs-nonLOF) from raw Badonyi predictions."""
     base = df.copy()
     if mask is not None:
         base = base[mask].copy()
@@ -230,18 +167,7 @@ def compute_aurocs(
 
 
 def run_holdout(df, group_col, n_folds, seed, compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES):
-    """Compute AUROCs after fold assignment by group_col. Held-out predictions
-    are concatenated across folds — but since Badonyi's predictions are
-    fixed (no retraining), this is equivalent to computing AUROC on the full
-    labeled set restricted to rows that have a group assignment. The CV
-    structure matters only because it tests whether the held-out cluster's
-    predictions are correlated within-cluster vs between-cluster — in this
-    setup, that doesn't actually change the AUROC since we never retrain.
-
-    However, we keep the CV-style aggregation for two reasons:
-      1. To match the project's other CV evaluations in framing.
-      2. To allow fold-level variance estimation (each fold's AUROC).
-    """
+    """Compute AUROCs under group-based fold assignment."""
     folds = assign_folds(df, group_col, n_folds, seed)
     # Rows without a group are excluded
     mask = folds != -1
@@ -278,11 +204,6 @@ def run_holdout(df, group_col, n_folds, seed, compute_ci=True, n_boot=BOOTSTRAP_
         "folds": fold_results,
         "n_rows_with_group": int(mask.sum()),
     }
-
-
-# ---------------------------------------------------------------------------
-# Seed runner
-# ---------------------------------------------------------------------------
 
 
 def _fmt(v):
@@ -343,7 +264,7 @@ def run_seed(df, seed, n_folds, compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES):
 
 
 def aggregate_seeds(all_seed):
-    """Mean ± std of the 'all_holdout' AUROC across seeds, per holdout."""
+    """Mean +/- std of the all_holdout AUROC across seeds, per holdout."""
     summary = {"n_seeds": len(all_seed)}
 
     for key, label in [
@@ -369,8 +290,7 @@ def aggregate_seeds(all_seed):
                 cur[f"{metric}_std"] = float(np.std(vals))
                 cur[f"{metric}_n_seeds"] = len(vals)
 
-            # Per-seed cluster-bootstrap CI bounds, pooled across seeds — a
-            # separate source of uncertainty from the seed-to-seed std above.
+            # CI bounds pooled across seeds — separate from seed-to-seed std.
             for bound in ("ci_low", "ci_high"):
                 ci_vals = []
                 for s in all_seed:

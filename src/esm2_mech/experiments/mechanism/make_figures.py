@@ -1,29 +1,4 @@
-"""
-Generate the run6 portfolio figures from the existing result JSONs.
-
-Reads only files already written by the experiments — no model training, no
-re-computation — and renders four figures to reports/run6/figures/:
-
-  fig1_dissociation.png   pathogenicity vs mechanism, gene- vs family-split
-                          (the headline: same delta, signal on one task, floor
-                          on the other). Source: pathogenicity_control.json,
-                          aggregate.json, naive_baseline.json.
-  fig2_family_split.png   per-feature gene- vs family-split mechanism macro-F1
-                          with the drop annotated (the family-recognition /
-                          leakage story). Source: aggregate.json, naive_baseline.json.
-  fig3_probe_ranking.png  per-feature mechanism macro-F1 vs the chance floor,
-                          5-seed error bars. Source: aggregate.json, naive_baseline.json.
-  fig4_within_family.png  per-family delta macro-F1 minus that family's own
-                          majority baseline, 5-seed error bars, zero line (the
-                          within-family null). Source: within_family_mechanism.json.
-
-Every value plotted traces to a result file under results/run6/; nothing is
-hardcoded or imputed. Features/families with no scorable result (NaN) are
-omitted rather than drawn as zero.
-
-Usage:
-    python -m esm2_mech.experiments.mechanism.make_figures
-"""
+"""Generate portfolio figures from existing result JSONs."""
 
 from __future__ import annotations
 
@@ -33,7 +8,7 @@ import math
 
 import matplotlib
 
-matplotlib.use("Agg")  # headless: render to file, never open a window
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -49,16 +24,11 @@ from esm2_mech.utils.paths import (
 
 print = functools.partial(print, flush=True)
 
-# Shared colours for the two cross-validation schemes, used across all figures.
-GENE_COLOR = "#4C72B0"    # gene-split
-FAMILY_COLOR = "#DD8452"  # family-split
+GENE_COLOR = "#4C72B0"
+FAMILY_COLOR = "#DD8452"
 
-# Per-class colours for the one-vs-rest AUROC figures.
 CLASS_COLORS = {"GOF": "#4C72B0", "DN": "#55A868", "LOF": "#C44E52"}
 
-# Feature groups and their colours, so bars are coloured by what kind of feature
-# they are (protein embedding / mutation-delta / non-ESM-2 baseline) rather than
-# all one colour.
 FEATURE_GROUPS = {
     "wt_only_mean": "ESM-2 protein embedding",
     "mut_only_mean": "ESM-2 protein embedding",
@@ -75,7 +45,6 @@ GROUP_COLORS = {
     "non-ESM-2 baseline": "#8172B3",       # purple
 }
 
-# Mechanism features in the order they should appear, with display labels.
 MECH_FEATURES = [
     ("wt_concat_mut", "wt_concat_mut"),
     ("mut_only_mean", "mut_only"),
@@ -103,21 +72,14 @@ def _mechanism_chance():
     return float(nb["by_strategy"]["most_frequent"]["gene"]["macro_f1_mean"])
 
 
-# ── Figure 1: the dissociation ────────────────────────────────────────────────
 def fig_dissociation():
-    """Two panels: pathogenicity AUROC and mechanism macro-F1, both split-paired.
-
-    The same delta_mean feature carries strong, family-stable signal for
-    pathogenicity but sits on the floor for mechanism. wt_only is shown alongside
-    as the contrast (gene-level identity feature).
-    """
+    """Pathogenicity AUROC vs mechanism macro-F1, gene- and family-split."""
     path = _load_json(PATHOGENICITY_CONTROL_JSON)
     mech = _load_json(MECHANISM_AGGREGATE_JSON)["across_seed"]
     mech_chance = _mechanism_chance()
 
     fig, (ax_path, ax_mech) = plt.subplots(1, 2, figsize=(11, 4.5))
 
-    # Left: pathogenicity AUROC (MLP probe), delta_mean vs wt_only.
     path_feats = [("delta_mean", "delta_mean"), ("wt_only", "wt_only")]
     _grouped_split_bars(
         ax_path,
@@ -134,8 +96,6 @@ def fig_dissociation():
     ax_path.set_ylabel("Pathogenicity AUROC")
     ax_path.set_title("Pathogenicity (known-answer control)")
 
-    # Right: mechanism macro-F1 (best nonlinear probe, mlp_delta_mean / wt via MLP).
-    # aggregate.json stores per-feature macro_f1; use the same two features.
     mech_feats = [("delta_mean", "delta_mean"), ("wt_only_mean", "wt_only")]
     _grouped_split_bars(
         ax_mech,
@@ -166,7 +126,6 @@ def fig_dissociation():
     _save(fig, "fig1_dissociation.png")
 
 
-# ── Figure 2: family-split stability / leakage ───────────────────────────────
 def fig_family_split():
     """Per-feature gene- vs family-split mechanism macro-F1, drop annotated."""
     mech = _load_json(MECHANISM_AGGREGATE_JSON)["across_seed"]
@@ -189,7 +148,6 @@ def fig_family_split():
             transform=ax.get_yaxis_transform(), va="bottom", ha="right",
             fontsize=8, color="grey")
 
-    # Annotate the gene→family drop only where it is non-trivial.
     x = np.arange(len(labels))
     for idx, (gval, fval) in enumerate(zip(gene_vals, fam_vals)):
         drop = gval - fval
@@ -202,14 +160,11 @@ def fig_family_split():
     ax.set_ylabel("Mechanism macro-F1")
     ax.set_title("Holding out whole families removes ~0.10 macro-F1 from the protein\n"
                  "embeddings — that drop is family recognition, not mechanism")
-    # Legend from the two bar series only (labels set in _grouped_split_bars);
-    # the chance line is left unlabelled so it never enters the legend.
     ax.legend(frameon=False)
     fig.tight_layout()
     _save(fig, "fig2_family_split.png")
 
 
-# ── Figure 3: probe ranking against the floor ────────────────────────────────
 def fig_probe_ranking():
     """Horizontal per-feature gene-split macro-F1 with the chance floor line."""
     mech = _load_json(MECHANISM_AGGREGATE_JSON)["across_seed"]["gene_split"]
@@ -217,7 +172,7 @@ def fig_probe_ranking():
 
     rows = [(key, lab, mech[key]["macro_f1_seed_mean"], mech[key]["macro_f1_seed_std"])
             for key, lab in MECH_FEATURES]
-    rows.sort(key=lambda r: r[2])  # ascending so the best is at the top
+    rows.sort(key=lambda r: r[2])
     keys = [r[0] for r in rows]
     labels = [r[1] for r in rows]
     vals = [r[2] for r in rows]
@@ -236,7 +191,6 @@ def fig_probe_ranking():
     ax.set_xlabel("Gene-split mechanism macro-F1 (5-seed mean ± std)")
     ax.set_title("Only the ESM-2 protein embeddings beat the chance floor;\n"
                  "the mutation delta and external baselines sit on it")
-    # Legend for the feature-group colours.
     handles = [plt.Rectangle((0, 0), 1, 1, color=color)
                for color in GROUP_COLORS.values()]
     ax.legend(handles, list(GROUP_COLORS.keys()), frameon=False, loc="lower right",
@@ -245,17 +199,8 @@ def fig_probe_ranking():
     _save(fig, "fig3_probe_ranking.png")
 
 
-# ── Figure 4: within-family null ─────────────────────────────────────────────
 def fig_within_family():
-    """Per-family delta macro-F1 minus that family's own majority baseline.
-
-    The few families where the delta sits above baseline are the smallest and
-    most class-skewed, and several contain a mechanism class represented by a
-    single gene (marked) — which cannot be held out and scored, so the
-    macro-F1 there is degenerate rather than evidence of within-family signal.
-    These are flagged on the figure so it carries the same caveat as the prose
-    in report_within_family.md; nothing is filtered out.
-    """
+    """Per-family delta macro-F1 minus that family's majority baseline."""
     data = _load_json(WITHIN_FAMILY_MECHANISM_JSON)["by_family"]
 
     rows = []
@@ -265,13 +210,11 @@ def fig_within_family():
         std = delta_mlp["std"]
         base = cell["majority_baseline_f1"]
         if _is_nan(mean) or _is_nan(base):
-            continue  # no scorable fold across seeds — omit, never draw as zero
-        # A class held by a single gene cannot be cross-validated: the macro-F1
-        # is degenerate. Derived from the data, not a hardcoded family list.
+            continue
         singleton_class = min(cell["gene_class_counts"].values()) <= 1
         rows.append((fam, cell["n_genes"], mean - base, std, singleton_class))
 
-    rows.sort(key=lambda r: r[2])  # ascending by delta-minus-baseline
+    rows.sort(key=lambda r: r[2])
     labels = [f"{fam} (n={ng})" for fam, ng, _, _, _ in rows]
     deltas = [d for _, _, d, _, _ in rows]
     errs = [s for _, _, _, s, _ in rows]
@@ -289,7 +232,6 @@ def fig_within_family():
     ax.set_xlabel("delta macro-F1 − family majority baseline (5-seed mean ± std)")
     ax.set_title("Within each family, the delta does not reliably beat the family's\n"
                  "own majority baseline (small, noisy families)")
-    # Legend marker for the degenerate (singleton-class) families.
     hatched = plt.Rectangle((0, 0), 1, 1, facecolor="lightgrey",
                             hatch="////", edgecolor="white")
     ax.legend([hatched], ["family has a single-gene mechanism class (degenerate)"],
@@ -304,22 +246,14 @@ def fig_within_family():
     _save(fig, "fig4_within_family.png")
 
 
-# ── Figure 5: family clustering collapses under the delta ────────────────────
 def fig_family_clustering():
-    """Two panels: k=5 family purity and family-probe accuracy, wt/mut/delta.
-
-    Both metrics are label-free family-recognition measures. wt and mut cluster
-    strongly by family; the delta collapses to the chance reference (the purity
-    null and the majority-family probe baseline), showing the subtraction
-    removes the family signal.
-    """
+    """k=5 family purity and family-probe accuracy for wt/mut/delta."""
     views = [("wt_mean", "wt_mean"), ("mut_mean", "mut_mean"), ("delta_mean", "delta_mean")]
     bv = _load_json(FAMILY_CLUSTERING_JSON)["by_view"]
 
     fig, (ax_pur, ax_probe) = plt.subplots(1, 2, figsize=(11, 4.5))
     x = np.arange(len(views))
 
-    # Left: k=5 family purity vs the shuffled-label null.
     purity = [bv[key]["knn5_purity"] for key, _ in views]
     purity_null = float(np.mean([bv[key]["knn5_purity_null"] for key, _ in views]))
     ax_pur.bar(x, purity, color=GENE_COLOR, width=0.6)
@@ -332,7 +266,6 @@ def fig_family_clustering():
     ax_pur.set_ylabel("k=5 family purity")
     ax_pur.set_title("Do nearest neighbours share the family?")
 
-    # Right: family-probe accuracy vs the majority-family baseline.
     probe = [bv[key]["family_probe"]["accuracy"] for key, _ in views]
     probe_err = [bv[key]["family_probe"]["accuracy_std"] for key, _ in views]
     probe_base = float(np.mean([bv[key]["family_probe"]["majority_baseline_acc"]
@@ -354,14 +287,8 @@ def fig_family_clustering():
     _save(fig, "fig5_family_clustering.png")
 
 
-# ── Figure 6: per-class AUROC, gene-split vs family-split ─────────────────────
 def fig_auroc_split_bars():
-    """Per-class one-vs-rest AUROC, gene- vs family-split, for wt_only and delta.
-
-    The signal-carrying wildtype embedding loses AUROC on every class when whole
-    families are held out (the family-recognition portion); the delta sits near
-    the 0.5 chance line on both splits.
-    """
+    """Per-class one-vs-rest AUROC, gene- vs family-split, for wt_only and delta."""
     agg = _load_json(MECHANISM_AGGREGATE_JSON)["across_seed"]
     panels = [("wt_only_mean", "wt_only"), ("delta_mean", "delta_mean")]
 
@@ -394,17 +321,9 @@ def fig_auroc_split_bars():
     _save(fig, "fig6_auroc_split_bars.png")
 
 
-# ── Figure 7: the before→after change, as a slopegraph ───────────────────────
 def fig_auroc_split_slope():
-    """Per-class AUROC, gene-split (before) → family-split (after), wt_only + delta.
-
-    A slopegraph makes the homology-leakage drop the visual subject: each class
-    is a line falling from its gene-split AUROC to its family-split AUROC. The
-    wildtype embedding (solid) starts high and drops; the delta (dashed) sits
-    near the 0.5 chance line on both splits, with little to lose.
-    """
+    """Per-class AUROC slopegraph: gene-split to family-split, wt_only + delta."""
     agg = _load_json(MECHANISM_AGGREGATE_JSON)["across_seed"]
-    # (feature key, line style, which end to label the class name on).
     features = [("wt_only_mean", "-", "left"), ("delta_mean", "--", "right")]
     x_gene, x_fam = 0.0, 1.0
 
@@ -422,7 +341,7 @@ def fig_auroc_split_slope():
                         fontsize=9, color=color)
                 ax.text(x_fam + 0.04, f, f"{f:.2f}", ha="left", va="center",
                         fontsize=9, color=color)
-            else:  # delta: name on the right end, value on the left end
+            else:
                 ax.text(x_fam + 0.04, f, f"{cls} {f:.2f}", ha="left", va="center",
                         fontsize=9, color=color)
                 ax.text(x_gene - 0.04, g, f"{g:.2f}", ha="right", va="center",
@@ -431,7 +350,6 @@ def fig_auroc_split_slope():
     ax.axhline(0.5, ls=":", c="grey", lw=1)
     ax.text(x_gene - 0.04, 0.5, "chance 0.50", ha="right", va="bottom", fontsize=8,
             color="grey")
-    # Line-style legend: solid = wt_only, dashed = delta.
     style_handles = [
         plt.Line2D([0], [0], color="grey", lw=2, ls="-"),
         plt.Line2D([0], [0], color="grey", lw=2, ls="--"),
@@ -448,7 +366,6 @@ def fig_auroc_split_slope():
     _save(fig, "fig7_auroc_split_slope.png")
 
 
-# ── Shared helpers ────────────────────────────────────────────────────────────
 def _grouped_split_bars(ax, labels, gene_vals, gene_err, family_vals, family_err):
     """Draw paired gene-split / family-split bars for each label on ax."""
     x = np.arange(len(labels))

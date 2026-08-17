@@ -1,27 +1,7 @@
-"""
-Geometry of the pathogenicity direction in ESM-2 perturbation space (follow-up
-to result_23). result_23 found pathogenicity is carried by the *direction* of
-the delta d = mut_emb - wt_emb (family-split AUROC 0.896), not its magnitude
-(0.664). Two questions:
+"""Direction geometry of the pathogenicity axis.
 
-  Probe 1 — is pathogenicity ONE direction or a subspace?
-    Rank-1 test: fit a linear direction w on the training deltas, remove its
-    component from train+test, refit. If AUROC collapses toward chance after
-    removing 1 (or a few) directions, pathogenicity is essentially low-rank.
-
-  Probe 2 — is that direction family-UNIVERSAL?
-    Fit the pathogenicity direction separately on disjoint Pfam family groups
-    and measure cosine similarity between the fitted directions. High cosine =
-    a universal pathogenicity axis that transfers across families (explains the
-    family-robustness in result_6/result_23). Compared to a label-shuffled null.
-    Also reports cross-family transfer AUROC (direction fit on group A, scored
-    on group B).
-
-Pure CPU analysis of the canonical pathogenicity embeddings (n=16,576). No GPU.
-
-Usage:
-  cd esm2_mechanism
-  python -m esm2_mech.experiments.geometry.direction_geometry
+Probe 1: is pathogenicity one direction or a subspace? (iterative rank removal)
+Probe 2: is that direction family-universal? (cross-family cosine + transfer AUROC)
 """
 
 import json
@@ -73,7 +53,7 @@ def load():
     y = np.array([_pathogenicity_label(v["label"]) for v in variants])
     with open(PFAM_JSON) as _f:
         pfam = json.load(_f)
-    fam = np.array([(pfam.get(g) or "NA") for g in genes])  # coerce missing/None
+    fam = np.array([(pfam.get(g) or "NA") for g in genes])
     print(
         f"Loaded {len(y)} variants, {len(set(genes))} genes, "
         f"{int(y.sum())} path / {int((1-y).sum())} benign, "
@@ -83,8 +63,6 @@ def load():
 
 
 def fit_direction(X, y, seed=0):
-    """Return unit weight vector of an L2 logistic regression (the linear
-    pathogenicity direction) plus the fitted classifier."""
     from sklearn.linear_model import LogisticRegression
 
     clf = LogisticRegression(max_iter=2000, C=1.0, random_state=seed)
@@ -93,13 +71,7 @@ def fit_direction(X, y, seed=0):
     w_unit = w / (np.linalg.norm(w) + 1e-12)
     return w_unit, clf
 
-
-# ── Probe 1: rank-1 / low-rank test ──────────────────────────────────────────
-
-
 def probe1_rank(delta, y, genes, pfam_map, k_max=5, seeds=(0, 1, 2, 3, 4)):
-    """Iteratively remove fitted directions; track family-split AUROC decay.
-    A single shared StandardScaler keeps everything in one coordinate frame."""
     from sklearn.preprocessing import StandardScaler
     from sklearn.linear_model import LogisticRegression
     from sklearn.metrics import roc_auc_score
@@ -108,9 +80,8 @@ def probe1_rank(delta, y, genes, pfam_map, k_max=5, seeds=(0, 1, 2, 3, 4)):
     print("PROBE 1 — is pathogenicity one direction or a subspace? (family-split)")
     print("=" * 60)
 
-    # decay[k] = list of per-fold-per-seed AUROC after removing k directions
     decay = {k: [] for k in range(k_max + 1)}
-    proj1 = []  # AUROC of the 1-D projection onto the first fitted direction
+    proj1 = []
 
     for seed in seeds:
         fs = family_split_cv(genes, pfam_map, seed=seed)
@@ -122,13 +93,11 @@ def probe1_rank(delta, y, genes, pfam_map, k_max=5, seeds=(0, 1, 2, 3, 4)):
             if len(set(ytr)) < 2 or len(set(yte)) < 2:
                 continue
 
-            # k = 0: full
             clf = LogisticRegression(max_iter=2000, C=1.0, random_state=seed).fit(
                 Xtr, ytr
             )
             decay[0].append(auroc_for_clf(clf, Xte, yte))
 
-            # 1-D projection onto first fitted direction
             w1 = clf.coef_.ravel()
             w1 /= np.linalg.norm(w1) + 1e-12
             s_tr = (Xtr @ w1).reshape(-1, 1)
@@ -138,7 +107,6 @@ def probe1_rank(delta, y, genes, pfam_map, k_max=5, seeds=(0, 1, 2, 3, 4)):
             )
             proj1.append(auroc_for_clf(clf1, s_te, yte))
 
-            # iteratively remove directions, refit on the residual
             Rtr, Rte = Xtr.copy(), Xte.copy()
             for k in range(1, k_max + 1):
                 ck = LogisticRegression(max_iter=2000, C=1.0, random_state=seed).fit(
@@ -171,14 +139,7 @@ def probe1_rank(delta, y, genes, pfam_map, k_max=5, seeds=(0, 1, 2, 3, 4)):
         print(f"  AUROC after removing {k} dir(s) = {m:.3f} ± {s:.3f}")
     return out
 
-
-# ── Probe 2: family-universal direction ──────────────────────────────────────
-
-
 def probe2_universal(delta, y, genes, fam, n_partitions=10, seeds=(0,)):
-    """Split Pfam families into two disjoint halves; fit the pathogenicity
-    direction on each half; measure cosine(w_A, w_B) and cross-family transfer
-    AUROC. Compare cosine to a label-shuffled null."""
     from sklearn.preprocessing import StandardScaler
 
     print("\n" + "=" * 60)
@@ -189,7 +150,7 @@ def probe2_universal(delta, y, genes, fam, n_partitions=10, seeds=(0,)):
     X = delta[mask]
     yy = y[mask]
     ff = fam[mask]
-    sc = StandardScaler().fit(X)  # one shared frame for all directions
+    sc = StandardScaler().fit(X)
     Xs = sc.transform(X)
     families = np.array(sorted(set(ff.tolist())))
 
@@ -215,7 +176,6 @@ def probe2_universal(delta, y, genes, fam, n_partitions=10, seeds=(0,)):
             cos_obs.append(float(np.dot(wA, wB)))
             transfer.append(auroc_for_clf(clfA, Xs[b], yy[b]))  # A's direction on B
 
-            # label-shuffled null (shuffle y within each half)
             yA_s = yy[a].copy()
             rng.shuffle(yA_s)
             yB_s = yy[b].copy()
@@ -245,11 +205,6 @@ def probe2_universal(delta, y, genes, fam, n_partitions=10, seeds=(0,)):
 
 
 def run(n_seeds=N_SEEDS):
-    """Run both geometry probes over n_seeds and write the result JSON.
-
-    Probe 1 (rank) uses the seeds directly; Probe 2 (family transfer) averages
-    over random partitions and is seeded over the same range for consistency.
-    """
     seeds = tuple(range(n_seeds))
     delta, y, genes, fam = load()
     with open(PFAM_JSON) as _f:

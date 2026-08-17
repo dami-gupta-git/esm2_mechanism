@@ -1,4 +1,4 @@
-"""Shared utilities for AlphaMissense score fetching."""
+"""Shared helpers for AlphaMissense score fetching."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ AM_URL = (
 
 
 def build_gene_uniprot_map(variants: list[dict]) -> dict[str, str]:
-    """Build gene -> most-frequent UniProt ID mapping from a variant list."""
+    """Build gene -> most-frequent UniProt ID mapping."""
     counts: dict[str, dict[str, int]] = {}
     for r in variants:
         g, u = r.get("gene"), r.get("uniprot_id")
@@ -42,10 +42,7 @@ def build_gene_uniprot_map(variants: list[dict]) -> dict[str, str]:
 def build_lookup(
     variants: list[dict], g2u: dict[str, str]
 ) -> tuple[dict, list, list]:
-    """Build (uniprot, protein_variant) -> vkey index for AM streaming.
-
-    Returns (index, skipped_no_uniprot, skipped_key_collision).
-    """
+    """Build (uniprot, protein_variant) -> vkey index for AM streaming."""
     index: dict[tuple[str, str], str] = {}
     skipped_no_uniprot = []
     skipped_key_collision = []
@@ -70,7 +67,7 @@ def build_lookup(
 
 
 def download_am(url: str, dest: Path) -> None:
-    """Download AlphaMissense bulk file atomically."""
+    """Download AlphaMissense bulk file."""
     import urllib.request
     if dest.exists():
         print(f"already exists: {dest} ({dest.stat().st_size:,} bytes)")
@@ -93,7 +90,7 @@ def download_am(url: str, dest: Path) -> None:
 
 
 def stream_am_filter(am_gz: Path, index: dict[tuple[str, str], str]) -> dict[str, float]:
-    """Stream AlphaMissense bulk file and return scores for indexed variants."""
+    """Stream AM bulk file and return scores for indexed variants."""
     scores: dict[str, float] = {}
     needed = len(index)
     skipped_unparseable = 0
@@ -120,8 +117,7 @@ def stream_am_filter(am_gz: Path, index: dict[tuple[str, str], str]) -> dict[str
                 except ValueError:
                     skipped_unparseable += 1
                     continue
-                # float() accepts "nan"/"inf" — a non-finite score is not a real
-                # observation; drop it rather than letting it enter the dataset.
+                # float() accepts "nan"/"inf" — drop non-finite scores.
                 if not math.isfinite(score):
                     skipped_non_finite += 1
                     continue

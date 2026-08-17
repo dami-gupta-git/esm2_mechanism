@@ -1,21 +1,4 @@
-"""
-Assign each Tsuboyama natural domain to a Pfam family via HMMER, and report
-family membership as a sanity check.
-
-Pipeline:
-  1. Load the parsed Tsuboyama variants, collect one WT sequence per domain.
-  2. Write a FASTA and run `hmmscan --cut_ga` against the (hmmpress-ed) Pfam-A db.
-  3. For each domain, take the best (lowest E-value) Pfam hit as its family.
-     Domains with no hit are ORPHANS — absent from the map, excluded from
-     family-split only (they still count for random/domain-split and per-domain).
-  4. Write {domain: PfamID} to MEGASCALE_DOMAIN_FAMILIES_JSON and print a
-     membership breakdown (families, sizes, singletons, orphans).
-
-Requires `hmmscan` on PATH and PFAM_A_HMM hmmpress-ed (.h3{f,i,m,p} alongside it).
-
-Usage:
-  python -m esm2_mech.experiments.stability.build_domain_families
-"""
+"""Assign Tsuboyama domains to Pfam families via HMMER and report membership."""
 
 import functools
 import os
@@ -37,7 +20,7 @@ HMMSCAN = "hmmscan"
 
 
 def _wt_sequences(variants):
-    """One WT sequence per domain, from the parsed variant records."""
+    """Return {domain: wt_seq} from parsed variant records."""
     wt = {}
     for variant in variants:
         domain = variant["protein"]
@@ -47,12 +30,7 @@ def _wt_sequences(variants):
 
 
 def run_hmmscan(wt_seqs, hmm_db=None, cpu=4):
-    """Run hmmscan --cut_ga on the WT sequences; return {domain: best_pfam_acc}.
-
-    best = lowest full-sequence E-value among a domain's hits (tblout column 5).
-    Pfam accessions are returned without the version suffix (PF00018.24 -> PF00018).
-    Domains with no hit are simply absent from the returned dict.
-    """
+    """Run hmmscan --cut_ga on WT sequences; return {domain: best_pfam_acc}."""
     hmm_db = str(hmm_db or PFAM_A_HMM)
     if not shutil.which(HMMSCAN):
         raise RuntimeError(f"{HMMSCAN} not found on PATH")
@@ -78,13 +56,8 @@ def run_hmmscan(wt_seqs, hmm_db=None, cpu=4):
             check=True,
         )
 
-        # tblout columns (1-based): target_name(1) accession(2) query/domain(3)
-        #                           query_acc(4) full_evalue(5) full_score(6) ...
-        # Family id = the Pfam accession (col 2, e.g. PF00018.24 -> PF00018). HMMER
-        # writes "-" in the accession column for any model without an ACC field; in
-        # that case fall back to the target NAME (col 1, always present and unique
-        # per model) so unrelated domains are NOT all merged into one bogus "-"
-        # family — which would force them into the same family-split fold.
+        # HMMER writes "-" in the accession column for models without an ACC field;
+        # fall back to target NAME so unrelated domains aren't merged into one "-" family.
         hits = defaultdict(list)
         n_malformed = 0
         n_acc_fallback = 0
@@ -120,7 +93,7 @@ def run_hmmscan(wt_seqs, hmm_db=None, cpu=4):
 
 
 def build_family_map(variants=None, out_path=None):
-    """Build and cache the {domain: PfamID} map; print a membership sanity check."""
+    """Build and cache {domain: PfamID}; print membership sanity check."""
     if variants is None:
         variants = load_tsuboyama_variants()
     out_path = str(out_path or MEGASCALE_DOMAIN_FAMILIES_JSON)
@@ -141,7 +114,7 @@ def build_family_map(variants=None, out_path=None):
 
 
 def print_membership(wt_seqs, family_map, orphans):
-    """Print the family-membership sanity check: per-family domain counts."""
+    """Print per-family domain counts."""
     members = defaultdict(list)
     for domain, family in family_map.items():
         members[family].append(domain)
@@ -151,7 +124,7 @@ def print_membership(wt_seqs, family_map, orphans):
     multi = [fam for fam, count in sizes.items() if count > 1]
     domains_in_multi = sum(count for count in sizes.values() if count > 1)
 
-    print("\n── Family membership ──")
+    print("")
     print(f"  domains total            : {len(wt_seqs)}")
     print(f"  assigned a Pfam family   : {len(family_map)}")
     print(f"  orphans (no Pfam)        : {len(orphans)}")

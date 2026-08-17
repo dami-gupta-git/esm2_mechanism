@@ -1,29 +1,6 @@
-"""
-Controls and interpretation for the Megascale stability probe (NOT pre-registered).
+"""Controls and interpretation baselines for the Megascale stability probe.
 
-These do not feed the H1–H4 verdict; they answer "is the linear signal real and
-earned by ESM-2, and how is it structured?" Kept separate from the pre-registered
-probe (megascale_stability.py) so the report can present them as controls /
-exploratory interpretation, not confirmed hypotheses.
-
-Four analyses, all under the same three CV schemes (random / domain / family) and
-N_SEEDS seeds as the main probe:
-
-  1. delta-norm baseline — a 1-feature Ridge on ||delta_mean|| only. If this
-     recovers most of the full-embedding ρ, "ESM-2 encodes stability" weakens to
-     "ESM-2's representation moves more for drastic mutations".
-  2. nested-CV alpha — RidgeCV picks alpha on an inner split of each train fold
-     (no leakage), removing the arbitrary alpha=1.0 of the main probe; reports the
-     chosen alphas so the linear ceiling isn't an artifact of one value.
-  3. label-shuffle null — ddG permuted; ρ must collapse to ~0 under every split.
-     A non-zero shuffled ρ would indicate a pipeline/CV-leakage artifact.
-  4. PLS component sweep — ρ vs n_components (random + family split). Characterises
-     the intrinsic dimensionality of the stability direction (exploratory).
-
-Usage (embeddings must already be extracted):
-  python -m esm2_mech.experiments.stability.stability_baselines
-
-Output: results/<run>/megascale_stability/baselines.json
+NOT pre-registered: delta-norm, nested-CV alpha, label-shuffle null, PLS sweep.
 """
 
 import functools
@@ -55,7 +32,7 @@ PLS_COMPONENTS = (1, 2, 5, 10, 20, 50)
 
 
 def _aggregate_over_seeds(per_seed):
-    """per_seed: list of {split: rho}. Returns {split: {mean,std,n_seeds}}."""
+    """Aggregate per-seed {split: rho} into {split: {mean, std, n_seeds}}."""
     out = {}
     for split in ("random", "domain", "family"):
         vals = [d[split] for d in per_seed if split in d]
@@ -65,7 +42,7 @@ def _aggregate_over_seeds(per_seed):
 
 
 def delta_norm_baseline(delta_mean, ddg, proteins, family_map):
-    """1-feature Ridge on ||delta_mean|| under all three splits."""
+    """1-feature Ridge on ||delta_mean||."""
     norms = np.linalg.norm(delta_mean, axis=1).reshape(-1, 1)
     per_seed = []
     for seed in range(N_SEEDS):
@@ -78,12 +55,7 @@ def delta_norm_baseline(delta_mean, ddg, proteins, family_map):
 
 
 def nested_alpha_ridge(delta_mean, ddg, proteins, family_map):
-    """RidgeCV (inner CV chooses alpha per train fold) under all three splits.
-
-    No leakage: alpha is selected by RidgeCV's internal CV on the training fold
-    only. Records the chosen alphas so the report can show the linear ceiling does
-    not hinge on a single arbitrary alpha.
-    """
+    """RidgeCV with inner-CV alpha selection; no leakage into test fold."""
     per_seed, chosen_alphas = [], []
     for seed in range(N_SEEDS):
         splits = stability_splits(seed, len(ddg), proteins, family_map)
@@ -107,7 +79,7 @@ def nested_alpha_ridge(delta_mean, ddg, proteins, family_map):
 
 
 def label_shuffle_null(delta_mean, ddg, proteins, family_map):
-    """Ridge on permuted ddG; ρ must collapse to ~0 under every split."""
+    """Ridge on permuted ddG; ρ should collapse to ~0."""
     per_seed = []
     for seed in range(N_SEEDS):
         rng = np.random.RandomState(seed)
@@ -121,11 +93,7 @@ def label_shuffle_null(delta_mean, ddg, proteins, family_map):
 
 
 def pls_component_sweep(delta_mean, ddg, proteins, family_map):
-    """ρ vs n_components for PLS, on random and family split (exploratory).
-
-    Single seed (seed 0) per component count — this characterises dimensionality,
-    not a headline number, so a multi-seed mean is unnecessary.
-    """
+    """PLS ρ vs n_components on random and family split (seed 0 only)."""
     splits = stability_splits(0, len(ddg), proteins, family_map)
     out = {}
     for split_name in ("random", "family"):

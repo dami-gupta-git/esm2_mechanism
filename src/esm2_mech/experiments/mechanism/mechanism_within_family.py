@@ -1,38 +1,7 @@
-"""
-Within-family mechanism classification from ESM-2 embeddings.
+"""Within-family mechanism classification from ESM-2 embeddings.
 
-Cross-family mechanism classification is mostly family leakage: the classifier
-recognises which protein family a gene belongs to, not the mechanism. This
-experiment asks the narrower question — once family identity is held constant (so
-it cannot act as a shortcut), can ESM-2 embeddings distinguish mechanism
-(GOF/DN/LOF) *within* a single family? Per-family gene counts are tiny (6-16
-genes), so each number is reported as mean +/- std across N seeds — the only
-honest way to read results at these sample sizes.
-
-Structure mirrors pathogenicity_control.py: phases run in sequence, the probe
-phase loops features x probes x seeds and reports per-seed values plus mean/std.
-Unlike pathogenicity_control (binary pathogenic-vs-benign), mechanism is
-multiclass, so the multiclass probe runners run_logreg_cv / run_mlp_cv are used.
-
-  Phase 1 (load)   - load_phase()
-      Load ESM-2 embeddings, valid variants, and the Pfam map (same inputs as
-      family_clustering.py); shape-check alignment; delta = mut - wt.
-
-  Phase 2 (select) - select_families()
-      Keep families with >= MIN_GENES genes AND >= MIN_CLASSES gene-level
-      mechanism classes, largest first.
-
-  Phase 3 (probe)  - probe_phase()
-      For each family, within-family gene-split CV on two views (wt_only, delta)
-      with two probes (logreg, mlp) across N seeds, plus an
-      always-most-common-class baseline F1. -> WITHIN_FAMILY_MECHANISM_JSON.
-
-  Inputs : VALID_VARIANTS_JSON, EMB_WT_MEAN, EMB_MUT_MEAN, PFAM_JSON
-  Output : results/<run>/within_family_mechanism.json
-
-Usage:
-    python -m esm2_mech.experiments.mechanism.mechanism_within_family
-        --seeds 5 --min-genes 6 --min-classes 2
+Holds family identity constant and asks whether ESM-2 embeddings distinguish
+GOF/DN/LOF within a single Pfam family via gene-split CV.
 """
 
 from __future__ import annotations
@@ -80,34 +49,21 @@ print = functools.partial(print, flush=True)
 MIN_GENES = 6
 MIN_CLASSES = 2
 
-# Within-family fold size guards. gene_split_cv's defaults (>=10 train / >=5
-# test) are tuned for the full 17k-variant dataset and would drop every fold of
-# a 9-gene family, returning no result. Within a family the per-variant counts
-# are small, so relax to the minimum that still lets a classifier fit: >=2
-# classes worth of training rows and at least 1 test row.
+# gene_split_cv defaults (>=10 train / >=5 test) drop every fold of small families; relax for within-family sizes.
 MIN_TRAIN = 4
 MIN_TEST = 1
 
-# Feature views compared within each family.
 VIEW_WT = "wt_only"
 VIEW_DELTA = "delta"
 
 
-# ===========================================================================
-# Phase 1 - load and align
-# ===========================================================================
 def load_phase():
-    """Load embeddings + variants + pfam map; align and return them.
-
-    Returns wt_mean, delta, genes, labels (all row-aligned), and pfam_map.
-    Mirrors family_clustering.py's loader exactly.
-    """
+    """Load embeddings, variants, and pfam map; align and return them."""
     print("=== Phase 1: load ESM-2 embeddings + variants + pfam ===")
     valid_variants = load_variants(VALID_VARIANTS_JSON)
     wt_mean = np.load(EMB_WT_MEAN)
     mut_mean = np.load(EMB_MUT_MEAN)
 
-    # Alignment by shape, not by a hardcoded count (project rule).
     if not (len(valid_variants) == wt_mean.shape[0] == mut_mean.shape[0]):
         raise ValueError(
             f"Row mismatch: {len(valid_variants)} variants in "
@@ -115,8 +71,6 @@ def load_phase():
             f"mut {mut_mean.shape[0]} embedding rows."
         )
 
-    # label_3class is the gene-level GOF/DN/LOF label (same field
-    # family_clustering.py uses); 'mechanism' is the raw multi-value source field.
     genes = np.array([v["gene"] for v in valid_variants])
     labels = np.array([v["label_3class"] for v in valid_variants])
 
@@ -131,9 +85,6 @@ def load_phase():
     return wt_mean, delta, genes, labels, pfam_map
 
 
-# ===========================================================================
-# Phase 2 - select qualifying families
-# ===========================================================================
 def _gene_labels(genes, labels):
     """One mechanism label per gene; surface (not silence) any conflict."""
     gene_label = {}
@@ -146,12 +97,7 @@ def _gene_labels(genes, labels):
 
 
 def select_families(genes, labels, pfam_map, min_genes, min_classes):
-    """Return ({family: gene_set}, gene_label) for families passing the gates.
-
-    A family qualifies if it has >= min_genes distinct genes AND its genes span
-    >= min_classes distinct mechanism classes (gene-level).
-    pfam_map is a flat {gene: family_id_or_None} dict.
-    """
+    """Return ({family: gene_set}, gene_label) for families passing size and class-count gates."""
     print("\n=== Phase 2: select qualifying families ===")
     gene_label = _gene_labels(genes, labels)
 
@@ -177,9 +123,6 @@ def select_families(genes, labels, pfam_map, min_genes, min_classes):
     return ordered, gene_label
 
 
-# ===========================================================================
-# Phase 3 - within-family probes
-# ===========================================================================
 def _majority_baseline_f1(y, classes):
     """Macro-F1 of always predicting the most common class in y."""
     majority = Counter(y).most_common(1)[0][0]
@@ -187,7 +130,7 @@ def _majority_baseline_f1(y, classes):
     f1s = []
     for cls in classes:
         if (y == cls).sum() == 0:
-            continue  # class absent from this family -> not part of macro avg
+            continue
         tp = int(np.sum((preds == cls) & (y == cls)))
         fp = int(np.sum((preds == cls) & (y != cls)))
         fn = int(np.sum((preds != cls) & (y == cls)))
@@ -200,38 +143,19 @@ def _probe_one_family(
     features_by_view, y, genes_rows, classes, n_seeds, n_folds, compute_ci=True,
     mlp_kwargs=None,
 ):
-    """Within-family gene-split CV for one family, both views x both probes, N seeds.
-
-    Returns ({view: {probe: {"macro_f1": {mean,std,per_seed},
-                             "auroc": {cls: {mean,std,per_seed}},
-                             "ci": {macro_f1, auroc_<cls>: {point,ci_low,ci_high,...}}}}},
-             {view: {probe: oof}}) where oof is the seed-averaged out-of-fold dict
-    (one proba per variant) used both for the per-family CIs here and for the pooled
-    cross-family GOF test downstream.
-
-    Per-family CIs come from a gene-cluster bootstrap over the seed-averaged OOF: each
-    variant's proba is averaged across the n_seeds CV repeats first (so a gene's rows
-    are not duplicated n_seeds-fold, which would falsely narrow the interval), then
-    whole genes are resampled. At 6-33 genes per family these intervals are wide and
-    sometimes undefined (a resample can drop a whole class) - that is the honest read
-    at these sizes, reported rather than hidden.
-    """
+    """Within-family gene-split CV for one family, both views x both probes, N seeds."""
     probes = {"logreg": run_logreg_cv, "mlp": run_mlp_cv}
-    # Extra kwargs applied per probe. mlp_kwargs lets callers (tests) shrink the MLP
-    # to make the many CV refits cheap; defaults leave the production probe unchanged.
     extra_kwargs = {"logreg": {}, "mlp": mlp_kwargs or {}}
 
     per_seed_f1 = {view: {p: [] for p in probes} for view in features_by_view}
     per_seed_auroc = {
         view: {p: defaultdict(list) for p in probes} for view in features_by_view
     }
-    # Collect each seed's OOF per (view, probe) so it can be seed-averaged afterwards.
     oof_by_view_probe = {
         view: {p: [] for p in probes} for view in features_by_view
     }
 
     for seed in range(n_seeds):
-        # Same folds across views/probes within a seed -> fair paired comparison.
         splits = gene_split_cv(
             genes_rows, n_folds=n_folds, seed=seed,
             min_train=MIN_TRAIN, min_test=MIN_TEST,
@@ -244,9 +168,6 @@ def _probe_one_family(
                     **extra_kwargs[probe_name],
                 )
                 oof_by_view_probe[view][probe_name].append(oof)
-                # aggregate_folds returns flat keys: macro_f1_mean (the
-                # across-fold mean for this seed) and auroc_{cls}_mean. None
-                # (no usable fold) -> NaN, never 0.
                 f1_seed = res.get("macro_f1_mean")
                 per_seed_f1[view][probe_name].append(
                     float("nan") if f1_seed is None else f1_seed
@@ -291,7 +212,7 @@ def _probe_one_family(
 
 
 def _gof_auroc_from_oof(oof, classes=MECHANISM_CLASSES):
-    """Pooled one-vs-rest GOF AUROC from a stacked OOF dict, or None if undefined."""
+    """Pooled one-vs-rest GOF AUROC from a stacked OOF dict."""
     gof_col = classes.index(GOF)
     y_bin = (np.asarray(oof["y_true"]) == GOF).astype(int)
     if y_bin.sum() == 0 or y_bin.sum() == len(y_bin):
@@ -300,11 +221,7 @@ def _gof_auroc_from_oof(oof, classes=MECHANISM_CLASSES):
 
 
 def _stack_oof(oof_list):
-    """Concatenate per-family seed-averaged OOF dicts into one pooled OOF dict.
-
-    Genes stay globally unique (gene ids are unique across families), so the stacked
-    `genes` array is a valid cluster key for a gene-level bootstrap over the pool.
-    """
+    """Concatenate per-family seed-averaged OOF dicts into one pooled OOF dict."""
     valid = [oof for oof in oof_list if oof is not None and len(oof["y_true"])]
     if not valid:
         return None
@@ -319,15 +236,7 @@ def _run_delta_gof_auroc_for_labels(
     family_inputs, perm_labels_by_family, n_seeds, n_folds,
     mlp_hidden=(256, 64), mlp_max_iter=500,
 ):
-    """Refit the delta MLP within every GOF-bearing family under given labels; pool GOF AUROC.
-
-    Used by the permutation test: `perm_labels_by_family` supplies a (shuffled) label
-    vector per family. Mirrors _probe_one_family's delta/MLP arm exactly — same folds,
-    same seed-averaging — so the permuted statistic is comparable to the observed one.
-
-    mlp_hidden / mlp_max_iter default to the production MLP; tests pass a smaller net
-    to make the permutation loop's many refits cheap without altering the real run.
-    """
+    """Refit the delta MLP within every GOF-bearing family under given labels; pool GOF AUROC."""
     per_family_oof = []
     for family, inp in family_inputs.items():
         labels_fam = perm_labels_by_family[family]
@@ -345,7 +254,6 @@ def _run_delta_gof_auroc_for_labels(
                 genes=inp["genes"], return_oof=True, label="perm",
                 hidden=mlp_hidden, max_iter=mlp_max_iter,
             )
-            # Re-align proba to the canonical 3-class order so GOF column is stable.
             if oof is not None:
                 oof["proba"] = align_proba(
                     oof["proba"], np.array(present), MECHANISM_CLASSES
@@ -363,18 +271,7 @@ def pooled_gof_test(
     compute_ci=True, n_permutations=0,
     mlp_hidden=(256, 64), mlp_max_iter=500,
 ):
-    """Cross-family pooled test of the delta's GOF separability against chance.
-
-    The per-family AUROCs (Table 2 of report_within_family.md) are too small to test
-    individually at 6-33 genes. This pools the delta out-of-fold predictions across all
-    GOF-bearing families and asks whether the delta ranks GOF above non-GOF better than
-    chance (AUROC 0.5), with:
-      - a gene-cluster bootstrap CI over the pooled OOF (genes are the resample unit),
-      - an optional gene-level label-permutation p-value (refits the delta MLP per
-        shuffle; slow, so opt-in via --n-permutations).
-    Reports logreg and mlp separately. Returns a dict, or {"n_families": 0} if no
-    family carries GOF.
-    """
+    """Pool delta OOF across GOF-bearing families and test GOF AUROC against chance."""
     print("\n=== Pooled cross-family test: delta GOF AUROC vs chance ===")
     probes = ["logreg", "mlp"]
     gof_families = [
@@ -425,8 +322,6 @@ def pooled_gof_test(
             f"(n={probe_res['n_genes']} genes, {probe_res['n_gof_variants']} GOF variants)"
         )
 
-    # Permutation p-value (MLP only - it is the slow, headline arm). Labels are
-    # shuffled at the gene level within each family, then the delta MLP is refit.
     if n_permutations > 0:
         inputs = {fam: family_inputs[fam] for fam in gof_families}
         observed = _run_delta_gof_auroc_for_labels(
@@ -435,8 +330,6 @@ def pooled_gof_test(
         )
 
         def _run_metric(flat_labels, _inputs=inputs):
-            # label_permutation_pvalue hands back one flat label vector; split it back
-            # to per-family vectors in the same family order it was concatenated.
             by_family, cursor = {}, 0
             for fam in _inputs:
                 size = len(_inputs[fam]["y"])
@@ -467,7 +360,7 @@ def probe_phase(
     wt_mean, delta, genes, labels, families, gene_label, n_seeds, n_folds,
     compute_ci=True, n_permutations=0,
 ):
-    """Phase 3. Within-family probes for every qualifying family, then a pooled test."""
+    """Within-family probes for every qualifying family, then a pooled test."""
     print("\n=== Phase 3: within-family probes ===")
     results = {
         "n_seeds": n_seeds,
@@ -479,7 +372,6 @@ def probe_phase(
         "by_family": {},
     }
 
-    # Keep the seed-averaged delta OOF per family so the pooled GOF test can stack it.
     delta_oof_by_family = {}
     family_inputs = {}
 
@@ -489,8 +381,6 @@ def probe_phase(
         genes_rows = genes[row_mask]
         features_by_view = {VIEW_WT: wt_mean[row_mask], VIEW_DELTA: delta[row_mask]}
 
-        # Restrict the class set to classes actually present in this family, so a
-        # class with zero examples is never counted toward macro-F1 or AUROC.
         present_classes = [cls for cls in MECHANISM_CLASSES if (y == cls).sum() > 0]
         class_counts = Counter(gene_label[gene] for gene in gene_set)
         print(
@@ -511,7 +401,6 @@ def probe_phase(
             **family_res,
         }
         delta_oof_by_family[family] = family_oof[VIEW_DELTA]
-        # Inputs the permutation test needs to refit the delta probes per shuffle.
         family_inputs[family] = {
             "X": delta[row_mask],
             "y": y,

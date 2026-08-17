@@ -1,43 +1,6 @@
-"""
-T2: Per-gene scoring for V1, V2, V3
-T4: V2 feature-class ablation
-
-T2 — Per-gene scoring
----------------------
-Existing results 11-13 score per-variant: each of the ~19k variants votes
-independently, so high-variant genes (KCNQ2 with 240 DN variants, SCN1A with
-374 GOF variants) dominate the macro-F1. Re-scoring per-gene gives each gene
-one vote regardless of how many variants it has.
-
-Method:
-  V1  ESM-2 delta: for each gene, mean the variant-level predicted probability
-      vectors across all variants of that gene, then argmax.
-  V2  Proteome features: one feature vector per gene → one prediction per gene.
-      No aggregation needed.
-  V3  Concat: mean the variant-level predicted probability vectors.
-
-All under 5-fold family-split CV, 5 seeds. Reports macro-F1 per-gene.
-
-T4 — V2 Feature-class ablation
--------------------------------
-Drop one feature class at a time from V2 (LogReg + MLP on proteome features).
-Feature classes:
-  constraint   pLI, LOEUF, mis_z  (+ all _missing, _familyresid, _familyresid_missing)
-  paralogs     paralog_count      (+ derived)
-  expression   tissue_specificity_tau (+ derived)
-  abundance    log_abundance_ppm  (+ derived)
-  interactome  PPI_degree         (+ derived)
-  dosage       HI_score, TS_score (+ derived)
-
-Reports delta-F1 = V2_full - V2_minus_class for each class.
-Per DN class separately (most scientifically interesting).
-
-Usage
------
-    python scripts/per_gene_ablation.py
-    python scripts/per_gene_ablation.py --seed 0
-    python scripts/per_gene_ablation.py --skip-t2   # only T4
-    python scripts/per_gene_ablation.py --skip-t4   # only T2
+"""T2 per-gene scoring (V1/V2/V3) and T4 V2 feature-class ablation under
+family-split CV. Re-scores per-gene so each gene gets one vote regardless
+of variant count.
 """
 
 from __future__ import annotations
@@ -85,35 +48,25 @@ MERGED_WT_MEAN = EMB_WT_MEAN
 MERGED_MUT_MEAN = EMB_MUT_MEAN
 PROTEOME_FEATURES = PROTEOME_FEATURES_ALIGNED
 PROTEOME_COLS = PROTEOME_FEATURE_COLUMNS_JSON
-# Row index for the aligned feature matrices. MUST be GENE_UNIVERSE, not
-# GENE_LIST_TSV: build_proteome_features/build_badonyi_features write their
-# .npy rows in gene_universe.tsv order, and gene_list.tsv is a longer,
-# differently-ordered superset (see paths.GENE_UNIVERSE).
+# Row index MUST be GENE_UNIVERSE — gene_list.tsv is a longer, differently-ordered superset.
 MERGED_GENE_LIST = GENE_UNIVERSE
 PFAM_FAMILIES = PFAM_JSON
 
 CLASSES = MECHANISM_CLASSES
 CLASS_TO_IDX = {cls: idx for idx, cls in enumerate(CLASSES)}
 
-# A classifier needs only two classes in train to fit; requiring all len(CLASSES)
-# silently drops valid folds where a rare class falls entirely in the test split.
+# Two classes in train suffice; requiring all len(CLASSES) silently drops valid folds.
 
 
 def _encode(y: np.ndarray) -> np.ndarray:
-    """String labels -> CLASSES indices, for sklearn estimators that cannot take
-    string targets (MLPClassifier with early_stopping scores its internal
-    validation split with np.isnan, which raises on string arrays)."""
+    """String labels -> CLASSES indices for sklearn estimators that need numeric targets."""
     return np.array([CLASS_TO_IDX[lab] for lab in y])
 
 
 def _decode(clf_classes: np.ndarray) -> np.ndarray:
-    """Integer-encoded clf.classes_ -> their string labels, so align_proba maps
-    columns by name instead of assuming the fitted order matches CLASSES."""
+    """Integer-encoded clf.classes_ -> string labels for align_proba."""
     return np.array([CLASSES[idx] for idx in clf_classes])
 
-# ---------------------------------------------------------------------------
-# Feature class definitions for T4
-# ---------------------------------------------------------------------------
 FEATURE_CLASSES = {
     "constraint": ["pLI", "LOEUF", "mis_z"],
     "paralogs": ["paralog_count"],
@@ -125,9 +78,7 @@ FEATURE_CLASSES = {
 
 
 def get_drop_indices(feature_names: list[str], base_features: list[str]) -> list[int]:
-    """Return column indices to drop for a given set of base feature names.
-    Drops the raw column plus all derived variants (_missing, _familyresid, etc.)
-    """
+    """Return column indices to drop for a given set of base feature names plus derived variants."""
     drop = []
     for i, name in enumerate(feature_names):
         for bf in base_features:
@@ -137,9 +88,6 @@ def get_drop_indices(feature_names: list[str], base_features: list[str]) -> list
     return drop
 
 
-# ---------------------------------------------------------------------------
-# Data loading
-# ---------------------------------------------------------------------------
 def load_all():
     with open(MERGED_VALID_VARIANTS) as f:
         variants = json.load(f)
@@ -177,18 +125,9 @@ def load_all():
 
     # Also load gene-level data (for V2 per-gene)
     gene_list_df = pd.read_csv(MERGED_GENE_LIST, sep="\t")
-    # AR handling — KNOWN DIVERGENCE FROM THE RUNBOOK PIPELINE.
-    # This proteome experiment maps AR -> None, i.e. AR (autosomal-recessive) variants
-    # are DROPPED from the 3-class task entirely. The runbook experiments
-    # (mechanism/loaders.py `_label_3class` and esm3/esm3_mechanism.py, used in
-    # RUNBOOK_4 Experiments 1/3/4) instead collapse AR -> LOF, keeping those variants
-    # in the LOF class. So the runbook pipeline and these proteome scripts train on
-    # DIFFERENT populations: AR variants are LOF examples there, absent here.
-    # This is deliberate and left as-is: the proteome_features experiments are NOT part
-    # of RUNBOOK_4 (they are older/exploratory), so they are not reconciled to the
-    # live pipeline's AR->LOF rule. If these scripts are ever promoted into the runbook,
-    # decide AR's fate once and route this through a single shared collapse helper in
-    # utils/constants.py rather than this local map.
+    # AR handling — KNOWN DIVERGENCE. These proteome experiments drop AR entirely;
+    # the runbook pipeline (RUNBOOK_4) collapses AR -> LOF. Not reconciled because
+    # these scripts are exploratory, not part of the runbook.
     mech_map = {"LOF": "LOF", "HI": "LOF", "GOF": "GOF", "DN": "DN", "AR": None}
     gene_list_df["mech3"] = gene_list_df["mechanism"].map(mech_map)
     gene_level = gene_list_df[gene_list_df["mech3"].notna()].copy()
@@ -214,9 +153,6 @@ def load_all():
     )
 
 
-# ---------------------------------------------------------------------------
-# T2 — Per-gene scoring
-# ---------------------------------------------------------------------------
 def run_per_gene_cv(
     *,
     # variant-level arrays (for V1 and V3 aggregation)
@@ -230,18 +166,7 @@ def run_per_gene_cv(
     pfam_map: dict,
     seed: int,
 ) -> dict:
-    """
-    For each CV fold:
-      - Train V1 MLP on variant-level delta (train variants)
-      - Train V2 LogReg on gene-level proteome (train genes)
-      - Train V3 MLP on variant-level concat (train variants)
-      - For test: aggregate per-variant probabilities to per-gene by mean
-      - Compute macro-F1 per-gene (one vote per gene)
-
-    Labels stay string-typed throughout: compute_metrics/align_proba key on the
-    string labels in CLASSES, so an int-encoded y silently yields None for every
-    per-class AUROC (`y_true == "GOF"` is never true against ints).
-    """
+    """Per-gene family-split CV for V1 (delta), V2 (proteome), and V3 (concat)."""
     y_var = np.asarray(var_labels)
     gene_pfam_var = np.array([pfam_map.get(g) for g in var_genes])
     has_fam_var = np.array([p is not None for p in gene_pfam_var])
@@ -268,7 +193,6 @@ def run_per_gene_cv(
     for fold_i, (tr_g, te_g) in enumerate(
         family_split_indices(groups_g, N_FOLDS, seed)
     ):
-        # Gene-level train/test split
         train_genes_set = set(gene_df_f.iloc[tr_g]["gene"].values)
         test_genes_set = set(gene_df_f.iloc[te_g]["gene"].values)
 
@@ -285,18 +209,14 @@ def run_per_gene_cv(
         ):
             continue
 
-        # NaN-native: the proteome block has real missing cells and nothing is
-        # imputed. Unscaled — boosted trees are invariant to monotone rescaling.
+        # NaN-native: proteome block has real missing cells, nothing is imputed.
         lr2 = HistGradientBoostingClassifier(
             max_iter=200, class_weight="balanced", random_state=seed
         )
         lr2.fit(X_tr_g, y_tr_g)
-        # Takes the string labels directly; align by class NAME so a class
-        # absent from this train fold becomes a zero column rather than shifting
-        # every later column left.
+        # String labels; align by class NAME so absent classes become zero columns.
         pr2_al = align_proba(lr2.predict_proba(X_te_g), lr2.classes_, CLASSES)
         pd2 = np.array([CLASSES[idx] for idx in pr2_al.argmax(axis=1)])
-        # --- V1 and V3: variant-level train, gene-level test ---
         # Train: all variants from train genes
         tr_var_mask = np.array([g in train_genes_set for g in genes_f])
         # Test: variants from test genes — aggregate per gene
@@ -307,13 +227,10 @@ def run_per_gene_cv(
 
         v2_folds.append(compute_metrics(y_te_g, pd2, pr2_al))
 
-        # MLPClassifier with early_stopping cannot take string targets, so the
-        # MLP arms fit on CLASSES indices and map clf.classes_ back to strings
-        # for align_proba — never assuming the fitted order matches CLASSES.
+        # MLPClassifier cannot take string targets; fit on CLASSES indices, decode for align_proba.
         X_tr_d, y_tr_d = delta_f[tr_var_mask], _encode(y_f[tr_var_mask])
         X_tr_c, y_tr_c = X_concat_f[tr_var_mask], _encode(y_f[tr_var_mask])
 
-        # Oversample for MLP
         def oversample(X, y, seed):
             counts = np.bincount(y, minlength=len(CLASSES))
             mc = counts.max()
@@ -344,16 +261,12 @@ def run_per_gene_cv(
         )
         mlp1.fit(X_bal_d, y_bal_d)
 
-        # V3 concatenates the dense delta with the sparse proteome block, so a
-        # few missing proteome columns would make the whole 1321-dim row
-        # unusable to an MLP. NaN-native instead: no imputation, no row dropped.
-        # class_weight replaces the oversampling the MLP arm needs.
+        # NaN-native: proteome columns would make the 1321-dim row unusable to an MLP.
         mlp3 = HistGradientBoostingClassifier(
             max_iter=200, class_weight="balanced", random_state=seed
         )
         mlp3.fit(X_tr_c, y_tr_c)
 
-        # Aggregate per-gene predictions for test genes
         test_genes_list = sorted(test_genes_set)
         y_gene_true, y_gene_pred1, y_gene_pred3 = [], [], []
         pr_gene1 = []
@@ -410,9 +323,6 @@ def run_per_gene_cv(
     }
 
 
-# ---------------------------------------------------------------------------
-# T4 — V2 Feature-class ablation
-# ---------------------------------------------------------------------------
 def run_v2_ablation(
     X_prot_gene: np.ndarray,
     y_gene: np.ndarray,
@@ -420,21 +330,12 @@ def run_v2_ablation(
     feature_names: list[str],
     seed: int,
 ) -> dict:
-    """Run V2 LogReg with and without each feature class. Return delta-F1.
-
-    `y_gene` holds string class labels — compute_metrics/align_proba key on the
-    strings in CLASSES, so an int-encoded y silently yields None for every
-    per-class AUROC and makes delta_auroc_DN unreportable.
-    """
+    """Run V2 with and without each feature class; return delta-F1."""
 
     def run_ablation_cv(X, y, groups):
         """NaN-native family-split CV over a proteome feature subset.
 
-        The ablation drops feature columns and re-measures, so every arm reads
-        the proteome block, which has real missing cells. Imputing to make a
-        linear model fit would leak test-fold statistics into training; the
-        ablation would then partly measure the imputation rather than the
-        feature class it removed. Unscaled — trees are rescaling-invariant.
+        Imputing would leak test-fold statistics; trees consume NaN directly.
         """
         folds = []
         for tr, te in family_split_indices(groups, N_FOLDS, seed):
@@ -490,9 +391,6 @@ def run_v2_ablation(
     return ablation_results
 
 
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--seed", type=int, default=None)
@@ -527,9 +425,6 @@ def main():
 
     seeds = [args.seed] if args.seed is not None else list(range(5))
 
-    # -----------------------------------------------------------------------
-    # T2 — Per-gene scoring
-    # -----------------------------------------------------------------------
     if not args.skip_t2:
         print("\n=== T2: Per-gene scoring ===")
         t2_seed_results = []
@@ -555,7 +450,6 @@ def main():
                 f1 = res[v].get("macro_f1_mean", float("nan"))
                 print(f"  {v}: macro_f1={f1:.4f}")
 
-        # Aggregate T2
         t2_summary = {}
         for v in ["V1_per_gene", "V2_per_gene", "V3_per_gene"]:
             f1s = [
@@ -595,9 +489,6 @@ def main():
                 else f"  {v}: N/A"
             )
 
-    # -----------------------------------------------------------------------
-    # T4 — V2 Feature-class ablation
-    # -----------------------------------------------------------------------
     if not args.skip_t4:
         print("\n=== T4: V2 Feature-class ablation ===")
         t4_seed_results = []

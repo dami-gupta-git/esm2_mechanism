@@ -1,10 +1,4 @@
-"""Shared input loading for the Megascale stability probes.
-
-megascale_stability.py, megascale_mlp.py and stability_baselines.py all need the
-same inputs: the Tsuboyama variants, their ΔΔG labels, the Pfam family map (loaded
-from cache or built), and the mean-pooled embedding delta. This module loads them
-once so the three probes do not each repeat the boilerplate.
-"""
+"""Shared input loading for the Megascale stability probes."""
 
 import functools
 from collections import namedtuple

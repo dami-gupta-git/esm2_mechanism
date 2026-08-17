@@ -1,22 +1,7 @@
-"""
-MMseqs2-20 cluster-holdout evaluation — Saadat & Fellay 2025 comparator.
+"""MMseqs2-20 cluster-holdout evaluation -- Saadat & Fellay 2025 comparator.
 
-Re-runs V1, V2, V_bad, V2+bad, V_all under MMseqs2 sequence-similarity cluster
-holdout (20% identity, 20% coverage) — same clustering parameters as
-Saadat & Fellay 2025 (iScience). Compares directly against the family-split
-numbers in result_15.
-
-The cluster_id map is computed by `scripts/fetch_uniprot_sequences.py` followed
-by `mmseqs easy-cluster ... --min-seq-id 0.20 -c 0.20 --cov-mode 0` and stored
-in `data/mmseqs_clusters.json` (key: `gene_to_cluster`).
-
-Outputs:
-    results/mmseqs_cluster_holdout/cluster_seed{0..4}.json
-    results/mmseqs_cluster_holdout/cluster_summary.json
-
-Usage:
-    python3 scripts/mmseqs_cluster_holdout.py
-    python3 scripts/mmseqs_cluster_holdout.py --seed 0
+Re-runs V1..V_all under MMseqs2 sequence-similarity cluster holdout (20% identity,
+20% coverage) for comparison against the family-split numbers.
 """
 
 from __future__ import annotations
@@ -65,10 +50,7 @@ MERGED_MUT_MEAN = EMB_MUT_MEAN
 PROTEOME_FEATURES = PROTEOME_FEATURES_ALIGNED
 BADONYI_FEATURES = BADONYI_FEATURES_ALIGNED
 BADONYI_RAW_COLS = [0, 1, 2]
-# Row index for the aligned feature matrices. MUST be GENE_UNIVERSE, not
-# GENE_LIST_TSV: build_proteome_features/build_badonyi_features write their
-# .npy rows in gene_universe.tsv order, and gene_list.tsv is a longer,
-# differently-ordered superset (see paths.GENE_UNIVERSE).
+# MUST be GENE_UNIVERSE, not GENE_LIST_TSV: feature .npy rows are in gene_universe.tsv order.
 MERGED_GENE_LIST = GENE_UNIVERSE
 MMSEQS_CLUSTERS = MMSEQS_CLUSTERS_JSON
 
@@ -93,13 +75,7 @@ def build_gene_to_row():
 
 
 def broadcast(genes, matrix, gene_to_row):
-    """Align a per-gene feature matrix to the variant list.
-
-    Returns (X, observed) where observed[i] is True only if gene[i] had a real
-    feature row. Rows for genes with no feature data are left as NaN (not 0.0):
-    0.0 is a plausible real feature value, so imputing it would silently
-    contaminate the probe. Callers must restrict to `observed` before fitting.
-    """
+    """Align a per-gene feature matrix to the variant list; unobserved rows are NaN."""
     n, d = len(genes), matrix.shape[1]
     X = np.full((n, d), np.nan, dtype=np.float32)
     observed = np.zeros(n, dtype=bool)
@@ -112,7 +88,7 @@ def broadcast(genes, matrix, gene_to_row):
 
 
 def cluster_split_indices(groups, n_folds, seed):
-    """Same as family_split_indices but with cluster_id as the grouping variable."""
+    """Group-aware CV splits using cluster_id as the grouping variable."""
     rng = np.random.RandomState(seed)
     unique = np.array(sorted(g for g in set(groups) if g is not None))
     rng.shuffle(unique)
@@ -132,15 +108,7 @@ def run_mlp(X, y, genes, groups, hidden, n_folds, seed, label, return_oof=False)
 
 
 def run_histgb(X, y, genes, groups, n_folds, seed, label, return_oof=False):
-    """NaN-native cluster-split CV — for every arm reading the proteome or
-    Badonyi block.
-
-    Those blocks carry missing values at two levels: a gene may have no feature
-    row at all, and a gene that has one may still be missing individual cells
-    (a family-residual undefined for a singleton family). The row-level
-    `observed` masks below catch only the first. This consumes both directly,
-    so no value is fabricated and no variant is dropped for either reason.
-    """
+    """NaN-native cluster-split CV for feature blocks with missing values."""
     splits = list(cluster_split_indices(groups, n_folds, seed))
     return run_histgb_cv(
         X, y, splits, seed=seed, genes=genes, label=label, return_oof=return_oof
@@ -148,12 +116,7 @@ def run_histgb(X, y, genes, groups, n_folds, seed, label, return_oof=False):
 
 
 def _attach_cluster_ci(agg, oof, cluster_ids, n_boot, seed):
-    """Attach a cluster-resampled CI to `agg["ci"]` (R7.3: MMseqs2-cluster-split
-    CIs resample the cluster id, not genes). `oof["row_ids"]` are positions into
-    the arm-local arrays this fold ran on (post any observed-subset filtering),
-    so `cluster_ids` must already be that same arm-local, aligned array — the
-    caller passes `groups[keep]` (or plain `groups` when no subset was applied).
-    """
+    """Attach a cluster-resampled bootstrap CI to agg["ci"]."""
     if oof is None:
         return agg
     row_clusters = cluster_ids[oof["row_ids"]]
@@ -179,12 +142,7 @@ def run_seed(
 ):
     print(f"\n{'='*72}\nSEED {seed}\n{'='*72}")
 
-    # y stays the string labels themselves (matching CLASSES/MECHANISM_CLASSES),
-    # not an int encoding: run_mlp_cv/run_logreg_cv compare y against `classes`
-    # (default MECHANISM_CLASSES strings) internally to build the oversampling
-    # index and the auroc_<cls> keys, so an int-encoded y silently produces zero
-    # counts for every class and crashes with "need at least one array to
-    # concatenate" the moment a class-balanced fold is built.
+    # y must stay as string labels (not int-encoded); run_mlp_cv/run_logreg_cv match against MECHANISM_CLASSES strings.
     cluster_of = np.array([gene_to_cluster.get(g) for g in genes])
     has_cluster = np.array([c is not None for c in cluster_of])
     idx = np.where(has_cluster)[0]
@@ -194,10 +152,6 @@ def run_seed(
     X_delta_f = delta[idx]
     X_prot_f = X_prot[idx]
     X_bad_f = X_bad[idx]
-    # Per-arm observed masks (subset of the cluster-filtered set). Proteome/Badonyi
-    # genes with no feature row are NaN here; restrict each feature arm to its own
-    # observed subset rather than imputing 0.0 (CLAUDE.md: no fillna on probe
-    # features; recompute splits on the observed subset).
     prot_obs_f = prot_observed[idx]
     bad_obs_f = bad_observed[idx]
 
@@ -225,12 +179,6 @@ def run_seed(
             f"pgF1={res_key.get('per_gene_f1_mean', float('nan')):.4f}"
         )
 
-    # Arms reading the proteome/Badonyi blocks use the NaN-native runner, so
-    # they keep every variant: a gene with no feature row, and a gene missing
-    # only some cells, are both consumed directly rather than imputed or
-    # dropped. n_used records how many variants the arm saw and
-    # n_rows_with_missing how many of those carried any missing feature, so the
-    # extent of missingness stays visible in the output.
     def subset(*masks):
         keep = np.ones(len(idx), dtype=bool)
         for mask in masks:
@@ -238,7 +186,6 @@ def run_seed(
         return keep
 
     print(f"\n--- V1: ESM-2 delta MLP ---")
-    # delta (ESM-2) is always observed — no feature-row dropout.
     res["V1"], oof = run_mlp(
         X_delta_f, y_f, genes_f, groups, (256, 64), n_folds, seed, "V1", return_oof=True
     )
@@ -294,8 +241,6 @@ def run_seed(
 
 def aggregate_seeds(all_res):
     out = {"n_seeds": len(all_res)}
-    # mean_std_n filters both None and NaN per-seed values, so a seed whose
-    # metric was unscorable (None) or NaN never poisons the across-seed mean/std.
     for key in ["V1", "V2", "V_bad", "V2_bad", "V_all"]:
         for metric in ["macro_f1_mean", "per_gene_f1_mean"]:
             vals = [r[key].get(metric) for r in all_res if key in r]

@@ -19,11 +19,7 @@ print = functools.partial(print, flush=True)
 
 
 def _label_3class(variant: dict) -> str:
-    """Collapse a variant's mechanism to the 3-class GOF/DN/LOF label.
-
-    HI and AR both map to LOF; GOF/DN/LOF pass through. Raises on anything else
-    rather than guessing — an unexpected mechanism is a data error, not LOF.
-    """
+    """Collapse to 3-class GOF/DN/LOF. Raises on unexpected mechanism values."""
     if "label_3class" in variant:
         return variant["label_3class"]
     mech = variant.get("mechanism")
@@ -39,19 +35,7 @@ def _label_3class(variant: dict) -> str:
 def load_mechanism_variants(
     pfam_map: dict | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Load the mechanism-task variants + ESM-2 embeddings, row-aligned.
-
-    Reads VALID_VARIANTS_JSON — the variant list the main embeddings were
-    extracted from (same identity and order as the .npy rows) — and labels every
-    variant GOF/DN/LOF. This is the full merged set (Gerasimavicius + ClinVar/G2P),
-    not Gerasimavicius alone.
-
-    Returns (delta_mean, delta_pos, labels, genes). pfam_map is accepted for
-    backward-compatible call sites but is unused (labels come from the variants).
-
-    Labels are taken from each variant's existing "label_3class" when present,
-    falling back to _label_3class for variants that only carry a raw "mechanism".
-    """
+    """Load mechanism variants + ESM-2 embeddings. Returns (delta_mean, delta_pos, labels, genes)."""
     variants, _labels, genes, delta_mean, delta_pos = load_variants_and_delta(
         VALID_VARIANTS_JSON, EMB_WT_MEAN, EMB_MUT_MEAN, EMB_WT_POS, EMB_MUT_POS,
         verbose=False,
@@ -62,10 +46,6 @@ def load_mechanism_variants(
 
 
 def load_merged(pfam_map: dict | None = None) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Mean-pooled mechanism variants + embeddings: (delta_mean, labels, genes).
-
-    Thin wrapper over load_mechanism_variants for callers that don't need the
-    per-residue (delta_pos) view.
-    """
+    """Mean-pooled mechanism variants: (delta_mean, labels, genes)."""
     delta_mean, _delta_pos, labels, genes = load_mechanism_variants(pfam_map)
     return delta_mean, labels, genes

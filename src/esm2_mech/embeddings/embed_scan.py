@@ -1,17 +1,4 @@
-"""
-Extract ESM-2 mean-pooled delta embeddings for the perturbation scan probe list.
-
-Reads data/cache/scan_probes.json (built by perturbation_scan.py --phase 1) and
-writes the WT and mutant embeddings to the canonical paths in utils_paths:
-
-  data/embeddings/<model>/scan_wt.npy   (N_probes, D)
-  data/embeddings/<model>/scan_mut.npy  (N_probes, D)
-
-Checkpoints are written every --checkpoint_every probes so the run is resumable.
-
-Usage (requires GPU):
-    python -m esm2_mech.embeddings.embed_scan --batch_size 128
-"""
+"""Extract ESM-2 mean-pooled embeddings for the perturbation scan probe list."""
 
 import functools
 import json
@@ -64,7 +51,6 @@ def embed_scan(batch_size: int = 128) -> None:
         print(f"Scan embeddings already complete: {SCAN_EMB_WT}")
         return
 
-    # Load sequences
     with open(SEQUENCES_JSON) as f:
         seqs = json.load(f)
     if SEQUENCES_EXTENDED_JSON.exists():
@@ -72,9 +58,6 @@ def embed_scan(batch_size: int = 128) -> None:
             seqs.update(json.load(f))
     print(f"Sequences loaded: {len(seqs)}")
 
-    # Build the full filtered sequence list first so CKPT_IDX unambiguously
-    # counts embedding rows (not raw probes). Probes that fail the WT-match are
-    # dropped here; the checkpoint index is an offset into wt_seqs/mut_seqs.
     wt_seqs, mut_seqs, positions = [], [], []
     skipped_mismatch = 0
     for p in probes:
@@ -93,7 +76,6 @@ def embed_scan(batch_size: int = 128) -> None:
     n_filtered = len(wt_seqs)
     print(f"Total filtered probes: {n_filtered} ({skipped_mismatch} skipped)")
 
-    # Resume from checkpoint — start_idx is a row count into the filtered lists
     start_idx = 0
     all_wt, all_mut = [], []
     if CKPT_IDX.exists():
@@ -144,15 +126,8 @@ def embed_scan(batch_size: int = 128) -> None:
         )
         all_wt.append(wt_emb)
         all_mut.append(mut_emb)
-        # n_done counts rows written into the embedding arrays — same coordinate
-        # system as CKPT_IDX so resume slicing is consistent.
         n_done = start_idx + chunk_end
-        # Checkpoint commit order: write both arrays atomically (save_npy uses
-        # .tmp + os.replace internally), then update CKPT_IDX last and
-        # atomically. CKPT_IDX is the commit signal: its value is only advanced
-        # after both arrays are on disk. On resume, the array row counts are
-        # validated against CKPT_IDX — a mismatch means a crash occurred between
-        # the two save_npy calls and the checkpoint is discarded.
+        # CKPT_IDX is written last as the commit signal; mismatch on resume discards the checkpoint.
         save_npy(SCAN_CKPT_WT, np.vstack(all_wt))
         save_npy(SCAN_CKPT_MUT, np.vstack(all_mut))
         ckpt_idx_tmp = str(CKPT_IDX) + ".tmp"

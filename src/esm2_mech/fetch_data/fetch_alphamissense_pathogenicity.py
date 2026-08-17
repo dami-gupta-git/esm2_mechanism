@@ -1,18 +1,4 @@
-"""
-Fetch AlphaMissense scores for pathogenicity control variants.
-
-Streams the AlphaMissense bulk file and extracts scores for all variants in
-data/clinvar_pathogenicity_variants.json.
-
-  Input : data/clinvar_pathogenicity_variants.json  (from pathogenicity_fetch.py)
-          data/valid_variants.json  (for gene->uniprot map)
-          data/cache/AlphaMissense_aa_substitutions.tsv.gz  (auto-downloaded)
-  Output: data/alphamissense_pathogenicity_scores.json
-
-Usage:
-    python -m esm2_mech.fetch_data.fetch_alphamissense_pathogenicity
-    python -m esm2_mech.fetch_data.fetch_alphamissense_pathogenicity --no-download --am-file /path/to/file.tsv.gz
-"""
+"""Fetch AlphaMissense scores for pathogenicity control variants."""
 
 from __future__ import annotations
 
@@ -48,7 +34,6 @@ def main(am_file: Optional[Path] = None, no_download: bool = False, out: Optiona
 
     am_file.parent.mkdir(parents=True, exist_ok=True)
 
-    # Build gene->uniprot map from mechanism variants (larger, more complete)
     with open(VALID_VARIANTS_JSON) as f:
         mechanism_variants = json.load(f)
     g2u = build_gene_uniprot_map(mechanism_variants)

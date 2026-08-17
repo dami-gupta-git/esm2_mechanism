@@ -1,28 +1,7 @@
-"""
-Diagnostic: do ESM-2 embeddings cluster by Pfam family?
+"""Diagnostic: do ESM-2 embeddings cluster by Pfam family?
 
-If yes, then gene-split CV leaks via homology (BRCA1 in train → BRCA2 in test
-gets recognized via family similarity), inflating the WT-only baseline's apparent
-mechanism signal.
-
-Computes, on WT, mutant, and delta embeddings:
-  1. Silhouette score by Pfam family (reported but unreliable here; see note below)
-  2. k-NN family purity (k=5, 10) vs shuffled-family null
-  3. Within-family vs between-family cosine distance ratio vs null
-  4. Linear probe predicting Pfam family from embedding (stratified k-fold CV)
-  5. Per-gene: family-tightness vs whether the gene's mechanism matches its family majority
-
-The headline rests on k-NN purity (z-score) and the family probe. Silhouette is
-unreliable in high-dim space with many singleton families and is reported only
-for completeness.
-
-  Input : data/valid_variants.json, data/pfam_families.json,
-          embeddings_wt_mean.npy, embeddings_mut_mean.npy
-  Output: results/<run>/family_clustering.json (path from paths.FAMILY_CLUSTERING_JSON)
-
-Usage:
-    python -m esm2_mech.experiments.mechanism.family_clustering
-    python -m esm2_mech.experiments.mechanism.family_clustering --seed 1
+Measures k-NN family purity, within/between cosine ratio, and a family-prediction
+linear probe on WT, mutant, and delta embeddings.
 """
 
 import argparse
@@ -52,14 +31,11 @@ from esm2_mech.utils.paths import (
 
 print = functools.partial(print, flush=True)
 
-# Clustering metrics need ≥2 members to form a family cluster. The family probe
-# needs ≥3 so a family can appear in both train and test under k-fold CV.
 MIN_FAMILY_SIZE_CLUSTER = 2
 MIN_FAMILY_SIZE_PROBE = 3
 
 
 def gene_level_embeddings(emb, genes_arr):
-    """Average per-variant embeddings to one vector per gene."""
     unique_genes = sorted(set(genes_arr))
     gene_emb = np.zeros((len(unique_genes), emb.shape[1]), dtype=np.float32)
     for i, g in enumerate(unique_genes):

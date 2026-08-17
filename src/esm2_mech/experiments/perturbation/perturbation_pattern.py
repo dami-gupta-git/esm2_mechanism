@@ -1,28 +1,6 @@
-"""
-Amino acid perturbation pattern analysis.
+"""Perturbation pattern analysis.
 
-Uses the existing per-residue delta embeddings (already cached) to build
-gene-level spatial features from the pattern of observed variant deltas
-across sequence positions, then tests whether these add mechanism signal
-beyond the mean-pooled delta.
-
-Features per gene (built from all observed variants in that gene):
-  1. delta_mag_mean      — mean ||delta|| across positions
-  2. delta_mag_std       — std of ||delta|| (how variable is perturbation size)
-  3. delta_mag_cv        — coefficient of variation (std/mean) — concentration
-  4. pos_mean_norm       — mean variant position / protein length (N vs C terminal)
-  5. pos_std_norm        — std of variant positions / protein length (spread)
-  6. pc1_var_explained   — variance explained by PC1 of per-gene delta matrix
-                           (how much a single direction dominates)
-  7. pc1_mean_delta      — projection of mean delta onto PC1
-  8. n_variants          — number of observed variants (proxy for study depth)
-  9. mean_pooled_delta   — the standard mean-pooled delta (baseline feature)
-
-CV: 5-fold family-split, 5 seeds.
-Probe: logistic regression (balanced class weights).
-
-Outputs:
-  results/perturbation_pattern/results.json
+Builds gene-level spatial features from per-residue delta embeddings and probes for mechanism signal.
 """
 
 import functools, json, os, sys, numpy as np
@@ -63,20 +41,17 @@ def load_data():
     wt_mean = np.load(EMB_WT_MEAN)
     mut_mean = np.load(EMB_MUT_MEAN)
 
-    delta_pos = mut_pos - wt_pos  # per-residue delta at variant position
-    delta_mean = mut_mean - wt_mean  # mean-pooled delta (baseline)
+    delta_pos = mut_pos - wt_pos
+    delta_mean = mut_mean - wt_mean
 
     return variants, delta_pos, delta_mean
 
 
 def build_gene_features(variants, delta_pos, delta_mean):
-    """Aggregate per-variant deltas into per-gene spatial pattern features."""
+    """Aggregate per-variant deltas into per-gene spatial features."""
     from sklearn.decomposition import PCA
 
-    # Group by gene
-    gene_data = defaultdict(
-        list
-    )  # gene -> list of (aa_pos, delta_pos_vec, delta_mean_vec)
+    gene_data = defaultdict(list)
     for i, v in enumerate(variants):
         gene_data[v["gene"]].append(
             {
@@ -105,21 +80,18 @@ def build_gene_features(variants, delta_pos, delta_mean):
         n = len(records)
 
         positions = np.array([r["aa_pos"] for r in records], dtype=float)
-        d_pos_mat = np.array([r["delta_pos"] for r in records])  # (n, 1280)
-        d_mean_mat = np.array([r["delta_mean"] for r in records])  # (n, 1280)
+        d_pos_mat = np.array([r["delta_pos"] for r in records])
+        d_mean_mat = np.array([r["delta_mean"] for r in records])
 
-        # Magnitudes of per-residue deltas
         mags = np.linalg.norm(d_pos_mat, axis=1)
         mag_mean = float(np.mean(mags))
         mag_std = float(np.std(mags))
         mag_cv = mag_std / (mag_mean + 1e-8)
 
-        # Positional spread (normalise by max observed position as proxy for length)
         max_pos = float(np.max(positions))
         pos_mean_norm = float(np.mean(positions)) / (max_pos + 1e-8)
         pos_std_norm = float(np.std(positions)) / max_pos if len(positions) > 1 else 0.0
 
-        # PCA on per-residue delta matrix
         if n >= 3:
             pca = PCA(n_components=1)
             pca.fit(d_pos_mat)
@@ -131,8 +103,7 @@ def build_gene_features(variants, delta_pos, delta_mean):
             pc1_var = 0.0
             pc1_proj = 0.0
 
-        # Mean-pooled delta for this gene (average over its variants)
-        gene_mean_delta = d_mean_mat.mean(0)  # (1280,)
+        gene_mean_delta = d_mean_mat.mean(0)
 
         scalar_feats = np.array(
             [
@@ -148,7 +119,6 @@ def build_gene_features(variants, delta_pos, delta_mean):
             dtype=np.float32,
         )
 
-        # Full feature: scalar features + mean-pooled delta
         full_feat = np.concatenate([scalar_feats, gene_mean_delta.astype(np.float32)])
 
         gene_list.append(gene)
@@ -178,9 +148,9 @@ def main():
     )
 
     # Feature subsets
-    X_scalar = X_full[:, :n_scalar]  # 8 scalar features only
-    X_baseline = X_full[:, n_scalar:]  # mean-pooled delta only (baseline)
-    X_combined = X_full  # scalar + mean-pooled delta
+    X_scalar = X_full[:, :n_scalar]
+    X_baseline = X_full[:, n_scalar:]
+    X_combined = X_full
 
     with open(os.path.join(DATA, "pfam_families.json")) as f:
         pfam_map = json.load(f)
@@ -206,7 +176,6 @@ def main():
                 print(f"  {key}: F1={f1:.3f}  GOF={gof:.3f}")
         all_results[seed] = seed_res
 
-    # Summary across seeds
     print("\n=== 5-SEED SUMMARY ===")
     summary = {}
     keys = list(all_results[0].keys())

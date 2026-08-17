@@ -1,31 +1,4 @@
-"""
-Cross-file gene-coverage consistency check for the fetch-pipeline outputs.
-
-The pipeline produces several gene-keyed files that must stand in fixed
-set relationships (derived by reading the builders, not guessed):
-
-  gene_universe.tsv          = gene_list.tsv filtered to Pfam-annotated genes
-                               (_build_gene_universe drops genes with no Pfam)
-  gene_proteome_features.tsv : built by iterating gene_universe.tsv → exact
-                               same gene set
-  badonyi_features.tsv       : built by iterating gene_universe.tsv → exact
-                               same gene set
-  enzyme_labels.tsv          : keyed on gene_list.tsv → exact same gene set
-  pfam_families.json         : Pfam fetched for every gene_list gene → keys
-                               are a superset of gene_list
-
-Aligned matrices carry no gene column; their rows are positionally aligned to
-gene_universe.tsv, so their row count must equal the universe gene count:
-
-  proteome_features_aligned.npy : rows == len(gene_universe)
-  badonyi_features_aligned.npy  : rows == len(gene_universe)
-
-Each violation is reported with counts and example genes in both directions.
-The script exits non-zero if any required check fails, so it can gate a run.
-
-Usage:
-    python -m esm2_mech.fetch_data.check_gene_coverage
-"""
+"""Cross-file gene-coverage consistency check for the fetch-pipeline outputs."""
 
 from __future__ import annotations
 
@@ -55,11 +28,8 @@ print = functools.partial(print, flush=True)
 MAX_EXAMPLES = 10
 
 
-# ---------------------------------------------------------------------------
-# Gene-set loaders
-# ---------------------------------------------------------------------------
 def load_tsv_genes(path: Path, column: str = "gene") -> set[str]:
-    """Return the set of gene symbols in `column` of a TSV (header required)."""
+    """Return the set of gene symbols in a TSV column."""
     genes: set[str] = set()
     with open(path, newline="") as handle:
         reader = csv.DictReader(handle, delimiter="\t")
@@ -73,7 +43,7 @@ def load_tsv_genes(path: Path, column: str = "gene") -> set[str]:
 
 
 def load_json_keys(path: Path) -> set[str]:
-    """Return the top-level key set of a JSON object (gene → value mapping)."""
+    """Return the top-level key set of a JSON object."""
     with open(path) as handle:
         data = json.load(handle)
     if not isinstance(data, dict):
@@ -82,16 +52,13 @@ def load_json_keys(path: Path) -> set[str]:
 
 
 def count_tsv_rows(path: Path) -> int:
-    """Number of data rows (excluding header) in a TSV."""
+    """Number of data rows (excluding header)."""
     with open(path, newline="") as handle:
         reader = csv.reader(handle, delimiter="\t")
         next(reader, None)  # header
         return sum(1 for row in reader if row)
 
 
-# ---------------------------------------------------------------------------
-# Reporting helpers
-# ---------------------------------------------------------------------------
 def _examples(genes: set[str]) -> str:
     sample = sorted(genes)[:MAX_EXAMPLES]
     suffix = ", ..." if len(genes) > MAX_EXAMPLES else ""
@@ -99,7 +66,7 @@ def _examples(genes: set[str]) -> str:
 
 
 def check_subset(name: str, sub: set[str], sup: set[str], sub_name: str, sup_name: str) -> bool:
-    """Pass if `sub` ⊆ `sup`. Reports genes present in sub but absent from sup."""
+    """Pass if sub is a subset of sup."""
     missing = sub - sup
     if not missing:
         print(f"[PASS] {name}: all {len(sub)} {sub_name} genes present in {sup_name}")
@@ -112,7 +79,7 @@ def check_subset(name: str, sub: set[str], sup: set[str], sub_name: str, sup_nam
 
 
 def check_equal(name: str, left: set[str], right: set[str], left_name: str, right_name: str) -> bool:
-    """Pass if the two gene sets are exactly equal. Reports both directions."""
+    """Pass if the two gene sets are exactly equal."""
     only_left = left - right
     only_right = right - left
     if not only_left and not only_right:
@@ -127,7 +94,7 @@ def check_equal(name: str, left: set[str], right: set[str], left_name: str, righ
 
 
 def check_row_count(name: str, npy_path: Path, expected: int, expected_name: str) -> bool:
-    """Pass if the .npy first-axis length equals `expected` (alignment contract)."""
+    """Pass if the .npy first-axis length equals expected."""
     matrix = np.load(npy_path, allow_pickle=False)
     n_rows = matrix.shape[0]
     if n_rows == expected:
@@ -140,9 +107,6 @@ def check_row_count(name: str, npy_path: Path, expected: int, expected_name: str
     return False
 
 
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--data-dir", type=Path, default=DATA_DIR, help="Directory holding the pipeline outputs.")
@@ -170,7 +134,6 @@ def main() -> int:
 
     print("=== Gene-coverage consistency check ===\n")
 
-    # Load gene sets once, where files exist.
     sets: dict[str, set[str]] = {}
     if paths["gene_list"].exists():
         sets["gene_list"] = load_tsv_genes(paths["gene_list"])
@@ -185,40 +148,31 @@ def main() -> int:
     if paths["pfam"].exists():
         sets["pfam"] = load_json_keys(paths["pfam"])
 
-    # 1. gene_universe ⊆ gene_list
     if have("gene_universe", "gene_list"):
         results.append(
             check_subset("universe⊆gene_list", sets["gene_universe"], sets["gene_list"], "universe", "gene_list")
         )
 
-    # 2. gene_universe ⊆ pfam keys. pfam_families.json is keyed on the variant
-    #    gene set (variants.json), NOT gene_list, so gene_list is intentionally
-    #    a superset of pfam. The real contract is that every *retained* universe
-    #    gene has a Pfam annotation (universe = gene_list genes with non-None pfam).
     if have("gene_universe", "pfam"):
         results.append(
             check_subset("universe⊆pfam", sets["gene_universe"], sets["pfam"], "universe", "pfam_families")
         )
 
-    # 3. proteome == gene_universe
     if have("proteome", "gene_universe"):
         results.append(
             check_equal("proteome==universe", sets["proteome"], sets["gene_universe"], "proteome", "universe")
         )
 
-    # 4. badonyi == gene_universe
     if have("badonyi", "gene_universe"):
         results.append(
             check_equal("badonyi==universe", sets["badonyi"], sets["gene_universe"], "badonyi", "universe")
         )
 
-    # 5. enzyme == gene_list
     if have("enzyme", "gene_list"):
         results.append(
             check_equal("enzyme==gene_list", sets["enzyme"], sets["gene_list"], "enzyme", "gene_list")
         )
 
-    # 6. aligned matrices: row count == universe gene count
     if have("gene_universe"):
         n_universe = count_tsv_rows(paths["gene_universe"])
         if have("proteome_npy"):

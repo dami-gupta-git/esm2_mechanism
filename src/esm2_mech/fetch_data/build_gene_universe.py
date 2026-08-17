@@ -1,20 +1,4 @@
-"""
-Build gene_universe.tsv — step 2 of the gene universe pipeline.
-
-Filters gene_list.tsv to genes with a Pfam family assignment. The output
-gene_universe.tsv is the canonical aligned row order for all feature matrices
-(proteome_features_aligned.npy, badonyi_features_aligned.npy, etc.).
-
-Must run after fetch_annotations --step pfam.
-
-Inputs : data/gene_list.tsv
-         data/pfam_families.json
-Output : data/gene_universe.tsv
-         Columns: gene, mechanism, uniprot_id, source, g2p_disagrees, pfam_family
-
-Usage:
-    python -m esm2_mech.fetch_data.build_gene_universe
-"""
+"""Build gene_universe.tsv by filtering gene_list.tsv to Pfam-annotated genes."""
 
 from __future__ import annotations
 

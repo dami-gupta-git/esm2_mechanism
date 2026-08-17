@@ -1,38 +1,7 @@
-"""
-Experiment 11 — Phase 3 Modelling
-===================================
+"""Phase 3 modelling: V1-V4 model variants under family-split CV.
 
-Four model variants under 5-fold family-split CV with 5 seeds (seeds 0–4):
-
-  V1  ESM-2 delta only (1280-dim)              MLP 1280→256→64→3
-  V2  Proteome features only (41-dim)          LightGBM (primary)
-  V3  ESM-2 delta + proteome (1321-dim)        NaN-native gradient boosting
-  V4  Contrastive head on V3 inputs (1321-dim) projection 1321→256→64,
-                                               TripletMarginLoss + kNN
-
-Missing-data policy. The proteome block carries real NaN (its family-residual
-columns are ~44-61% missing by design); nothing is imputed. V1 is delta-only
-and fully observed, so it keeps its MLP. Every arm that touches the proteome
-block — including V3, where it is concatenated onto the dense delta — uses a
-model that consumes NaN directly, which keeps all genes without fabricating a
-value. V2 also reports a LogReg restricted to fully-observed genes to answer
-whether the signal is linear, paired with a NaN-native run on those same rows.
-V4's projection head and k-NN cannot take NaN at all, so V4 is complete-case
-and V3 is re-run on V4's exact rows as its comparator.
-
-Pre-registered decision gates:
-  Gate 1 (V2): macro-F1 ≥ 0.35              → proceed to V3
-  Gate 2 (V3): macro-F1 ≥ max(V1,V2)+0.02  → proceed to V4
-  Gate 3 (V4): report only — against V3 on V4's own gene subset, so the gate
-               reads a method difference rather than a change in coverage
-
-Also runs gene-split CV for V3 to compute leakage delta.
-
-Usage:
-    python scripts/proteome_mechanism.py                    # all 5 seeds
-    python scripts/proteome_mechanism.py --seed 0           # single seed
-    python scripts/proteome_mechanism.py --variants-only    # skip V4
-    python scripts/proteome_mechanism.py
+V1 ESM-2 delta MLP, V2 proteome LightGBM, V3 concat NaN-native,
+V4 contrastive head + kNN. Pre-registered decision gates between stages.
 """
 
 from __future__ import annotations
@@ -78,27 +47,17 @@ OUT_DIR = RESULTS_DIR
 
 warnings.filterwarnings("ignore")
 
-# ---------------------------------------------------------------------------
-# Paths
-# ---------------------------------------------------------------------------
 MERGED_VALID_VARIANTS = VALID_VARIANTS_JSON
 MERGED_WT_MEAN = EMB_WT_MEAN
 MERGED_MUT_MEAN = EMB_MUT_MEAN
 
 PROTEOME_FEATURES = PROTEOME_FEATURES_ALIGNED
 PROTEOME_COLS = PROTEOME_FEATURE_COLUMNS_JSON
-# Row index for the aligned feature matrices. MUST be GENE_UNIVERSE, not
-# GENE_LIST_TSV: build_proteome_features/build_badonyi_features write their
-# .npy rows in gene_universe.tsv order, and gene_list.tsv is a longer,
-# differently-ordered superset (see paths.GENE_UNIVERSE).
+# MUST be GENE_UNIVERSE (aligned .npy row order), not GENE_LIST_TSV (longer, differently-ordered superset).
 MERGED_GENE_LIST = GENE_UNIVERSE
 PFAM_FAMILIES = PFAM_JSON
 
 CLASSES = MECHANISM_CLASSES
-
-# ---------------------------------------------------------------------------
-# Gene-split CV (from mlp.py / contrastive_mechanism.py)
-# ---------------------------------------------------------------------------
 
 
 def gene_split_indices(
@@ -107,20 +66,7 @@ def gene_split_indices(
     seed: int,
     pfam_map: dict | None = None,
 ):
-    """
-    Yield (train_idx, test_idx) splitting by unique gene identity, while
-    keeping all genes from the same Pfam family in the same fold.
-
-    Without pfam_map: simple gene-split (original behaviour, contaminated by
-    family leakage — retained for comparison only).
-
-    With pfam_map: family-aware gene-split. Genes are grouped by their Pfam
-    family first; families are shuffled and assigned to folds; then within
-    each family, individual genes are the unit of test holdout. This ensures
-    no family straddles a train/test boundary, making the leakage delta
-    (gene-split F1 − family-split F1) a clean measure of within-family
-    positional signal rather than a contaminated lower bound.
-    """
+    """Yield (train_idx, test_idx) splitting by gene, optionally family-aware."""
     rng = np.random.RandomState(seed)
 
     if pfam_map is None:
@@ -174,21 +120,9 @@ def gene_split_indices(
         yield train, test
 
 
-# ---------------------------------------------------------------------------
-# Data loading
-# ---------------------------------------------------------------------------
-
 
 def load_data() -> tuple[list[dict], np.ndarray, np.ndarray, np.ndarray]:
-    """
-    Load merged variants, labels, genes, and ESM-2 delta embeddings.
-
-    Returns:
-        variants  : list of variant dicts
-        labels    : (n,) string array of 3-class labels
-        genes     : (n,) string array of gene symbols
-        delta     : (n, 1280) float32 ESM-2 delta embeddings
-    """
+    """Load merged variants, labels, genes, and ESM-2 delta embeddings."""
     variants, labels, genes, delta, _ = load_variants_and_delta(
         MERGED_VALID_VARIANTS, MERGED_WT_MEAN, MERGED_MUT_MEAN
     )
@@ -206,25 +140,13 @@ def build_gene_to_proteome_row() -> dict[str, int]:
 
 
 def load_proteome_features(genes: np.ndarray) -> np.ndarray:
-    """
-    Broadcast gene-level proteome features (2424 × 41) to variant level.
-
-    For each variant, look up its gene's row in the proteome matrix.
-    Variants whose gene is absent from the gene-order list are given a
-    zero-filled row (should not occur given aligned construction, but
-    this is defensive).
-
-    Returns (n_variants, 41) float32 array.
-    """
+    """Broadcast gene-level proteome features to variant level."""
     prot_matrix = np.load(PROTEOME_FEATURES).astype(np.float32)  # (2424, 41)
     gene_to_row = build_gene_to_proteome_row()
 
     n = len(genes)
     n_feats = prot_matrix.shape[1]
-    # NaN, not 0.0, for a variant whose gene has no proteome row: 0.0 is a
-    # plausible real value for pLI/LOEUF/PPI_degree and a zero-filled row would
-    # be indistinguishable from a real measurement. The proteome arms consume
-    # NaN natively.
+    # NaN not 0.0: zero is a plausible real value for pLI/LOEUF/PPI_degree.
     X_prot = np.full((n, n_feats), np.nan, dtype=np.float32)
     n_missing = 0
     for i, g in enumerate(genes):
@@ -245,8 +167,7 @@ def aggregate_fold_results(fold_list: list[dict]) -> dict:
         return {"error": "no folds"}
 
     out: dict = {}
-    # macro_f1 — NaN-filtered so a single NaN fold (e.g. a degenerate split)
-    # does not poison the mean, matching the per-class AUROC guard below.
+    # NaN-filtered so a single degenerate fold does not poison the mean.
     macro_mean, macro_std, _ = mean_std_n([f["macro_f1"] for f in fold_list])
     out["macro_f1_mean"] = macro_mean
     out["macro_f1_std"] = macro_std
@@ -269,21 +190,10 @@ def aggregate_fold_results(fold_list: list[dict]) -> dict:
     return out
 
 
-# ---------------------------------------------------------------------------
-# V1 / V2 / V3 — sklearn MLPClassifier runners
-# ---------------------------------------------------------------------------
-
-
 def _attach_ci(agg: dict, oof: dict | None, compute_ci: bool, n_boot: int, seed: int) -> dict:
-    """Attach a cluster-bootstrap CI, resampling whatever unit `oof["genes"]` holds.
+    """Attach a cluster-bootstrap CI, resampling whatever unit oof["genes"] holds.
 
-    Every caller here passes the actual resampling unit as the `genes` argument
-    to run_mlp_cv/run_logreg_cv/run_histgb_cv — the Pfam family id for a
-    family-split arm, the real gene id for the gene-split leakage diagnostic —
-    so oof["genes"] already IS the cluster array (R7.3: family-split resamples
-    families, not genes). No further mapping through a pfam_map is needed here,
-    unlike mechanism_delta_family_split.py, which handles both split schemes in
-    one function and must derive clusters from raw gene ids each time.
+    oof["genes"] is already the cluster array (family id or gene id depending on arm).
     """
     if compute_ci and oof is not None:
         agg["ci"] = bootstrap_mechanism_metrics(
@@ -336,8 +246,7 @@ def run_family_split_histgb(
     compute_ci: bool = True,
     n_boot: int = BOOTSTRAP_N_RESAMPLES,
 ) -> dict:
-    """NaN-native family-split CV — for any arm whose matrix includes the
-    proteome block, alone or concatenated with the ESM-2 delta."""
+    """NaN-native family-split CV for arms that include the proteome block."""
     splits = list(family_split_indices(groups, n_folds, seed))
     agg, oof = run_histgb_cv(X, y, splits, seed=seed, genes=groups, label=label, return_oof=True)
     return _attach_ci(agg, oof, compute_ci, n_boot, seed)
@@ -355,13 +264,9 @@ def run_observed_subset_arm(
     n_boot: int = BOOTSTRAP_N_RESAMPLES,
     **runner_kwargs,
 ) -> dict:
-    """Run `runner` on the fully-observed rows of X, with folds recomputed there.
+    """Run runner on fully-observed rows of X, with folds recomputed there.
 
-    For a model that cannot consume NaN. The returned metrics describe only the
-    complete-case subset, which is smaller than and not a random sample of the
-    full gene set (genes drop out for being singletons or sitting in small
-    families), so `n_observed` / `frac_observed` are reported alongside and any
-    comparison must be against an arm run on this same subset.
+    # Observed subset is not a random sample; compare only against arms on the same rows.
     """
     observed = observed_rows_mask(X, label=label)
     n_obs = int(observed.sum())
@@ -384,11 +289,6 @@ def run_observed_subset_arm(
     return agg
 
 
-# ---------------------------------------------------------------------------
-# V2 — LightGBM (gradient boosting, handles tabular/sparse features well)
-# ---------------------------------------------------------------------------
-
-
 def run_family_split_lgbm(
     X: np.ndarray,
     y: np.ndarray,
@@ -399,7 +299,7 @@ def run_family_split_lgbm(
     compute_ci: bool = True,
     n_boot: int = BOOTSTRAP_N_RESAMPLES,
 ) -> dict:
-    """5-fold family-split CV with LightGBM multiclass classifier."""
+    """Family-split CV with LightGBM multiclass classifier."""
     import lightgbm as lgb
 
     fold_results = []
@@ -418,7 +318,6 @@ def run_family_split_lgbm(
             print(f"    [{label}] Fold {fold_i+1}: skipped (< 2 test classes)")
             continue
 
-        # Class weights — inverse frequency
         counts = {c: int((y_tr == c).sum()) for c in CLASSES}
         class_weight = {c: 1.0 / max(counts[c], 1) for c in CLASSES}
         sample_weight = np.array([class_weight[yi] for yi in y_tr], dtype=np.float32)
@@ -464,11 +363,6 @@ def run_family_split_lgbm(
     return _attach_ci(agg, oof, compute_ci, n_boot, seed)
 
 
-# ---------------------------------------------------------------------------
-# Gene-split CV for V3 (leakage diagnostic)
-# ---------------------------------------------------------------------------
-
-
 def run_gene_split_histgb(
     X: np.ndarray,
     y: np.ndarray,
@@ -480,20 +374,10 @@ def run_gene_split_histgb(
     compute_ci: bool = True,
     n_boot: int = BOOTSTRAP_N_RESAMPLES,
 ) -> dict:
-    """NaN-native gene-split CV — the leakage-diagnostic counterpart to
-    run_family_split_histgb, for matrices that include the proteome block.
-
-    CI resamples genes (not families): this is the gene-split arm, and R7.3's
-    unit is whatever the split scheme actually holds out.
-    """
+    """NaN-native gene-split CV for leakage diagnostics; CI resamples genes."""
     splits = list(gene_split_indices(genes, n_folds, seed, pfam_map=pfam_map))
     agg, oof = run_histgb_cv(X, y, splits, seed=seed, genes=genes, label=label, return_oof=True)
     return _attach_ci(agg, oof, compute_ci, n_boot, seed)
-
-
-# ---------------------------------------------------------------------------
-# V4 — Contrastive projection head (PyTorch) + k-NN
-# ---------------------------------------------------------------------------
 
 
 def build_triplets_v4(
@@ -502,21 +386,12 @@ def build_triplets_v4(
     max_triplets: int,
     seed: int,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """
-    Mine triplets for V4:
-      anchor: any variant
-      positive: same mechanism, different Pfam family
-      negative: different mechanism (hard negative)
-
-    Capped at max_triplets total.
-    """
+    """Mine cross-family triplets for V4, capped at max_triplets."""
     rng = np.random.RandomState(seed)
     n = len(y)
     n_classes = len(CLASSES)
 
-    # Local int encoding for this function's dict-of-int-keys bookkeeping only;
-    # y itself stays string-typed for every other caller (compute_metrics,
-    # run_logreg_cv, run_mlp_cv all key on the string labels in CLASSES).
+    # Local int encoding for dict-of-int-keys bookkeeping; y stays string-typed elsewhere.
     cls_to_idx = {c: i for i, c in enumerate(CLASSES)}
     y_int = np.array([cls_to_idx[lbl] for lbl in y])
 
@@ -589,10 +464,7 @@ def train_projection_head_v4(
     max_triplets: int,
     seed: int,
 ) -> tuple:
-    """
-    Train projection head: Linear(1321,256) → ReLU → Linear(256,64)
-    with TripletMarginLoss. Returns (proj_model, mu, std).
-    """
+    """Train projection head 1321->256->64 with TripletMarginLoss."""
     import torch
     import torch.nn as nn
     from torch.utils.data import DataLoader, TensorDataset
@@ -614,8 +486,7 @@ def train_projection_head_v4(
     if len(anchors) < 20:
         print(f"      WARNING: only {len(anchors)} triplets; V4 may be unreliable")
 
-    # Seed torch before the head is built: weight init and the DataLoader
-    # shuffle draw from the global RNG, so an unseeded run is irreproducible.
+    # Seed torch before head build: weight init and DataLoader shuffle use global RNG.
     torch.manual_seed(seed)
 
     in_dim = X_norm.shape[1]
@@ -698,10 +569,7 @@ def run_v4_family_split(
     compute_ci: bool = True,
     n_boot: int = BOOTSTRAP_N_RESAMPLES,
 ) -> dict:
-    """
-    V4: contrastive projection head + k-NN under family-split CV.
-    Uses the same fold splits as V1–V3 (family_split_indices).
-    """
+    """V4 contrastive projection head + kNN under family-split CV."""
     fold_results = []
     oof_y, oof_proba, oof_groups = [], [], []
 
@@ -756,11 +624,6 @@ def run_v4_family_split(
     return _attach_ci(agg, oof, compute_ci, n_boot, seed)
 
 
-# ---------------------------------------------------------------------------
-# Single-seed runner
-# ---------------------------------------------------------------------------
-
-
 def _fmt_ci(agg: dict) -> str:
     ci = agg.get("ci", {}).get("macro_f1")
     if not ci or ci.get("ci_suppressed"):
@@ -784,15 +647,9 @@ def run_seed(
     print(f"SEED {seed}")
     print(f"{'='*60}")
 
-    # y stays the string labels themselves (matching CLASSES/MECHANISM_CLASSES).
-    # run_mlp_cv/run_logreg_cv/compute_metrics compare y against `classes`
-    # (string labels) internally; an int-encoded y silently produces zero
-    # counts for every class (LogReg/MLP) or zero AUROC for every class
-    # (compute_metrics, since `y_true == "GOF"` is always False against ints).
+    # y must stay string-typed: int-encoded y silently zeroes all class counts and AUROCs.
     y = np.asarray(labels)
 
-    # Build groups (variant-level Pfam family for family-split CV)
-    # Variants with no Pfam family for their gene are excluded
     gene_pfam = np.array([pfam_map.get(g) for g in genes])
     has_family = np.array([p is not None for p in gene_pfam])
 
@@ -800,7 +657,6 @@ def run_seed(
     X_prot_all = X_prot
     X_concat_all = np.concatenate([delta, X_prot], axis=1)  # (n, 1321)
 
-    # Restrict to variants with a Pfam family assignment (same as pilot)
     fam_idx = np.where(has_family)[0]
     X_delta = X_delta_all[fam_idx]
     X_prot_fam = X_prot_all[fam_idx]
@@ -808,7 +664,7 @@ def run_seed(
     y_fam = y[fam_idx]
     genes_fam = genes[fam_idx]
     gene_pfam_fam = gene_pfam[fam_idx]
-    groups = gene_pfam_fam  # groups = Pfam family strings
+    groups = gene_pfam_fam
 
     print(f"  Variants with Pfam family: {len(fam_idx)}/{len(y)}")
     print(f"  Unique families: {len(set(groups.tolist()))}")
@@ -824,9 +680,6 @@ def run_seed(
         "n_families": int(len(set(groups.tolist()))),
     }
 
-    # ------------------------------------------------------------------
-    # V1 — ESM-2 delta only, MLP 1280→256→64→3
-    # ------------------------------------------------------------------
     print(f"\n--- V1: ESM-2 delta only (MLP 1280→256→64→3) ---")
     v1_res = run_family_split_mlp(
         X_delta,
@@ -846,17 +699,7 @@ def run_seed(
         + _fmt_ci(v1_res)
     )
 
-    # ------------------------------------------------------------------
-    # V2 — Proteome features only
-    #
-    # The proteome block has missing cells in every feature (the family-residual
-    # columns are ~44-61% missing by design), so LightGBM — which consumes NaN
-    # natively — is the primary arm: it keeps every gene without fabricating a
-    # value. The linear question ("is the signal linear?") is answered by a
-    # LogReg restricted to fully-observed genes, paired with a LightGBM run on
-    # that same restricted subset so the linear/nonlinear comparison comes from
-    # one population rather than confounding model class with gene coverage.
-    # ------------------------------------------------------------------
+    # LightGBM is primary (NaN-native); LogReg + matched HistGB on observed subset for linearity check.
     print(f"\n--- V2: Proteome features only (LightGBM primary; linear check on observed subset) ---")
 
     v2_lgbm_res = run_family_split_lgbm(
@@ -929,14 +772,7 @@ def run_seed(
         print("  Stopping after Gate 1 failure (V3/V4 not run for this seed).")
         return results
 
-    # ------------------------------------------------------------------
-    # V3 — Concatenated: ESM-2 delta + proteome
-    #
-    # NaN-native: the concat is a dense 1280-dim delta block glued to the sparse
-    # 41-col proteome block, so a handful of missing proteome cells would make
-    # the whole 1321-dim row unusable to an MLP. Restricting instead would throw
-    # away ~65% of genes whose embeddings are perfectly well observed.
-    # ------------------------------------------------------------------
+    # NaN-native: restricting to complete cases would discard ~65% of genes with good embeddings.
     print(f"\n--- V3: ESM-2 delta + proteome concat (NaN-native gradient boosting) ---")
     v3_family_res = run_family_split_histgb(
         X_concat,
@@ -1006,17 +842,8 @@ def run_seed(
         results["V4_family_split"] = {"skipped": True, "reason": "Gate 2 failed"}
         return results
 
-    # ------------------------------------------------------------------
-    # V4 — Contrastive head on V3 inputs (1321-dim)
-    #
-    # The triplet-trained projection head and the k-NN that scores it both
-    # require real numbers at every coordinate, and there is no NaN-native
-    # substitute for a learned embedding. So V4 runs complete-case, on genes
-    # whose proteome block is fully observed, with folds recomputed there.
-    # V3 is re-run on those exact rows as the comparator: Gate 3 otherwise
-    # measures V4-on-a-subset against V3-on-everything, which reads a change in
-    # gene population as a method effect.
-    # ------------------------------------------------------------------
+    # V4 needs complete-case (no NaN-native substitute for learned embeddings).
+    # V3 re-run on V4's rows as comparator so Gate 3 reads method, not coverage.
     print(f"\n--- V4: Contrastive projection head (1321→256→64) + k-NN, observed subset ---")
     v4_observed = observed_rows_mask(X_concat, label="V4")
     n_v4 = int(v4_observed.sum())
@@ -1056,7 +883,7 @@ def run_seed(
         + _fmt_ci(v4_res)
     )
 
-    # V3 on V4's exact rows — the like-for-like comparator for Gate 3.
+    # V3 on V4's exact rows for like-for-like Gate 3 comparison.
     v3_matched_res = run_family_split_histgb(
         X_concat[v4_observed],
         y_fam[v4_observed],
@@ -1075,9 +902,7 @@ def run_seed(
         + _fmt_ci(v3_matched_res)
     )
 
-    # Gate 3 — report only (no hard stop). Compared against V3 on the identical
-    # gene subset, not the historical all-genes reference, which was computed on
-    # a different population and a different model class.
+    # Gate 3 — report only; compared against V3 on the identical gene subset.
     gate3_target = v3_matched_f1 + 0.03
     gate3_pass = v4_f1 >= gate3_target
     gate3_msg = (
@@ -1098,13 +923,8 @@ def run_seed(
     return results
 
 
-# ---------------------------------------------------------------------------
-# Summary across seeds
-# ---------------------------------------------------------------------------
-
-
 def aggregate_seeds(all_seed_results: list[dict]) -> dict:
-    """Aggregate per-seed results into mean ± std across seeds."""
+    """Aggregate per-seed results into mean +/- std across seeds."""
     summary: dict = {"n_seeds": len(all_seed_results)}
 
     def get_mean_std(key_mean: str) -> tuple[float | None, float | None]:
@@ -1137,10 +957,7 @@ def aggregate_seeds(all_seed_results: list[dict]) -> dict:
     summary["V2_lgbm_macro_f1_mean"] = m
     summary["V2_lgbm_macro_f1_std"] = s
 
-    # V2 linear check and its matched comparator, both on the fully-observed
-    # subset only. Reported as a pair because the linear-vs-nonlinear read is
-    # only valid between these two; neither is comparable to the all-genes
-    # LightGBM arm above.
+    # V2 linear check pair (observed subset only); not comparable to all-genes LightGBM.
     for key, out_prefix in [
         ("V2_logreg_observed_subset", "V2_logreg_observed"),
         ("V2_histgb_observed_subset", "V2_histgb_observed"),
@@ -1175,9 +992,7 @@ def aggregate_seeds(all_seed_results: list[dict]) -> dict:
         summary["V3_leakage_delta_mean"] = float(np.mean(leakage_vals))
         summary["V3_leakage_delta_std"] = float(np.std(leakage_vals))
 
-    # V4 (fully-observed subset) and the V3 run on those identical rows. Gate 3
-    # is read from this pair; V3_family_split above is on all genes and would
-    # confound gene coverage with method.
+    # V4 and its matched V3 pair; Gate 3 reads from this, not from all-genes V3.
     m, s = get_mean_std("V4_family_split.macro_f1_mean")
     summary["V4_family_split_macro_f1_mean"] = m
     summary["V4_family_split_macro_f1_std"] = s
@@ -1200,11 +1015,8 @@ def aggregate_seeds(all_seed_results: list[dict]) -> dict:
             summary[f"{variant_key}_auroc_{cls}_mean"] = m
             summary[f"{variant_key}_auroc_{cls}_std"] = s
 
-    # Per-seed family/gene-resampled macro-F1 CIs, pooled across seeds. This is
-    # a SEPARATE source of uncertainty from the *_macro_f1_std values above:
-    # those are seed-to-seed spread of the point estimate, this is the average
-    # within-seed resampling uncertainty. Any seed whose CI was suppressed
-    # (too few valid resamples) is skipped for that seed only.
+    # Per-seed resampled CIs pooled across seeds (within-seed uncertainty,
+    # separate from the seed-to-seed spread in *_macro_f1_std above).
     for variant_key in [
         "V1_family_split", "V2_lgbm_family_split", "V2_logreg_observed_subset",
         "V2_histgb_observed_subset", "V3_family_split", "V3_gene_split",
@@ -1219,7 +1031,7 @@ def aggregate_seeds(all_seed_results: list[dict]) -> dict:
 
 
 def nested_get(d: dict, key: str):
-    """Get nested dict value using dot-notation key like 'V1_family_split.macro_f1_mean'."""
+    """Get nested dict value using dot-notation key."""
     parts = key.split(".", 1)
     if parts[0] not in d:
         return None
@@ -1229,11 +1041,6 @@ def nested_get(d: dict, key: str):
     if isinstance(v, dict):
         return nested_get(v, parts[1])
     return None
-
-
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
 
 
 def main():
@@ -1258,9 +1065,6 @@ def main():
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    # ------------------------------------------------------------------
-    # Load shared data once
-    # ------------------------------------------------------------------
     print("=== Loading data ===")
     variants, labels, genes, delta = load_data()
 
@@ -1279,9 +1083,6 @@ def main():
     X_concat_check = np.concatenate([delta, X_prot], axis=1)
     print(f"Concatenated shape: {X_concat_check.shape}  (expected ~19k × 1313)")
 
-    # ------------------------------------------------------------------
-    # Per-seed runs
-    # ------------------------------------------------------------------
     all_seed_results = []
 
     for seed in seeds:
@@ -1303,9 +1104,6 @@ def main():
         out_path.write_text(json.dumps(seed_results, indent=2))
         print(f"\n  Saved: {out_path}")
 
-    # ------------------------------------------------------------------
-    # Summary across seeds
-    # ------------------------------------------------------------------
     summary = aggregate_seeds(all_seed_results)
 
     summary_path = OUT_DIR / "proteome_mechanism_summary.json"

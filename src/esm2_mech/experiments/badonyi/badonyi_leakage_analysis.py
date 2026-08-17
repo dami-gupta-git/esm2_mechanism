@@ -1,26 +1,4 @@
-"""
-Badonyi leakage analysis — quantify the label-leakage contribution to result_15.
-
-Result_15 used Badonyi 2024's SVM output probabilities (pDN, pGOF, pLOF) as input
-features for V_bad and V2+bad. Many genes in the merged dataset were in Badonyi's
-training set, so their pDN/pGOF/pLOF values are partly fit-to-label predictions
-from a pre-trained model. This script quantifies the magnitude.
-
-Approach: re-run V_bad and V2+bad family-split CV on three subsets:
-    ALL  — every labeled+family-annotated variant (reproduces result_15)
-    IN   — variants whose gene was in Badonyi's training set (any classifier)
-    OUT  — variants whose gene was NOT in Badonyi's training set
-
-V2 (proteome only) is run on all three regimes as a leakage-free comparator.
-
-Outputs:
-    results/badonyi_leakage/leakage_seed{0..4}.json
-    results/badonyi_leakage/leakage_summary.json
-
-Usage:
-    python3 scripts/badonyi_leakage_analysis.py
-    python3 scripts/badonyi_leakage_analysis.py --seed 0 --n-folds 5
-"""
+"""Quantify label-leakage from Badonyi training-set overlap by comparing V_bad/V2+bad on IN vs OUT genes."""
 
 from __future__ import annotations
 
@@ -64,19 +42,11 @@ BADONYI_FEATURES = BADONYI_FEATURES_ALIGNED
 BADONYI_S3 = BADONYI_CACHE_DIR / "table_S3.xlsx"
 BADONYI_RAW_COLS = [0, 1, 2]  # pDN, pGOF, pLOF
 
-# Row index for the aligned feature matrices. MUST be GENE_UNIVERSE, not
-# GENE_LIST_TSV: build_proteome_features/build_badonyi_features write their
-# .npy rows in gene_universe.tsv order, and gene_list.tsv is a longer,
-# differently-ordered superset (see paths.GENE_UNIVERSE).
+# MUST be GENE_UNIVERSE, not GENE_LIST_TSV: .npy rows are in gene_universe.tsv order.
 MERGED_GENE_LIST = GENE_UNIVERSE
 PFAM_FAMILIES = PFAM_JSON
 
 CLASSES = MECHANISM_CLASSES
-
-
-# ---------------------------------------------------------------------------
-# Data
-# ---------------------------------------------------------------------------
 
 
 def load_data():
@@ -97,13 +67,9 @@ def build_gene_to_row():
     return _build_gene_to_row(MERGED_GENE_LIST)
 
 
+# NaN not 0.0 for missing genes: 0.0 is a plausible real observation.
 def broadcast(genes, matrix, gene_to_row):
-    """Broadcast per-gene features to variant rows, NaN where the gene has no row.
-
-    A gene absent from the feature matrix gets NaN, not 0.0 — these are
-    probability scores where 0.0 is a plausible real observation, so a
-    zero-filled row would be indistinguishable from a real measurement.
-    """
+    """Broadcast per-gene features to variant rows, NaN where the gene has no row."""
     n, d = len(genes), matrix.shape[1]
     X = np.full((n, d), np.nan, dtype=np.float32)
     n_missing = 0
@@ -119,11 +85,7 @@ def broadcast(genes, matrix, gene_to_row):
 
 
 def load_badonyi_train_flags():
-    """Return dict[gene] -> bool: True if gene was in any of Badonyi's three
-    training sets (DN, GOF, or LOF classifier).
-
-    Also returns per-classifier dict for stratified diagnostics.
-    """
+    """Return (any-train dict, per-classifier dict) from Badonyi S3."""
     print(f"Loading Badonyi S3 train flags from {BADONYI_S3.name}")
     s3 = pd.read_excel(BADONYI_S3, sheet_name="table_S3")
 
@@ -131,7 +93,6 @@ def load_badonyi_train_flags():
         if pd.isna(s):
             return (0, 0, 0)
         return tuple(int(b) for b in str(s).split("|"))
-
     parts = s3["train_dn_gof_lof"].map(parse)
     s3["tr_DN"] = [p[0] for p in parts]
     s3["tr_GOF"] = [p[1] for p in parts]
@@ -148,29 +109,13 @@ def load_badonyi_train_flags():
     return any_train, per_class
 
 
-# ---------------------------------------------------------------------------
-# CV
-# ---------------------------------------------------------------------------
-
-
+# Nothing is imputed: filling before the split would leak test-fold statistics into training.
+# CI resamples families not genes; cluster array is derived via pfam_map since `genes` are real gene ids.
 def run_probe(
     X, y, genes, groups, n_folds, seed, label, pfam_map,
     compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES,
 ):
-    """NaN-native family-split CV.
-
-    Every arm here reads the proteome or Badonyi block, which carry real
-    missing cells. Nothing is imputed: a value filled in before the split would
-    leak test-fold statistics into training, and this experiment exists to
-    measure leakage. Restricting to complete cases instead would shrink the IN
-    and OUT regimes unevenly — genes in Badonyi's training set are better
-    annotated — which would confound the very contrast being tested.
-
-    CI resamples families, not genes (R7.3) — `genes` here are real gene ids
-    (needed for run_histgb_cv's per_gene_f1), so the cluster array is derived
-    via pfam_map, unlike proteome_mechanism.py where `groups` already IS the
-    cluster id and no mapping step is needed.
-    """
+    """NaN-native family-split CV."""
     splits = list(family_split_indices(groups, n_folds, seed))
     agg, oof = run_histgb_cv(X, y, splits, seed=seed, genes=genes, label=label, return_oof=True)
     if compute_ci and oof is not None:
@@ -181,16 +126,11 @@ def run_probe(
     return agg
 
 
-# ---------------------------------------------------------------------------
-# Run one regime (ALL / IN / OUT) for one seed
-# ---------------------------------------------------------------------------
-
-
 def run_regime(
     regime_name, mask, X_prot, X_bad, y, genes, groups, n_folds, seed, pfam_map,
     compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES,
 ):
-    """Apply mask, run V2, V_bad, V2+bad. Skip if not enough variants."""
+    """Apply mask, run V2/V_bad/V2+bad; skip if fewer than 100 variants."""
     n_var = int(mask.sum())
     if n_var < 100:
         print(f"  [{regime_name}] skipped: only {n_var} variants")
@@ -243,13 +183,8 @@ def run_seed(
 ):
     print(f"\n{'='*72}\nSEED {seed}\n{'='*72}")
 
-    # y stays string labels — the probe runners and compute_metrics key on
-    # `classes` (strings). Note: sklearn's LabelEncoder sorts classes alphabetically
-    # ("DN","GOF","LOF"), which does NOT match MECHANISM_CLASSES order
-    # ("GOF","DN","LOF") — an int-encoded y here previously also mislabeled
-    # per-class counts positionally against CLASSES.
+    # y stays string labels: LabelEncoder alphabetical order mismatches MECHANISM_CLASSES order.
 
-    # Restrict to variants whose gene has a Pfam family (same as result_15)
     gene_pfam = np.array([pfam_map.get(g) for g in genes])
     has_fam = gene_pfam != None  # noqa
     fam_mask = has_fam
@@ -276,14 +211,8 @@ def run_seed(
     return seed_results
 
 
-# ---------------------------------------------------------------------------
-# Aggregation across seeds
-# ---------------------------------------------------------------------------
-
-
 def aggregate_seeds(all_seed):
-    """Aggregate macro-F1 / per-gene-F1 / AUROC means across seeds, per regime
-    and per variant."""
+    """Aggregate macro-F1, per-gene-F1, and AUROC across seeds per regime and variant."""
     summary = {"n_seeds": len(all_seed), "regimes": {}}
     regimes = ["ALL", "IN", "OUT"]
     variants = ["V2", "V_bad", "V2_bad"]
@@ -324,10 +253,7 @@ def aggregate_seeds(all_seed):
                     out[f"{v}_auroc_{cls}_mean"] = float(np.mean(vals))
                     out[f"{v}_auroc_{cls}_std"] = float(np.std(vals))
 
-            # Per-seed family-resampled macro-F1 CI, pooled across seeds — a
-            # separate source of uncertainty from the seed-to-seed std above
-            # (within-seed resampling uncertainty vs. across-seed spread of the
-            # point estimate). A seed whose CI was suppressed is skipped.
+            # CI bounds pooled across seeds — separate from seed-to-seed std.
             for bound in ("ci_low", "ci_high"):
                 vals = [
                     x[v]["ci"]["macro_f1"].get(bound)

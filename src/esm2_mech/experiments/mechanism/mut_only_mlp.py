@@ -1,28 +1,7 @@
-"""
-MLP probe on raw WT and mutant embeddings (not delta) — testing whether a
-nonlinear probe can recover GOF / DN / LOF mechanism from mutant or WT
-mean-pooled embeddings, where the delta probe gave only the small ~0.36
-family-split floor.
+"""MLP probe on raw WT and mutant embeddings (not delta).
 
-Question: linear mut_only ≈ linear WT-only on family-split (both ~0.39 F1,
-GOF AUROC ~0.73–0.80). Does an MLP find more in the mutant embedding than
-the linear probe does — i.e., does the mutation-induced shift, extracted
-nonlinearly from the full mutant representation, carry mechanism signal
-beyond family identity?
-
-Three features tested:
-  1. mut_only_mean   — mutant sequence embedding, mean-pooled (1280-D)
-  2. wt_only_mean    — WT sequence embedding, mean-pooled (1280-D)
-  3. concat_wt_mut   — [WT; mut] concatenation (2560-D)
-
-Uses the EXACT same PyTorch MLP and class-weighting as mlp.py
-(imports `run_mlp_probe`), so numbers are directly comparable to the
-delta_mean MLP family-split F1 = 0.364 / 0.352 published in result_7.
-
-Usage:
-    python -m esm2_mech.experiments.mechanism.mut_only_mlp \\
-        --family_split \\
-        --out run_0/mut_only_mlp_seed0.json
+Tests whether a nonlinear probe recovers GOF/DN/LOF from mut_only, wt_only,
+or concat_wt_mut embeddings under gene-split and family-split CV.
 """
 
 import argparse
@@ -46,14 +25,7 @@ print = functools.partial(print, flush=True)
 
 
 def load_variants_and_labels(variants_file: str | None = None):
-    """Load the mechanism variants row-aligned to the embeddings.
-
-    Reads VALID_VARIANTS_JSON (the variant list the embeddings were extracted
-    from, same identity and order as the .npy rows) unless an explicit
-    variants_file is given. Labels are collapsed to GOF/DN/LOF via the shared
-    _label_3class (HI/AR -> LOF), so an unexpected mechanism raises rather than
-    being silently mislabeled. Returns (variants, labels, genes).
-    """
+    """Load mechanism variants row-aligned to the embeddings."""
     path = variants_file or VALID_VARIANTS_JSON
     with open(path) as f:
         variants = json.load(f)

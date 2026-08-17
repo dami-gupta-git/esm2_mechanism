@@ -1,15 +1,4 @@
-"""
-Build Badonyi 2024 feature columns for the merged gene set.
-
-Source: Badonyi & Marsh 2024 PLOS One (DOI: 10.1371/journal.pone.0307312)
-        S3 Table — per-gene SVM probability scores pDN, pGOF, pLOF for 20,365 human proteins.
-        Downloaded from OSF: https://osf.io/download/7bftj/
-
-Outputs:
-    data/badonyi_features.tsv          — gene x 10 columns (raw + missing + familyresid)
-    data/badonyi_features_aligned.npy  — float32 matrix aligned to gene_universe.tsv row order
-    data/badonyi_feature_columns.json  — column metadata
-"""
+"""Build Badonyi 2024 feature columns (pDN, pGOF, pLOF) for the merged gene set."""
 
 import json
 import numpy as np
@@ -42,7 +31,6 @@ def load_badonyi_predictions():
     df = pd.read_excel(S3_PATH, sheet_name="table_S3")
     df = df[["gene", "pDN", "pGOF", "pLOF"]].copy()
     df = df.rename(columns={"gene": "gene_badonyi"})
-    # Some gene symbols may differ — keep both for join diagnostics
     print(f"  Loaded {len(df)} genes from S3 Table")
     return df
 
@@ -54,28 +42,13 @@ def load_gene_universe():
 
 
 def compute_family_residuals(df, pfam, feature_cols, observed_mask=None):
-    """For each continuous feature, subtract the mean of observed genes in the same Pfam family.
-
-    observed_mask: boolean Series (same index as df) marking genes with real (non-imputed)
-    scores. Family means are computed only over observed genes, so imputed values don't
-    contaminate the family mean. If None, all genes are treated as observed.
-
-    Residual assignment rules:
-    - All genes in a family with ≥2 observed members: residual = value − observed family mean.
-      _familyresid_missing = 0. (Family mean computed from observed-only genes.)
-    - Singletons or families with ≤1 observed member: residual = NaN, _familyresid_missing = 1.
-    is_singleton_family_badonyi = 1 when the gene has no Pfam entry or its family has ≤1 observed
-    member — exactly matching the condition that produces NaN residuals above.
-    The raw _missing column (e.g. pDN_missing) already records whether the score was imputed;
-    _familyresid_missing records only whether a residual exists, not how the score was obtained.
-    """
+    """Subtract the observed-only Pfam family mean from each continuous feature."""
     df = df.copy()
     df["pfam_family"] = df["gene"].map(pfam)
 
     if observed_mask is None:
         observed_mask = pd.Series(True, index=df.index)
 
-    # Count observed genes per family — mirrors the residual loop's ≥2 observed condition.
     observed_family_counts = (
         df.loc[observed_mask, "pfam_family"].dropna().value_counts().to_dict()
     )
@@ -99,10 +72,6 @@ def compute_family_residuals(df, pfam, feature_cols, observed_mask=None):
             if len(observed_in_fam) <= 1:
                 continue
             fam_mean = df.loc[observed_in_fam, col].mean()
-            # Only assign a residual (and clear the missing flag) for members
-            # whose own raw score is observed. A family member with a NaN raw
-            # score gets NaN here too, with resid_missing staying 1 — the flag
-            # must track the same condition as the computed value.
             df.loc[observed_in_fam, resid_col] = df.loc[observed_in_fam, col] - fam_mean
             df.loc[observed_in_fam, resid_missing_col] = 0
 
@@ -120,10 +89,6 @@ def main():
     merged = load_gene_universe()
     pfam = dict(zip(merged["gene"], merged["pfam_family"]))
 
-    # Join on gene symbol (case-sensitive exact match). A duplicate gene symbol
-    # would make the index non-unique and crash the .map below
-    # (InvalidIndexError), so detect collisions explicitly, report them, and keep
-    # the first occurrence rather than letting pandas raise or silently guess.
     dup_mask = bad["gene_badonyi"].duplicated(keep=False)
     if dup_mask.any():
         dup_genes = sorted(bad.loc[dup_mask, "gene_badonyi"].unique())
@@ -150,8 +115,6 @@ def main():
 
     feature_cols = ["pDN", "pGOF", "pLOF"]
 
-    # Guard: if join matched nothing, all scores are NaN — median would be NaN and
-    # fillna would be a no-op, silently writing an all-NaN matrix.
     for col in feature_cols:
         if result[col].notna().sum() == 0:
             raise ValueError(
@@ -160,15 +123,11 @@ def main():
                 "Refusing to fabricate imputation values."
             )
 
-    # Missingness indicators
     for col in feature_cols:
         result[f"{col}_missing"] = result[col].isna().astype(float)
 
-    # observed_mask: genes with real scores (used for family mean computation)
     observed_mask = result["pDN_missing"] == 0
 
-    # Family-mean-centred residuals — computed on observed values only, so
-    # family means are never contaminated by a fabricated value
     result = compute_family_residuals(result, pfam, feature_cols, observed_mask)
 
     for col in feature_cols:
@@ -178,11 +137,9 @@ def main():
             f"observed subset and recompute CV splits)"
         )
 
-    # Save TSV — raw values, NaN preserved (no imputation)
     result.to_csv(OUT_TSV, sep="\t", index=False)
     print(f"\nSaved TSV: {OUT_TSV} ({result.shape})")
 
-    # Build aligned numpy matrix (same row order as gene_universe.tsv)
     numeric_cols = (
         feature_cols
         + [f"{c}_missing" for c in feature_cols]
@@ -194,7 +151,6 @@ def main():
     save_npy(OUT_NPY, mat)
     print(f"Saved NPY: {OUT_NPY} shape={mat.shape}")
 
-    # Column metadata
     col_meta = []
     for c in numeric_cols:
         kind = (

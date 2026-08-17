@@ -1,36 +1,6 @@
-"""
-Clinical Utility Experiment (Result 14)
-========================================
-
-Evaluates whether gene-level proteome features can identify GOF and DN
-outliers within the ClinGen HI=3 gene set using HONEST out-of-sample
-probabilities from family-split cross-validation.
-
-Key design choices vs naive version:
-  - Family-split CV (5-fold, same scheme as results 11-13): HI=3 genes are
-    scored only when their Pfam family is in the held-out test fold.
-    Singleton genes (no Pfam annotation) are each treated as their own
-    family and appear in exactly one test fold.
-  - Two feature sets: FULL (37 features including *_missing indicators) and
-    NO-MISSING (18 features: 9 substantive + 9 family residuals only).
-    Report AUROCs for both; delta shows how much signal is study-bias artefact.
-  - Missing features are never imputed. The two feature-set arms use a
-    NaN-native booster, which consumes missing cells directly; the MLP arm
-    cannot, so it is restricted to fully-observed genes with folds recomputed
-    on that subset. That subset is ~35% of genes and is not a random sample
-    (it excludes singleton and small-family genes), so the MLP arm describes a
-    different population than the other two and is not directly comparable.
-  - Baselines within HI=3: mis_z alone, paralog_count alone, PPI_degree alone.
-    (pLI/LOEUF are tautologically at chance within HI=3 and are reported only
-    to confirm the tautology, not as a meaningful comparison.)
-  - Bootstrap CIs: 1000 gene-level resamples on the HI=3 subset.
-  - Calibration: reliability diagram + ECE for LogReg probabilities.
-  - PR curve reported alongside ROC; operating-point stats shown prominently.
-
-Usage
------
-    python scripts/clinical_utility.py
-    python scripts/clinical_utility.py
+"""Evaluate clinical utility of proteome features for GOF/DN identification
+within ClinGen HI=3 genes, using honest out-of-sample probabilities from
+family-split cross-validation.
 """
 
 from __future__ import annotations
@@ -65,9 +35,6 @@ print = functools.partial(print, flush=True)
 
 warnings.filterwarnings("ignore")
 
-# ---------------------------------------------------------------------------
-# Paths
-# ---------------------------------------------------------------------------
 from esm2_mech.utils.paths import (
     RESULTS_DIR,
     GENE_UNIVERSE,
@@ -89,22 +56,9 @@ PROTEOME_FEATURES = PROTEOME_FEATURES_ALIGNED
 PROTEOME_COLS = PROTEOME_FEATURE_COLUMNS_JSON
 GENE_FEATURES_TSV = PROTEOME_FEATURES_TSV
 
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
-# AR handling — KNOWN DIVERGENCE FROM THE RUNBOOK PIPELINE.
-# This proteome experiment maps AR -> None, i.e. AR (autosomal-recessive) variants
-# are DROPPED from the 3-class task entirely. The runbook experiments
-# (mechanism/loaders.py `_label_3class` and esm3/esm3_mechanism.py, used in
-# RUNBOOK_4 Experiments 1/3/4) instead collapse AR -> LOF, keeping those variants
-# in the LOF class. So the runbook pipeline and these proteome scripts train on
-# DIFFERENT populations: AR variants are LOF examples there, absent here.
-# This is deliberate and left as-is: the proteome_features experiments are NOT part
-# of RUNBOOK_4 (they are older/exploratory), so they are not reconciled to the
-# live pipeline's AR->LOF rule. If these scripts are ever promoted into the runbook,
-# decide AR's fate once and route this through a single shared collapse helper in
-# utils/constants.py rather than this local map. Treating AR as a zygosity/inheritance
-# descriptor rather than a clean molecular-mechanism call is the rationale for dropping it.
+# AR handling — KNOWN DIVERGENCE. These proteome experiments drop AR entirely;
+# the runbook pipeline (RUNBOOK_4) collapses AR -> LOF. Not reconciled because
+# these scripts are exploratory, not part of the runbook.
 MECH_MAP = {"LOF": "LOF", "HI": "LOF", "GOF": "GOF", "DN": "DN", "AR": None}
 CLASSES = MECHANISM_CLASSES
 N_BOOTSTRAP = 1000
@@ -112,15 +66,8 @@ RANDOM_STATE = 42
 CONF_THRESHOLD = 0.4
 
 
-# ---------------------------------------------------------------------------
-# Feature set definitions
-# ---------------------------------------------------------------------------
 def get_feature_sets(feature_names: list[str]) -> dict[str, list[int]]:
-    """
-    Returns column index lists for two feature sets:
-      FULL    — all 37 columns (substantive + missingness indicators + residuals)
-      NO_MISS — 18 columns: 9 substantive + 9 family residuals, no *_missing flags
-    """
+    """Return column index lists for FULL (37 cols) and NO_MISS (18 cols) feature sets."""
     miss_suffixes = ("_missing",)
     no_miss_idx = [
         i
@@ -131,20 +78,12 @@ def get_feature_sets(feature_names: list[str]) -> dict[str, list[int]]:
     return {"FULL": full_idx, "NO_MISS": no_miss_idx}
 
 
-# ---------------------------------------------------------------------------
-# Family-split CV helpers
-# ---------------------------------------------------------------------------
 def build_family_folds(
     families: np.ndarray,
     n_folds: int,
     rng: np.random.Generator,
 ) -> list[np.ndarray]:
-    """
-    Assign each unique Pfam family to one of n_folds folds.
-    Singleton genes (family = NaN or '') each form their own singleton family
-    and are distributed evenly across folds.
-    Returns a list of n_folds arrays, each containing gene indices for that fold's test set.
-    """
+    """Assign each unique Pfam family to one fold; singletons each form their own family."""
     unique_fams = []
     seen = set()
     singleton_counter = 0
@@ -177,12 +116,7 @@ def build_family_folds(
 def _scatter_aligned_proba(
     probs: np.ndarray, test_rows: np.ndarray, raw_proba: np.ndarray, clf_classes
 ) -> None:
-    """Write a fold's predictions into `probs` at `test_rows`, aligned to CLASSES.
-
-    `clf_classes` are the integer-encoded labels actually fitted in this fold; a
-    class absent from the fold's train split stays a zero column rather than
-    being assumed present positionally.
-    """
+    """Write a fold's predictions into `probs` at `test_rows`, aligned to CLASSES."""
     aligned = np.zeros((len(test_rows), len(CLASSES)), dtype=np.float32)
     for col, cls_idx in enumerate(clf_classes):
         aligned[:, cls_idx] = raw_proba[:, col]
@@ -190,7 +124,7 @@ def _scatter_aligned_proba(
 
 
 def _warn_unpredicted(probs: np.ndarray, arm: str) -> None:
-    """Report rows left without a prediction. They stay NaN — never a uniform prior."""
+    """Report rows left without a prediction."""
     n_unpredicted = int(np.isnan(probs[:, 0]).sum())
     if n_unpredicted:
         print(
@@ -207,21 +141,7 @@ def run_family_split_cv(
     feature_idx: list[int],
     le: LabelEncoder,
 ) -> np.ndarray:
-    """
-    5-fold family-split CV. Returns out-of-sample probability matrix (n_genes, 3).
-
-    NaN-native (HistGradientBoosting): the proteome matrix has missing cells in
-    every feature — the family-residual columns are ~44-61% missing by design
-    (singletons and families with <2 observed members). Imputing them, as this
-    previously did via a whole-dataset median in build_proteome_features, both
-    leaked test-fold statistics into training and produced cells
-    indistinguishable from real measurements. Complete-case restriction is not
-    an option here either: it would keep only ~35% of genes, and the genes it
-    drops are precisely the singleton/small-family ones whose treatment this
-    family-split experiment is measuring. The booster consumes NaN directly,
-    learning a default branch direction per split, so no value is fabricated
-    and no gene is dropped.
-    """
+    """5-fold family-split CV returning out-of-sample probability matrix (n_genes, 3)."""
     n = len(y)
     probs = np.full((n, len(CLASSES)), np.nan)
 
@@ -257,17 +177,7 @@ def run_mlp_cv(
     families: np.ndarray,
     feature_idx: list[int],
 ) -> np.ndarray:
-    """MLP family-split CV with oversampling on train folds, on the observed subset.
-
-    MLPClassifier cannot consume NaN, so this arm is restricted to genes with
-    every used feature observed and the family folds are recomputed on that
-    subset (never imputed). Restricted-out genes keep NaN probabilities and are
-    dropped downstream. The subset is much smaller than the full gene set and is
-    not a random sample of it — genes drop out because they are singletons or
-    sit in small families — so this arm's metrics describe a different, better-
-    annotated population than the NaN-native arms and are not directly
-    comparable to them.
-    """
+    """MLP family-split CV on the fully-observed gene subset (MLPClassifier cannot consume NaN)."""
     n = len(y)
     probs = np.full((n, len(CLASSES)), np.nan)
 
@@ -329,9 +239,6 @@ def run_mlp_cv(
     return probs
 
 
-# ---------------------------------------------------------------------------
-# Bootstrap CI helper
-# ---------------------------------------------------------------------------
 def bootstrap_auroc(
     y_true: np.ndarray,
     y_score: np.ndarray,
@@ -356,9 +263,6 @@ def bootstrap_auroc(
     )
 
 
-# ---------------------------------------------------------------------------
-# Calibration helper
-# ---------------------------------------------------------------------------
 def compute_ece(y_true: np.ndarray, y_prob: np.ndarray, n_bins: int = 10) -> float:
     """Expected calibration error (binary)."""
     bin_edges = np.linspace(0, 1, n_bins + 1)
@@ -373,9 +277,6 @@ def compute_ece(y_true: np.ndarray, y_prob: np.ndarray, n_bins: int = 10) -> flo
     return float(ece)
 
 
-# ---------------------------------------------------------------------------
-# HI=3 analysis
-# ---------------------------------------------------------------------------
 def hi3_analysis(
     df: pd.DataFrame,
     probs_lr_full: np.ndarray,
@@ -408,7 +309,6 @@ def hi3_analysis(
         "n_hi3_LOF": int((hi3["mechanism_3class"] == "LOF").sum()),
     }
 
-    # --- H1: GOF vs LOF ---
     hi3_gl = hi3[hi3["mechanism_3class"].isin(["GOF", "LOF"])]
     y_gof = (hi3_gl["mechanism_3class"] == "GOF").astype(int).values
 
@@ -442,7 +342,6 @@ def hi3_analysis(
                 results[f"H1_baseline_{feat}_AUROC"] = pt
                 results[f"H1_baseline_{feat}_CI95"] = [lo, hi_]
 
-    # --- H2: DN vs LOF ---
     hi3_dl = hi3[hi3["mechanism_3class"].isin(["DN", "LOF"])]
     y_dn = (hi3_dl["mechanism_3class"] == "DN").astype(int).values
 
@@ -460,7 +359,6 @@ def hi3_analysis(
             results[f"H2_DN_vs_LOF_AUROC_{label}"] = pt
             results[f"H2_DN_vs_LOF_CI95_{label}"] = [lo, hi_]
 
-    # --- H3: missingness ablation delta ---
     results["H3_missingness_ablation_delta_GOF"] = (
         results["H1_GOF_vs_LOF_AUROC_LR_FULL"]
         - results["H1_GOF_vs_LOF_AUROC_LR_NOMISS"]
@@ -469,7 +367,6 @@ def hi3_analysis(
         results["H2_DN_vs_LOF_AUROC_LR_FULL"] - results["H2_DN_vs_LOF_AUROC_LR_NOMISS"]
     )
 
-    # --- Calibration (GOF binary, LR_FULL) ---
     y_cal = (hi3["mechanism_3class"] == "GOF").astype(int).values
     p_cal = hi3["P_GOF_lr_full"].values
     # Drop genes with no prediction (NaN) — calibrate over real predictions only.
@@ -481,7 +378,6 @@ def hi3_analysis(
     )
     results["calibration_ECE_GOF_LR_FULL"] = ece
 
-    # --- Named outlier gene report ---
     outliers = hi3[hi3["mechanism_3class"].isin(["GOF", "DN"])].copy()
     results["outlier_genes"] = (
         outliers[
@@ -500,7 +396,6 @@ def hi3_analysis(
         .to_dict(orient="records")
     )
 
-    # --- Operating point stats ---
     for label, col in [("LR_FULL", "P_GOF_lr_full"), ("LR_NOMISS", "P_GOF_lr_nomiss")]:
         above = hi3[hi3[col] > CONF_THRESHOLD]
         tp = (above["mechanism_3class"] == "GOF").sum()
@@ -514,7 +409,6 @@ def hi3_analysis(
         )
         results[f"GOF_flagged_at_0.4_{label}"] = int(tp + fp)
 
-    # --- Plots ---
     _plot_roc_pr(hi3, results, out_dir)
     _plot_calibration(hi3, out_dir)
     _plot_prob_distributions(hi3, out_dir)
@@ -714,9 +608,6 @@ def _plot_prob_distributions(hi3: pd.DataFrame, out_dir: Path) -> None:
     plt.close()
 
 
-# ---------------------------------------------------------------------------
-# Unannotated gene analysis (H4)
-# ---------------------------------------------------------------------------
 def unannotated_analysis(
     df: pd.DataFrame,
     probs_lr_full: np.ndarray,
@@ -818,9 +709,6 @@ def _plot_unannotated(
     plt.close()
 
 
-# ---------------------------------------------------------------------------
-# Feature importance (full-data fit, for interpretability only)
-# ---------------------------------------------------------------------------
 def feature_importance_plot(
     X: np.ndarray,
     y: np.ndarray,
@@ -829,21 +717,10 @@ def feature_importance_plot(
     le: LabelEncoder,
     out_dir: Path,
 ) -> dict:
-    """
-    Fit a single full-data model on the NO_MISS feature set and rank features by
-    permutation importance.
+    """Fit a full-data model on NO_MISS features and rank by permutation importance.
 
-    Permutation importance rather than LogReg coefficients: the NO_MISS columns
-    still contain NaN (the family-residual block is ~44-61% missing by design),
-    which LogReg cannot fit, and imputing to recover coefficients would fabricate
-    the values this experiment is meant to avoid. Permutation importance works
-    directly on the NaN-native booster — it measures the drop in balanced
-    accuracy when one column is shuffled, so it is unsigned (magnitude only, no
-    direction of effect, unlike a coefficient).
-
-    Importance is measured on the training data, so these values describe what
-    the fitted model relies on, not what generalizes; the CV arms above carry
-    the out-of-sample claims.
+    Permutation importance rather than LogReg coefficients because the NO_MISS
+    columns still contain NaN (~44-61% missing), which LogReg cannot fit.
     """
     X_sub = X[:, feature_idx]
 
@@ -903,12 +780,8 @@ def feature_importance_plot(
     }
 
 
-# ---------------------------------------------------------------------------
-# Decision rule
-# ---------------------------------------------------------------------------
 def apply_decision_rule(hi3_results: dict) -> str:
-    # Missing/uncomputable AUROC must stay NaN, not 0.0 — a fabricated 0.0 would
-    # emit a confident "NULL" verdict for a metric that was never computed.
+    # Missing AUROC must stay NaN, not 0.0 — a fabricated 0.0 would emit a confident verdict for an uncomputed metric.
     auroc = hi3_results.get("H1_GOF_vs_LOF_AUROC_LR_FULL", float("nan"))
     ci = hi3_results.get("H1_GOF_vs_LOF_CI95_LR_FULL", [None, None])
     ci_str = f" [95% CI {ci[0]:.3f}–{ci[1]:.3f}]" if ci[0] is not None else ""
@@ -922,9 +795,6 @@ def apply_decision_rule(hi3_results: dict) -> str:
         return f"NULL: GOF AUROC within HI=3 = {auroc:.3f}{ci_str} < 0.55"
 
 
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
 def main(out_dir: Path) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -977,8 +847,6 @@ def main(out_dir: Path) -> None:
     print("Running family-split CV (MLP FULL features)...")
     oos_probs_mlp_full = run_mlp_cv(X_labeled, y, families, full_idx)
 
-    # Map OOS probabilities back to full df index space
-    # (oos_probs are indexed 0..len(labeled)-1; need to map to df.index)
     probs_lr_full_df = np.full((len(df), len(CLASSES)), np.nan)
     probs_lr_nomiss_df = np.full((len(df), len(CLASSES)), np.nan)
     probs_mlp_full_df = np.full((len(df), len(CLASSES)), np.nan)
@@ -1009,7 +877,6 @@ def main(out_dir: Path) -> None:
     )
     print("Saved gene_labels.tsv and gene_mechanism_probs.tsv")
 
-    # --- HI=3 analysis ---
     print("\nRunning ClinGen HI=3 analysis...")
     hi3_results, hi3_df = hi3_analysis(
         df,
@@ -1069,7 +936,6 @@ def main(out_dir: Path) -> None:
     print(f"    Precision: {hi3_results['GOF_precision_at_0.4_LR_FULL']:.3f}")
     print(f"    Flagged:   {hi3_results['GOF_flagged_at_0.4_LR_FULL']}")
 
-    # --- Unannotated analysis ---
     print("\nRunning unannotated gene analysis...")
     unann_results = unannotated_analysis(df, probs_lr_full_df, le, out_dir)
     print(
@@ -1080,13 +946,11 @@ def main(out_dir: Path) -> None:
         f"  Predicted distribution: {unann_results['H4_predicted_distribution_LogReg']}"
     )
 
-    # --- Feature importance (no-miss, full-data fit for interpretability) ---
     print("\nComputing feature importance (NO-MISS features)...")
     feat_results = feature_importance_plot(
         X_labeled, y, feature_names, nomiss_idx, le, out_dir
     )
 
-    # --- Compile and save ---
     all_results = {
         "design": "family-split CV (5-fold), out-of-sample probabilities",
         "n_labeled_genes": len(labeled),
@@ -1132,7 +996,6 @@ def run_seed(
     full_idx = feat_sets["FULL"]
     nomiss_idx = feat_sets["NO_MISS"]
 
-    # Override RANDOM_STATE with seed
     global RANDOM_STATE
     RANDOM_STATE = seed
 

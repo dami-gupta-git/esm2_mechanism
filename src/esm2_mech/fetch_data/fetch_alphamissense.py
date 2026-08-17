@@ -1,19 +1,4 @@
-"""
-Fetch AlphaMissense scores for target variants.
-
-Stream the AlphaMissense bulk file and extract scores for variants in
-pathogenicity_valid_variants.json.
-
-  Input : data/valid_variants.json,
-          data/pathogenicity_valid_variants.json,
-          data/cache/AlphaMissense_aa_substitutions.tsv.gz  (auto-downloaded)
-  Output: data/alphamissense_scores_full.json
-
-Usage:
-    python -m esm2_mech.fetch_data.fetch_alphamissense
-    python -m esm2_mech.fetch_data.fetch_alphamissense --no-download --am-file /path/to/file.tsv.gz
-    python -m esm2_mech.fetch_data.fetch_alphamissense --out /path/to/output.json
-"""
+"""Fetch AlphaMissense scores for pathogenicity variants."""
 
 from __future__ import annotations
 
