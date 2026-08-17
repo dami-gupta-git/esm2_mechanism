@@ -48,7 +48,7 @@ experiments (1, 2, 5, 7) actually read — the proteome-features and Badonyi dow
 
 ---
 
-## Stage 0 — preconditions
+## 0. Preconditions
 
 Must all hold before `RUN_NAME` is flipped. 0.0 gets the environment running, 0.2–0.4 are the
 substance of the run, 0.5–0.6 fix how results may be read, 0.7–0.9 protect provenance.
@@ -108,7 +108,7 @@ for p in ['numpy','scipy','scikit-learn','pandas','torch','fair-esm','xgboost','
 
 ---
 
-## Stage 1 — build gene list
+## 1. Build gene list
 
 This builds the list of genes every later experiment uses. Each gene in the output is labelled with
 the disease mechanism its variants are known to cause: dominant-negative (DN), loss-of-function
@@ -127,116 +127,102 @@ and the disagreement is recorded in the output.
 
 This step reads the two files listed in Prerequisites above.
 
-| Command | Description | Inputs | Outputs |
-|---|---|---|---|
-| `python -m esm2_mech.fetch_data.build_gene_list` | Build merged gene list | `downloads/DiseaseMech_Stability_VEPS.xlsx`, `downloads/AllG2P.csv` | `data/gene_list.tsv` |
+| Step | Command | Description | Inputs | Outputs |
+|---|---|---|---|---|
+| 1.1 | `python -m esm2_mech.fetch_data.build_gene_list` | Build merged gene list | `downloads/DiseaseMech_Stability_VEPS.xlsx`, `downloads/AllG2P.csv` | `data/gene_list.tsv` |
 
 ---
 
-## Stage 2 — fetch variant data (CPU)
+## 2. Fetch variant data (CPU)
 
-The merged variant set and its annotations form a shared foundation used by Experiments 1, 2, 3, 5, and 7 (they are not experiment-specific).
+The merged variant set and its annotations form a shared foundation used by sections 4, 5, 6, and 7 (they are not experiment-specific).
 The ClinVar fetch is the slowest step because it queries NCBI once per gene. Genes whose esearch/esummary calls fail are neither written nor cached, so re-running the same command automatically retries only those genes.
 
 | Step | Command | Description | Inputs | Outputs |
 |---|---|---|---|---|
-| 1 | `python -m esm2_mech.fetch_data.fetch_variants --step gerasimavicius` | Fetch Gerasimavicius variants | `downloads/DiseaseMech_Stability_VEPS.xlsx` | `gerasimavicius_variants.json` |
-| 2 | `python -m esm2_mech.fetch_data.fetch_variants --step clinvar` | Fetch ClinVar variants | `gene_list.tsv` | `clinvar_variants.tsv` |
-| 3 | `python -m esm2_mech.fetch_data.fetch_variants --step merge --pathogenic_only` | Merge variant datasets (pathogenic only, drops likely pathogenic) | `gerasimavicius_variants.json`, `gene_list.tsv`, `clinvar_variants.tsv` | `variants.json` |
-| 4 | `python -m esm2_mech.fetch_data.fetch_sequences` | Fetch UniProt sequences | `variants.json` | `cache/sequences.json` |
-| 5 | `python -m esm2_mech.fetch_data.fetch_annotations --step pfam` | Fetch Pfam families | `variants.json` | `pfam_families.json` |
-| 6 | `python -m esm2_mech.fetch_data.fetch_alphamissense_mechanism` | Fetch AlphaMissense scores | `variants.json` | `alphamissense_scores_full.json` |
-| 7 | `python -m esm2_mech.fetch_data.build_valid_variants` | Build filtered variant list | `variants.json`, `cache/sequences.json` | `valid_variants.json` |
-| 8 | `python -m esm2_mech.fetch_data.fetch_pathogenicity_variants` | Fetch balanced pathogenic/benign ClinVar variants for Experiment 2 (separate from step 2's pathogenic-only fetch) | `variants.json` | `clinvar_pathogenicity_variants.json`, `clinvar_pathogenicity_variants.params.json` |
+| 2.1 | `python -m esm2_mech.fetch_data.fetch_variants --step gerasimavicius` | Fetch Gerasimavicius variants | `downloads/DiseaseMech_Stability_VEPS.xlsx` | `gerasimavicius_variants.json` |
+| 2.2 | `python -m esm2_mech.fetch_data.fetch_variants --step clinvar` | Fetch ClinVar variants | `gene_list.tsv` | `clinvar_variants.tsv` |
+| 2.3 | `python -m esm2_mech.fetch_data.fetch_variants --step merge --pathogenic_only` | Merge variant datasets (pathogenic only, drops likely pathogenic) | `gerasimavicius_variants.json`, `gene_list.tsv`, `clinvar_variants.tsv` | `variants.json` |
+| 2.4 | `python -m esm2_mech.fetch_data.fetch_sequences` | Fetch UniProt sequences | `variants.json` | `cache/sequences.json` |
+| 2.5 | `python -m esm2_mech.fetch_data.fetch_annotations --step pfam` | Fetch Pfam families | `variants.json` | `pfam_families.json` |
+| 2.6 | `python -m esm2_mech.fetch_data.fetch_alphamissense_mechanism` | Fetch AlphaMissense scores | `variants.json` | `alphamissense_scores_full.json` |
+| 2.7 | `python -m esm2_mech.fetch_data.build_valid_variants` | Build filtered variant list | `variants.json`, `cache/sequences.json` | `valid_variants.json` |
+| 2.8 | `python -m esm2_mech.fetch_data.fetch_pathogenicity_variants` | Fetch balanced pathogenic/benign ClinVar variants for section 5 (separate from step 2.2's pathogenic-only fetch) | `variants.json` | `clinvar_pathogenicity_variants.json`, `clinvar_pathogenicity_variants.params.json` |
 
-Step 8 is network-only, so it runs locally rather than on the pod, unlike Experiment 2's embedding step below. It caches its output and only re-fetches if `--max_per_gene_per_class` (default 20) or `--fetch_seed` (default 42) change from what produced the cached file.
+Step 2.8 is network-only, so it runs locally rather than on the pod, unlike section 5's embedding step below. It caches its output and only re-fetches if `--max_per_gene_per_class` (default 20) or `--fetch_seed` (default 42) change from what produced the cached file.
 
 ---
 
-## Stage 3 — embed variants (GPU)
+## 3. Embed variants (GPU)
 
 This turns each variant's wildtype and mutant sequence into ESM-2 embeddings. It is a shared
-foundation, not specific to one experiment — Experiment 1 reads it directly. It must be
-re-extracted whenever Stage 2 (fetch variant data) produces a new `valid_variants.json`; an
+foundation, not specific to one experiment — section 4 reads it directly. It must be
+re-extracted whenever section 2 (fetch variant data) produces a new `valid_variants.json`; an
 embedding array built from an older variant list will not line up with the current one.
 
 This script runs on the pod but reads `data/valid_variants.json` and `data/cache/sequences.json`
-from the pod's own filesystem, so copy those two files there first, before launching the script:
+from the pod's own filesystem, so copy those two files there first, before launching the script.
 
-```bash
-scp -i ~/.ssh/id_runpod_2 -P <pod-port> data/valid_variants.json root@<pod-ip>:/workspace/repo/data/
-scp -i ~/.ssh/id_runpod_2 -P <pod-port> data/cache/sequences.json root@<pod-ip>:/workspace/repo/data/cache/
-```
+| Step | Command | Description |
+|---|---|---|
+| 3.1 | `scp -i ~/.ssh/id_runpod_2 -P <pod-port> data/valid_variants.json root@<pod-ip>:/workspace/repo/data/` | Copy valid_variants.json to pod |
+| 3.2 | `scp -i ~/.ssh/id_runpod_2 -P <pod-port> data/cache/sequences.json root@<pod-ip>:/workspace/repo/data/cache/` | Copy sequences.json to pod |
+| 3.3 | `python -m esm2_mech.embeddings.embed_variants --model esm2_t33_650M_UR50D` | Extract ESM-2 embeddings. Inputs: `valid_variants.json`, `cache/sequences.json`. Outputs: `embeddings_wt_mean.npy`, `embeddings_mut_mean.npy`, `embeddings_wt_pos.npy`, `embeddings_mut_pos.npy`, `embedded_variants.json` |
+| 3.4 | `scp -i ~/.ssh/id_runpod_2 -P <pod-port> root@<pod-ip>:/workspace/repo/data/embeddings/esm2_t33_650M_UR50D/*.npy root@<pod-ip>:/workspace/repo/data/embeddings/esm2_t33_650M_UR50D/embedded_variants.json data/embeddings/esm2_t33_650M_UR50D/` | Copy embeddings and metadata back to local machine |
 
-| Command | Description | Inputs | Outputs |
-|---|---|---|---|
-| `python -m esm2_mech.embeddings.embed_variants --model esm2_t33_650M_UR50D` | Extract ESM-2 embeddings | `valid_variants.json`, `cache/sequences.json` | `embeddings_wt_mean.npy`, `embeddings_mut_mean.npy`, `embeddings_wt_pos.npy`, `embeddings_mut_pos.npy`, `embedded_variants.json` |
-
-This runs on the pod, so afterward copy the output files back to your local machine (all
-subsequent steps run on CPU and read from the local `data/embeddings/` directory):
-
-```bash
-scp -i ~/.ssh/id_runpod_2 -P <pod-port> \
-    root@<pod-ip>:/workspace/repo/data/embeddings/esm2_t33_650M_UR50D/*.npy \
-    root@<pod-ip>:/workspace/repo/data/embeddings/esm2_t33_650M_UR50D/embedded_variants.json \
-    data/embeddings/esm2_t33_650M_UR50D/
-```
-
-**Output:** `data/embeddings/<ESM2_MODEL>/embeddings_{wt,mut}_{mean,pos}.npy`,
-`embedded_variants.json`. After this runs, confirm all four `.npy` arrays have the same row count
-as `embedded_variants.json` and `valid_variants.json`. Spot-check a few rows to confirm the
-three files are in the same row order.
+After step 3.4, confirm all four `.npy` arrays have the same row count as `embedded_variants.json`
+and `valid_variants.json`. Spot-check a few rows to confirm the three files are in the same row
+order.
 
 ---
 
-## Experiment 1 — ESM-2 delta-embedding mechanism
+## 4. ESM-2 delta-embedding mechanism
 
 This experiment tests whether ESM-2 embeddings can predict a variant's mechanism (DN/LOF/GOF), and
 whether that prediction still holds once genes from the same protein family are kept out of the
 opposite train/test split, so the model can't just be recognizing the family.
 
-Three scripts used in this experiment (`classify_by_mechanism`, `single_source_mechanism`,
+Several scripts used in this experiment (`classify_by_mechanism`, `single_source_mechanism`,
 `mechanism_delta_family_split`) all accept `--no_ci` (skip the confidence-interval computation,
 for faster iteration only), `--n_boot N` (number of bootstrap resamples, default 1000), and
 `--n_permutations N` (run a permutation test, default 0 = off). None of the commands below pass
 `--no_ci`, so confidence intervals are computed by default everywhere in this experiment.
 
-### Step 1 — run analysis (CPU)
+### Run analysis (CPU)
 
-This step runs five scripts. The first four each read the embeddings and write their own result
-file, and don't depend on each other, so they can run in any order or in parallel. The fifth,
-`leakage_fraction`, does not look at the embeddings at all — it just reads the result files the
-first four already wrote and combines their numbers. So it has to run last, after the other four
-have finished.
+Steps 4.1–4.4 each read the embeddings and write their own result file, and don't depend on each
+other, so they can run in any order or in parallel. Step 4.5 (`leakage_fraction`) does not look at
+the embeddings at all — it just reads the result files the earlier steps already wrote and combines
+their numbers. So it has to run last, after the others have finished.
 
 Each script's confidence-interval computation already uses all available CPU cores (`n_jobs=-1`
-in `utils/bootstrap.py`), so running the four in parallel on one machine means they split those
+in `utils/bootstrap.py`), so running them in parallel on one machine means they split those
 cores rather than each getting the full machine — a faster or more-cored CPU (local or a RunPod
 CPU instance) helps more than trying to parallelize them on a small machine:
 
 | Step | Command | Description | Inputs | Outputs |
 |---|---|---|---|---|
-| 1 | `python -m esm2_mech.experiments.mechanism.classify_by_mechanism --seeds 5` | Gene-split vs family-split baseline comparison | `variants.json`, `cache/sequences.json`, `pfam_families.json`, `embeddings_*.npy`, `alphamissense_scores_full.json` | `results/<run>/family_split_baselines_seed{0..4}.json` |
-| 2 | `python -m esm2_mech.experiments.mechanism.mlp --seeds 5` | Nonlinear classifiers (MLP, GBM, RF, kNN) on delta embeddings | `valid_variants.json`, `pfam_families.json`, `embeddings_*.npy` | `results/<run>/nonlinear_results_seed{0..4}.json` |
-| 3 | `python -m esm2_mech.experiments.mechanism.family_clustering --seeds 5` | Diagnostic: do ESM-2 embeddings cluster by Pfam family? (kNN purity, within/between distance, family probe, mechanism–family overlap) — explains the homology leakage in the WT-only baseline | `valid_variants.json`, `pfam_families.json`, `embeddings_wt_mean.npy`, `embeddings_mut_mean.npy` | `results/<run>/family_clustering.json` |
-| 4 | `python -m esm2_mech.experiments.mechanism.naive_baseline` | Measured majority-class / stratified macro-F1 + AUROC floor (DummyClassifier, 5 seeds, same CV) — the chance reference for the other tables | `valid_variants.json`, `pfam_families.json` | `results/<run>/naive_baseline.json` |
-| 5 | `python -m esm2_mech.experiments.mechanism.leakage_fraction` | Derived diagnostic: leakage fraction per feature = (gene − family macro-F1) / (gene − chance), the share of each feature's above-chance gene-split score attributable to family recognition | `family_split_baselines_seed{0..4}.json`, `naive_baseline.json`, `family_clustering.json` | `results/<run>/leakage_fraction.json` |
+| 4.1 | `python -m esm2_mech.experiments.mechanism.classify_by_mechanism --seeds 5` | Gene-split vs family-split baseline comparison | `variants.json`, `cache/sequences.json`, `pfam_families.json`, `embeddings_*.npy`, `alphamissense_scores_full.json` | `results/<run>/family_split_baselines_seed{0..4}.json` |
+| 4.2 | `python -m esm2_mech.experiments.mechanism.mlp --seeds 5` | Nonlinear classifiers (MLP, GBM, RF, kNN) on delta embeddings | `valid_variants.json`, `pfam_families.json`, `embeddings_*.npy` | `results/<run>/nonlinear_results_seed{0..4}.json` |
+| 4.3 | `python -m esm2_mech.experiments.mechanism.family_clustering --seeds 5` | Diagnostic: do ESM-2 embeddings cluster by Pfam family? (kNN purity, within/between distance, family probe, mechanism–family overlap) — explains the homology leakage in the WT-only baseline | `valid_variants.json`, `pfam_families.json`, `embeddings_wt_mean.npy`, `embeddings_mut_mean.npy` | `results/<run>/family_clustering.json` |
+| 4.4 | `python -m esm2_mech.experiments.mechanism.naive_baseline` | Measured majority-class / stratified macro-F1 + AUROC floor (DummyClassifier, 5 seeds, same CV) — the chance reference for the other tables | `valid_variants.json`, `pfam_families.json` | `results/<run>/naive_baseline.json` |
+| 4.5 | `python -m esm2_mech.experiments.mechanism.leakage_fraction` | Derived diagnostic: leakage fraction per feature = (gene − family macro-F1) / (gene − chance), the share of each feature's above-chance gene-split score attributable to family recognition | `family_split_baselines_seed{0..4}.json`, `naive_baseline.json`, `family_clustering.json` | `results/<run>/leakage_fraction.json` |
 
 All outputs write to `results/<run>/`. Each of `classify_by_mechanism`, `single_source_mechanism`,
 and `mechanism_delta_family_split` accepts `--no_ci` (skip the confidence-interval computation, for
 faster iteration only), `--n_boot N` (number of bootstrap resamples, default 1000), and
 `--n_permutations N` (run a permutation test, default 0 = off).
 
-### Step 2 — permutation tests (CPU, seed 0 only)
+### Permutation tests (CPU, seed 0 only)
 
 A permutation test checks whether the family-split score is better than what pure chance would
-produce, by repeatedly shuffling the labels and re-scoring. Run this separately from Step 1, in its
+produce, by repeatedly shuffling the labels and re-scoring. Run this separately from steps 4.1–4.5, in its
 own tmux window, because it is far more expensive: the MLP-probe feature `wt_only_mean` re-trains
 the probe once per shuffle.
 
-| Command | Description | Outputs |
-|---|---|---|
-| `python -m esm2_mech.experiments.mechanism.classify_by_mechanism --seeds 1 --n_permutations 1000` | Permutation p-value for the family-split score, seed 0 only | `results/<run>/...` |
+| Step | Command | Description | Outputs |
+|---|---|---|---|
+| 4.6 | `python -m esm2_mech.experiments.mechanism.classify_by_mechanism --seeds 1 --n_permutations 1000` | Permutation p-value for the family-split score, seed 0 only | `results/<run>/...` |
 
 This only needs to run at seed 0: a permutation test builds its own reference distribution by
 shuffling, so running it at every seed would mostly re-measure the same seed-to-seed noise this
@@ -247,21 +233,21 @@ powered, and no claim in this run depends on an MLP permutation p-value.
 Before launching on the pod, time a single re-fit so you know whether the full 1,000-permutation
 run will take hours or days.
 
-### Step 3 — single-source robustness check (CPU)
+### Single-source robustness check (CPU)
 
-Re-runs the Step 1 probe on the subset of variants that came from a single curation source
+Re-runs the step 4.1 probe on the subset of variants that came from a single curation source
 (Gerasimavicius), instead of the merged ClinVar + Gerasimavicius set, as a check that the mechanism
 result isn't an artifact of merging two differently-curated datasets.
 
-| Command | Description | Outputs |
-|---|---|---|
-| `python -m esm2_mech.experiments.mechanism.single_source_mechanism --seeds 5` | Re-run the mechanism probe on the Gerasimavicius-only subset | `results/<run>/single_source_gerasimavicius/{family_split_baselines_seed{0..4}.json, aggregate.json, naive_baseline.json}` |
+| Step | Command | Description | Outputs |
+|---|---|---|---|
+| 4.7 | `python -m esm2_mech.experiments.mechanism.single_source_mechanism --seeds 5` | Re-run the mechanism probe on the Gerasimavicius-only subset | `results/<run>/single_source_gerasimavicius/{family_split_baselines_seed{0..4}.json, aggregate.json, naive_baseline.json}` |
 
 ---
 
-## Experiment 2 — pathogenicity positive control
+## 5. Pathogenicity positive control
 
-Tests whether the same delta embeddings that show no mechanism signal in Experiment 1 can still
+Tests whether the same delta embeddings that show no mechanism signal in section 4 can still
 tell pathogenic from benign ClinVar variants, confirming they carry usable signal at all. Pass
 criterion: `delta_mean` MLP AUROC ≥ 0.85.
 
@@ -269,69 +255,62 @@ A small neural network (the MLP) is trained to look at a variant's embedding and
 is disease-causing or harmless. AUROC is a score from 0.5 to 1 measuring how well it separates the
 two: 0.5 means no better than a coin flip, 1.0 means it always gets it right. The 0.85 threshold is
 set in advance — scoring at least that well is treated as proof the embeddings carry real
-biological signal, since Experiment 1 found mechanism prediction near chance.
+biological signal, since section 4 found mechanism prediction near chance.
 
-This experiment uses its own ClinVar pull, separate from Stage 2's. Stage 2's step 2 fetched
-pathogenic variants only, to label genes by mechanism; Stage 2's step 8
+This experiment uses its own ClinVar pull, separate from section 2's. Step 2.2 fetched
+pathogenic variants only, to label genes by mechanism; step 2.8
 (`fetch_pathogenicity_variants`) fetches benign variants too, in equal numbers to pathogenic ones
-per gene, to train a pathogenic-vs-benign classifier. Run Stage 2 step 8 before this experiment, if
+per gene, to train a pathogenic-vs-benign classifier. Run step 2.8 before this experiment, if
 not already done — its output is this experiment's input.
 
-One script runs the remaining two phases in sequence: extracting ESM-2 embeddings for the fetched
+One script runs the remaining phases in sequence: extracting ESM-2 embeddings for the fetched
 variants (GPU), then running the pathogenic-vs-benign probe (CPU). Because the first phase needs a
-GPU, this runs on the pod — copy `clinvar_pathogenicity_variants.json` there first, the same way
-Stage 3 copies its inputs to the pod before embedding:
+GPU, this runs on the pod.
 
-```bash
-scp -i ~/.ssh/id_runpod_2 -P <pod-port> data/clinvar_pathogenicity_variants.json root@<pod-ip>:/workspace/repo/data/
-python -m esm2_mech.experiments.pathogenicity.pathogenicity_control --model esm2_t33_650M_UR50D
-```
+| Step | Command | Description |
+|---|---|---|
+| 5.1 | `scp -i ~/.ssh/id_runpod_2 -P <pod-port> data/clinvar_pathogenicity_variants.json root@<pod-ip>:/workspace/repo/data/` | Copy pathogenicity variants to pod |
+| 5.2 | `python -m esm2_mech.experiments.pathogenicity.pathogenicity_control --model esm2_t33_650M_UR50D` | Embed the fetched pathogenicity variants, run the pathogenic-vs-benign probe. Inputs: `clinvar_pathogenicity_variants.json`, `cache/sequences.json`, `pfam_families.json`. Outputs: `data/embeddings/esm2_t33_650M_UR50D/pathogenicity_{wt,mut}_mean.npy`, `data/embeddings/esm2_t33_650M_UR50D/pathogenicity_meta.json`, `results/run_biorxiv/pathogenicity_control.json` |
+| 5.3 | `scp -i ~/.ssh/id_runpod_2 -P <pod-port> root@<pod-ip>:/workspace/repo/data/embeddings/esm2_t33_650M_UR50D/pathogenicity_*.npy root@<pod-ip>:/workspace/repo/data/embeddings/esm2_t33_650M_UR50D/pathogenicity_meta.json root@<pod-ip>:/workspace/repo/results/run_biorxiv/pathogenicity_control.json data/embeddings/esm2_t33_650M_UR50D/` | Copy embeddings and results back to local machine |
 
-| Command | Description | Inputs | Outputs |
-|---|---|---|---|
-| `python -m esm2_mech.experiments.pathogenicity.pathogenicity_control --model esm2_t33_650M_UR50D` | Embed the fetched pathogenicity variants, run the pathogenic-vs-benign probe | `clinvar_pathogenicity_variants.json`, `cache/sequences.json`, `pfam_families.json` | `data/embeddings/esm2_t33_650M_UR50D/pathogenicity_{wt,mut}_mean.npy`, `data/embeddings/esm2_t33_650M_UR50D/pathogenicity_meta.json`, `results/run_biorxiv/pathogenicity_control.json` |
-
-This script errors immediately if `clinvar_pathogenicity_variants.json` is missing, rather than
-fetching it itself — the fetch is Stage 2 step 8's job, run locally, so pod GPU time is never spent
+Step 5.2 errors immediately if `clinvar_pathogenicity_variants.json` is missing, rather than
+fetching it itself — the fetch is step 2.8's job, run locally, so pod GPU time is never spent
 on network I/O.
 
 Classes here are balanced by construction (equal pathogenic and benign variants per gene), but
 genes still cluster into protein families, so confidence intervals resample whole genes rather
-than individual variants, the same as in Experiment 1. The resulting report should note that the
+than individual variants, the same as in section 4. The resulting report should note that the
 probe measures how well it discriminates pathogenic from benign variants, not a calibrated risk
 estimate for any one variant.
 
-Copy the two embedding arrays and `results/run_biorxiv/pathogenicity_control.json` back to the
-local machine once the script finishes, the same way Stage 3's embeddings were copied back.
-
 ---
 
-## Experiment 5 — geometry of the pathogenicity direction
+## 6. Geometry of the pathogenicity direction
 
-Experiment 2 shows the delta embeddings separate pathogenic from benign variants. This experiment
+Section 5 shows the delta embeddings separate pathogenic from benign variants. This experiment
 asks what that pathogenicity direction actually is: whether it is one shared direction across
 protein families or many family-specific ones, whether it is more about how far a variant moves
 the embedding or which way, whether it is explained by simple substitution chemistry (e.g. amino
 acid size or charge change) or by ESM-2's own sense of how conserved a position is, and whether the
 same direction transfers to the stability and mechanism tasks.
 
-This experiment sits downstream of Experiment 2: its first step reads the pathogenicity variant
+This experiment sits downstream of section 5: its first step reads the pathogenicity variant
 set and embedding arrays that earlier steps produced, so run those first.
 
-### Step 1 — build canonical variant list (CPU)
+### Build canonical variant list (CPU)
 
-Experiment 2's embedding step drops any variant it cannot embed (missing sequence, position out of
+Section 5's embedding step drops any variant it cannot embed (missing sequence, position out of
 range, wildtype-residue mismatch), so the `.npy` embedding rows are a subset of the fetched variant
 list, not a 1:1 match. This step is a re-indexing step: it takes the pathogenicity variants and embeddings 
-Experiment 2 already produced and re-materializes them in a row-aligned file for the geometry scripts to read directly.
+Section 5 already produced and re-materializes them in a row-aligned file for the geometry scripts to read directly.
 
-| Command | Description | Inputs | Outputs |
-|---|---|---|---|
-| `python -m esm2_mech.experiments.geometry.build_canonical_pathogenicity` | Re-index the pathogenicity variant set to match the embedding row order | `clinvar_pathogenicity_variants.json`, `data/embeddings/esm2_t33_650M_UR50D/pathogenicity_{wt,mut}_mean.npy`, `pathogenicity_meta.json` | `pathogenicity_valid_variants_canonical.json` |
+| Step | Command | Description | Inputs | Outputs |
+|---|---|---|---|---|
+| 6.1 | `python -m esm2_mech.experiments.geometry.build_canonical_pathogenicity` | Re-index the pathogenicity variant set to match the embedding row order | `clinvar_pathogenicity_variants.json`, `data/embeddings/esm2_t33_650M_UR50D/pathogenicity_{wt,mut}_mean.npy`, `pathogenicity_meta.json` | `pathogenicity_valid_variants_canonical.json` |
 
-### Step 2 — geometry probes (CPU)
+### Geometry probes (CPU)
 
-One script runs four probes in sequence, each writing its own result file. `--probe` can restrict
+One script runs the probes in sequence, each writing its own result file. `--probe` can restrict
 this to a subset (e.g. `--probe magnitude geometry`); the default is all four.
 
 | Probe | What it asks |
@@ -341,114 +320,107 @@ this to a subset (e.g. `--probe magnitude geometry`); the default is all four.
 | transfer | Under one identical protocol, does a direction fit on one half of the data transfer to the other half, compared for the pathogenicity, stability, and mechanism tasks? |
 | biochem | How much of the direction is explained by context-free substitution chemistry (BLOSUM62 score, and changes in hydropathy, charge, and volume) rather than sequence context? |
 
-| Command | Description | Inputs | Outputs |
-|---|---|---|---|
-| `python -m esm2_mech.experiments.geometry.run_geometry --seeds 5` | Run all four geometry probes | `pathogenicity_valid_variants_canonical.json`, `data/embeddings/esm2_t33_650M_UR50D/pathogenicity_{wt,mut}_mean.npy` | `results/<run>/magnitude_direction/probe_results.json`, `geometry_results.json`, `transfer_contrast.json`, `probe4_axis_identity.json` |
+| Step | Command | Description | Inputs | Outputs |
+|---|---|---|---|---|
+| 6.2 | `python -m esm2_mech.experiments.geometry.run_geometry --seeds 5` | Run all geometry probes | `pathogenicity_valid_variants_canonical.json`, `data/embeddings/esm2_t33_650M_UR50D/pathogenicity_{wt,mut}_mean.npy` | `results/<run>/magnitude_direction/probe_results.json`, `geometry_results.json`, `transfer_contrast.json`, `probe4_axis_identity.json` |
 
 Only the magnitude probe has cluster-bootstrap confidence intervals wired (`--no_ci` / `--n_boot`
-apply to it only); the other three are rank and correlation probes with no CI attached. `--seeds`
-applies to all four.
+apply to it only); the others are rank and correlation probes with no CI attached. `--seeds`
+applies to all probes.
 
-### Step 3 — conservation extract (GPU)
+### Conservation extract (GPU)
 
 For each canonical pathogenicity variant, mask its wildtype position and read ESM-2's own predicted
 probability of the wildtype residue, the mutant residue, and the entropy over all 20 amino acids at
 that position — i.e., how confidently the model expects that position to be conserved. This is the
 one GPU step in this experiment; it can share a pod session with any other GPU work already running.
 
-Copy the canonical variant file and sequences to the pod first, the same way Stage 3 copies its
-inputs:
+| Step | Command | Description |
+|---|---|---|
+| 6.3 | `scp -i ~/.ssh/id_runpod_2 -P <pod-port> data/pathogenicity_valid_variants_canonical.json root@<pod-ip>:/workspace/repo/data/` | Copy canonical variants to pod |
+| 6.4 | `scp -i ~/.ssh/id_runpod_2 -P <pod-port> data/cache/sequences.json root@<pod-ip>:/workspace/repo/data/cache/` | Copy sequences to pod |
+| 6.5 | `python -m esm2_mech.experiments.geometry.conservation_axis --extract` | Masked-LM forward pass per variant to score how conserved its position is. Inputs: `pathogenicity_valid_variants_canonical.json`, `cache/sequences.json`. Outputs: `data/conservation_pathogenicity.npy`, `data/conservation_pathogenicity_meta.json` |
+| 6.6 | `scp -i ~/.ssh/id_runpod_2 -P <pod-port> root@<pod-ip>:/workspace/repo/data/conservation_pathogenicity.npy root@<pod-ip>:/workspace/repo/data/conservation_pathogenicity_meta.json data/` | Copy conservation outputs back to local machine |
 
-```bash
-scp -i ~/.ssh/id_runpod_2 -P <pod-port> data/pathogenicity_valid_variants_canonical.json root@<pod-ip>:/workspace/repo/data/
-scp -i ~/.ssh/id_runpod_2 -P <pod-port> data/cache/sequences.json root@<pod-ip>:/workspace/repo/data/cache/
-```
+### Conservation analysis (CPU)
 
-| Command | Description | Inputs | Outputs |
-|---|---|---|---|
-| `python -m esm2_mech.experiments.geometry.conservation_axis --extract` | Masked-LM forward pass per variant to score how conserved its position is | `pathogenicity_valid_variants_canonical.json`, `cache/sequences.json` | `data/conservation_pathogenicity.npy`, `data/conservation_pathogenicity_meta.json` |
-
-Copy the two output files back to the local machine once this finishes.
-
-### Step 4 — conservation analysis (CPU)
-
-Compares the conservation features from Step 3 to the pathogenicity direction found in Step 2, on
+Compares the conservation features from step 6.5 to the pathogenicity direction found in step 6.2, on
 the same family-split protocol. Pre-registered gates: K1 conservation alone reaches AUROC ≥ 0.85
 (the axis is mostly conservation); K2 adding the embedding delta on top of conservation improves
 AUROC by ≥ 0.02 (the embedding carries pathogenicity signal beyond conservation).
 
-| Command | Description | Inputs | Outputs |
-|---|---|---|---|
-| `python -m esm2_mech.experiments.geometry.conservation_axis` | Compare conservation features to the embedding-derived pathogenicity direction | `conservation_pathogenicity.npy`, `pathogenicity_valid_variants_canonical.json`, `data/embeddings/esm2_t33_650M_UR50D/pathogenicity_{wt,mut}_mean.npy` | `results/<run>/magnitude_direction/conservation_axis.json` |
+| Step | Command | Description |
+|---|---|---|
+| 6.7 | `python -m esm2_mech.experiments.geometry.conservation_axis` | Compare conservation features to the embedding-derived pathogenicity direction. Inputs: `conservation_pathogenicity.npy`, `pathogenicity_valid_variants_canonical.json`, `data/embeddings/esm2_t33_650M_UR50D/pathogenicity_{wt,mut}_mean.npy`. Output: `results/<run>/magnitude_direction/conservation_axis.json` |
 
 run_biorxiv adds gene-cluster confidence intervals to each pathogenicity AUROC in this experiment
-(resampled over genes, not individual variants, the same as Experiments 1 and 2), and a paired
+(resampled over genes, not individual variants, the same as sections 4 and 5), and a paired
 cluster-bootstrap confidence interval on the K2 gap (conservation-alone AUROC vs. conservation-plus-
 embedding-delta AUROC) and on the pathogenicity-vs-mechanism transfer contrast.
 
 ---
 
-## Experiment 7 — megascale stability positive control
+## 7. Megascale stability positive control
 
-A second positive control, alongside Experiment 2, with a purely physical label instead of a
+A second positive control, alongside section 5, with a purely physical label instead of a
 clinically curated one: Tsuboyama et al. 2023's measured folding stability change (ΔΔG) for about
 177,000 single point mutations across about 181 natural protein domains. Because this label comes
 from a direct physical measurement rather than expert curation, it rules out the concern that
-Experiment 2's pathogenicity signal is really the embeddings picking up on curation patterns rather
+section 5's pathogenicity signal is really the embeddings picking up on curation patterns rather
 than biology.
 
 The embedding step is skipped: `megascale_{wt,mut}_{mean,pos}.npy` already exist locally, extracted
 in an earlier run, and are unaffected by this run's ClinVar refresh since this experiment has no
-ClinVar dependency. Step 3's H3 test does read `valid_variants.json` and the Experiment 1
-embeddings, so run Step 3 after Experiment 1 Step 1 has produced a current `valid_variants.json`.
+ClinVar dependency. Step 7.2's H3 test does read `valid_variants.json` and the section 4
+embeddings, so run step 7.2 after step 4.1 has produced a current `valid_variants.json`.
 
-### Step 1 — assign Pfam families (CPU)
+### Assign Pfam families (CPU)
 
 Assigns each Tsuboyama domain to a Pfam family via HMMER, so later steps can hold out whole families
 rather than whole domains when testing whether the stability signal generalizes. Needs `hmmscan` on
 the system path and a hmmpress-ed Pfam-A database; skip this step if `megascale_domain_families.json`
 is already present and non-empty (it is, as of this writing).
 
-| Command | Description | Inputs | Outputs |
-|---|---|---|---|
-| `python -m esm2_mech.experiments.stability.build_domain_families` | Assign each Tsuboyama domain to a Pfam family | `megascale_tsuboyama_variants.json`, `downloads/megascale/Pfam-A.hmm` | `data/megascale_domain_families.json` |
+| Step | Command | Description | Inputs | Outputs |
+|---|---|---|---|---|
+| 7.1 | `python -m esm2_mech.experiments.stability.build_domain_families` | Assign each Tsuboyama domain to a Pfam family | `megascale_tsuboyama_variants.json`, `downloads/megascale/Pfam-A.hmm` | `data/megascale_domain_families.json` |
 
-### Step 2 — embed variants (GPU) — skipped
+### Embed variants (GPU) — skipped
 
 Not run in run_biorxiv. `megascale_{wt,mut}_{mean,pos}.npy` under
 `data/embeddings/esm2_t33_650M_UR50D/` are reused from an earlier run.
 
-### Step 3 — linear probe (CPU)
+### Linear probe (CPU)
 
 Fits a Ridge regression from the embeddings to ΔΔG under three cross-validation schemes — random
 split, holding out whole domains, and holding out whole Pfam families — and tests four pre-registered
 hypotheses: H1, the random-split correlation (Spearman ρ) reaches at least 0.5; H2, that correlation
 drops by no more than 0.05 when switching to a family-split (a big drop would mean the model is
 recognizing domains rather than learning a general stability signal); H3, projecting the fitted
-stability direction out of Experiment 1's mechanism-classification features does not raise the
+stability direction out of section 4's mechanism-classification features does not raise the
 family-split mechanism score by more than 0.01 (stability and mechanism should be separable); H4, the
 per-domain spread in correlation stays tight (standard deviation ≤ 0.10).
 
-| Command | Description | Inputs | Outputs |
-|---|---|---|---|
-| `python -m esm2_mech.experiments.stability.megascale_stability` | Ridge probe from embeddings to ΔΔG under random/domain/family splits | `megascale_tsuboyama_variants.json`, `megascale_domain_families.json`, `data/embeddings/esm2_t33_650M_UR50D/megascale_{wt,mut}_{mean,pos}.npy`, `valid_variants.json` | `results/<run>/megascale_stability/per_protein_spearman.json`, `h3_stability_projection.json`, `summary.json` |
+| Step | Command | Description | Inputs | Outputs |
+|---|---|---|---|---|
+| 7.2 | `python -m esm2_mech.experiments.stability.megascale_stability` | Ridge probe from embeddings to ΔΔG under random/domain/family splits | `megascale_tsuboyama_variants.json`, `megascale_domain_families.json`, `data/embeddings/esm2_t33_650M_UR50D/megascale_{wt,mut}_{mean,pos}.npy`, `valid_variants.json` | `results/<run>/megascale_stability/per_protein_spearman.json`, `h3_stability_projection.json`, `summary.json` |
 
-### Step 4 — nonlinear probe (GPU)
+### Nonlinear probe (GPU)
 
-Repeats Step 3's three-way split comparison with a small neural network (MLP) alongside Ridge, plus
+Repeats step 7.2's three-way split comparison with a small neural network (MLP) alongside Ridge, plus
 two exploratory tree-based models (random forest and gradient-boosted trees), to check whether a
 nonlinear model finds more signal than the linear probe, and whether any such gain survives the
 family-split. Only the Ridge and MLP results are pre-registered; the random forest and
 gradient-boosted-tree numbers are exploratory. `--xgboost` adds the gradient-boosted-tree model,
 which needs a GPU; without it, this step is CPU-only.
 
-| Command | Description | Inputs | Outputs |
-|---|---|---|---|
-| `python -m esm2_mech.experiments.stability.megascale_mlp --xgboost` | MLP/random-forest/gradient-boosted-tree probes on the same three splits | `megascale_tsuboyama_variants.json`, `megascale_domain_families.json`, `data/embeddings/esm2_t33_650M_UR50D/megascale_{wt,mut}_{mean,pos}.npy` | `results/<run>/megascale_stability/mlp_summary_xgb.json` |
+| Step | Command | Description | Inputs | Outputs |
+|---|---|---|---|---|
+| 7.3 | `python -m esm2_mech.experiments.stability.megascale_mlp --xgboost` | MLP/random-forest/gradient-boosted-tree probes on the same three splits | `megascale_tsuboyama_variants.json`, `megascale_domain_families.json`, `data/embeddings/esm2_t33_650M_UR50D/megascale_{wt,mut}_{mean,pos}.npy` | `results/<run>/megascale_stability/mlp_summary_xgb.json` |
 
-### Step 5 — controls (CPU)
+### Controls (CPU)
 
-Four exploratory checks on the Step 3 linear signal, not part of the pre-registered H1–H4 verdict:
+Exploratory checks on the step 7.2 linear signal, not part of the pre-registered H1–H4 verdict:
 whether a single feature (the size of the embedding shift, ignoring its direction) recovers most of
 the full signal; the regularization strength chosen by nested cross-validation, so the main probe's
 result isn't an artifact of one fixed setting; a label-shuffle null, where the ΔΔG values are
@@ -456,9 +428,9 @@ randomly permuted and the correlation should collapse to near zero as a leakage 
 correlation changes as more embedding components are kept, to characterize how many dimensions the
 stability signal actually occupies.
 
-| Command | Description | Inputs | Outputs |
-|---|---|---|---|
-| `python -m esm2_mech.experiments.stability.stability_baselines` | Delta-norm baseline, nested-CV alpha, label-shuffle null, and component sweep | `megascale_tsuboyama_variants.json`, `megascale_domain_families.json`, `data/embeddings/esm2_t33_650M_UR50D/megascale_{wt,mut}_{mean,pos}.npy` | `results/<run>/megascale_stability/baselines.json` |
+| Step | Command | Description | Inputs | Outputs |
+|---|---|---|---|---|
+| 7.4 | `python -m esm2_mech.experiments.stability.stability_baselines` | Delta-norm baseline, nested-CV alpha, label-shuffle null, and component sweep | `megascale_tsuboyama_variants.json`, `megascale_domain_families.json`, `data/embeddings/esm2_t33_650M_UR50D/megascale_{wt,mut}_{mean,pos}.npy` | `results/<run>/megascale_stability/baselines.json` |
 
 Gates are unchanged from run6: H1 random-split ρ ≥ 0.5, H2 the random-to-family-split drop stays
 below 0.10, H3 the mechanism-F1 change from projecting out stability stays ≤ +0.01, H4 per-domain ρ
