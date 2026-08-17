@@ -176,9 +176,15 @@ bootstrap on the gap (family-resampled, 1,144 clusters, seed 0).
 
 ## Reading the tables
 
-**1. The delta carries no mechanism signal.** `delta_mean` family-split macro-F1 = 0.288
-[0.268, 0.306], indistinguishable from the 0.290 floor. Its CI sits entirely within the
-floor's own CI [0.270, 0.304]. The permutation test confirms: p = 0.678.
+**1. The linear delta carries no detectable mechanism signal.** `delta_mean` family-split
+macro-F1 = 0.288 [0.268, 0.306], indistinguishable from the 0.290 floor. Its CI sits
+entirely within the floor's own CI [0.270, 0.304]. The permutation test confirms: p = 0.678.
+
+**1b. The nonlinear delta recovers weak signal, but not mechanism understanding.** The MLP
+on `delta_mean` family-split scores 0.375 [0.331, 0.410], above the 0.290 floor but
+substantially below the linear absolute-embedding score (0.502). The signal is also reduced
+under family holdout (kNN drops from 0.414 to 0.357), consistent with residual family
+structure rather than a learned mechanism representation.
 
 **2. The protein embedding predicts mechanism, but through family identity.** `wt_only_mean`
 scores 0.566 on gene-split but drops to 0.502 on family-split. The paired gap is 0.064
@@ -268,10 +274,12 @@ slightly higher `wt_only_mean` score. The delta result is unchanged.
 
 ## Interpretation
 
-The delta embedding carries no linear mechanism signal under family-split, and only weak
-nonlinear signal consistent with residual family structure rather than mechanism
-understanding. The protein embedding's above-floor score comes from family identity
-acting as a proxy for mechanism, not from the mutation itself.
+The linear delta is at the chance floor under family-split (macro-F1 0.288, p = 0.678),
+showing no detectable mechanism signal. Nonlinear probes recover weak signal (MLP 0.375),
+but it is substantially smaller than the absolute-embedding baseline (0.502) and reduced
+under family holdout, consistent with residual family structure rather than a learned
+mechanism representation. The protein embedding's above-floor score comes from family
+identity acting as a proxy for mechanism, not from the mutation itself.
 
 A single missense substitution shifts ESM-2's protein-level embedding only slightly, so
 the delta is dominated by per-variant variation rather than a consistent per-mechanism

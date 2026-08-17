@@ -139,8 +139,8 @@ The same ESM-2 delta embedding and the same pipeline, evaluated on two tasks:
 | Mechanism ([`report_mechanism.md`](report_mechanism.md)) | delta_mean linear | macro-F1 0.288 (at floor) | — |
 
 ESM-2 delta embeddings predict *whether* a mutation is damaging at AUROC ~0.90 but do not
-classify *how* it acts above chance. Because the pipeline recovers known signal cleanly, the
-mechanism null is a real property of the representation, not a pipeline failure.
+classify *how* it acts above chance. The positive control shows that the mechanism result
+cannot be explained by a general failure of the embedding/probe pipeline.
 
 ---
 
