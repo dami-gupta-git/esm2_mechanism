@@ -9,6 +9,13 @@ run_biorxiv intervals are in.
 Methodology: `reports/run6/STATS_PLAN.md`. Step-by-step execution: `RUNBOOK_biorxiv.md` (section
 numbers below refer to that document).
 
+**Amended 2026-08-18 by `PREREGISTRATION_AMENDMENT_1.md`, which governs where the two differ.**
+That amendment renames the two quantities this document both calls the chance floor, re-derives
+the 2A threshold from the majority-class baseline, runs the permutation test on all five seeds,
+pins the three open choices in the 2B verdict, and records the rare-class rule as part of the
+metric definition. The text below is left as written so that what was specified beforehand stays
+readable; the pointers mark each rule the amendment replaces.
+
 ---
 
 ## Part 1 — Rules that apply to every result
@@ -66,6 +73,10 @@ partition.
 
 ### 1.3 Rare classes get a caveat, not a fix
 
+*Amended: the rare-class rule for resampling is now part of the metric definition — see amendment
+1, section 5. Metrics are scored within each fold and averaged, and a resample where any fold
+cannot score a class is discarded whole.*
+
 DN (≈9%, ~150–170 genes) and GOF (≈15%) sit in a regime where a percentile bootstrap undercovers
 for a bounded metric near its boundary with few clusters. No bias correction is applied — over
 ~150 clusters a correction is itself noisy, trading one inaccuracy for another while implying
@@ -108,6 +119,10 @@ retain 2A–2C.
 
 ### 2A — mechanism null (Runbook §4, permutation §4.6)
 
+*Amended: the threshold below is replaced by the measured majority-class floor plus 0.05 — see
+amendment 1, sections 1 and 2. The quantity defined in this paragraph keeps its role as a reported
+comparator under the name nonlinear delta reference, and is not called a floor.*
+
 **The chance floor is a rule, not a fixed number:** the ESM-2 family-split floor from that run's
 own MLP `delta_mean` family-split probe, averaged over five seeds (raising rather than
 substituting if a seed is missing). Run6's floor was 0.380 (it also appears as 0.415/0.418
@@ -118,6 +133,9 @@ flags the floor's movement between runs.
 enough interval straddles anything. 2A is affirmed only if the family-split CI's upper bound falls
 below floor + 0.05; otherwise it is **not adjudicated**, never confirmed. The permutation test runs
 in one direction only: a significant p refutes 2A, a non-significant p does not confirm it.
+
+*Amended: the permutation test runs on all five seeds, not seed 0, and refutes 2A only when at
+least three of the five return p below 0.05 — see amendment 1, section 3.*
 
 **Permutation test — the two headline features are tested differently:**
 
@@ -204,6 +222,10 @@ the null holding.
 - [ ] The MLP has no permutation p-value attached.
 
 ### 2B — homology leakage (Runbook §4.5)
+
+*Amended: the verdict rule below did not say which feature, which quantity, or how the seeds
+combine. All three are pinned in amendment 1, section 4 — `wt_only_mean`, the paired split gap
+rather than the leakage fraction, and an interval excluding zero on at least three of five seeds.*
 
 Paired bootstrap on the gene-split-minus-family-split gap, resampled by family (§1.2). **Would
 overturn 2B:** the split-gap CI spans zero — the leakage account would be unsupported at this
