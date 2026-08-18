@@ -115,10 +115,10 @@ labels, to confirm the embeddings carry signal independent of ClinVar curation.
 | Step | Command | Outputs | Status |
 |---|---|---|---|
 | 7.1 | `python -m esm2_mech.experiments.stability.build_domain_families` | `data/megascale_domain_families.json` | ✅ reused | |
-| 7.2 | `python -m esm2_mech.experiments.stability.megascale_stability` | `results/run_biorxiv/megascale_stability/per_protein_spearman.json`, `h3_stability_projection.json`, `summary.json` | ⚠️ | Log says done but output dir is empty — needs investigation |
-| 7.3 | `python -m esm2_mech.experiments.stability.megascale_mlp` | `results/run_biorxiv/megascale_stability/mlp_summary.json` | 🔄 running | |
-| 7.3a | `python -m esm2_mech.experiments.stability.megascale_mlp --xgboost` | `results/run_biorxiv/megascale_stability/mlp_summary_xgb.json` | ⚠️ | Log says done but output dir is empty — needs investigation |
-| 7.4 | `python -m esm2_mech.experiments.stability.stability_baselines` | `results/run_biorxiv/megascale_stability/baselines.json` | ⚠️ | Crashed mid-run (stopped after step 2/4) |
+| 7.2 | `python -m esm2_mech.experiments.stability.megascale_stability --n_jobs 4` | `results/run_biorxiv/megascale_stability/per_protein_spearman.json`, `h3_stability_projection.json`, `summary.json` | ✅ 2026-08-18 | Reran on new pod after fixing stale pre-loaded data files and adding required `--n_jobs`; verdict matches prior run (LEAKY) |
+| 7.3 | `python -m esm2_mech.experiments.stability.megascale_mlp` | `results/run_biorxiv/megascale_stability/mlp_summary.json` | ✅ 2026-08-18 | cuML GPU RF |
+| 7.4 | `python -m esm2_mech.experiments.stability.megascale_mlp --xgboost` | `results/run_biorxiv/megascale_stability/mlp_summary_xgb.json` | ✅ 2026-08-18 | GPU XGBoost |
+| 7.5 | `python -m esm2_mech.experiments.stability.stability_baselines --n_jobs 64` | `results/run_biorxiv/megascale_stability/baselines.json` | ✅ 2026-08-18 | |
 
 ## 8. Experiment: Enzyme type classification (positive control)
 
@@ -127,7 +127,7 @@ from its WT mean-pooled ESM-2 embedding.
 
 | Step | Command | Outputs | Status |
 |---|---|---|---|
-| 8.1 | `python -m esm2_mech.experiments.proteome_features.enzyme_classification --seeds 5` | `results/run_biorxiv/enzyme_classification/enzyme_classification_summary.json` | ⬜ |
+| 8.1 | `python -m esm2_mech.experiments.proteome_features.enzyme_classification --seeds 5` | `results/run_biorxiv/enzyme_classification/enzyme_classification_summary.json` | ✅ 2026-08-18 | 2E.1 fails (underpowered, F1=0.691 CI covers 0.70); 2E.2 passes; 2E.3 passes on point estimate only |
 
 ## Verification checklist
 

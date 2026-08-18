@@ -423,7 +423,7 @@ scikit-learn gradient boosting. The separate `--xgboost` command runs only XGBoo
 | Step | Command | Description | Inputs | Outputs |
 |---|---|---|---|---|
 | 7.3 | `python -m esm2_mech.experiments.stability.megascale_mlp` | 🔴 GPU for MLP when CUDA is available; tree probes are CPU. Run MLP, random forest, and scikit-learn gradient boosting on the three splits | `megascale_tsuboyama_variants.json`, `megascale_domain_families.json`, `data/embeddings/esm2_t33_650M_UR50D/megascale_{wt,mut}_mean.npy` | `results/<run>/megascale_stability/mlp_summary.json` |
-| 7.3a | `python -m esm2_mech.experiments.stability.megascale_mlp --xgboost` | 🔴 GPU. Run the exploratory XGBoost probe on the three splits | Same as step 7.3 | `results/<run>/megascale_stability/mlp_summary_xgb.json` |
+| 7.4 | `python -m esm2_mech.experiments.stability.megascale_mlp --xgboost` | 🔴 GPU. Run the exploratory XGBoost probe on the three splits | Same as step 7.3 | `results/<run>/megascale_stability/mlp_summary_xgb.json` |
 
 ### Controls (CPU)
 
@@ -437,7 +437,7 @@ stability signal actually occupies.
 
 | Step | Command | Description | Inputs | Outputs |
 |---|---|---|---|---|
-| 7.4 | `python -m esm2_mech.experiments.stability.stability_baselines --n_jobs 4` | 🟢 Light. Delta-norm baseline, nested-CV alpha, label-shuffle null, and component sweep | `megascale_tsuboyama_variants.json`, `megascale_domain_families.json`, `data/embeddings/esm2_t33_650M_UR50D/megascale_{wt,mut}_{mean,pos}.npy` | `results/<run>/megascale_stability/baselines.json` |
+| 7.5 | `python -m esm2_mech.experiments.stability.stability_baselines --n_jobs 4` | 🟢 Light. Delta-norm baseline, nested-CV alpha, label-shuffle null, and component sweep | `megascale_tsuboyama_variants.json`, `megascale_domain_families.json`, `data/embeddings/esm2_t33_650M_UR50D/megascale_{wt,mut}_{mean,pos}.npy` | `results/<run>/megascale_stability/baselines.json` |
 
 `--n_jobs` is required here too, for the same reason as step 7.2 — its per-seed loops fork workers
 against the full embedding matrix. Start at `--n_jobs 4`.
