@@ -5,8 +5,19 @@ from esm2_mech.utils.constants import ESM2_MODEL, ESM3_MODEL, GENE_UNIVERSE_FILE
 
 print = functools.partial(print, flush=True)
 
-PACKAGE_ROOT = Path(__file__).parent.parent.resolve()  # src/esm2_mech/
-PROJECT_ROOT = PACKAGE_ROOT.parent.parent              # esm2_mechanism/
+def _find_project_root() -> Path:
+    p = Path(__file__).resolve().parent
+    while p != p.parent:
+        if (p / "pyproject.toml").exists():
+            return p
+        p = p.parent
+    raise RuntimeError(
+        "Cannot locate project root (no pyproject.toml found above "
+        f"{Path(__file__).resolve()}). Is the package installed editable?"
+    )
+
+PROJECT_ROOT = _find_project_root()
+PACKAGE_ROOT = PROJECT_ROOT / "src" / "esm2_mech"
 
 RUN_NAME="run_biorxiv"
 
