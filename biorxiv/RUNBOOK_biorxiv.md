@@ -405,7 +405,11 @@ per-domain spread in correlation stays tight (standard deviation ≤ 0.10).
 
 | Step | Command | Description | Inputs | Outputs |
 |---|---|---|---|---|
-| 7.2 | `python -m esm2_mech.experiments.stability.megascale_stability` | 🟡 CPU — more cores help. Ridge probe from embeddings to ΔΔG under random/domain/family splits | `megascale_tsuboyama_variants.json`, `megascale_domain_families.json`, `data/embeddings/esm2_t33_650M_UR50D/megascale_{wt,mut}_{mean,pos}.npy`, `valid_variants.json` | `results/<run>/megascale_stability/per_protein_spearman.json`, `h3_stability_projection.json`, `summary.json` |
+| 7.2 | `python -m esm2_mech.experiments.stability.megascale_stability --n_jobs 4` | 🟡 CPU — more cores help. Ridge probe from embeddings to ΔΔG under random/domain/family splits | `megascale_tsuboyama_variants.json`, `megascale_domain_families.json`, `data/embeddings/esm2_t33_650M_UR50D/megascale_{wt,mut}_{mean,pos}.npy`, `valid_variants.json` | `results/<run>/megascale_stability/per_protein_spearman.json`, `h3_stability_projection.json`, `summary.json` |
+
+`--n_jobs` is required, not optional: the per-seed, per-protein, and H3 loops each fork a worker
+that standardizes and fits against most of the 177k×1280 embedding matrix, so an unbounded worker
+count (`-1`) can exhaust RAM. Start at `--n_jobs 4`, watch peak RAM, and raise only if it fits.
 
 ### Nonlinear probe (GPU)
 
@@ -433,7 +437,10 @@ stability signal actually occupies.
 
 | Step | Command | Description | Inputs | Outputs |
 |---|---|---|---|---|
-| 7.4 | `python -m esm2_mech.experiments.stability.stability_baselines` | 🟢 Light. Delta-norm baseline, nested-CV alpha, label-shuffle null, and component sweep | `megascale_tsuboyama_variants.json`, `megascale_domain_families.json`, `data/embeddings/esm2_t33_650M_UR50D/megascale_{wt,mut}_{mean,pos}.npy` | `results/<run>/megascale_stability/baselines.json` |
+| 7.4 | `python -m esm2_mech.experiments.stability.stability_baselines --n_jobs 4` | 🟢 Light. Delta-norm baseline, nested-CV alpha, label-shuffle null, and component sweep | `megascale_tsuboyama_variants.json`, `megascale_domain_families.json`, `data/embeddings/esm2_t33_650M_UR50D/megascale_{wt,mut}_{mean,pos}.npy` | `results/<run>/megascale_stability/baselines.json` |
+
+`--n_jobs` is required here too, for the same reason as step 7.2 — its per-seed loops fork workers
+against the full embedding matrix. Start at `--n_jobs 4`.
 
 Gates are unchanged from run6: H1 random-split ρ ≥ 0.5, H2 the random-to-family-split drop stays
 below 0.10, H3 the mechanism-F1 change from projecting out stability stays ≤ +0.01, H4 per-domain ρ

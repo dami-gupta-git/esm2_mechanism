@@ -9,6 +9,7 @@ import functools
 import json
 import os
 import numpy as np
+from joblib import Parallel, delayed, parallel_config
 from scipy.stats import spearmanr, pearsonr
 
 print = functools.partial(print, flush=True)
@@ -128,29 +129,41 @@ def spearman_cluster_bootstrap_ci(oof, n_resamples=BOOTSTRAP_N_RESAMPLES, seed=0
 
 
 
-def per_protein_spearman(X, y, proteins):
-    """Leave-one-protein-out Ridge ρ for each protein with ≥5 variants."""
+def _fit_one_protein(prot, X, y, proteins):
+    """Fit Ridge leaving out one protein; return (prot, result) or None."""
+    mask = proteins == prot
+    if mask.sum() < 5:
+        return None
+    tr = np.where(~mask)[0]
+    te = np.where(mask)[0]
+    if len(tr) < 10:
+        return None
+    Xtr, Xte = standardize(X[tr], X[te])
+    clf = Ridge(alpha=1.0)
+    clf.fit(Xtr, y[tr])
+    pred = clf.predict(Xte)
+    rho, pval = spearmanr(y[te], pred)
+    return prot, {
+        "spearman": float(rho),
+        "p_value": float(pval),
+        "n_variants": int(mask.sum()),
+    }
+
+
+def per_protein_spearman(X, y, proteins, n_jobs):
+    """Leave-one-protein-out Ridge ρ for each protein with ≥5 variants.
+
+    Each worker standardizes and fits against nearly the full 177k×1280 matrix,
+    so n_jobs is capped explicitly (never -1) to bound peak RAM, and each worker
+    is limited to one BLAS thread so its own linear algebra doesn't oversubscribe
+    the cores the outer Parallel pool already claimed.
+    """
     unique = sorted(set(proteins))
-    results = {}
-    for prot in unique:
-        mask = proteins == prot
-        if mask.sum() < 5:
-            continue
-        tr = np.where(~mask)[0]
-        te = np.where(mask)[0]
-        if len(tr) < 10:
-            continue
-        Xtr, Xte = standardize(X[tr], X[te])
-        clf = Ridge(alpha=1.0)
-        clf.fit(Xtr, y[tr])
-        pred = clf.predict(Xte)
-        rho, pval = spearmanr(y[te], pred)
-        results[prot] = {
-            "spearman": float(rho),
-            "p_value": float(pval),
-            "n_variants": int(mask.sum()),
-        }
-    return results
+    with parallel_config(backend="loky", n_jobs=n_jobs, inner_max_num_threads=1):
+        hits = Parallel()(
+            delayed(_fit_one_protein)(prot, X, y, proteins) for prot in unique
+        )
+    return {prot: result for prot, result in (h for h in hits if h is not None)}
 
 
 
@@ -165,6 +178,7 @@ def run_h3_stability_projection(
     n_folds=5,
     n_seeds=5,
     n_boot=BOOTSTRAP_N_RESAMPLES,
+    n_jobs=1,
 ):
     """Project stability out of mechanism delta_mean; compare family-split F1."""
     from sklearn.linear_model import LogisticRegression
@@ -202,17 +216,15 @@ def run_h3_stability_projection(
     le = LabelEncoder()
     y = le.fit_transform(merged_labels)
 
-    baseline_f1s, projected_f1s = [], []
-    seed0_oof = {}
-    for seed in range(n_seeds):
+    def _run_h3_seed(seed, collect_oof):
         splits = family_split_cv(merged_proteins, pfam_map, n_folds=n_folds, seed=seed)
+        seed_oof = {}
+        seed_baseline_f1 = None
+        seed_projected_f1 = None
         for X, tag in [(merged_scaled, "baseline"), (residuals, "projected")]:
             fold_f1s = []
             oof_y, oof_pred, oof_genes = [], [], []
             for tr, te in splits:
-                # No per-fold StandardScaler: X is already sc_s-standardised, and
-                # re-standardising would undo the projection (see note above). Both
-                # arms get identical handling so the only difference is the projection.
                 clf = LogisticRegression(
                     max_iter=1000,
                     C=1.0,
@@ -224,21 +236,30 @@ def run_h3_stability_projection(
                 fold_f1s.append(
                     float(f1_score(y[te], pred, average="macro", zero_division=0))
                 )
-                if seed == 0:
+                if collect_oof:
                     oof_y.append(y[te])
                     oof_pred.append(pred)
                     oof_genes.append(merged_proteins[te])
             seed_f1_mean, _, _ = mean_std_n(fold_f1s)
             if tag == "baseline":
-                baseline_f1s.append(seed_f1_mean)
+                seed_baseline_f1 = seed_f1_mean
             else:
-                projected_f1s.append(seed_f1_mean)
-            if seed == 0 and oof_y:
-                seed0_oof[tag] = {
+                seed_projected_f1 = seed_f1_mean
+            if collect_oof and oof_y:
+                seed_oof[tag] = {
                     "y_true": np.concatenate(oof_y),
                     "pred": np.concatenate(oof_pred),
                     "genes": np.concatenate(oof_genes),
                 }
+        return seed_baseline_f1, seed_projected_f1, seed_oof
+
+    seed0_bl, seed0_pr, seed0_oof = _run_h3_seed(0, collect_oof=True)
+    with parallel_config(backend="loky", n_jobs=n_jobs, inner_max_num_threads=1):
+        rest = Parallel()(
+            delayed(_run_h3_seed)(seed, False) for seed in range(1, n_seeds)
+        )
+    baseline_f1s = [seed0_bl] + [r[0] for r in rest]
+    projected_f1s = [seed0_pr] + [r[1] for r in rest]
 
     baseline_f1_mean, baseline_f1_std, _ = mean_std_n(baseline_f1s)
     projected_f1_mean, projected_f1_std, _ = mean_std_n(projected_f1s)
@@ -322,7 +343,7 @@ def apply_decision_rule(random_rho, protein_rho, per_prot_std, h2_gap_ci=None):
 
 
 
-def main(compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES):
+def main(compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES, n_jobs=1):
     inputs = load_stability_inputs(include_pos=True)
     variants = inputs.variants
     proteins = inputs.proteins
@@ -337,50 +358,65 @@ def main(compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES):
     global_median = float(np.median(ddg))
     print(f"Global ΔΔG median: {global_median:.4f}")
 
-    results_by_seed = []
-    seed0_oofs = {}
-    for seed in range(N_SEEDS):
-        print(f"\n── Seed {seed} ──")
-
-        splits_by_name = stability_splits(seed, len(variants), proteins, family_map)
-
-        seed_result = {"seed": seed}
-
+    def _run_seed0():
+        """Seed 0 additionally computes cluster-bootstrap CIs (joblib-parallel
+        internally), so it must run alone rather than alongside the other seeds
+        — nesting Parallel inside Parallel just splits the same core pool."""
+        print("\n── Seed 0 ──")
+        splits_by_name = stability_splits(0, len(variants), proteins, family_map)
+        seed_result = {"seed": 0}
+        oofs = {}
         for feat_name, X in [("delta_mean", delta_mean), ("delta_pos", delta_pos)]:
             for split_name, splits in splits_by_name.items():
                 key = f"{feat_name}_{split_name}"
-                if compute_ci and seed == 0:
-                    ci_clusters = (
-                        np.array(
-                            [family_map.get(p, f"__orphan__{p}") for p in proteins]
-                        )
-                        if split_name == "family"
-                        else proteins
+                ci_clusters = (
+                    np.array([family_map.get(p, f"__orphan__{p}") for p in proteins])
+                    if split_name == "family"
+                    else proteins
+                )
+                res, oof = run_ridge_with_auroc(
+                    X, ddg, splits, clusters=ci_clusters, return_oof=True,
+                    median=global_median,
+                )
+                if compute_ci and oof is not None:
+                    res["ci"] = spearman_cluster_bootstrap_ci(
+                        oof, n_resamples=n_boot, seed=0
                     )
-                    res, oof = run_ridge_with_auroc(
-                        X, ddg, splits, clusters=ci_clusters, return_oof=True,
-                        median=global_median,
-                    )
-                    if oof is not None:
-                        res["ci"] = spearman_cluster_bootstrap_ci(
-                            oof, n_resamples=n_boot, seed=seed
-                        )
-                        seed0_oofs[key] = oof
-                else:
-                    res = run_ridge_with_auroc(
-                        X, ddg, splits, median=global_median,
-                    )
+                    oofs[key] = oof
                 seed_result[key] = res
                 if res:
                     print(
                         f"  {key}: ρ={res['spearman_mean']:.3f}±{res['spearman_std']:.3f}  "
                         f"AUROC={res['auroc_mean']:.3f}"
                     )
+        return seed_result, oofs
 
-        results_by_seed.append(seed_result)
+    def _run_seed_plain(seed):
+        """Seeds 1..N-1: no CI, no OOF — independent of each other and of seed 0."""
+        print(f"\n── Seed {seed} ──")
+        splits_by_name = stability_splits(seed, len(variants), proteins, family_map)
+        seed_result = {"seed": seed}
+        for feat_name, X in [("delta_mean", delta_mean), ("delta_pos", delta_pos)]:
+            for split_name, splits in splits_by_name.items():
+                key = f"{feat_name}_{split_name}"
+                res = run_ridge_with_auroc(X, ddg, splits, median=global_median)
+                seed_result[key] = res
+                if res:
+                    print(
+                        f"  {key}: ρ={res['spearman_mean']:.3f}±{res['spearman_std']:.3f}  "
+                        f"AUROC={res['auroc_mean']:.3f}"
+                    )
+        return seed_result
+
+    seed0_result, seed0_oofs = _run_seed0()
+    with parallel_config(backend="loky", n_jobs=n_jobs, inner_max_num_threads=1):
+        remaining_results = Parallel()(
+            delayed(_run_seed_plain)(seed) for seed in range(1, N_SEEDS)
+        )
+    results_by_seed = [seed0_result] + list(remaining_results)
 
     print("\nPer-protein Spearman (leave-one-protein-out)...")
-    per_prot = per_protein_spearman(delta_mean, ddg, proteins)
+    per_prot = per_protein_spearman(delta_mean, ddg, proteins, n_jobs=n_jobs)
     prot_rhos = [entry["spearman"] for entry in per_prot.values()]
     # NaN-guard: constant predictions yield NaN which must not poison per_prot_std.
     per_prot_mean, per_prot_std, n_finite_prot = mean_std_n(prot_rhos)
@@ -455,6 +491,7 @@ def main(compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES):
             n_folds=N_FOLDS,
             n_seeds=N_SEEDS,
             n_boot=n_boot,
+            n_jobs=n_jobs,
         )
         print(
             f"  H3: baseline F1={h3_result['baseline_f1_mean']:.3f}  "
@@ -545,8 +582,15 @@ def _cli():
     parser = argparse.ArgumentParser()
     parser.add_argument("--no_ci", action="store_true", help="skip cluster-bootstrap CIs")
     parser.add_argument("--n_boot", type=int, default=BOOTSTRAP_N_RESAMPLES)
+    parser.add_argument(
+        "--n_jobs", type=int, required=True,
+        help="Max concurrent worker processes for the per-seed, per-protein, and "
+        "H3 parallel loops. Each worker standardizes/fits against most of the "
+        "177k x 1280 matrix, so this must be set explicitly (never -1) to bound "
+        "peak RAM. Start low (e.g. 4), watch peak RAM, raise only if it fits.",
+    )
     args = parser.parse_args()
-    main(compute_ci=not args.no_ci, n_boot=args.n_boot)
+    main(compute_ci=not args.no_ci, n_boot=args.n_boot, n_jobs=args.n_jobs)
 
 
 if __name__ == "__main__":
