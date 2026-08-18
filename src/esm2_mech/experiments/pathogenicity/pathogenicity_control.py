@@ -389,18 +389,26 @@ def main():
     parser.add_argument("--n_jobs", type=int, default=-1, help="parallel jobs for probes (-1 = all cores)")
     parser.add_argument("--no_ci", action="store_true", help="skip cluster-bootstrap CIs")
     parser.add_argument("--n_boot", type=int, default=BOOTSTRAP_N_RESAMPLES)
+    parser.add_argument(
+        "--phase", choices=["embed", "probe", "both"], default="both",
+        help="Run only 'embed' (GPU) or 'probe' (CPU), or 'both' (default)",
+    )
     args = parser.parse_args()
 
     if args.seeds < 1:
         parser.error("--seeds must be >= 1")
 
     variants = load_fetched_variants()
-    embed_phase(variants, model=args.model, batch_size=args.batch_size)
-    results = probe_phase(
-        variants, n_seeds=args.seeds, n_jobs=args.n_jobs,
-        compute_ci=not args.no_ci, n_boot=args.n_boot,
-    )
-    _print_headline(results)
+
+    if args.phase in ("embed", "both"):
+        embed_phase(variants, model=args.model, batch_size=args.batch_size)
+
+    if args.phase in ("probe", "both"):
+        results = probe_phase(
+            variants, n_seeds=args.seeds, n_jobs=args.n_jobs,
+            compute_ci=not args.no_ci, n_boot=args.n_boot,
+        )
+        _print_headline(results)
 
 
 if __name__ == "__main__":

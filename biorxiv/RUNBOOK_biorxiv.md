@@ -267,19 +267,19 @@ pathogenic variants only, to label genes by mechanism; step 2.8
 per gene, to train a pathogenic-vs-benign classifier. Run step 2.8 before this experiment, if
 not already done — its output is this experiment's input.
 
-One script runs the remaining phases in sequence: extracting ESM-2 embeddings for the fetched
-variants (GPU), then running the pathogenic-vs-benign probe (CPU). Because the first phase needs a
-GPU, this runs on the pod.
+The embedding step (GPU) runs on the pod; the probe step (CPU) runs locally after copying the
+embeddings back. The `--phase` flag separates them so the bootstrap gets all your local cores
+instead of burning GPU-hours on the pod.
 
 | Step | Command | Description |
 |---|---|---|
 | 5.1 | `scp -i ~/.ssh/id_runpod_2 -P <pod-port> data/clinvar_pathogenicity_variants.json root@<pod-ip>:/workspace/repo/data/` | Copy pathogenicity variants to pod |
-| 5.1a | `scp -i ~/.ssh/id_runpod_2 -P <pod-port> data/pfam_families.json root@<pod-ip>:/workspace/repo/data/` | Copy the current Pfam mapping to the pod |
-| 5.2 | `python -m esm2_mech.experiments.pathogenicity.pathogenicity_control --model esm2_t33_650M_UR50D` | 🔴 GPU (embed phase), then 🟡 CPU (probe phase). Embed the fetched pathogenicity variants, run the pathogenic-vs-benign probe. Inputs: `clinvar_pathogenicity_variants.json`, `cache/sequences.json`, `pfam_families.json`. Outputs: `data/embeddings/esm2_t33_650M_UR50D/pathogenicity_{wt,mut}_mean.npy`, `data/embeddings/esm2_t33_650M_UR50D/pathogenicity_meta.json`, `results/run_biorxiv/pathogenicity_control.json` |
-| 5.3 | `scp -i ~/.ssh/id_runpod_2 -P <pod-port> root@<pod-ip>:/workspace/repo/data/embeddings/esm2_t33_650M_UR50D/pathogenicity_*.npy root@<pod-ip>:/workspace/repo/data/embeddings/esm2_t33_650M_UR50D/pathogenicity_meta.json data/embeddings/esm2_t33_650M_UR50D/` | Copy embeddings and metadata back to the local machine |
-| 5.4 | `scp -i ~/.ssh/id_runpod_2 -P <pod-port> root@<pod-ip>:/workspace/repo/results/run_biorxiv/pathogenicity_control.json results/run_biorxiv/` | Copy the pathogenicity result back to the local results directory |
+| 5.2 | `scp -i ~/.ssh/id_runpod_2 -P <pod-port> data/pfam_families.json root@<pod-ip>:/workspace/repo/data/` | Copy the current Pfam mapping to the pod |
+| 5.3 | `python -m esm2_mech.experiments.pathogenicity.pathogenicity_control --phase embed --model esm2_t33_650M_UR50D` | 🔴 GPU. Embed the fetched pathogenicity variants. Inputs: `clinvar_pathogenicity_variants.json`, `cache/sequences.json`. Outputs: `data/embeddings/esm2_t33_650M_UR50D/pathogenicity_{wt,mut}_mean.npy`, `data/embeddings/esm2_t33_650M_UR50D/pathogenicity_meta.json` |
+| 5.4 | `scp -i ~/.ssh/id_runpod_2 -P <pod-port> root@<pod-ip>:/workspace/repo/data/embeddings/esm2_t33_650M_UR50D/pathogenicity_*.npy root@<pod-ip>:/workspace/repo/data/embeddings/esm2_t33_650M_UR50D/pathogenicity_meta.json data/embeddings/esm2_t33_650M_UR50D/` | Copy embeddings and metadata back to the local machine |
+| 5.5 | `python -m esm2_mech.experiments.pathogenicity.pathogenicity_control --phase probe` | 🟡 CPU — more cores help. Run the pathogenic-vs-benign probe on the cached embeddings. Inputs: `pathogenicity_{wt,mut}_mean.npy`, `pathogenicity_meta.json`, `clinvar_pathogenicity_variants.json`, `pfam_families.json`. Output: `results/run_biorxiv/pathogenicity_control.json` |
 
-Step 5.2 errors immediately if `clinvar_pathogenicity_variants.json` is missing.
+Step 5.3 errors immediately if `clinvar_pathogenicity_variants.json` is missing. The `--phase` flag accepts `embed`, `probe`, or `both` (the default, which preserves the old single-command behavior).
 
 Classes are balanced by construction (equal numbers of pathogenic and benign variants per gene).
 However, genes still cluster into protein families, so family-split confidence intervals resample
