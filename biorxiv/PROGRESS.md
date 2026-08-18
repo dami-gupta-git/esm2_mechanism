@@ -62,10 +62,10 @@ Shared foundation for sections 4 and 6.
 
 | Step | Command | Status | Notes |
 |---|---|---|---|
-| 3.1 | `scp -i ~/.ssh/id_runpod_2 -P <pod-port> data/valid_variants.json root@<pod-ip>:/workspace/repo/data/` | ⬜ | |
-| 3.2 | `scp -i ~/.ssh/id_runpod_2 -P <pod-port> data/cache/sequences.json root@<pod-ip>:/workspace/repo/data/cache/` | ⬜ | |
-| 3.3 | `python -m esm2_mech.embeddings.embed_variants --model esm2_t33_650M_UR50D` | ⬜ | |
-| 3.4 | `scp -i ~/.ssh/id_runpod_2 -P <pod-port> root@<pod-ip>:/workspace/repo/data/embeddings/esm2_t33_650M_UR50D/*.npy root@<pod-ip>:/workspace/repo/data/embeddings/esm2_t33_650M_UR50D/embedded_variants.json data/embeddings/esm2_t33_650M_UR50D/` | ⬜ | |
+| 3.1 | `scp valid_variants.json` to pod | ✅ reused | Already on pod from previous run |
+| 3.2 | `scp sequences.json` to pod | ✅ reused | Already on pod from previous run |
+| 3.3 | `python -m esm2_mech.embeddings.embed_variants --model esm2_t33_650M_UR50D` | ✅ reused | From previous run; 17,770 variants × 1,280 dims |
+| 3.4 | Copy embeddings back to local | ✅ reused | All 4 `.npy` + `embedded_variants.json` present locally, row counts match |
 
 ## 4. Experiment: ESM-2 delta-embedding mechanism
 
@@ -75,10 +75,10 @@ learning something about the mechanism.
 
 | Step | Command | Outputs | Status |
 |---|---|---|---|
-| 4.1 | `python -m esm2_mech.experiments.mechanism.classify_by_mechanism --seeds 5` | `results/run_biorxiv/family_split_baselines_seed{0..4}.json`, `aggregate.json` | ⬜ |
-| 4.2 | `python -m esm2_mech.experiments.mechanism.mlp --seeds 5` | `results/run_biorxiv/nonlinear_results_seed{0..4}.json` | ⬜ |
-| 4.3 | `python -m esm2_mech.experiments.mechanism.family_clustering --seeds 5` | `results/run_biorxiv/family_clustering.json` | ⬜ |
-| 4.4 | `python -m esm2_mech.experiments.mechanism.naive_baseline` | `results/run_biorxiv/naive_baseline.json` | ⬜ |
+| 4.1 | `python -m esm2_mech.experiments.mechanism.classify_by_mechanism --seeds 5` | `results/run_biorxiv/family_split_baselines_seed{0..4}.json`, `aggregate.json` | ✅ 2026-08-17 | Ran on 128-core RunPod. Log: `logs/step_4_1.log` |
+| 4.2 | `python -m esm2_mech.experiments.mechanism.mlp --seeds 5` | `results/run_biorxiv/nonlinear_results_seed{0..4}.json` | 🔄 running | On 128-core RunPod, tmux `step42` |
+| 4.3 | `python -m esm2_mech.experiments.mechanism.family_clustering --seeds 5` | `results/run_biorxiv/family_clustering.json` | 🔄 running | On 128-core RunPod, tmux `step43` |
+| 4.4 | `python -m esm2_mech.experiments.mechanism.naive_baseline` | `results/run_biorxiv/naive_baseline.json` | 🔄 running | On 128-core RunPod, tmux `step44` |
 | 4.5 | `python -m esm2_mech.experiments.mechanism.leakage_fraction` | `results/run_biorxiv/leakage_fraction.json` | ⬜ |
 | 4.6 | `python -m esm2_mech.experiments.mechanism.classify_by_mechanism --seeds 1 --n_permutations 1000` | `results/run_biorxiv/...` | ⬜ |
 | 4.7 | `python -m esm2_mech.experiments.mechanism.single_source_mechanism --seeds 5` | `results/run_biorxiv/single_source_gerasimavicius/...` | ⬜ |

@@ -33,16 +33,9 @@ All commands use `python -m esm2_mech.<module>` from the project root with the p
 ssh -i ~/.ssh/id_runpod_2 root@<pod-ip> -p <pod-port>
 ```
 
-### Compute requirements by step
-
-Each step falls into one of three tiers. "More cores help" means the bootstrap uses all available
-CPUs, so a 32-core machine finishes roughly 4× faster than an 8-core laptop.
-
-| Tier | Steps | What drives the cost |
-|---|---|---|
-| **GPU required** | 3.3 (embed variants), 5.2 (pathogenicity embed+probe), 6.5 (conservation extract), 7.3 (MLP+XGBoost) | ESM-2 forward pass or PyTorch/XGBoost training on GPU |
-| **CPU-intensive — more cores help** | 4.1, 4.2, 4.3, 4.6, 4.7, 5.2 probe phase, 6.2, 6.7, 7.2, 8.1 | 1,000-resample cluster bootstrap and/or multi-seed sklearn CV, all with `n_jobs=-1` |
-| **Light — runs anywhere** | 4.4, 4.5, 6.1, 7.1, 7.4 | Trivial models, file reads, or simple ratio computations |
+Compute tags appear next to each step: **🟢 light** (runs anywhere), **🟡 CPU — more cores help**
+(bootstrap uses all cores; 128-core pod finishes ~16× faster than an 8-core laptop),
+**🔴 GPU** (ESM-2 forward pass or PyTorch/XGBoost training).
 
 ---
 
@@ -84,7 +77,7 @@ pre-registration, implemented by the 0.2 wiring.
 
 **0.4 — Paired cluster bootstrap.** Implemented in `utils/bootstrap.py`, call sites
 `conservation_axis.py` and `mechanism_delta_family_split.py`. Covers two paired claims — the
-conservation-vs-embedding-delta gap that gate 1B turns on and the
+conservation-vs-embedding-delta gap that claim 2E turns on and the
 gene-split-minus-family-split gap (the leakage account, 2B) — plus the pathogenicity-vs-mechanism
 cross-family transfer contrast (not paired — different datasets, no shared row space).
 
@@ -178,7 +171,7 @@ from the pod's own filesystem, so copy those two files there first, before launc
 |---|---|---|
 | 3.1 | `scp -i ~/.ssh/id_runpod_2 -P <pod-port> data/valid_variants.json root@<pod-ip>:/workspace/repo/data/` | Copy valid_variants.json to pod |
 | 3.2 | `scp -i ~/.ssh/id_runpod_2 -P <pod-port> data/cache/sequences.json root@<pod-ip>:/workspace/repo/data/cache/` | Copy sequences.json to pod |
-| 3.3 | `python -m esm2_mech.embeddings.embed_variants --model esm2_t33_650M_UR50D` | Extract ESM-2 embeddings. Inputs: `valid_variants.json`, `cache/sequences.json`. Outputs: `embeddings_wt_mean.npy`, `embeddings_mut_mean.npy`, `embeddings_wt_pos.npy`, `embeddings_mut_pos.npy`, `embedded_variants.json` |
+| 3.3 | `python -m esm2_mech.embeddings.embed_variants --model esm2_t33_650M_UR50D` | 🔴 GPU. Extract ESM-2 embeddings. Inputs: `valid_variants.json`, `cache/sequences.json`. Outputs: `embeddings_wt_mean.npy`, `embeddings_mut_mean.npy`, `embeddings_wt_pos.npy`, `embeddings_mut_pos.npy`, `embedded_variants.json` |
 | 3.4 | `scp -i ~/.ssh/id_runpod_2 -P <pod-port> root@<pod-ip>:/workspace/repo/data/embeddings/esm2_t33_650M_UR50D/*.npy root@<pod-ip>:/workspace/repo/data/embeddings/esm2_t33_650M_UR50D/embedded_variants.json data/embeddings/esm2_t33_650M_UR50D/` | Copy embeddings and metadata back to local machine |
 
 After step 3.4, confirm all four `.npy` arrays have the same row count as `embedded_variants.json`
@@ -213,11 +206,11 @@ CPU instance) helps more than trying to parallelize them on a small machine:
 
 | Step | Command | Description | Inputs | Outputs |
 |---|---|---|---|---|
-| 4.1 | `python -m esm2_mech.experiments.mechanism.classify_by_mechanism --seeds 5` | Gene-split vs family-split baseline comparison | `variants.json`, `cache/sequences.json`, `pfam_families.json`, `embeddings_*.npy`, `alphamissense_scores_full.json` | `results/<run>/family_split_baselines_seed{0..4}.json` |
-| 4.2 | `python -m esm2_mech.experiments.mechanism.mlp --seeds 5` | Nonlinear classifiers (MLP, GBM, RF, kNN) on delta embeddings | `valid_variants.json`, `pfam_families.json`, `embeddings_*.npy` | `results/<run>/nonlinear_results_seed{0..4}.json` |
-| 4.3 | `python -m esm2_mech.experiments.mechanism.family_clustering --seeds 5` | Diagnostic: do ESM-2 embeddings cluster by Pfam family? (kNN purity, within/between distance, family probe, mechanism–family overlap) — explains the homology leakage in the WT-only baseline | `valid_variants.json`, `pfam_families.json`, `embeddings_wt_mean.npy`, `embeddings_mut_mean.npy` | `results/<run>/family_clustering.json` |
-| 4.4 | `python -m esm2_mech.experiments.mechanism.naive_baseline` | Measured majority-class / stratified macro-F1 + AUROC floor (DummyClassifier, 5 seeds, same CV) — the chance reference for the other tables | `valid_variants.json`, `pfam_families.json` | `results/<run>/naive_baseline.json` |
-| 4.5 | `python -m esm2_mech.experiments.mechanism.leakage_fraction` | Derived diagnostic: leakage fraction per feature = (gene − family macro-F1) / (gene − chance), the share of each feature's above-chance gene-split score attributable to family recognition | `family_split_baselines_seed{0..4}.json`, `naive_baseline.json`, `family_clustering.json` | `results/<run>/leakage_fraction.json` |
+| 4.1 | `python -m esm2_mech.experiments.mechanism.classify_by_mechanism --seeds 5` | 🟡 CPU — more cores help. Gene-split vs family-split baseline comparison | `variants.json`, `cache/sequences.json`, `pfam_families.json`, `embeddings_*.npy`, `alphamissense_scores_full.json` | `results/<run>/family_split_baselines_seed{0..4}.json` |
+| 4.2 | `python -m esm2_mech.experiments.mechanism.mlp --seeds 5` | 🟡 CPU — more cores help. Nonlinear classifiers (MLP, GBM, RF, kNN) on delta embeddings | `valid_variants.json`, `pfam_families.json`, `embeddings_*.npy` | `results/<run>/nonlinear_results_seed{0..4}.json` |
+| 4.3 | `python -m esm2_mech.experiments.mechanism.family_clustering --seeds 5` | 🟡 CPU — more cores help. Diagnostic: do ESM-2 embeddings cluster by Pfam family? (kNN purity, within/between distance, family probe, mechanism–family overlap) — explains the homology leakage in the WT-only baseline | `valid_variants.json`, `pfam_families.json`, `embeddings_wt_mean.npy`, `embeddings_mut_mean.npy` | `results/<run>/family_clustering.json` |
+| 4.4 | `python -m esm2_mech.experiments.mechanism.naive_baseline` | 🟢 Light. Measured majority-class / stratified macro-F1 + AUROC floor (DummyClassifier, 5 seeds, same CV) — the chance reference for the other tables | `valid_variants.json`, `pfam_families.json` | `results/<run>/naive_baseline.json` |
+| 4.5 | `python -m esm2_mech.experiments.mechanism.leakage_fraction` | 🟢 Light. Derived diagnostic: leakage fraction per feature = (gene − family macro-F1) / (gene − chance), the share of each feature's above-chance gene-split score attributable to family recognition | `family_split_baselines_seed{0..4}.json`, `naive_baseline.json`, `family_clustering.json` | `results/<run>/leakage_fraction.json` |
 
 All outputs write to `results/<run>/`. Each of `classify_by_mechanism`, `single_source_mechanism`,
 and `mechanism_delta_family_split` accepts `--no_ci` (skip the confidence-interval computation, for
@@ -233,7 +226,7 @@ the probe once per shuffle.
 
 | Step | Command | Description | Outputs |
 |---|---|---|---|
-| 4.6 | `python -m esm2_mech.experiments.mechanism.classify_by_mechanism --seeds 1 --n_permutations 1000` | Permutation p-value for the family-split score, seed 0 only | `results/<run>/...` |
+| 4.6 | `python -m esm2_mech.experiments.mechanism.classify_by_mechanism --seeds 1 --n_permutations 1000` | 🟡 CPU — more cores help. Permutation p-value for the family-split score, seed 0 only | `results/<run>/...` |
 
 This only needs to run at seed 0: a permutation test builds its own reference distribution by
 shuffling, so running it at every seed would mostly re-measure the same seed-to-seed noise this
@@ -252,7 +245,7 @@ result isn't an artifact of merging two differently-curated datasets.
 
 | Step | Command | Description | Outputs |
 |---|---|---|---|
-| 4.7 | `python -m esm2_mech.experiments.mechanism.single_source_mechanism --seeds 5` | Re-run the mechanism probe on the Gerasimavicius-only subset | `results/<run>/single_source_gerasimavicius/{family_split_baselines_seed{0..4}.json, aggregate.json, naive_baseline.json}` |
+| 4.7 | `python -m esm2_mech.experiments.mechanism.single_source_mechanism --seeds 5` | 🟡 CPU — more cores help. Re-run the mechanism probe on the Gerasimavicius-only subset | `results/<run>/single_source_gerasimavicius/{family_split_baselines_seed{0..4}.json, aggregate.json, naive_baseline.json}` |
 
 ---
 
@@ -281,14 +274,16 @@ GPU, this runs on the pod.
 | Step | Command | Description |
 |---|---|---|
 | 5.1 | `scp -i ~/.ssh/id_runpod_2 -P <pod-port> data/clinvar_pathogenicity_variants.json root@<pod-ip>:/workspace/repo/data/` | Copy pathogenicity variants to pod |
-| 5.2 | `python -m esm2_mech.experiments.pathogenicity.pathogenicity_control --model esm2_t33_650M_UR50D` | Embed the fetched pathogenicity variants, run the pathogenic-vs-benign probe. Inputs: `clinvar_pathogenicity_variants.json`, `cache/sequences.json`, `pfam_families.json`. Outputs: `data/embeddings/esm2_t33_650M_UR50D/pathogenicity_{wt,mut}_mean.npy`, `data/embeddings/esm2_t33_650M_UR50D/pathogenicity_meta.json`, `results/run_biorxiv/pathogenicity_control.json` |
-| 5.3 | `scp -i ~/.ssh/id_runpod_2 -P <pod-port> root@<pod-ip>:/workspace/repo/data/embeddings/esm2_t33_650M_UR50D/pathogenicity_*.npy root@<pod-ip>:/workspace/repo/data/embeddings/esm2_t33_650M_UR50D/pathogenicity_meta.json root@<pod-ip>:/workspace/repo/results/run_biorxiv/pathogenicity_control.json data/embeddings/esm2_t33_650M_UR50D/` | Copy embeddings and results back to local machine |
+| 5.1a | `scp -i ~/.ssh/id_runpod_2 -P <pod-port> data/pfam_families.json root@<pod-ip>:/workspace/repo/data/` | Copy the current Pfam mapping to the pod |
+| 5.2 | `python -m esm2_mech.experiments.pathogenicity.pathogenicity_control --model esm2_t33_650M_UR50D` | 🔴 GPU (embed phase), then 🟡 CPU (probe phase). Embed the fetched pathogenicity variants, run the pathogenic-vs-benign probe. Inputs: `clinvar_pathogenicity_variants.json`, `cache/sequences.json`, `pfam_families.json`. Outputs: `data/embeddings/esm2_t33_650M_UR50D/pathogenicity_{wt,mut}_mean.npy`, `data/embeddings/esm2_t33_650M_UR50D/pathogenicity_meta.json`, `results/run_biorxiv/pathogenicity_control.json` |
+| 5.3 | `scp -i ~/.ssh/id_runpod_2 -P <pod-port> root@<pod-ip>:/workspace/repo/data/embeddings/esm2_t33_650M_UR50D/pathogenicity_*.npy root@<pod-ip>:/workspace/repo/data/embeddings/esm2_t33_650M_UR50D/pathogenicity_meta.json data/embeddings/esm2_t33_650M_UR50D/` | Copy embeddings and metadata back to the local machine |
+| 5.4 | `scp -i ~/.ssh/id_runpod_2 -P <pod-port> root@<pod-ip>:/workspace/repo/results/run_biorxiv/pathogenicity_control.json results/run_biorxiv/` | Copy the pathogenicity result back to the local results directory |
 
 Step 5.2 errors immediately if `clinvar_pathogenicity_variants.json` is missing.
 
 Classes are balanced by construction (equal numbers of pathogenic and benign variants per gene).
-However, genes still cluster into protein families, so confidence intervals continue to resample
-whole genes rather than individual variants (as in section 4). The report should also note that the
+However, genes still cluster into protein families, so family-split confidence intervals resample
+whole Pfam families rather than genes or individual variants. The report should also note that the
 probe measures discrimination between pathogenic and benign variants, not a calibrated risk
 estimate for any single variant.
 
@@ -313,7 +308,7 @@ Section 5 already produced and re-materializes them in a row-aligned file for th
 
 | Step | Command | Description | Inputs | Outputs |
 |---|---|---|---|---|
-| 6.1 | `python -m esm2_mech.experiments.geometry.build_canonical_pathogenicity` | Re-index the pathogenicity variant set to match the embedding row order | `clinvar_pathogenicity_variants.json`, `data/embeddings/esm2_t33_650M_UR50D/pathogenicity_{wt,mut}_mean.npy`, `pathogenicity_meta.json` | `pathogenicity_valid_variants_canonical.json` |
+| 6.1 | `python -m esm2_mech.experiments.geometry.build_canonical_pathogenicity` | 🟢 Light. Re-index the pathogenicity variant set to match the embedding row order | `clinvar_pathogenicity_variants.json`, `data/embeddings/esm2_t33_650M_UR50D/pathogenicity_{wt,mut}_mean.npy`, `pathogenicity_meta.json` | `pathogenicity_valid_variants_canonical.json` |
 
 ### Geometry probes (CPU)
 
@@ -329,7 +324,7 @@ this to a subset (e.g. `--probe magnitude geometry`); the default is all four.
 
 | Step | Command | Description | Inputs | Outputs |
 |---|---|---|---|---|
-| 6.2 | `python -m esm2_mech.experiments.geometry.run_geometry --seeds 5` | Run all geometry probes | `pathogenicity_valid_variants_canonical.json`, `data/embeddings/esm2_t33_650M_UR50D/pathogenicity_{wt,mut}_mean.npy` | `results/<run>/magnitude_direction/probe_results.json`, `geometry_results.json`, `transfer_contrast.json`, `probe4_axis_identity.json` |
+| 6.2 | `python -m esm2_mech.experiments.geometry.run_geometry --seeds 5 --stability-dataset tsuboyama` | 🟡 CPU — more cores help. Run all geometry probes, including the Tsuboyama stability arms | `pathogenicity_valid_variants_canonical.json`, `data/embeddings/esm2_t33_650M_UR50D/pathogenicity_{wt,mut}_mean.npy`, `megascale_tsuboyama_variants.json`, `megascale_domain_families.json`, `data/embeddings/esm2_t33_650M_UR50D/megascale_{wt,mut}_mean.npy` | `results/<run>/magnitude_direction/probe_results.json`, `geometry_results.json`, `transfer_contrast.json`, `probe4_axis_identity.json` |
 
 Only the magnitude probe has cluster-bootstrap confidence intervals wired (`--no_ci` / `--n_boot`
 apply to it only); the others are rank and correlation probes with no CI attached. `--seeds`
@@ -346,23 +341,23 @@ one GPU step in this experiment; it can share a pod session with any other GPU w
 |---|---|---|
 | 6.3 | `scp -i ~/.ssh/id_runpod_2 -P <pod-port> data/pathogenicity_valid_variants_canonical.json root@<pod-ip>:/workspace/repo/data/` | Copy canonical variants to pod |
 | 6.4 | `scp -i ~/.ssh/id_runpod_2 -P <pod-port> data/cache/sequences.json root@<pod-ip>:/workspace/repo/data/cache/` | Copy sequences to pod |
-| 6.5 | `python -m esm2_mech.experiments.geometry.conservation_axis --extract` | Masked-LM forward pass per variant to score how conserved its position is. Inputs: `pathogenicity_valid_variants_canonical.json`, `cache/sequences.json`. Outputs: `data/conservation_pathogenicity.npy`, `data/conservation_pathogenicity_meta.json` |
+| 6.5 | `python -m esm2_mech.experiments.geometry.conservation_axis --extract` | 🔴 GPU. Masked-LM forward pass per variant to score how conserved its position is. Inputs: `pathogenicity_valid_variants_canonical.json`, `cache/sequences.json`. Outputs: `data/conservation_pathogenicity.npy`, `data/conservation_pathogenicity_meta.json` |
 | 6.6 | `scp -i ~/.ssh/id_runpod_2 -P <pod-port> root@<pod-ip>:/workspace/repo/data/conservation_pathogenicity.npy root@<pod-ip>:/workspace/repo/data/conservation_pathogenicity_meta.json data/` | Copy conservation outputs back to local machine |
 
 ### Conservation analysis (CPU)
 
 Compares the conservation features from step 6.5 to the pathogenicity direction found in step 6.2, on
-the same family-split protocol. Pre-registered gates: 1A conservation alone reaches AUROC ≥ 0.85
-(the axis is mostly conservation); 1B adding the embedding delta on top of conservation improves
+the same family-split protocol. Pre-registered claims: 2D conservation alone reaches AUROC ≥ 0.85
+(the axis is mostly conservation); 2E adding the embedding delta on top of conservation improves
 AUROC by ≥ 0.02 (the embedding carries pathogenicity signal beyond conservation).
 
 | Step | Command | Description |
 |---|---|---|
-| 6.7 | `python -m esm2_mech.experiments.geometry.conservation_axis` | Compare conservation features to the embedding-derived pathogenicity direction. Inputs: `conservation_pathogenicity.npy`, `pathogenicity_valid_variants_canonical.json`, `data/embeddings/esm2_t33_650M_UR50D/pathogenicity_{wt,mut}_mean.npy`. Output: `results/<run>/magnitude_direction/conservation_axis.json` |
+| 6.7 | `python -m esm2_mech.experiments.geometry.conservation_axis` | 🟡 CPU — more cores help. Compare conservation features to the embedding-derived pathogenicity direction. Inputs: `conservation_pathogenicity.npy`, `pathogenicity_valid_variants_canonical.json`, `data/embeddings/esm2_t33_650M_UR50D/pathogenicity_{wt,mut}_mean.npy`. Output: `results/<run>/magnitude_direction/conservation_axis.json` |
 
-run_biorxiv adds gene-cluster confidence intervals to each pathogenicity AUROC in this experiment
-(resampled over genes, not individual variants, the same as sections 4 and 5), and a paired
-cluster-bootstrap confidence interval on the 1B gap (conservation-alone AUROC vs. conservation-plus-
+run_biorxiv adds family-cluster confidence intervals to each pathogenicity AUROC in this experiment
+(resampled over Pfam families, not genes or individual variants), and a paired cluster-bootstrap confidence
+interval on the 2E gap (conservation-alone AUROC vs. conservation-plus-
 embedding-delta AUROC) and on the pathogenicity-vs-mechanism transfer contrast.
 
 ---
@@ -390,7 +385,7 @@ is already present and non-empty (it is, as of this writing).
 
 | Step | Command | Description | Inputs | Outputs |
 |---|---|---|---|---|
-| 7.1 | `python -m esm2_mech.experiments.stability.build_domain_families` | Assign each Tsuboyama domain to a Pfam family | `megascale_tsuboyama_variants.json`, `downloads/megascale/Pfam-A.hmm` | `data/megascale_domain_families.json` |
+| 7.1 | `python -m esm2_mech.experiments.stability.build_domain_families` | 🟢 Light. Assign each Tsuboyama domain to a Pfam family | `megascale_tsuboyama_variants.json`, `downloads/megascale/Pfam-A.hmm` | `data/megascale_domain_families.json` |
 
 ### Embed variants (GPU) — skipped
 
@@ -410,20 +405,21 @@ per-domain spread in correlation stays tight (standard deviation ≤ 0.10).
 
 | Step | Command | Description | Inputs | Outputs |
 |---|---|---|---|---|
-| 7.2 | `python -m esm2_mech.experiments.stability.megascale_stability` | Ridge probe from embeddings to ΔΔG under random/domain/family splits | `megascale_tsuboyama_variants.json`, `megascale_domain_families.json`, `data/embeddings/esm2_t33_650M_UR50D/megascale_{wt,mut}_{mean,pos}.npy`, `valid_variants.json` | `results/<run>/megascale_stability/per_protein_spearman.json`, `h3_stability_projection.json`, `summary.json` |
+| 7.2 | `python -m esm2_mech.experiments.stability.megascale_stability` | 🟡 CPU — more cores help. Ridge probe from embeddings to ΔΔG under random/domain/family splits | `megascale_tsuboyama_variants.json`, `megascale_domain_families.json`, `data/embeddings/esm2_t33_650M_UR50D/megascale_{wt,mut}_{mean,pos}.npy`, `valid_variants.json` | `results/<run>/megascale_stability/per_protein_spearman.json`, `h3_stability_projection.json`, `summary.json` |
 
 ### Nonlinear probe (GPU)
 
-Repeats step 7.2's three-way split comparison with a small neural network (MLP) alongside Ridge, plus
-two exploratory tree-based models (random forest and gradient-boosted trees), to check whether a
+Repeats step 7.2's three-way split comparison with a small neural network (MLP), plus
+exploratory tree-based models, to check whether a
 nonlinear model finds more signal than the linear probe, and whether any such gain survives the
 family-split. Only the Ridge and MLP results are pre-registered; the random forest and
-gradient-boosted-tree numbers are exploratory. `--xgboost` adds the gradient-boosted-tree model,
-which needs a GPU; without it, this step is CPU-only.
+gradient-boosted-tree numbers are exploratory. The default command runs the MLP, random forest, and
+scikit-learn gradient boosting. The separate `--xgboost` command runs only XGBoost and needs a GPU.
 
 | Step | Command | Description | Inputs | Outputs |
 |---|---|---|---|---|
-| 7.3 | `python -m esm2_mech.experiments.stability.megascale_mlp --xgboost` | MLP/random-forest/gradient-boosted-tree probes on the same three splits | `megascale_tsuboyama_variants.json`, `megascale_domain_families.json`, `data/embeddings/esm2_t33_650M_UR50D/megascale_{wt,mut}_{mean,pos}.npy` | `results/<run>/megascale_stability/mlp_summary_xgb.json` |
+| 7.3 | `python -m esm2_mech.experiments.stability.megascale_mlp` | 🔴 GPU for MLP when CUDA is available; tree probes are CPU. Run MLP, random forest, and scikit-learn gradient boosting on the three splits | `megascale_tsuboyama_variants.json`, `megascale_domain_families.json`, `data/embeddings/esm2_t33_650M_UR50D/megascale_{wt,mut}_mean.npy` | `results/<run>/megascale_stability/mlp_summary.json` |
+| 7.3a | `python -m esm2_mech.experiments.stability.megascale_mlp --xgboost` | 🔴 GPU. Run the exploratory XGBoost probe on the three splits | Same as step 7.3 | `results/<run>/megascale_stability/mlp_summary_xgb.json` |
 
 ### Controls (CPU)
 
@@ -437,7 +433,7 @@ stability signal actually occupies.
 
 | Step | Command | Description | Inputs | Outputs |
 |---|---|---|---|---|
-| 7.4 | `python -m esm2_mech.experiments.stability.stability_baselines` | Delta-norm baseline, nested-CV alpha, label-shuffle null, and component sweep | `megascale_tsuboyama_variants.json`, `megascale_domain_families.json`, `data/embeddings/esm2_t33_650M_UR50D/megascale_{wt,mut}_{mean,pos}.npy` | `results/<run>/megascale_stability/baselines.json` |
+| 7.4 | `python -m esm2_mech.experiments.stability.stability_baselines` | 🟢 Light. Delta-norm baseline, nested-CV alpha, label-shuffle null, and component sweep | `megascale_tsuboyama_variants.json`, `megascale_domain_families.json`, `data/embeddings/esm2_t33_650M_UR50D/megascale_{wt,mut}_{mean,pos}.npy` | `results/<run>/megascale_stability/baselines.json` |
 
 Gates are unchanged from run6: H1 random-split ρ ≥ 0.5, H2 the random-to-family-split drop stays
 below 0.10, H3 the mechanism-F1 change from projecting out stability stays ≤ +0.01, H4 per-domain ρ
@@ -479,20 +475,21 @@ python -m esm2_mech.fetch_data.fetch_annotations --step enzyme
 
 | Step | Command | Description | Inputs | Outputs |
 |---|---|---|---|---|
-| 8.1 | `python -m esm2_mech.experiments.proteome_features.enzyme_classification --seeds 5` | Enzyme type classification: LogReg + MLP on WT embeddings and proteome features, gene-split and family-split, with cluster-bootstrap CIs | `valid_variants.json`, `embeddings_wt_mean.npy`, `enzyme_labels.tsv`, `pfam_families.json`, `proteome_features_aligned.npy`, `results/<run>/aggregate.json` (mechanism reference) | `results/<run>/enzyme_classification/enzyme_classification_summary.json` |
+| 8.1 | `python -m esm2_mech.experiments.proteome_features.enzyme_classification --seeds 5` | 🟡 CPU — more cores help. Enzyme type classification: LogReg + MLP on WT embeddings and proteome features, gene-split and family-split, with cluster-bootstrap CIs | `valid_variants.json`, `embeddings_wt_mean.npy`, `enzyme_labels.tsv`, `pfam_families.json`, `proteome_features_aligned.npy`, `results/<run>/aggregate.json`, `results/<run>/mechanism_oof_cache_seed0.json` | `results/<run>/enzyme_classification/enzyme_classification_summary.json` |
 
 The script accepts `--no_ci` (skip cluster-bootstrap CIs), `--n_boot N` (default 1000), and
 `--n_permutations N` (OOF permutation test, default 0 = skip), matching sections 4–7. The mechanism
-reference F1 is read from section 4's aggregate result, not hardcoded — run section 4 first.
+reference F1 and its family-split OOF predictions are read from section 4's outputs, not hardcoded.
+Run section 4 first.
 
-Decision rules (pre-registration §2E):
+Decision rules (pre-registration §2F–2H):
 
-- **2E.1** — family-split LogReg macro-F1 ≥ 0.70. Enzyme class is strongly encoded in ESM-2 WT
+- **2F** — family-split LogReg macro-F1 ≥ 0.70. Enzyme class is strongly encoded in ESM-2 WT
   embeddings and family-split CV is a meaningful discriminator.
-- **2E.2** — enzyme family-split F1 substantially exceeds the mechanism family-split floor (read
+- **2G** — enzyme family-split F1 substantially exceeds the mechanism family-split floor (read
   from section 4's aggregate, not hardcoded). The mechanism null is task-specific, not a probe or
   data failure.
-- **2E.3** — MLP does not substantially outperform LogReg under family-split (|delta F1| < 0.05).
+- **2H** — MLP does not substantially outperform LogReg under family-split (|delta F1| < 0.05).
   Linear readout is sufficient, paralleling pathogenicity and contrasting with stability.
 
 ---
