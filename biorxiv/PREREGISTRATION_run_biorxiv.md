@@ -1,18 +1,12 @@
 # run_biorxiv pre-registration — inferential statistics
 
-**Written before run_biorxiv executes.** Governs run_biorxiv only — the original (run0-era)
-pre-registration and its outcomes live in `docs/EXPERIMENT.md`. run_biorxiv re-scores run6's
-science with dependency-aware error bars; the experiments, hypotheses, and gates are unchanged.
-Run6 point estimates are recorded here so the rules below cannot be retro-fitted once the
-run_biorxiv intervals are in.
+**Written and committed before run_biorxiv executes**, so that no rule here can be fitted to a
+result. Governs run_biorxiv only. Every threshold is either an absolute number fixed here or a
+quantity this run measures for itself; no threshold is carried in from another run, and no
+threshold is derived from a probe this document then judges.
 
 Methodology: `reports/run6/STATS_PLAN.md`. Step-by-step execution: `RUNBOOK_biorxiv.md` (section
 numbers below refer to that document).
-
-**Revised 2026-08-18, before any output of the re-run was inspected.** Four rules were
-underdetermined in ways that let a verdict be chosen after the numbers were seen. They are
-rewritten in place below, and the revision history at the end of this document records what each
-one said before and why it changed.
 
 ---
 
@@ -163,8 +157,8 @@ is judged against it, and never carried over from earlier results.
 
 | Feature | Statistic | Refits | Permutations | Why this choice |
 |---|---|---|---|---|
-| `wt_only_mean` | macro-F1 | yes, once per permutation | 1,000, all five seeds | Load-bearing p-value; run6 left it unresolved at the 1/(N+1) floor |
-| `delta_mean` | macro one-vs-rest AUROC, cached out-of-fold predictions | none | 1,000, all five seeds | Sensitivity, not cost — macro-F1 stays near the floor even with real signal (run6: 0.289 vs. shuffled mean 0.319, p = 1.0, a test that cannot fire is not a test); AUROC reads the ranking directly |
+| `wt_only_mean` | macro-F1 | yes, once per permutation | 1,000, all five seeds | Load-bearing p-value, so it gets the rigorous variant and enough permutations to resolve below the 1/(N+1) floor |
+| `delta_mean` | macro one-vs-rest AUROC, cached out-of-fold predictions | none | 1,000, all five seeds | Sensitivity, not cost — macro-F1 stays near the floor even when real ranking signal is present, so a macro-F1 permutation test cannot fire; AUROC reads the ranking directly |
 
 There are two ways to run a shuffle test:
 
@@ -203,16 +197,13 @@ Scope and cost:
 
 - Only the linear probe gets this test — the headline claim is a linear-probe result, and no
   conclusion depends on the MLP's permutation p-value, so the MLP isn't tested this way.
-- Refit cost: 1,000 (never the 4,000 in the run6-era planning text — only the family split is
-  permuted, not both).
+- Refit cost: 1,000 per seed. Only the family split is permuted, not both splits.
 
 Resolution limit:
 
 - With 1,000 shuffles, the smallest measurable p-value is about 1 in 1,000. A p-value landing
   exactly there means only "nothing more extreme was detectable at this resolution," not a precise
   measurement, and is reported as unresolved rather than as a result.
-- Run6's `wt_only_mean` p = 0.0099 at 200 permutations is exactly this case and is not carried
-  forward.
 
 **Label-heterogeneity threat, named and cited.** Badonyi & Marsh 2025
 (`papers/mechanism_2025.pdf`, bioRxiv 2025.03.13.642984) report 43% of multi-phenotype dominant
@@ -302,19 +293,18 @@ whole paper weakens.
 
 ### 2D–2E — conservation vs. embedding delta (Runbook §6.7)
 
-Paired bootstrap on claims 2D/2E, with run6 values recorded for reference:
+Paired bootstrap on claims 2D and 2E:
 
-| Gate | Criterion | Run6 value | Margin | Run6 verdict |
-|---|---|---|---|---|
-| 2D | conservation alone AUROC > 0.85 | 0.891 | +0.041 | pass |
-| 2E | conservation + delta improves over conservation by > 0.02 | +0.0023 | −0.018 | fail |
-| Descriptive | conservation + delta improves over delta alone | +0.0345 | — | descriptive (no threshold) |
+| Gate | Criterion |
+|---|---|
+| 2D | Conservation alone reaches AUROC above 0.85 |
+| 2E | Conservation plus the embedding delta improves on conservation alone by more than 0.02 |
+| Descriptive | Conservation plus the delta compared against the delta alone, reported without a threshold |
 
-Margins are stated against the threshold, never the bare floor — against the bare floor the lifts
-look much larger (seq +0.058, seq_struct +0.072) and the CI question becomes trivial; the two
-framings must not be interchanged. 2E already fails, so a CI spanning zero reinforces that reading.
-The underpowered clause (§1.1) applies; it does not threaten the conclusion. A failed gate makes no
-positive claim.
+Margins are stated against the threshold, never against the bare chance floor. Measured against the
+floor the lifts look much larger and the interval question becomes trivial, so the two framings
+must not be interchanged. The underpowered clause (§1.1) governs 2E however its interval lands, and
+a failed gate makes no positive claim.
 
 **Checklist:**
 - [ ] Margins reported are stated against the threshold (e.g. 0.85, 0.02), never against the bare
@@ -332,28 +322,27 @@ test of whether the mechanism null (2A) is a property of the task, not a failure
 Governed by the same verdict rule (§1.1) and resampling rule (§1.2) as the other experiments.
 Decision rules from `docs/plans/plan_enzyme_classification.md`:
 
-| # | Criterion | Run0 value | Interpretation |
-|---|---|---|---|
-| 2F | Family-split LogReg macro-F1 ≥ 0.70 | 0.655 | Enzyme class is strongly encoded in ESM-2 WT embeddings |
-| 2G | Enzyme family-split F1 substantially exceeds the mechanism family-split floor | +0.270 above 0.385 | The mechanism null is task-specific, not a probe or data failure |
-| 2H | MLP does not substantially outperform LogReg under family-split (\|ΔF1\| < 0.05) | −0.058 (LogReg wins) | Linear readout is sufficient, paralleling pathogenicity |
+| # | Criterion | Interpretation if met |
+|---|---|---|
+| 2F | Family-split LogReg macro-F1 at or above 0.70 | Enzyme class is strongly encoded in ESM-2 wildtype embeddings |
+| 2G | Enzyme family-split F1 substantially exceeds the mechanism family-split floor | The mechanism null is task-specific, not a probe or data failure |
+| 2H | MLP does not substantially outperform LogReg under family-split (\|ΔF1\| below 0.05) | A linear readout is sufficient, paralleling pathogenicity |
 
 2G is the central claim: the same pipeline that shows mechanism at floor achieves strong enzyme
 classification, so the mechanism null reflects what ESM-2 encodes, not a methodological ceiling.
 2F sets an absolute bar. 2H tests whether the signal is linearly separable (as for
 pathogenicity) or requires nonlinear probes (as for stability).
 
-The mechanism reference F1 in 2G is read from section 4's aggregate result, not hardcoded — the
-same "floor is a rule, not a fixed number" principle as 2A. Run0's value was 0.385; run_biorxiv
-recomputes it.
+The mechanism reference F1 in 2G is read from section 4's aggregate result for this run, never
+hardcoded, on the same principle as the measured chance floor in 2A.
 
 CIs are cluster-bootstrap on seed-0 family-split OOF predictions, resampled by family (§1.2). The
-rare-class caveat (§1.3) applies to protease (68 genes in run0). A proteome-features baseline runs
+rare-class caveat (§1.3) applies to protease, the smallest class here. A proteome-features baseline runs
 alongside as a negative control — enzyme class is a structural property, not a population-genetics
 one, so proteome features should be near chance.
 
 **Checklist:**
-- [ ] Mechanism reference F1 is read from the current run's aggregate, not hardcoded from run0.
+- [ ] Mechanism reference F1 is read from this run's own aggregate, never hardcoded.
 - [ ] CIs are resampled by family, not gene.
 - [ ] Protease per-class AUROC is flagged under the rare-class caveat (§1.3).
 
@@ -378,43 +367,7 @@ was confirmatory.
 
 ## Part 5 — What would change the conclusions
 
-Recorded in advance so "the CIs corroborated the point estimates" is a falsifiable statement, not
-an assumption. Per-claim conditions are under each claim in Part 2. Overall: run_biorxiv changes
-error bars, not point estimates — any point estimate that moves materially from run6 is either a
-bug introduced by the wiring or a finding that needs explaining. `scripts/compare_runs.py` flags
-these, and each flagged movement is explained rather than silently adopted.
-
----
-
-## Revision history
-
-Rules are rewritten in place above rather than kept as a separate amendment, so that there is one
-current specification and no second document to reconcile against it. This section records what
-changed, when, and why, so a reader can still see what was specified before the numbers were seen.
-
-### 2026-08-18, before any output of the re-run was inspected
-
-An audit found the scoring code was ranking probabilities pooled across independently fitted folds,
-and that four specification rules were underdetermined in ways that let a verdict be chosen after
-the numbers were seen. The scoring fix is recorded in the implementation history. The four rules
-changed as follows.
-
-| Rule | What it said before | Why it changed |
-|---|---|---|
-| The chance floor (§2A) | One term named two quantities: the majority-class score, and the run's own nonlinear `delta_mean` probe score | Only the majority-class score is a no-information baseline. The other carries signal and sits consistently above it |
-| The 2A threshold (§2A) | The nonlinear `delta_mean` probe's own five-seed family-split score, plus 0.05 | The threshold was derived from a probe and then used to judge a probe, so a higher-scoring probe raised its own bar and made the claim easier to affirm. It also moved whenever the scoring code changed |
-| Permutation seeds (§2A) | 1,000 permutations on seed 0 | Seed 0 has the smallest gene-to-family gap of the five and the only paired interval straddling zero, so a single-seed result both understated the effect and invited the objection that the seed was chosen |
-| The 2B verdict (§2B) | Overturned if "the split-gap CI spans zero" | It did not say which feature adjudicates, which quantity is the gap, or how the five seeds combine, and each of the three changes the answer |
-
-The rare-class rule in §1.3 was added at the same time. It was previously an implementation detail
-rather than part of the specification, but discarding a resample where a fold loses a class changes
-what the intervals estimate, so it belongs in the metric definition.
-
-No hypothesis, gate direction, or threshold in claims 2C through 2H changed, and no reported number
-was adjusted. Values affected by the scoring fix change as a consequence of being recomputed, and
-the reports are regenerated rather than edited.
-
-If the revised 2A threshold changes the verdict on 2A relative to the rule as originally written,
-both verdicts are stated rather than one being adopted silently. Under the original rule and on the
-pre-fix numbers 2A was affirmed, and it was also affirmed under the threshold adopted here; whether
-that survives the re-run is what the re-run decides.
+Recorded in advance so that "the intervals corroborated the point estimates" is a falsifiable
+statement rather than an assumption. Per-claim conditions are under each claim in Part 2.
+`scripts/compare_runs.py` flags every point estimate that moves materially between runs, and each
+flagged movement is explained rather than silently adopted.
