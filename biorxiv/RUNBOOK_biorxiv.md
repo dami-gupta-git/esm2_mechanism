@@ -33,6 +33,17 @@ All commands use `python -m esm2_mech.<module>` from the project root with the p
 ssh -i ~/.ssh/id_runpod_2 root@<pod-ip> -p <pod-port>
 ```
 
+### Compute requirements by step
+
+Each step falls into one of three tiers. "More cores help" means the bootstrap uses all available
+CPUs, so a 32-core machine finishes roughly 4× faster than an 8-core laptop.
+
+| Tier | Steps | What drives the cost |
+|---|---|---|
+| **GPU required** | 3.3 (embed variants), 5.2 (pathogenicity embed+probe), 6.5 (conservation extract), 7.3 (MLP+XGBoost) | ESM-2 forward pass or PyTorch/XGBoost training on GPU |
+| **CPU-intensive — more cores help** | 4.1, 4.2, 4.3, 4.6, 4.7, 5.2 probe phase, 6.2, 6.7, 7.2, 8.1 | 1,000-resample cluster bootstrap and/or multi-seed sklearn CV, all with `n_jobs=-1` |
+| **Light — runs anywhere** | 4.4, 4.5, 6.1, 7.1, 7.4 | Trivial models, file reads, or simple ratio computations |
+
 ---
 
 ## Prerequisites — manually placed files

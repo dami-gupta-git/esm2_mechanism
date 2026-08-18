@@ -352,6 +352,63 @@ def paired_cluster_bootstrap_diff(
     )
 
 
+def independent_cluster_bootstrap_diff(
+    clusters_a: np.ndarray,
+    clusters_b: np.ndarray,
+    metric_fn_a: Callable[[np.ndarray], float | None],
+    metric_fn_b: Callable[[np.ndarray], float | None],
+    n_resamples: int = BOOTSTRAP_N_RESAMPLES,
+    ci_level: float = BOOTSTRAP_CI_LEVEL,
+    min_valid_frac: float = BOOTSTRAP_MIN_VALID_FRAC,
+    seed: int = 0,
+) -> dict:
+    """CI on A minus B when the arms come from independent datasets."""
+    _, cluster_rows_a = _cluster_to_rows(np.asarray(clusters_a))
+    _, cluster_rows_b = _cluster_to_rows(np.asarray(clusters_b))
+    n_clusters_a = len(cluster_rows_a)
+    n_clusters_b = len(cluster_rows_b)
+
+    point_a = _clean_scalar(metric_fn_a(np.arange(len(clusters_a))))
+    point_b = _clean_scalar(metric_fn_b(np.arange(len(clusters_b))))
+    point_diff = point_a - point_b if point_a is not None and point_b is not None else None
+
+    seed_sequences = np.random.SeedSequence(seed).spawn(n_resamples)
+    differences = []
+    for seed_sequence in seed_sequences:
+        seed_a, seed_b = seed_sequence.spawn(2)
+        rng_a = np.random.RandomState(int(seed_a.generate_state(1)[0]))
+        rng_b = np.random.RandomState(int(seed_b.generate_state(1)[0]))
+        drawn_a = rng_a.randint(0, n_clusters_a, size=n_clusters_a)
+        drawn_b = rng_b.randint(0, n_clusters_b, size=n_clusters_b)
+        rows_a = np.concatenate([cluster_rows_a[index] for index in drawn_a])
+        rows_b = np.concatenate([cluster_rows_b[index] for index in drawn_b])
+        value_a = _clean_scalar(metric_fn_a(rows_a))
+        value_b = _clean_scalar(metric_fn_b(rows_b))
+        if value_a is not None and value_b is not None:
+            differences.append(value_a - value_b)
+
+    valid_frac = len(differences) / n_resamples if n_resamples else 0.0
+    result = {
+        "point_a": point_a,
+        "point_b": point_b,
+        "point_diff": point_diff,
+        "n_resamples": len(differences),
+        "n_resamples_total": int(n_resamples),
+        "valid_frac": float(valid_frac),
+        "n_clusters_a": n_clusters_a,
+        "n_clusters_b": n_clusters_b,
+    }
+    if not differences or valid_frac < min_valid_frac:
+        return {**result, "ci_low": None, "ci_high": None, "ci_suppressed": True}
+    tail = (1.0 - ci_level) / 2.0 * 100.0
+    return {
+        **result,
+        "ci_low": float(np.percentile(differences, tail)),
+        "ci_high": float(np.percentile(differences, 100.0 - tail)),
+        "ci_suppressed": False,
+    }
+
+
 def paired_cluster_bootstrap_diff_cross_partition(
     resample_clusters: np.ndarray,
     metric_fn_a: Callable[[np.ndarray], float | None],

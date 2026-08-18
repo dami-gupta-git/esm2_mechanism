@@ -55,6 +55,7 @@ from esm2_mech.utils.bootstrap import (
     bootstrap_mechanism_metrics,
     cluster_bootstrap_ci,
     cluster_subsample_ci,
+    independent_cluster_bootstrap_diff,
     label_permutation_pvalue,
     macro_ovr_auroc,
     oof_permutation_pvalue,
@@ -1411,3 +1412,48 @@ class TestAdjudicateEquivalence:
         assert adjudicate_equivalence(None, {"ci_low": -0.01, "ci_high": 0.01}, 0.05) == (
             "not adjudicated (no point estimate)"
         )
+
+
+class TestIndependentClusterBootstrapDiff:
+    def test_resamples_each_dataset_at_its_own_cluster_level(self):
+        clusters_a = np.repeat(["A1", "A2", "A3", "A4"], [2, 3, 4, 5])
+        clusters_b = np.repeat(["B1", "B2", "B3"], [3, 4, 5])
+        values_a = np.linspace(0.6, 1.0, len(clusters_a))
+        values_b = np.linspace(0.0, 0.4, len(clusters_b))
+
+        out = independent_cluster_bootstrap_diff(
+            clusters_a,
+            clusters_b,
+            lambda rows: float(values_a[rows].mean()),
+            lambda rows: float(values_b[rows].mean()),
+            n_resamples=300,
+            seed=7,
+        )
+
+        assert out["n_clusters_a"] == 4
+        assert out["n_clusters_b"] == 3
+        assert out["point_diff"] == pytest.approx(values_a.mean() - values_b.mean())
+        assert out["ci_low"] > 0
+
+    def test_is_deterministic_for_a_fixed_seed(self):
+        clusters_a = np.repeat(np.arange(5), 2)
+        clusters_b = np.repeat(np.arange(4), 3)
+        values_a = np.arange(len(clusters_a), dtype=float)
+        values_b = np.arange(len(clusters_b), dtype=float)
+        kwargs = dict(n_resamples=100, seed=11)
+
+        first = independent_cluster_bootstrap_diff(
+            clusters_a,
+            clusters_b,
+            lambda rows: float(values_a[rows].mean()),
+            lambda rows: float(values_b[rows].mean()),
+            **kwargs,
+        )
+        second = independent_cluster_bootstrap_diff(
+            clusters_a,
+            clusters_b,
+            lambda rows: float(values_a[rows].mean()),
+            lambda rows: float(values_b[rows].mean()),
+            **kwargs,
+        )
+        assert first == second

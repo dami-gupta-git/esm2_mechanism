@@ -71,6 +71,12 @@ def fit_direction(X, y, seed=0):
     w_unit = w / (np.linalg.norm(w) + 1e-12)
     return w_unit, clf
 
+
+def original_space_direction(scaled_direction, scaler):
+    """Map standardized-feature coefficients back to the original feature space."""
+    direction = np.asarray(scaled_direction) / scaler.scale_
+    return direction / (np.linalg.norm(direction) + 1e-12)
+
 def probe1_rank(delta, y, genes, pfam_map, k_max=5, seeds=(0, 1, 2, 3, 4)):
     from sklearn.preprocessing import StandardScaler
     from sklearn.linear_model import LogisticRegression
@@ -175,10 +181,8 @@ def probe2_universal(delta, y, genes, fam, n_partitions=10, seeds=(0,)):
             Xb_own = sc_b.transform(X[b])
             wA, clfA = fit_direction(Xa_own, yy[a], seed=seed)
             wB, clfB = fit_direction(Xb_own, yy[b], seed=seed)
-            wA_orig = sc_a.scale_ * wA
-            wB_orig = sc_b.scale_ * wB
-            wA_orig /= np.linalg.norm(wA_orig) + 1e-12
-            wB_orig /= np.linalg.norm(wB_orig) + 1e-12
+            wA_orig = original_space_direction(wA, sc_a)
+            wB_orig = original_space_direction(wB, sc_b)
             cos_obs.append(float(np.dot(wA_orig, wB_orig)))
             Xb_via_a = sc_a.transform(X[b])
             transfer.append(auroc_for_clf(clfA, Xb_via_a, yy[b]))
@@ -189,10 +193,8 @@ def probe2_universal(delta, y, genes, fam, n_partitions=10, seeds=(0,)):
             rng.shuffle(yB_s)
             wAn, _ = fit_direction(Xa_own, yA_s, seed=seed)
             wBn, _ = fit_direction(Xb_own, yB_s, seed=seed)
-            wAn_orig = sc_a.scale_ * wAn
-            wBn_orig = sc_b.scale_ * wBn
-            wAn_orig /= np.linalg.norm(wAn_orig) + 1e-12
-            wBn_orig /= np.linalg.norm(wBn_orig) + 1e-12
+            wAn_orig = original_space_direction(wAn, sc_a)
+            wBn_orig = original_space_direction(wBn, sc_b)
             cos_null.append(float(np.dot(wAn_orig, wBn_orig)))
             part += 1
 

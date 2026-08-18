@@ -17,6 +17,7 @@ import numpy as np
 
 from esm2_mech.experiments.geometry.direction_geometry import (
     fit_direction,
+    original_space_direction,
     probe2_universal,
 )
 
@@ -74,8 +75,7 @@ class TestDirectionCosine:
         X_scaled = sc.transform(X)
         w_scaled, _ = fit_direction(X_scaled, y, seed=0)
 
-        w_back = sc.scale_ * w_scaled
-        w_back /= np.linalg.norm(w_back) + 1e-12
+        w_back = original_space_direction(w_scaled, sc)
 
         cos_with_truth = float(np.dot(w_back, w_true))
         assert abs(cos_with_truth) > 0.8, (
@@ -107,10 +107,8 @@ class TestDirectionCosine:
         wA, _ = fit_direction(Xa, y[:n // 2], seed=0)
         wB, _ = fit_direction(Xb, y[n // 2:], seed=0)
 
-        wA_orig = sc_a.scale_ * wA
-        wB_orig = sc_b.scale_ * wB
-        wA_orig /= np.linalg.norm(wA_orig) + 1e-12
-        wB_orig /= np.linalg.norm(wB_orig) + 1e-12
+        wA_orig = original_space_direction(wA, sc_a)
+        wB_orig = original_space_direction(wB, sc_b)
         cos_back = float(np.dot(wA_orig, wB_orig))
 
         cos_naive = float(np.dot(wA, wB))
@@ -119,4 +117,19 @@ class TestDirectionCosine:
             f"Back-projected cosine should be more meaningful than naive cosine "
             f"when halves have different distributions; "
             f"back-projected={cos_back:.3f}, naive={cos_naive:.3f}"
+        )
+
+    def test_back_projection_preserves_linear_scores_up_to_intercept(self):
+        from sklearn.preprocessing import StandardScaler
+
+        X = np.array([[0.0, 10.0], [1.0, 30.0], [3.0, 70.0]])
+        scaler = StandardScaler().fit(X)
+        scaled_direction = np.array([0.4, -0.9])
+        original_direction = original_space_direction(scaled_direction, scaler)
+
+        scaled_scores = scaler.transform(X) @ scaled_direction
+        original_scores = X @ original_direction
+        assert np.allclose(
+            np.diff(scaled_scores),
+            np.diff(original_scores) * np.linalg.norm(scaled_direction / scaler.scale_),
         )

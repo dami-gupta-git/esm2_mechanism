@@ -19,6 +19,7 @@ from esm2_mech.utils.constants import (
     BOOTSTRAP_CI_LEVEL,
     BOOTSTRAP_N_RESAMPLES,
     N_SEEDS,
+    mechanism_oof_cache_filename,
 )
 from esm2_mech.utils.splits import gene_split_cv, family_split_cv
 from esm2_mech.utils.data import build_gene_to_row
@@ -28,6 +29,7 @@ from esm2_mech.utils.bootstrap import (
     adjudicate_level,
     bootstrap_mechanism_metrics,
     family_or_gene_clusters,
+    independent_cluster_bootstrap_diff,
     oof_permutation_pvalue,
     paired_oof_diff,
 )
@@ -41,6 +43,7 @@ from esm2_mech.utils.paths import (
     PFAM_JSON,
     PROTEOME_FEATURES_ALIGNED,
     PROTEOME_FEATURE_COLUMNS_JSON,
+    RESULTS_DIR,
     VALID_VARIANTS_JSON,
 )
 
@@ -65,6 +68,24 @@ def _load_mechanism_reference_f1() -> float | None:
     if val is None:
         print("  WARNING: macro_f1_seed_mean not found in mechanism aggregate — reference unavailable")
     return val
+
+
+def _load_mechanism_family_oof() -> dict | None:
+    """Load seed-0 mechanism family-split OOF labels for an independent CI."""
+    path = RESULTS_DIR / mechanism_oof_cache_filename(0)
+    if not path.exists():
+        print(f"  WARNING: {path} not found — enzyme/mechanism difference CI unavailable")
+        return None
+    with open(path) as handle:
+        cache = json.load(handle)
+    oof = cache.get("delta_mean", {}).get("family_split")
+    required = {"y_true", "pred", "genes"}
+    if oof is None or not required.issubset(oof):
+        raise ValueError(f"{path} lacks delta_mean family-split OOF fields {sorted(required)}")
+    lengths = {key: len(oof[key]) for key in required}
+    if len(set(lengths.values())) != 1:
+        raise ValueError(f"{path} has misaligned mechanism OOF fields: {lengths}")
+    return oof
 
 
 def load_gene_embeddings() -> tuple:
@@ -264,6 +285,7 @@ def run_multiseed(
     compute_ci: bool = True,
     n_boot: int = BOOTSTRAP_N_RESAMPLES,
     n_permutations: int = 0,
+    mechanism_family_oof: dict | None = None,
 ) -> dict:
     """Run linear and nonlinear probes across seeds with optional cluster-bootstrap CIs."""
     linear_probe = run_logreg
@@ -354,6 +376,7 @@ def run_multiseed(
     pooled_fs_f1 = None
     pooled_mlp_f1 = None
     paired_mlp_vs_logreg = None
+    independent_logreg_vs_mechanism = None
 
     if seed0_fs_oof is not None:
         oof_y_str = np.array([classes[i] for i in seed0_fs_oof["y_true"]])
@@ -410,6 +433,42 @@ def run_multiseed(
                 if lo is not None and hi is not None and pt is not None:
                     print(f"    MLP-LogReg diff: {pt:+.3f} [{lo:+.3f}, {hi:+.3f}]")
 
+        if mechanism_family_oof is not None:
+            print("\n  Computing independent CI: enzyme LogReg minus mechanism...")
+            enzyme_pred = np.array([classes[col] for col in seed0_fs_oof["proba"].argmax(axis=1)])
+            mechanism_y = np.asarray(mechanism_family_oof["y_true"])
+            mechanism_pred = np.asarray(mechanism_family_oof["pred"])
+            enzyme_clusters = family_or_gene_clusters(
+                seed0_fs_oof["genes"], pfam_map, is_family_split=True
+            )
+            mechanism_clusters = family_or_gene_clusters(
+                np.asarray(mechanism_family_oof["genes"]), pfam_map, is_family_split=True
+            )
+
+            def _enzyme_f1(rows):
+                return float(f1_score(oof_y_str[rows], enzyme_pred[rows], average="macro", zero_division=0))
+
+            def _mechanism_f1(rows):
+                return float(
+                    f1_score(
+                        mechanism_y[rows], mechanism_pred[rows], average="macro", zero_division=0
+                    )
+                )
+
+            independent_logreg_vs_mechanism = independent_cluster_bootstrap_diff(
+                enzyme_clusters,
+                mechanism_clusters,
+                _enzyme_f1,
+                _mechanism_f1,
+                n_resamples=n_boot,
+                seed=0,
+            )
+            lo = independent_logreg_vs_mechanism.get("ci_low")
+            hi = independent_logreg_vs_mechanism.get("ci_high")
+            point = independent_logreg_vs_mechanism.get("point_diff")
+            if lo is not None and hi is not None and point is not None:
+                print(f"    enzyme-mechanism diff: {point:+.3f} [{lo:+.3f}, {hi:+.3f}]")
+
         if n_permutations > 0:
             print(f"\n  Computing permutation p-value ({n_permutations} reps)...")
             permutation_result = oof_permutation_pvalue(
@@ -461,6 +520,8 @@ def run_multiseed(
         result["bootstrap_ci"] = ci_result
     if paired_mlp_vs_logreg is not None:
         result["paired_ci_mlp_minus_logreg"] = paired_mlp_vs_logreg
+    if independent_logreg_vs_mechanism is not None:
+        result["independent_ci_logreg_minus_mechanism"] = independent_logreg_vs_mechanism
     if permutation_result is not None:
         result["permutation_test"] = permutation_result
 
@@ -491,6 +552,7 @@ def main():
     print(f"Seeds: {seeds}  Folds: {args.n_folds}  CI: {compute_ci}  n_boot: {args.n_boot}")
 
     mechanism_ref_f1 = _load_mechanism_reference_f1()
+    mechanism_family_oof = _load_mechanism_family_oof()
 
     X_emb, gene_list, _ = load_gene_embeddings()
     enzyme_labels = load_enzyme_labels()
@@ -524,6 +586,7 @@ def main():
     emb_results = run_multiseed(
         X_emb, y, gene_list, pfam_map, le, seeds=seeds, n_folds=args.n_folds,
         compute_ci=compute_ci, n_boot=args.n_boot, n_permutations=args.n_permutations,
+        mechanism_family_oof=mechanism_family_oof,
     )
 
     print("\n" + "=" * 60)
@@ -570,28 +633,28 @@ def main():
     gs_f1 = emb_results["logreg_gene_split"]["macro_f1_mean"]
     fs_ci = (emb_results.get("bootstrap_ci") or {}).get("macro_f1")
     paired_ci = emb_results.get("paired_ci_mlp_minus_logreg")
+    independent_ci = emb_results.get("independent_ci_logreg_minus_mechanism")
 
     gate_2e1 = fs_f1 is not None and fs_f1 >= 0.70
-    gate_2e2 = (
-        fs_f1 is not None
-        and mechanism_ref_f1 is not None
-        and (fs_f1 - mechanism_ref_f1) > 0.10
+    mechanism_point = independent_ci.get("point_b") if independent_ci is not None else None
+    enzyme_mechanism_diff = (
+        independent_ci.get("point_diff") if independent_ci is not None else None
     )
+    gate_2e2 = enzyme_mechanism_diff is not None and enzyme_mechanism_diff > 0.10
     gate_2e3 = mlp_f1 is not None and fs_f1 is not None and abs(mlp_f1 - fs_f1) < 0.05
 
     verdict_2e1 = adjudicate_level(fs_f1, fs_ci, 0.70)
-    if mechanism_ref_f1 is not None:
-        verdict_2e2 = adjudicate_level(fs_f1, fs_ci, mechanism_ref_f1 + 0.10)
-        verdict_2e2 += " (mechanism estimate treated as fixed; no paired CI available)"
+    if independent_ci is not None:
+        verdict_2e2 = adjudicate_level(enzyme_mechanism_diff, independent_ci, 0.10)
     else:
-        verdict_2e2 = "not adjudicated (mechanism reference unavailable)"
+        verdict_2e2 = "not adjudicated (independent difference CI unavailable)"
     verdict_2e3 = adjudicate_equivalence(gate_2e3, paired_ci, 0.05)
 
     print(f"\n2E.1 — family-split F1 >= 0.70:  {verdict_2e1}  (F1={fs_f1:.3f})")
-    if mechanism_ref_f1 is not None:
+    if mechanism_point is not None:
         print(
             f"2E.2 — enzyme >> mechanism floor:  {verdict_2e2}  "
-            f"(delta={fs_f1 - mechanism_ref_f1:+.3f})"
+            f"(delta={enzyme_mechanism_diff:+.3f})"
         )
     else:
         print("2E.2 — enzyme >> mechanism floor:  SKIPPED (mechanism reference unavailable)")
@@ -630,6 +693,8 @@ def main():
             "mlp_f1": mlp_f1,
             "gs_f1": gs_f1,
             "mechanism_reference_f1": mechanism_ref_f1,
+            "mechanism_seed0_oof_f1": mechanism_point,
+            "enzyme_minus_mechanism_f1": enzyme_mechanism_diff,
             "note": "fs_f1 and mlp_f1 are pooled-OOF macro F1 (matching the bootstrap CI)",
         },
     }
