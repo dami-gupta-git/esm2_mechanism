@@ -140,10 +140,24 @@ def _fetch_clinvar(target_genes, max_per_gene_per_class, seed):
     print(f"  Scanned {n_seen} ClinVar rows; matched {sum(len(v) for v in by_gene_class.values())} variants")
 
     rng = np.random.RandomState(seed)
-    chosen = []
-    for lst in by_gene_class.values():
+    capped = {}
+    for (gene, label), lst in by_gene_class.items():
         rng.shuffle(lst)
-        chosen.extend(lst[:max_per_gene_per_class])
+        capped[(gene, label)] = lst[:max_per_gene_per_class]
+
+    genes_with_both = {
+        gene for (gene, label) in capped
+        if (gene, "pathogenic") in capped and (gene, "benign") in capped
+    }
+    chosen = []
+    for gene in sorted(genes_with_both):
+        n = min(len(capped[(gene, "pathogenic")]), len(capped[(gene, "benign")]))
+        chosen.extend(capped[(gene, "pathogenic")][:n])
+        chosen.extend(capped[(gene, "benign")][:n])
+
+    n_dropped = len(set(g for (g, _) in capped) - genes_with_both)
+    if n_dropped:
+        print(f"  Dropped {n_dropped} genes with only one class")
     return chosen
 
 

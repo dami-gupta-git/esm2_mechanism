@@ -56,16 +56,17 @@ class TestLeakageFractionCiForPartition:
             "row_ids": row_ids,
         }
         partition_clusters = np.array(["clanA"] * 5 + ["clanB"] * 5)
-        chance = 0.3
 
         ci = panel.leakage_fraction_ci_for_partition(
-            oof_gene, oof_partition, partition_clusters, chance, n_boot=30, seed=0
+            oof_gene, oof_partition, partition_clusters, n_boot=30, seed=0
         )
 
         from sklearn.metrics import f1_score
+        from esm2_mech.utils.metrics import majority_baseline_f1
 
         gene_f1 = f1_score(y_true, y_true, average="macro", zero_division=0)  # 1.0
         part_f1 = f1_score(y_true, part_pred_labels, average="macro", zero_division=0)
+        chance, _ = majority_baseline_f1(y_true, y_true)
         expected = (gene_f1 - part_f1) / (gene_f1 - chance)
 
         assert ci is not None
@@ -82,7 +83,7 @@ class TestLeakageFractionCiForPartition:
         partition_clusters = np.array(["c0", "c1", "c2"] * 4)
 
         ci = panel.leakage_fraction_ci_for_partition(
-            oof_gene, oof_partition, partition_clusters, chance=0.3, n_boot=20, seed=0
+            oof_gene, oof_partition, partition_clusters, n_boot=20, seed=0
         )
         # gene_f1 == part_f1 == 1.0 here so LF is 0 everywhere but n_clusters
         # must still reflect the distinct partition ids, not the row count.
@@ -97,9 +98,10 @@ class TestLeakageFractionCiForPartition:
         oof_partition = {"y_true": y_true, "proba": _one_hot_proba(y_true), "row_ids": row_ids}
         partition_clusters = np.array(["c0"] * 5 + ["c1"] * 5)
 
-        # chance set so that gene_f1 - chance <= MIN_ABOVE_CHANCE.
+        # Gene arm predicts everything as LOF. The majority class IS LOF (8/10),
+        # so gene_f1 equals the chance floor and denom <= MIN_ABOVE_CHANCE.
         ci = panel.leakage_fraction_ci_for_partition(
-            oof_gene, oof_partition, partition_clusters, chance=0.9, n_boot=20, seed=0
+            oof_gene, oof_partition, partition_clusters, n_boot=20, seed=0
         )
         assert ci["ci_suppressed"] is True
 
@@ -108,7 +110,7 @@ class TestLeakageFractionCiForPartition:
         oof_gene = {"y_true": y_true, "proba": _one_hot_proba(y_true), "row_ids": np.array([0, 1, 2])}
         oof_partition = {"y_true": y_true, "proba": _one_hot_proba(y_true), "row_ids": np.array([10, 11, 12])}
         result = panel.leakage_fraction_ci_for_partition(
-            oof_gene, oof_partition, np.array(["c0"] * 3), chance=0.3, n_boot=10, seed=0
+            oof_gene, oof_partition, np.array(["c0"] * 3), n_boot=10, seed=0
         )
         assert result is None
 

@@ -187,7 +187,12 @@ def probe_phase(variants, n_seeds, n_jobs=-1, compute_ci=True, n_boot=BOOTSTRAP_
     # --no_ci (or a different --n_boot) looks complete on disk but is missing
     # CIs a later CI-on run needs, so the params that produced each file are
     # stored alongside it and checked before treating it as reusable.
-    seed_params = {"compute_ci": compute_ci, "n_boot": n_boot if compute_ci else None}
+    seed_params = {
+        "compute_ci": compute_ci,
+        "n_boot": n_boot if compute_ci else None,
+        "variant_fingerprint": meta["fingerprint"],
+        "model": meta.get("model"),
+    }
     for seed in range(n_seeds):
         seed_path = Path(PATHOGENICITY_CONTROL_SEED_JSON.format(seed=seed))
         if seed_path.exists():

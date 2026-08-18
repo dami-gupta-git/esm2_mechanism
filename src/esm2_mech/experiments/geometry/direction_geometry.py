@@ -150,8 +150,6 @@ def probe2_universal(delta, y, genes, fam, n_partitions=10, seeds=(0,)):
     X = delta[mask]
     yy = y[mask]
     ff = fam[mask]
-    sc = StandardScaler().fit(X)
-    Xs = sc.transform(X)
     families = np.array(sorted(set(ff.tolist())))
 
     cos_obs, cos_null, transfer = [], [], []
@@ -171,17 +169,23 @@ def probe2_universal(delta, y, genes, fam, n_partitions=10, seeds=(0,)):
                 or (1 - yy[b]).sum() < 5
             ):
                 continue
-            wA, clfA = fit_direction(Xs[a], yy[a], seed=seed)
-            wB, clfB = fit_direction(Xs[b], yy[b], seed=seed)
+            sc_a = StandardScaler().fit(X[a])
+            sc_b = StandardScaler().fit(X[b])
+            Xa = sc_a.transform(X[a])
+            Xb_via_a = sc_a.transform(X[b])
+            Xb = sc_b.transform(X[b])
+            Xa_via_b = sc_b.transform(X[a])
+            wA, clfA = fit_direction(Xa, yy[a], seed=seed)
+            wB, clfB = fit_direction(Xb, yy[b], seed=seed)
             cos_obs.append(float(np.dot(wA, wB)))
-            transfer.append(auroc_for_clf(clfA, Xs[b], yy[b]))  # A's direction on B
+            transfer.append(auroc_for_clf(clfA, Xb_via_a, yy[b]))
 
             yA_s = yy[a].copy()
             rng.shuffle(yA_s)
             yB_s = yy[b].copy()
             rng.shuffle(yB_s)
-            wAn, _ = fit_direction(Xs[a], yA_s, seed=seed)
-            wBn, _ = fit_direction(Xs[b], yB_s, seed=seed)
+            wAn, _ = fit_direction(Xa, yA_s, seed=seed)
+            wBn, _ = fit_direction(Xb, yB_s, seed=seed)
             cos_null.append(float(np.dot(wAn, wBn)))
             part += 1
 

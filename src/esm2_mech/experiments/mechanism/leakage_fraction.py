@@ -15,7 +15,7 @@ from sklearn.metrics import f1_score
 
 from esm2_mech.utils.bootstrap import cluster_bootstrap_ci
 from esm2_mech.utils.constants import BOOTSTRAP_N_RESAMPLES, mechanism_oof_cache_filename
-from esm2_mech.utils.metrics import mean_std_n
+from esm2_mech.utils.metrics import majority_baseline_f1, mean_std_n
 from esm2_mech.utils.paths import (
     FAMILY_CLUSTERING_JSON,
     LEAKAGE_FRACTION_JSON,
@@ -51,11 +51,15 @@ def _measured_chance():
     return float(nb["by_strategy"]["most_frequent"]["gene"]["macro_f1_mean"])
 
 
+def _pick_macro_f1(arm_result):
+    """Prefer pooled OOF macro-F1 (consistent with bootstrap CI); fall back to fold mean."""
+    return arm_result.get("macro_f1_pooled", arm_result.get("macro_f1_mean"))
+
+
 def leakage_fraction_per_feature(seeds, feature, chance):
     """Leakage fraction for one feature, from seed-averaged macro-F1."""
-    # Averaged from seed-level F1s (not per-seed ratios, which are unstable).
-    gene_f1 = [s["gene_split"][feature]["macro_f1_mean"] for s in seeds]
-    family_f1 = [s["family_split"][feature]["macro_f1_mean"] for s in seeds]
+    gene_f1 = [_pick_macro_f1(s["gene_split"][feature]) for s in seeds]
+    family_f1 = [_pick_macro_f1(s["family_split"][feature]) for s in seeds]
     gene_mean, gene_std, gene_n = mean_std_n(gene_f1)
     family_mean, family_std, _ = mean_std_n(family_f1)
 
@@ -79,7 +83,7 @@ def leakage_fraction_per_feature(seeds, feature, chance):
     return result
 
 
-def leakage_fraction_ci(oof_cache_entry, pfam_map, chance, n_resamples, seed=0):
+def leakage_fraction_ci(oof_cache_entry, pfam_map, n_resamples, seed=0):
     """Cluster-bootstrap CI on the LF ratio, resampling family clusters shared across both arms."""
     gene_arm = oof_cache_entry["gene_split"]
     family_arm = oof_cache_entry["family_split"]
@@ -111,7 +115,8 @@ def leakage_fraction_ci(oof_cache_entry, pfam_map, chance, n_resamples, seed=0):
         family_f1 = float(
             f1_score(family_y_true[f_idx], family_pred[f_idx], average="macro", zero_division=0)
         )
-        denom = gene_f1 - chance
+        resample_chance, _ = majority_baseline_f1(gene_y_true[g_idx], gene_y_true[g_idx])
+        denom = gene_f1 - resample_chance
         if denom <= MIN_ABOVE_CHANCE:
             return None
         return (gene_f1 - family_f1) / denom
@@ -164,7 +169,7 @@ def main(compute_ci: bool = True, n_boot: int = BOOTSTRAP_N_RESAMPLES) -> None:
     for feature in features:
         cell = leakage_fraction_per_feature(seeds, feature, chance)
         if oof_cache is not None and feature in oof_cache:
-            ci = leakage_fraction_ci(oof_cache[feature], pfam_map, chance, n_boot, seed=0)
+            ci = leakage_fraction_ci(oof_cache[feature], pfam_map, n_boot, seed=0)
             if ci is not None:
                 cell["ci"] = ci
         results["by_feature"][feature] = cell

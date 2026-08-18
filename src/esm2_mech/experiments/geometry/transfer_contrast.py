@@ -60,8 +60,6 @@ def transfer_test(delta, y, groups, kind="linear", n_partitions=10, seed=0, min_
     from sklearn.model_selection import StratifiedKFold
 
     y = np.asarray(y).astype(int)
-    # Scaler fit on all rows deliberately — shared coordinate frame for direction transfer.
-    Xs = StandardScaler().fit_transform(delta)
     groups = np.asarray(groups)
     uniq = np.array(sorted(set(groups.tolist())))
     rng = np.random.RandomState(seed)
@@ -78,18 +76,23 @@ def transfer_test(delta, y, groups, kind="linear", n_partitions=10, seed=0, min_
                 continue
             if y[te].sum() < min_pos or (1 - y[te]).sum() < min_pos:
                 continue
-            clf = _make_clf(kind, seed).fit(Xs[tr], y[tr])
-            transfer.append(auroc_for_clf(clf, Xs[te], y[te]))
+            sc = StandardScaler().fit(delta[tr])
+            Xtr = sc.transform(delta[tr])
+            Xte = sc.transform(delta[te])
+            clf = _make_clf(kind, seed).fit(Xtr, y[tr])
+            transfer.append(auroc_for_clf(clf, Xte, y[te]))
 
-    # Cap n_splits at minority-class count to avoid StratifiedKFold raising.
     pooled = []
     minority = int(min(y.sum(), (1 - y).sum()))
     n_splits = min(5, minority)
     if n_splits >= 2:
         skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=seed)
-        for tr, te in skf.split(Xs, y):
-            clf = _make_clf(kind, seed).fit(Xs[tr], y[tr])
-            pooled.append(auroc_for_clf(clf, Xs[te], y[te]))
+        for tr, te in skf.split(delta, y):
+            sc = StandardScaler().fit(delta[tr])
+            Xtr = sc.transform(delta[tr])
+            Xte = sc.transform(delta[te])
+            clf = _make_clf(kind, seed).fit(Xtr, y[tr])
+            pooled.append(auroc_for_clf(clf, Xte, y[te]))
 
     def agg(v):
         mean, std, n = mean_std_n(v)

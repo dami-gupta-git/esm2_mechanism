@@ -43,8 +43,11 @@ PCA_COMPONENTS = 256  # applied to embedding features (dim > PCA_COMPONENTS)
 print = functools.partial(print, flush=True)
 
 
-def run_probe_on_splits(X, y, splits, genes=None, seed=42):
-    """Run logistic regression across splits. Returns (agg, oof)."""
+def run_probe_on_splits(X, y, splits, genes=None, seed=42, n_pca=None):
+    """Run logistic regression across splits. Returns (agg, oof).
+
+    n_pca: if set, fit PCA to this many components on training rows only per fold.
+    """
     fold_results = []
     oof_y, oof_proba, oof_genes, oof_rows = [], [], [], []
     for train_idx, test_idx in splits:
@@ -52,6 +55,13 @@ def run_probe_on_splits(X, y, splits, genes=None, seed=42):
         y_train, y_test = y[train_idx], y[test_idx]
         if len(set(y_train)) < 2:
             continue
+        if n_pca is not None and X_train.shape[1] > n_pca:
+            pca = PCA(
+                n_components=min(n_pca, X_train.shape[0] - 1),
+                random_state=seed,
+            )
+            X_train = pca.fit_transform(X_train)
+            X_test = pca.transform(X_test)
         clf = LogisticRegression(
             max_iter=1000, C=1.0, solver="lbfgs", random_state=seed
         )
@@ -96,6 +106,10 @@ def run_probe_on_splits(X, y, splits, genes=None, seed=42):
             "genes": np.concatenate(oof_genes),
             "row_ids": np.concatenate(oof_rows),
         }
+        pooled_pred = [MECHANISM_CLASSES[col] for col in oof["proba"].argmax(axis=1)]
+        agg["macro_f1_pooled"] = float(
+            f1_score(oof["y_true"], pooled_pred, average="macro", zero_division=0)
+        )
     return agg, oof
 
 
@@ -137,20 +151,14 @@ def run(
     foldx_mask = ~np.isnan(foldx_ddg)
     am_mask = ~np.isnan(alphamissense_scores)
 
-    print(f"\n=== PCA reduction to {PCA_COMPONENTS} components ===")
-    pca = PCA(n_components=PCA_COMPONENTS, random_state=seed)
-    emb_wt_mean_pca = pca.fit_transform(emb_wt_mean)
-    emb_mut_mean_pca = pca.transform(emb_mut_mean)
-    deltas_mean_pca = pca.transform(deltas_mean)
-    deltas_pos_pca = pca.transform(deltas_pos)
-    print(f"  Variance explained: {pca.explained_variance_ratio_.sum():.3f}")
+    print(f"\n=== PCA ({PCA_COMPONENTS} components) fitted per CV fold ===")
 
     features: dict = {
-        "wt_only_mean": emb_wt_mean_pca,
-        "mut_only_mean": emb_mut_mean_pca,
-        "delta_mean": deltas_mean_pca,
-        "delta_per_residue": deltas_pos_pca,
-        "wt_concat_mut": np.concatenate([emb_wt_mean_pca, emb_mut_mean_pca], axis=1),
+        "wt_only_mean": emb_wt_mean,
+        "mut_only_mean": emb_mut_mean,
+        "delta_mean": deltas_mean,
+        "delta_per_residue": deltas_pos,
+        "wt_concat_mut": np.concatenate([emb_wt_mean, emb_mut_mean], axis=1),
         "onehot_aa": build_wt_mut_onehot(aa_wt_list, aa_mut_list),
     }
 
@@ -207,23 +215,25 @@ def run(
             continue
         print(f"\n--- {name} (dim={X.shape[1]}, n={len(feat_labels)}) ---")
 
-        gs, gs_oof = run_probe_on_splits(X, feat_labels, feat_gene_splits, feat_genes, seed=seed)
+        gs, gs_oof = run_probe_on_splits(X, feat_labels, feat_gene_splits, feat_genes, seed=seed, n_pca=PCA_COMPONENTS)
         if compute_ci and gs_oof is not None:
             gs["ci"] = bootstrap_mechanism_metrics(
                 gs_oof["y_true"], gs_oof["proba"], gs_oof["genes"],
                 n_resamples=n_boot, seed=seed,
             )
         results["gene_split"][name] = gs
+        gs_f1 = gs.get("macro_f1_pooled", gs.get("macro_f1_mean", float("nan")))
         print(
-            f"  gene-split   macro-F1 = {gs.get('macro_f1_mean', float('nan')):.3f} "
-            f"± {gs.get('macro_f1_std', float('nan')):.3f}  "
+            f"  gene-split   macro-F1 = {gs_f1:.3f} "
+            f"(fold mean {gs.get('macro_f1_mean', float('nan')):.3f} "
+            f"± {gs.get('macro_f1_std', float('nan')):.3f})  "
             f"(GOF AUROC {gs.get('auroc_GOF_mean', float('nan')):.3f}, "
             f"DN {gs.get('auroc_DN_mean', float('nan')):.3f}, "
             f"LOF {gs.get('auroc_LOF_mean', float('nan')):.3f})"
         )
 
         if feat_family_splits:
-            fs, fs_oof = run_probe_on_splits(X, feat_labels, feat_family_splits, feat_genes, seed=seed)
+            fs, fs_oof = run_probe_on_splits(X, feat_labels, feat_family_splits, feat_genes, seed=seed, n_pca=PCA_COMPONENTS)
             if compute_ci and fs_oof is not None:
                 fs_clusters = family_or_gene_clusters(
                     fs_oof["genes"], pfam_map, is_family_split=True
@@ -234,8 +244,8 @@ def run(
                 )
             if n_permutations > 0 and name in REFIT_PERMUTATION_FEATURES:
                 def _family_macro_f1(perm_labels, _X=X, _splits=feat_family_splits, _genes=feat_genes):
-                    agg_perm, _ = run_probe_on_splits(_X, perm_labels, _splits, _genes, seed=seed)
-                    return agg_perm.get("macro_f1_mean")
+                    agg_perm, _ = run_probe_on_splits(_X, perm_labels, _splits, _genes, seed=seed, n_pca=PCA_COMPONENTS)
+                    return agg_perm.get("macro_f1_pooled", agg_perm.get("macro_f1_mean"))
 
                 fs["permutation"] = label_permutation_pvalue(
                     _family_macro_f1, feat_labels, statistic="macro_f1",
@@ -280,12 +290,12 @@ def run(
                 }
 
             results["family_split"][name] = fs
-            delta_macro = gs.get("macro_f1_mean", float("nan")) - fs.get(
-                "macro_f1_mean", float("nan")
-            )
+            fs_f1 = fs.get("macro_f1_pooled", fs.get("macro_f1_mean", float("nan")))
+            delta_macro = gs_f1 - fs_f1
             print(
-                f"  family-split macro-F1 = {fs.get('macro_f1_mean', float('nan')):.3f} "
-                f"± {fs.get('macro_f1_std', float('nan')):.3f}  "
+                f"  family-split macro-F1 = {fs_f1:.3f} "
+                f"(fold mean {fs.get('macro_f1_mean', float('nan')):.3f} "
+                f"± {fs.get('macro_f1_std', float('nan')):.3f})  "
                 f"(GOF AUROC {fs.get('auroc_GOF_mean', float('nan')):.3f}, "
                 f"DN {fs.get('auroc_DN_mean', float('nan')):.3f}, "
                 f"LOF {fs.get('auroc_LOF_mean', float('nan')):.3f})"

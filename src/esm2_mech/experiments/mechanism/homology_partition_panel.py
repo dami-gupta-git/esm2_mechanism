@@ -60,6 +60,7 @@ from esm2_mech.utils.bootstrap import (
     family_or_gene_clusters,
 )
 from esm2_mech.utils.constants import BOOTSTRAP_N_RESAMPLES, MECHANISM_CLASSES
+from esm2_mech.utils.metrics import majority_baseline_f1
 from esm2_mech.utils.io import atomic_write_json, load_variants_and_delta
 from esm2_mech.utils.paths import (
     EMB_MUT_MEAN,
@@ -121,9 +122,13 @@ def _pred_from_proba(proba):
     return np.array([MECHANISM_CLASSES[col] for col in proba.argmax(axis=1)])
 
 
-def leakage_fraction_ci_for_partition(oof_gene, oof_partition, partition_clusters, chance, n_boot, seed):
+def leakage_fraction_ci_for_partition(oof_gene, oof_partition, partition_clusters, n_boot, seed):
     """CI on LF = (gene_f1 - partition_f1) / (gene_f1 - chance), jointly
     resampled at the partition's own held-out unit per replicate (R7.3).
+
+    The chance floor (majority-class macro-F1) is recomputed from the resampled
+    gene-split labels on every bootstrap replicate, because resampling clusters
+    changes the class balance and therefore the majority-class baseline.
 
     `oof_gene`/`oof_partition` are {"y_true", "proba", "row_ids"} with row_ids
     in a SHARED global row space (the same indexing the caller used for both
@@ -151,7 +156,8 @@ def leakage_fraction_ci_for_partition(oof_gene, oof_partition, partition_cluster
         p_idx = part_idx_all[rows]
         gene_f1 = float(f1_score(gene_y[g_idx], gene_pred[g_idx], average="macro", zero_division=0))
         part_f1 = float(f1_score(part_y[p_idx], part_pred[p_idx], average="macro", zero_division=0))
-        denom = gene_f1 - chance
+        resample_chance, _ = majority_baseline_f1(gene_y[g_idx], gene_y[g_idx])
+        denom = gene_f1 - resample_chance
         if denom <= MIN_ABOVE_CHANCE:
             return None
         return (gene_f1 - part_f1) / denom
@@ -169,7 +175,7 @@ def _partition_row(
         n_resamples=n_boot, seed=seed,
     )
     lf_ci = leakage_fraction_ci_for_partition(
-        oof_gene, oof_partition, partition_clusters, gene_chance, n_boot, seed
+        oof_gene, oof_partition, partition_clusters, n_boot, seed
     )
     return {
         "partition": name,

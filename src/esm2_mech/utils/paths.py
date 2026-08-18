@@ -45,6 +45,10 @@ LEAKAGE_FRACTION_JSON = RESULTS_DIR / "leakage_fraction.json"
 # Format with .format(seed=N).
 PATHOGENICITY_CONTROL_SEED_JSON = str(RESULTS_DIR / "pathogenicity_control_seed{seed}.json")
 WITHIN_FAMILY_MECHANISM_JSON = RESULTS_DIR / "within_family_mechanism.json"
+
+# ── Enzyme classification (positive control for the mechanism arc) ───────────
+ENZYME_RESULTS_DIR = RESULTS_DIR / "enzyme_classification"
+ENZYME_CLASSIFICATION_JSON = ENZYME_RESULTS_DIR / "enzyme_classification_summary.json"
 # Per-seed ESM-2 nonlinear-probe results (MLP/GBM/RF/kNN on delta features). Format
 # with .format(seed=N). The ESM-3 experiment reads mlp_delta_mean_family from these to
 # derive the matched ESM-2 family-split floor instead of hardcoding it.

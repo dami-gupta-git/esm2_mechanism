@@ -6,6 +6,7 @@ Phase 2 (CPU): compare conservation features to the result_23 axis, same family-
 """
 
 import argparse
+import hashlib
 import json
 import os
 import numpy as np
@@ -57,6 +58,14 @@ K2_ADD_MIN = 0.02
 PATHOGENIC = 1
 LOGREG_MAX_ITER = 2000
 
+def _variant_fingerprint(variants):
+    key = json.dumps(
+        [(v["gene"], v["aa_pos"], v["aa_wt"], v["aa_mut"]) for v in variants],
+        sort_keys=True,
+    )
+    return hashlib.sha256(key.encode()).hexdigest()[:16]
+
+
 def extract_conservation(variants, seqs, batch_size=64, ckpt_every=2000):
     """Returns (N,3) array [logP_wt, logP_mut, entropy]; NaN where unavailable."""
     import torch
@@ -70,14 +79,21 @@ def extract_conservation(variants, seqs, batch_size=64, ckpt_every=2000):
         )
 
     N = len(variants)
+    fp = _variant_fingerprint(variants)
     out = np.full((N, 3), np.nan, dtype=np.float32)
     done = 0
-    if CONS_CACHE.exists():
+    if CONS_CACHE.exists() and CONS_META.exists():
         cached = load_npy_or_discard(CONS_CACHE)
-        if cached is not None and len(cached) == N:
+        with open(CONS_META) as _f:
+            meta = json.load(_f)
+        if cached is not None and len(cached) == N and meta.get("fingerprint") == fp:
             out = cached
             done = int(np.isfinite(out[:, 0]).sum())
             print(f"Resuming: {done}/{N} variants already extracted")
+        elif cached is not None and len(cached) == N and "fingerprint" not in meta:
+            out = cached
+            done = int(np.isfinite(out[:, 0]).sum())
+            print(f"Resuming (legacy cache, no fingerprint): {done}/{N} already extracted")
 
     model, alphabet = esm.pretrained.load_model_and_alphabet(ESM2_MODEL_650M)
     model = model.to(device).eval()
@@ -133,6 +149,7 @@ def extract_conservation(variants, seqs, batch_size=64, ckpt_every=2000):
         CONS_META,
         {
             "n": N,
+            "fingerprint": fp,
             "coverage": done,
             "features": ["logP_wt", "logP_mut", "entropy"],
             "model": ESM2_MODEL_650M,
