@@ -17,7 +17,13 @@ from sklearn.metrics import accuracy_score, f1_score, silhouette_score
 from sklearn.model_selection import StratifiedKFold
 from sklearn.neighbors import NearestNeighbors
 
-from esm2_mech.utils.bootstrap import cluster_bootstrap_ci, cluster_subsample_ci
+from esm2_mech.utils.bootstrap import (
+    cluster_bootstrap_ci,
+    cluster_subsample_ci,
+    folds_to_arms,
+    score_within_folds,
+    within_stratum_bootstrap_ci,
+)
 from esm2_mech.utils.constants import BOOTSTRAP_N_RESAMPLES, N_SEEDS
 from esm2_mech.utils.data import load_variants
 from esm2_mech.utils.metrics import mean_std_n
@@ -191,8 +197,8 @@ def family_probe(
     skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=seed)
 
     accs, f1s, baseline_accs = [], [], []
-    oof_y, oof_pred = [], []
-    for train_idx, test_idx in skf.split(X, y):
+    oof_y, oof_pred, oof_folds = [], [], []
+    for fold_i, (train_idx, test_idx) in enumerate(skf.split(X, y)):
         if len(set(y[train_idx])) < 2:
             continue
         clf = LogisticRegression(max_iter=500, C=1.0, solver="lbfgs", random_state=seed)
@@ -207,6 +213,7 @@ def family_probe(
         if return_oof:
             oof_y.append(y[test_idx])
             oof_pred.append(pred)
+            oof_folds.append(np.full(len(test_idx), fold_i, dtype=int))
 
     if not accs:
         result = {"note": "all folds failed"}
@@ -225,28 +232,43 @@ def family_probe(
     oof = None
     if oof_y:
         y_true = np.concatenate(oof_y)
-        oof = {"y_true": y_true, "pred": np.concatenate(oof_pred), "families": y_true}
+        oof = {
+            "y_true": y_true,
+            "pred": np.concatenate(oof_pred),
+            "families": y_true,
+            "folds": np.concatenate(oof_folds),
+        }
     return result, oof
 
 
 def _family_probe_bootstrap_ci(oof, n_resamples, seed):
-    """Cluster-bootstrap CI (resampled at the family level) on the family probe's
-    accuracy and macro-F1, from its OOF predictions."""
+    """Bootstrap CI on the family probe's accuracy and macro-F1, from its OOF rows.
+
+    Resamples genes inside each family rather than resampling families. The family is
+    this probe's prediction target, so dropping families from a draw changes the class
+    set the macro average runs over and moves the value systematically; the reported
+    point estimate then sits outside its own interval. Scoring stays within fold and
+    averages, matching the point estimate, which is a fold mean.
+    """
     y_true, pred = oof["y_true"], oof["pred"]
+    arms = folds_to_arms(pred, oof["folds"])
 
-    def _accuracy(rows):
-        return float(accuracy_score(y_true[rows], pred[rows]))
+    def _fold_accuracy(block, arm_pred):
+        return float(accuracy_score(y_true[block], arm_pred[block]))
 
-    def _macro_f1(rows):
-        return float(f1_score(y_true[rows], pred[rows], average="macro", zero_division=0))
+    def _fold_macro_f1(block, arm_pred):
+        return float(
+            f1_score(y_true[block], arm_pred[block], average="macro", zero_division=0)
+        )
+
+    def _scored(fold_fn):
+        return lambda rows: score_within_folds(rows, arms, fold_fn)
 
     return {
-        "accuracy": cluster_bootstrap_ci(
-            oof["families"], _accuracy, n_resamples=n_resamples, seed=seed
-        ),
-        "macro_f1": cluster_bootstrap_ci(
-            oof["families"], _macro_f1, n_resamples=n_resamples, seed=seed
-        ),
+        name: within_stratum_bootstrap_ci(
+            oof["families"], _scored(fold_fn), n_resamples=n_resamples, seed=seed
+        )
+        for name, fold_fn in (("accuracy", _fold_accuracy), ("macro_f1", _fold_macro_f1))
     }
 
 

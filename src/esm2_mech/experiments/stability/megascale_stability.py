@@ -1,6 +1,6 @@
 """Linear (Ridge) stability probe on Tsuboyama 2023 point-mutant ΔΔG.
 
-Pre-registered H1-H4 hypotheses; see docs/plans/plan_megascale_stability.md.
+Pre-registered stability controls 3A-3D; see biorxiv/PREREGISTRATION_run_biorxiv.md.
 Companion nonlinear probe: megascale_mlp.py.
 """
 
@@ -23,8 +23,10 @@ from esm2_mech.experiments.stability.stability_data import (
 )
 from esm2_mech.utils.bootstrap import (
     cluster_bootstrap_ci,
+    folds_to_arms,
     paired_cluster_bootstrap_diff,
     paired_cluster_bootstrap_diff_cross_partition,
+    score_within_folds,
 )
 from esm2_mech.utils.constants import BOOTSTRAP_N_RESAMPLES, N_SEEDS, N_FOLDS
 from esm2_mech.utils.io import atomic_write_json
@@ -51,7 +53,7 @@ def run_regression_cv(X, y, splits, clf_fn, with_pearson=True, clusters=None,
                       return_oof=False, median=None, label=None):
     """Standardise-fit-predict a regressor over CV folds; return ρ/AUROC."""
     rhos, pearsons, aurocs = [], [], []
-    oof_y, oof_pred, oof_clusters, oof_indices = [], [], [], []
+    oof_y, oof_pred, oof_clusters, oof_indices, oof_folds = [], [], [], [], []
     splits = list(splits)
     n_folds = len(splits)
     for fold_i, (tr, te) in enumerate(splits):
@@ -72,6 +74,7 @@ def run_regression_cv(X, y, splits, clf_fn, with_pearson=True, clusters=None,
             oof_pred.append(pred)
             oof_clusters.append(clusters[te])
             oof_indices.append(te)
+            oof_folds.append(np.full(len(te), fold_i, dtype=int))
     if not rhos:
         out = {}
     else:
@@ -92,17 +95,17 @@ def run_regression_cv(X, y, splits, clf_fn, with_pearson=True, clusters=None,
         return out
     oof = None
     if oof_y:
-        all_y = np.concatenate(oof_y)
-        all_pred = np.concatenate(oof_pred)
+        # No pooled rank correlation here. Each fold's regressor has its own
+        # intercept and scale, so ranking one concatenated list of predictions
+        # compares values that were never on a common scale. The reported figure is
+        # the fold mean, and the interval below is computed the same way.
         oof = {
-            "y_true": all_y,
-            "pred": all_pred,
+            "y_true": np.concatenate(oof_y),
+            "pred": np.concatenate(oof_pred),
             "clusters": np.concatenate(oof_clusters),
             "indices": np.concatenate(oof_indices),
+            "folds": np.concatenate(oof_folds),
         }
-        pooled_rho, _ = spearmanr(all_y, all_pred)
-        if np.isfinite(pooled_rho):
-            out["spearman_pooled"] = float(pooled_rho)
     return out, oof
 
 
@@ -115,15 +118,22 @@ def run_ridge_with_auroc(X, y, splits, clusters=None, return_oof=False, median=N
 
 
 def spearman_cluster_bootstrap_ci(oof, n_resamples=BOOTSTRAP_N_RESAMPLES, seed=0):
-    """Cluster-bootstrap CI on Spearman ρ from OOF predictions."""
+    """Cluster-bootstrap CI on Spearman ρ, correlated within fold and averaged.
+
+    Matches the reported fold mean. Ranking the pooled predictions would mix folds
+    fitted with different intercepts into one ranking.
+    """
     y_true = oof["y_true"]
-    pred = oof["pred"]
+    arms = folds_to_arms(oof["pred"], oof["folds"])
+
+    def _fold_rho(block, arm_pred):
+        if len(set(block.tolist())) < 2:
+            return None
+        rho, _ = spearmanr(y_true[block], arm_pred[block])
+        return float(rho) if np.isfinite(rho) else None
 
     def _rho(rows):
-        if len(set(rows.tolist())) < 2:
-            return None
-        rho, _ = spearmanr(y_true[rows], pred[rows])
-        return float(rho) if np.isfinite(rho) else None
+        return score_within_folds(rows, arms, _fold_rho)
 
     return cluster_bootstrap_ci(oof["clusters"], _rho, n_resamples=n_resamples, seed=seed)
 
@@ -167,7 +177,7 @@ def per_protein_spearman(X, y, proteins, n_jobs):
 
 
 
-def run_h3_stability_projection(
+def run_stability_projection_3c(
     merged_delta_mean,
     merged_labels,
     merged_proteins,
@@ -203,7 +213,7 @@ def run_h3_stability_projection(
     proj = merged_scaled @ stability_dir  # (N,) scalar stability score per variant
     residuals = merged_scaled - np.outer(proj, stability_dir)
 
-    # H3 hinges on this removal; assert var along stability_dir ≈ 0.
+    # Control 3C hinges on this removal; assert var along stability_dir ≈ 0.
     var_before = float(np.var(merged_scaled.astype(np.float64) @ stability_dir))
     var_after = float(np.var(residuals.astype(np.float64) @ stability_dir))
     if var_after > 1e-6 * var_before + 1e-8:
@@ -216,15 +226,15 @@ def run_h3_stability_projection(
     le = LabelEncoder()
     y = le.fit_transform(merged_labels)
 
-    def _run_h3_seed(seed, collect_oof):
+    def _run_3c_seed(seed, collect_oof):
         splits = family_split_cv(merged_proteins, pfam_map, n_folds=n_folds, seed=seed)
         seed_oof = {}
         seed_baseline_f1 = None
         seed_projected_f1 = None
         for X, tag in [(merged_scaled, "baseline"), (residuals, "projected")]:
             fold_f1s = []
-            oof_y, oof_pred, oof_genes = [], [], []
-            for tr, te in splits:
+            oof_y, oof_pred, oof_genes, oof_folds = [], [], [], []
+            for fold_i, (tr, te) in enumerate(splits):
                 clf = LogisticRegression(
                     max_iter=1000,
                     C=1.0,
@@ -240,6 +250,7 @@ def run_h3_stability_projection(
                     oof_y.append(y[te])
                     oof_pred.append(pred)
                     oof_genes.append(merged_proteins[te])
+                    oof_folds.append(np.full(len(te), fold_i, dtype=int))
             seed_f1_mean, _, _ = mean_std_n(fold_f1s)
             if tag == "baseline":
                 seed_baseline_f1 = seed_f1_mean
@@ -250,13 +261,14 @@ def run_h3_stability_projection(
                     "y_true": np.concatenate(oof_y),
                     "pred": np.concatenate(oof_pred),
                     "genes": np.concatenate(oof_genes),
+                    "folds": np.concatenate(oof_folds),
                 }
         return seed_baseline_f1, seed_projected_f1, seed_oof
 
-    seed0_bl, seed0_pr, seed0_oof = _run_h3_seed(0, collect_oof=True)
+    seed0_bl, seed0_pr, seed0_oof = _run_3c_seed(0, collect_oof=True)
     with parallel_config(backend="loky", n_jobs=n_jobs, inner_max_num_threads=1):
         rest = Parallel()(
-            delayed(_run_h3_seed)(seed, False) for seed in range(1, n_seeds)
+            delayed(_run_3c_seed)(seed, False) for seed in range(1, n_seeds)
         )
     baseline_f1s = [seed0_bl] + [r[0] for r in rest]
     projected_f1s = [seed0_pr] + [r[1] for r in rest]
@@ -268,30 +280,25 @@ def run_h3_stability_projection(
         baseline_oof = seed0_oof["baseline"]
         projected_oof = seed0_oof["projected"]
         if not np.array_equal(baseline_oof["genes"], projected_oof["genes"]):
-            raise AssertionError("H3 baseline and projected OOF rows are not aligned")
+            raise AssertionError("3C baseline and projected OOF rows are not aligned")
         clusters = np.array(
             [pfam_map[gene] for gene in baseline_oof["genes"]], dtype=object
         )
 
-        def _projected_f1(rows):
-            return float(
-                f1_score(
-                    projected_oof["y_true"][rows],
-                    projected_oof["pred"][rows],
-                    average="macro",
-                    zero_division=0,
-                )
-            )
+        def _fold_f1(oof):
+            y_true = oof["y_true"]
+            arms = folds_to_arms(oof["pred"], oof["folds"])
 
-        def _baseline_f1(rows):
-            return float(
-                f1_score(
-                    baseline_oof["y_true"][rows],
-                    baseline_oof["pred"][rows],
-                    average="macro",
-                    zero_division=0,
+            def _score(block, arm_pred):
+                return float(
+                    f1_score(y_true[block], arm_pred[block], average="macro", zero_division=0)
                 )
-            )
+            return lambda rows: score_within_folds(rows, arms, _score)
+
+        # Both arms are the same fold assignment (one seed, one split), so the paired
+        # difference stays row-for-row aligned while each side is scored per fold.
+        _projected_f1 = _fold_f1(projected_oof)
+        _baseline_f1 = _fold_f1(baseline_oof)
 
         difference_ci = paired_cluster_bootstrap_diff(
             clusters,
@@ -301,13 +308,13 @@ def run_h3_stability_projection(
             seed=0,
         )
     if difference_ci is None or difference_ci.get("ci_high") is None:
-        h3_verdict = "not adjudicated (paired family-bootstrap CI unavailable)"
+        control_3c_verdict = "not adjudicated (paired family-bootstrap CI unavailable)"
     elif difference_ci["ci_high"] <= 0.01:
-        h3_verdict = "pass — established"
+        control_3c_verdict = "pass — established"
     elif difference_ci["ci_low"] > 0.01:
-        h3_verdict = "fail — established"
+        control_3c_verdict = "fail — established"
     else:
-        h3_verdict = "underpowered — CI overlaps +0.01 threshold"
+        control_3c_verdict = "underpowered — CI overlaps +0.01 threshold"
     return {
         "baseline_f1_mean": baseline_f1_mean,
         "baseline_f1_std": baseline_f1_std,
@@ -315,22 +322,22 @@ def run_h3_stability_projection(
         "projected_f1_std": projected_f1_std,
         "delta_f1": projected_f1_mean - baseline_f1_mean,
         "difference_ci": difference_ci,
-        "h3_passes": h3_verdict == "pass — established",
-        "h3_verdict": h3_verdict,
+        "3C_passes": control_3c_verdict == "pass — established",
+        "3C_verdict": control_3c_verdict,
     }
 
 
 
-def apply_decision_rule(random_rho, protein_rho, per_prot_std, h2_gap_ci=None):
+def apply_decision_rule(random_rho, protein_rho, per_prot_std, control_3b_gap_ci=None):
     """Apply pre-registered decision rule, ordered by informativeness."""
     delta = random_rho - protein_rho
     # Check in order of informativeness
     if random_rho >= 0.5 and delta >= 0.10:
-        if h2_gap_ci is None or h2_gap_ci.get("ci_low") is None:
-            return "NOT ADJUDICATED (H2 paired CI unavailable)"
-        if h2_gap_ci["ci_low"] >= 0.10:
+        if control_3b_gap_ci is None or control_3b_gap_ci.get("ci_low") is None:
+            return "NOT ADJUDICATED (3B paired CI unavailable)"
+        if control_3b_gap_ci["ci_low"] >= 0.10:
             return "LEAKY"
-        return "UNDERPOWERED (H2 point estimate is LEAKY; CI overlaps 0.10)"
+        return "UNDERPOWERED (3B point estimate is LEAKY; CI overlaps 0.10)"
     if random_rho >= 0.5 and delta <= 0.05 and per_prot_std >= 0.15:
         return "HETEROGENEOUS"
     if random_rho >= 0.5 and delta <= 0.05 and per_prot_std <= 0.10:
@@ -469,18 +476,18 @@ def main(compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES, n_jobs=1):
         "n_proteins_finite": n_finite_prot,
     }
 
-    h3_result = None
+    control_3c_result = None
     if all(
         os.path.exists(path)
         for path in [VALID_VARIANTS_JSON, EMB_WT_MEAN, EMB_MUT_MEAN, PFAM_JSON]
     ):
-        print("\nRunning H3 stability projection test...")
+        print("\nRunning 3C stability projection test...")
         with open(PFAM_JSON) as handle:
             pfam_map = json.load(handle)
 
         merged_delta, merged_labels, merged_proteins = load_merged()
 
-        h3_result = run_h3_stability_projection(
+        control_3c_result = run_stability_projection_3c(
             merged_delta,
             merged_labels,
             merged_proteins,
@@ -494,22 +501,22 @@ def main(compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES, n_jobs=1):
             n_jobs=n_jobs,
         )
         print(
-            f"  H3: baseline F1={h3_result['baseline_f1_mean']:.3f}  "
-            f"projected F1={h3_result['projected_f1_mean']:.3f}  "
-            f"Δ={h3_result['delta_f1']:+.3f}  "
-            f"passes={'YES' if h3_result['h3_passes'] else 'NO (stability direction is informative)'}"
+            f"  3C: baseline F1={control_3c_result['baseline_f1_mean']:.3f}  "
+            f"projected F1={control_3c_result['projected_f1_mean']:.3f}  "
+            f"Δ={control_3c_result['delta_f1']:+.3f}  "
+            f"passes={'YES' if control_3c_result['3C_passes'] else 'NO (stability direction is informative)'}"
         )
         atomic_write_json(
-            os.path.join(OUT, "h3_stability_projection.json"), h3_result
+            os.path.join(OUT, "stability_projection_3c.json"), control_3c_result
         )
     else:
-        print("\nSkipping H3 (merged embeddings not found — run on pod with full data)")
+        print("\nSkipping 3C (merged embeddings not found — run on pod with full data)")
 
-    h2_gap_ci = None
+    control_3b_gap_ci = None
     oof_random = seed0_oofs.get("delta_mean_random")
     oof_family = seed0_oofs.get("delta_mean_family")
     if compute_ci and oof_random is not None and oof_family is not None:
-        print("\nComputing paired CI on random-to-family Spearman gap (H2)...")
+        print("\nComputing paired CI on random-to-family Spearman gap (3B)...")
         idx_r = oof_random["indices"]
         idx_f = oof_family["indices"]
         shared = np.intersect1d(idx_r, idx_f)
@@ -534,7 +541,7 @@ def main(compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES, n_jobs=1):
             rho, _ = spearmanr(shared_y[rows], shared_pred_family[rows])
             return float(rho) if np.isfinite(rho) else None
 
-        h2_gap_ci = paired_cluster_bootstrap_diff_cross_partition(
+        control_3b_gap_ci = paired_cluster_bootstrap_diff_cross_partition(
             resample_clusters=shared_families,
             metric_fn_a=_rho_random,
             metric_fn_b=_rho_family,
@@ -542,34 +549,34 @@ def main(compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES, n_jobs=1):
             seed=0,
         )
         print(
-            f"  H2 gap: {h2_gap_ci['point_diff']:.3f} "
-            f"[{h2_gap_ci.get('ci_low', '?')}, {h2_gap_ci.get('ci_high', '?')}]"
+            f"  3B gap: {control_3b_gap_ci['point_diff']:.3f} "
+            f"[{control_3b_gap_ci.get('ci_low', '?')}, {control_3b_gap_ci.get('ci_high', '?')}]"
         )
 
     dm_random = summary.get("delta_mean_random", {}).get("spearman_mean", float("nan"))
     dm_family = summary.get("delta_mean_family", {}).get("spearman_mean", float("nan"))
 
-    verdict = apply_decision_rule(dm_random, dm_family, per_prot_std, h2_gap_ci)
+    verdict = apply_decision_rule(dm_random, dm_family, per_prot_std, control_3b_gap_ci)
     summary["verdict"] = verdict
-    if h2_gap_ci is not None:
-        summary["h2_gap_ci"] = h2_gap_ci
+    if control_3b_gap_ci is not None:
+        summary["3B_gap_ci"] = control_3b_gap_ci
     summary["n_variants"] = len(variants)
     summary["n_proteins"] = len(set(proteins))
     summary["n_families"] = n_families
     summary["n_seeds"] = N_SEEDS
-    summary["h3"] = h3_result
+    summary["3C"] = control_3c_result
 
     print(f"\n{'='*60}")
     print(
         f"VERDICT: {verdict}  (ordered by informativeness: LEAKY > HETEROGENEOUS > ROBUST > WEAK > NULL)"
     )
-    print(f"  delta_mean random ρ  : {dm_random:.3f}  (H1 threshold ≥ 0.5)")
+    print(f"  delta_mean random ρ  : {dm_random:.3f}  (3A threshold ≥ 0.5)")
     print(f"  delta_mean family ρ  : {dm_family:.3f}")
     print(f"  Δ (random − family)  : {dm_random - dm_family:.3f}  (LEAKY if Δ ≥ 0.10)")
     print(f"  per-domain ρ std     : {per_prot_std:.3f}  (HETEROGENEOUS if ≥ 0.15)")
-    if h3_result:
+    if control_3c_result:
         print(
-            f"  H3 Δ mechanism F1    : {h3_result['delta_f1']:+.3f}  "
+            f"  3C Δ mechanism F1    : {control_3c_result['delta_f1']:+.3f}  "
             f"(passes if ≤ +0.01 — stability projection doesn't help mechanism)"
         )
     print(f"{'='*60}")
@@ -585,7 +592,7 @@ def _cli():
     parser.add_argument(
         "--n_jobs", type=int, required=True,
         help="Max concurrent worker processes for the per-seed, per-protein, and "
-        "H3 parallel loops. Each worker standardizes/fits against most of the "
+        "3C parallel loops. Each worker standardizes/fits against most of the "
         "177k x 1280 matrix, so this must be set explicitly (never -1) to bound "
         "peak RAM. Start low (e.g. 4), watch peak RAM, raise only if it fits.",
     )

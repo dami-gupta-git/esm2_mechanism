@@ -259,7 +259,7 @@ def probe_phase(variants, n_seeds, n_jobs=-1, compute_ci=True, n_boot=BOOTSTRAP_
             # CI from seed 0's OOF only: each seed reshuffles the CV fold
             # assignment, and the aggregation step below only ever keeps seed
             # 0's CI (matching megascale_stability.py / magnitude_direction.py's
-            # R7.5 "seed 0" convention) — computing it for every seed would be
+            # Pre-registration §2C seed-0 convention — computing it for every seed would be
             # pure waste, since seeds 1..n-1's bootstrap runs are discarded.
             if compute_ci and oof is not None and seed == 0:
                 clusters = family_or_gene_clusters(
@@ -335,7 +335,7 @@ def probe_phase(variants, n_seeds, n_jobs=-1, compute_ci=True, n_boot=BOOTSTRAP_
                     "auroc_std": std,
                     "per_seed": per_cell[key],
                 }
-                # Cluster-bootstrap CI from seed 0's OOF only (R7.5's "seed 0"
+                # Cluster-bootstrap CI from seed 0's OOF only (pre-registration §2C
                 # convention): each seed reshuffles the CV fold assignment, so a
                 # single seed's CI is the coherent unit rather than merging OOF
                 # across seeds' differing folds.

@@ -15,7 +15,8 @@ print = functools.partial(print, flush=True)
 from joblib import Parallel, delayed
 
 from esm2_mech.utils.bootstrap import (
-    average_oof_over_seeds, binary_auroc_cluster_bootstrap_ci, bootstrap_mechanism_metrics,
+    binary_auroc_cluster_bootstrap_ci, bootstrap_mechanism_metrics_from_oof,
+    stack_oof_over_seeds,
     family_or_gene_clusters,
 )
 from esm2_mech.utils.constants import BOOTSTRAP_N_RESAMPLES, MIN_TRAIN_CLASSES, N_SEEDS
@@ -187,7 +188,7 @@ def run_pathogenicity(pfam_map, seeds, n_jobs=-1, compute_ci=True, n_boot=BOOTST
             }
             if compute_ci:
                 for probe in ("logreg", "mlp"):
-                    combined = average_oof_over_seeds(oof_collect[fname][split_name][probe])
+                    combined = stack_oof_over_seeds(oof_collect[fname][split_name][probe])
                     if combined is not None:
                         clusters = family_or_gene_clusters(
                             combined["genes"], pfam_map,
@@ -271,15 +272,14 @@ def run_mechanism(pfam_map, seeds, n_jobs=-1, compute_ci=True, n_boot=BOOTSTRAP_
             }
             if compute_ci:
                 for probe, out_key in (("logreg", "logreg_macro_f1"), ("mlp", "mlp_macro_f1")):
-                    combined = average_oof_over_seeds(oof_collect[fname][split_name][probe])
+                    combined = stack_oof_over_seeds(oof_collect[fname][split_name][probe])
                     if combined is not None:
                         clusters = family_or_gene_clusters(
                             combined["genes"], pfam_map,
                             is_family_split=(split_name == "family_split"),
                         )
-                        cell[out_key]["ci"] = bootstrap_mechanism_metrics(
-                            combined["y_true"], combined["proba"], clusters,
-                            n_resamples=n_boot, seed=0,
+                        cell[out_key]["ci"] = bootstrap_mechanism_metrics_from_oof(
+                            combined, clusters, n_resamples=n_boot, seed=0,
                         )
             out[fname][split_name] = cell
     return out

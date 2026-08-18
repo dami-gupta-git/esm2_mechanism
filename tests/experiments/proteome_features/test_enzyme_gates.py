@@ -2,15 +2,14 @@
 Tests for enzyme gate evaluation in enzyme_classification.run_multiseed.
 
 Invariants:
-- The gate point estimates (fs_f1, mlp_f1) come from pooled out-of-fold
-  predictions, not from the mean of per-fold F1 scores. These two numbers
-  differ on imbalanced data, and the CI is computed on pooled OOF, so the
-  point estimate must match.
+- The gate point estimates (fs_f1, mlp_f1) come from the seed-0 out-of-fold
+  predictions, scored within each fold and averaged — the same basis the
+  bootstrap CI uses, so the point estimate matches what the CI is attached to.
 - When CIs are computed, a paired CI on MLP minus LogReg is present
   (paired_ci_mlp_minus_logreg key). Without it the preregistered decision
   rule cannot be applied.
-- The pooled OOF F1 is stored in both logreg_family_split and
-  mlp_family_split result dicts.
+- The seed-0 OOF macro-F1 is stored in both logreg_family_split and
+  mlp_family_split result dicts, under oof_macro_f1.
 """
 
 import numpy as np
@@ -44,32 +43,37 @@ def _synthetic_data(n_genes=200, dim=32, seed=42):
     return X, y, genes, pfam_map, le
 
 
-class TestPooledOofConsistency:
+class TestOofMacroF1Consistency:
 
-    def test_pooled_oof_f1_present(self):
-        """run_multiseed should include pooled_oof_macro_f1 in both logreg and mlp results."""
+    def test_oof_macro_f1_present(self):
+        """run_multiseed should include oof_macro_f1 in both logreg and mlp results."""
         X, y, genes, pfam_map, le = _synthetic_data()
         result = run_multiseed(
             X, y, genes, pfam_map, le, seeds=[0], n_folds=3,
             compute_ci=False, n_boot=50,
         )
-        assert "pooled_oof_macro_f1" in result["logreg_family_split"]
-        assert "pooled_oof_macro_f1" in result["mlp_family_split"]
+        assert "oof_macro_f1" in result["logreg_family_split"]
+        assert "oof_macro_f1" in result["mlp_family_split"]
 
-    def test_pooled_oof_differs_from_fold_mean(self):
-        """The pooled-OOF F1 and fold-mean F1 are generally different numbers.
-        This test verifies they are computed independently (not copied)."""
+    def test_oof_macro_f1_equals_the_fold_mean_on_a_single_seed(self):
+        """With one seed, the OOF score and the reported fold mean are the same
+        average over the same folds, so they must agree to floating point.
+
+        This is what distinguishes the two computations. Scoring the concatenated
+        out-of-fold predictions as one block gives a different number on imbalanced
+        data, so a return to pooling breaks this equality.
+        """
         X, y, genes, pfam_map, le = _synthetic_data()
         result = run_multiseed(
             X, y, genes, pfam_map, le, seeds=[0], n_folds=3,
             compute_ci=False, n_boot=50,
         )
-        pooled = result["logreg_family_split"]["pooled_oof_macro_f1"]
-        fold_mean = result["logreg_family_split"]["macro_f1_mean"]
-        assert pooled is not None
-        assert fold_mean is not None
-        assert isinstance(pooled, float)
-        assert isinstance(fold_mean, float)
+        for arm in ("logreg_family_split", "mlp_family_split"):
+            oof_f1 = result[arm]["oof_macro_f1"]
+            fold_mean = result[arm]["macro_f1_mean"]
+            assert oof_f1 is not None
+            assert fold_mean is not None
+            assert oof_f1 == pytest.approx(fold_mean)
 
 
 class TestPairedCiPresence:

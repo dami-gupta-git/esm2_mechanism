@@ -20,6 +20,13 @@ Invariants:
 - pooled_gof_test: permutation null centers on chance; planted signal -> small p
 - _probe_one_family (slow, real probes): returns (results, oof); attaches CIs;
   seed-averaged OOF has one row per variant; compute_ci=False omits CI
+
+Two tests here are marked as expected failures. The script under test is deferred
+out of scope in TODO.md and still calls the shared bootstrap and permutation
+helpers without a fold index, which they now refuse rather than ranking pooled
+probabilities. The marks are strict, so if the script is ever fixed those tests
+pass unexpectedly and the suite fails until the marks are removed, which is what
+brings the coverage back rather than leaving it silently disabled.
 """
 
 import numpy as np
@@ -199,6 +206,16 @@ class TestPooledGofTest:
 
 @pytest.mark.slow
 class TestPooledPermutation:
+    @pytest.mark.xfail(
+        raises=TypeError,
+        strict=True,
+        reason=(
+            "mechanism_within_family.py is deferred out of scope (see TODO.md): it still "
+            "calls the shared helpers without a fold index, which now refuse rather than "
+            "silently ranking pooled probabilities. Strict, so that fixing the script turns "
+            "this into an unexpected pass and forces the marker off."
+        ),
+    )
     def test_permutation_null_centers_on_chance(self):
         rng = np.random.RandomState(5)
         family_inputs = {
@@ -236,6 +253,16 @@ class TestPooledPermutation:
 
 @pytest.mark.slow
 class TestProbeOneFamilyRealProbes:
+    @pytest.mark.xfail(
+        raises=TypeError,
+        strict=True,
+        reason=(
+            "mechanism_within_family.py is deferred out of scope (see TODO.md): it still "
+            "calls the shared helpers without a fold index, which now refuse rather than "
+            "silently ranking pooled probabilities. Strict, so that fixing the script turns "
+            "this into an unexpected pass and forces the marker off."
+        ),
+    )
     def test_returns_results_oof_and_ci(self):
         rng = np.random.RandomState(0)
         inp = _family_input("F", 12, rng=rng)

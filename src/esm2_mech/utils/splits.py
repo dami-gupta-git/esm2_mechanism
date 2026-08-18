@@ -93,3 +93,25 @@ def family_split_indices(groups: np.ndarray, n_folds: int, seed: int):
         test = np.where(fold_of == k)[0]
         train = np.where(fold_of != k)[0]
         yield train, test
+
+
+def fold_index_array(splits: list[tuple], n_rows: int) -> np.ndarray:
+    """Which test fold each row falls in, for the permutation tests.
+
+    A permutation that refits per draw scores each fold separately, so the shuffle
+    has to know the fold layout even though the out-of-fold predictions are rebuilt
+    every draw. Every row must land in exactly one test fold; a row in none or in two
+    means the splits are not a partition and the within-fold shuffle would be
+    ill-defined.
+    """
+    folds = np.full(n_rows, -1, dtype=int)
+    for fold_i, (_, test_idx) in enumerate(splits):
+        test_idx = np.asarray(test_idx)
+        if (folds[test_idx] != -1).any():
+            raise ValueError("fold_index_array: a row appears in two test folds")
+        folds[test_idx] = fold_i
+    if (folds == -1).any():
+        raise ValueError(
+            f"fold_index_array: {(folds == -1).sum()} of {n_rows} rows are in no test fold"
+        )
+    return folds

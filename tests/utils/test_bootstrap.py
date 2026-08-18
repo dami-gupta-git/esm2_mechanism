@@ -37,6 +37,10 @@ Invariants:
 - oof_permutation_pvalue: refits nothing — predictions are never recomputed
 - oof_permutation_pvalue: a draw scoring a different class set is dropped, not
   averaged into the null, and the drop is counted
+- score_within_folds (via macro_ovr_auroc, bootstrap_mechanism_metrics and
+  paired_oof_diff): folds whose probability scales do not compare are scored
+  separately and averaged; ranking the concatenation instead drops a pair of
+  perfectly ranked folds to 0.36, below chance
 - macro_ovr_auroc: drops classes absent from y_true and reports which it scored;
   all-absent -> (None, ())
 - bootstrap_mechanism_metrics: emits prevalence and AUPRC-minus-prevalence intervals
@@ -52,6 +56,7 @@ from esm2_mech.utils.bootstrap import (
     adjudicate_equivalence,
     adjudicate_level,
     average_oof_over_seeds,
+    binary_auroc_cluster_bootstrap_ci,
     bootstrap_mechanism_metrics,
     cluster_bootstrap_ci,
     cluster_subsample_ci,
@@ -62,6 +67,8 @@ from esm2_mech.utils.bootstrap import (
     paired_cluster_bootstrap_diff,
     paired_cluster_bootstrap_diff_cross_partition,
     paired_oof_diff,
+    stack_oof_over_seeds,
+    within_stratum_bootstrap_ci,
     _permute_labels,
     _permute_labels_by_cluster,
 )
@@ -378,20 +385,27 @@ class TestClusterSubsampleCI:
 class TestBootstrapMechanismMetrics:
     def _signal_data(self, seed=0):
         rng = np.random.RandomState(seed)
-        n = 120
+        n_genes, rows_per_gene = 60, 6
+        n = n_genes * rows_per_gene
+        # One class per gene, 20 genes per fold, so every class has several genes in
+        # every fold — as the real splits do. A fixture thin enough that one draw can
+        # empty a class out of a fold would discard most resamples by design.
         y = np.array([GOF, DN, LOF] * (n // 3))
-        genes = np.array([f"G{i % 12}" for i in range(n)])
+        genes = np.array([f"G{i % n_genes}" for i in range(n)])
         # Build proba that ranks the true class high (clear, recoverable signal).
         proba = np.full((n, 3), 0.1)
         for i, cls in enumerate(y):
             proba[i, MECHANISM_CLASSES.index(cls)] = 0.8
         proba += rng.rand(n, 3) * 0.05
         proba /= proba.sum(axis=1, keepdims=True)
-        return y, proba, genes
+        # Each gene carries one class, so folds are built to hold consecutive genes
+        # and therefore all three classes — the real family-split folds do too.
+        folds = np.array([(i % n_genes) // (n_genes // 3) for i in range(n)])
+        return y, proba, genes, folds
 
     def test_keys_macro_f1_and_per_class_auroc(self):
-        y, proba, genes = self._signal_data()
-        out = bootstrap_mechanism_metrics(y, proba, genes, n_resamples=100)
+        y, proba, genes, folds = self._signal_data()
+        out = bootstrap_mechanism_metrics(y, proba, genes, folds, n_resamples=100)
         assert "macro_f1" in out
         for cls in MECHANISM_CLASSES:
             assert f"auroc_{cls}" in out
@@ -404,8 +418,8 @@ class TestBootstrapMechanismMetrics:
         # AUPRC's no-signal value is the prevalence, which moves with each resample.
         # The lift must be bootstrapped as one quantity (both terms from the same
         # draw), not reconstructed by subtracting two separately-computed points.
-        y, proba, genes = self._signal_data()
-        out = bootstrap_mechanism_metrics(y, proba, genes, n_resamples=300)
+        y, proba, genes, folds = self._signal_data()
+        out = bootstrap_mechanism_metrics(y, proba, genes, folds, n_resamples=300)
         for cls in MECHANISM_CLASSES:
             assert f"prevalence_{cls}" in out
             assert f"auprc_lift_{cls}" in out
@@ -416,15 +430,15 @@ class TestBootstrapMechanismMetrics:
         assert lift["ci_low"] > 0  # planted signal beats its own prevalence baseline
 
     def test_recovers_gof_signal_above_chance(self):
-        y, proba, genes = self._signal_data()
-        out = bootstrap_mechanism_metrics(y, proba, genes, n_resamples=300)
+        y, proba, genes, folds = self._signal_data()
+        out = bootstrap_mechanism_metrics(y, proba, genes, folds, n_resamples=300)
         gof = out["auroc_GOF"]
         assert gof["point"] > 0.9
         assert gof["ci_low"] > 0.5  # CI excludes chance
 
     def test_clusters_are_genes(self):
-        y, proba, genes = self._signal_data()
-        out = bootstrap_mechanism_metrics(y, proba, genes, n_resamples=10)
+        y, proba, genes, folds = self._signal_data()
+        out = bootstrap_mechanism_metrics(y, proba, genes, folds, n_resamples=10)
         assert out["macro_f1"]["n_clusters"] == len(set(genes.tolist()))
 
 
@@ -713,12 +727,17 @@ class TestPairedClusterBootstrapDiffCrossPartition:
 # label permutation
 # ---------------------------------------------------------------------------
 
+def _one_fold(rows):
+    """All rows in one fold, for the tests that are about the shuffle unit alone."""
+    return np.zeros(len(rows), dtype=int)
+
+
 class TestPermuteLabels:
     def test_grouped_shuffle_keeps_one_label_per_gene(self):
         rng = np.random.RandomState(0)
         genes = np.array(["G0", "G0", "G0", "G1", "G1", "G2"])
         labels = np.array([GOF, GOF, GOF, DN, DN, LOF])
-        permuted = _permute_labels(labels, genes, rng)
+        permuted = _permute_labels(labels, genes, _one_fold(labels), rng)
         # Every gene's rows must still carry a single label.
         for gene in set(genes.tolist()):
             mask = genes == gene
@@ -728,17 +747,29 @@ class TestPermuteLabels:
         rng = np.random.RandomState(0)
         genes = np.array(["G0", "G0", "G1", "G2", "G2"])
         labels = np.array([GOF, GOF, DN, LOF, LOF])
-        permuted = _permute_labels(labels, genes, rng)
+        permuted = _permute_labels(labels, genes, _one_fold(labels), rng)
         gene_labels_in = sorted([GOF, DN, LOF])
         gene_labels_out = sorted(
             {g: permuted[genes == g][0] for g in set(genes.tolist())}.values()
         )
         assert gene_labels_out == gene_labels_in
 
+    def test_labels_stay_inside_their_own_fold(self):
+        # Moving a label across folds changes each fold's class composition, which is
+        # the confound the within-fold scoring removes. The shuffle must not undo it.
+        rng = np.random.RandomState(0)
+        genes = np.array(["G0", "G0", "G1", "G1", "G2", "G2", "G3", "G3"])
+        labels = np.array([GOF, GOF, DN, DN, LOF, LOF, GOF, GOF])
+        folds = np.array([0, 0, 0, 0, 1, 1, 1, 1])
+        permuted = _permute_labels(labels, genes, folds, rng)
+        for fold in (0, 1):
+            mask = folds == fold
+            assert sorted(permuted[mask].tolist()) == sorted(labels[mask].tolist())
+
     def test_ungrouped_shuffle_permutes_all(self):
         rng = np.random.RandomState(0)
         labels = np.array([GOF, DN, LOF, GOF, DN, LOF])
-        permuted = _permute_labels(labels, None, rng)
+        permuted = _permute_labels(labels, None, _one_fold(labels), rng)
         assert sorted(permuted.tolist()) == sorted(labels.tolist())
 
 
@@ -763,7 +794,8 @@ class TestLabelPermutationPvalue:
             return float(roc_auc_score(y_bin, scores))
 
         out = label_permutation_pvalue(
-            run_metric, labels, statistic="auroc_GOF", groups=genes, n_permutations=200,
+            run_metric, labels, statistic="auroc_GOF", folds=_one_fold(labels),
+            groups=genes, n_permutations=200,
             alternative="greater",
         )
         assert out["observed"] == pytest.approx(1.0)  # perfect by construction
@@ -776,7 +808,7 @@ class TestLabelPermutationPvalue:
         labels = np.array([GOF if i % 2 else LOF for i in range(30)])
 
         out = label_permutation_pvalue(
-            lambda lab: 0.5, labels, statistic="constant", groups=genes, n_permutations=50
+            lambda lab: 0.5, labels, statistic="constant", folds=_one_fold(labels), groups=genes, n_permutations=50
         )
         # (1 + #{null >= observed}) / (1 + n); with a constant metric all null >=
         # observed, so p == 1.0, and p is always in (0, 1].
@@ -799,10 +831,10 @@ class TestLabelPermutationPvalue:
             return float(np.corrcoef(feature, y_bin)[0, 1])
 
         first = label_permutation_pvalue(
-            run_metric, labels, statistic="corr", groups=genes, n_permutations=64, seed=7
+            run_metric, labels, statistic="corr", folds=_one_fold(labels), groups=genes, n_permutations=64, seed=7
         )
         second = label_permutation_pvalue(
-            run_metric, labels, statistic="corr", groups=genes, n_permutations=64, seed=7
+            run_metric, labels, statistic="corr", folds=_one_fold(labels), groups=genes, n_permutations=64, seed=7
         )
         assert first["p_value"] == second["p_value"]
         assert first["null_mean"] == second["null_mean"]
@@ -823,10 +855,10 @@ class TestLabelPermutationPvalue:
             return float(np.corrcoef(feature, y_bin)[0, 1])
 
         serial = label_permutation_pvalue(
-            run_metric, labels, statistic="corr", groups=genes, n_permutations=48, seed=1, n_jobs=1
+            run_metric, labels, statistic="corr", folds=_one_fold(labels), groups=genes, n_permutations=48, seed=1, n_jobs=1
         )
         parallel = label_permutation_pvalue(
-            run_metric, labels, statistic="corr", groups=genes, n_permutations=48, seed=1, n_jobs=2
+            run_metric, labels, statistic="corr", folds=_one_fold(labels), groups=genes, n_permutations=48, seed=1, n_jobs=2
         )
         assert serial["p_value"] == parallel["p_value"]
         assert serial["null_mean"] == parallel["null_mean"]
@@ -848,7 +880,7 @@ class TestLabelPermutationPvalue:
         labels = np.array([GOF if i % 3 == 0 else LOF for i in range(200)])
 
         out = label_permutation_pvalue(
-            make_metric(), labels, statistic="r2", groups=genes, n_permutations=32, seed=0, n_jobs=2
+            make_metric(), labels, statistic="r2", folds=_one_fold(labels), groups=genes, n_permutations=32, seed=0, n_jobs=2
         )
         assert out["n_permutations"] == 32
         assert 0.0 < out["p_value"] <= 1.0
@@ -868,7 +900,7 @@ class TestLabelPermutationPvalue:
             return 0.5
 
         out = label_permutation_pvalue(
-            flaky_metric, labels, statistic="flaky", groups=genes, n_permutations=10, seed=0, n_jobs=1
+            flaky_metric, labels, statistic="flaky", folds=_one_fold(labels), groups=genes, n_permutations=10, seed=0, n_jobs=1
         )
         # Half the draws are NaN and dropped; the kept null has only finite values.
         assert out["n_permutations"] < 10
@@ -878,6 +910,15 @@ class TestLabelPermutationPvalue:
 # ---------------------------------------------------------------------------
 # oof_permutation_pvalue / macro_ovr_auroc
 # ---------------------------------------------------------------------------
+
+def _folds_by_unit(units, n_folds=3):
+    """Assign each unit (gene or family) to a fold, the way the CV splitters do.
+
+    Whole units stay inside one fold, which is what the within-fold shuffle needs.
+    """
+    unit_fold = {unit: i % n_folds for i, unit in enumerate(sorted(set(np.asarray(units).tolist())))}
+    return np.array([unit_fold[u] for u in np.asarray(units)], dtype=int)
+
 
 def _gene_level_labels(rng, n_genes, rows_per_gene):
     genes = np.repeat([f"G{i}" for i in range(n_genes)], rows_per_gene)
@@ -904,7 +945,7 @@ class TestPermuteLabelsByCluster:
     def test_whole_blocks_move_together(self):
         labels, genes, clusters = self._families()
         rng = np.random.RandomState(0)
-        permuted, _ = _permute_labels_by_cluster(labels, genes, clusters, rng)
+        permuted, _ = _permute_labels_by_cluster(labels, genes, clusters, _one_fold(labels), rng)
         # Every size-2 family must now hold some size-2 family's original block.
         original_blocks = {("F0", (GOF, LOF)), ("F1", (DN, DN)), ("F2", (GOF, GOF))}
         blocks_in = {tuple(sorted(b)) for _, b in original_blocks}
@@ -915,7 +956,7 @@ class TestPermuteLabelsByCluster:
     def test_label_multiset_is_preserved(self):
         labels, genes, clusters = self._families()
         rng = np.random.RandomState(1)
-        permuted, _ = _permute_labels_by_cluster(labels, genes, clusters, rng)
+        permuted, _ = _permute_labels_by_cluster(labels, genes, clusters, _one_fold(labels), rng)
         assert sorted(permuted.tolist()) == sorted(labels.tolist())
 
     def test_unique_size_cluster_cannot_move_and_is_counted(self):
@@ -923,7 +964,7 @@ class TestPermuteLabelsByCluster:
         # with and keeps its own label. That has to be visible, not silent.
         labels, genes, clusters = self._families()
         rng = np.random.RandomState(2)
-        permuted, immovable = _permute_labels_by_cluster(labels, genes, clusters, rng)
+        permuted, immovable = _permute_labels_by_cluster(labels, genes, clusters, _one_fold(labels), rng)
         assert immovable == 1
         assert permuted[clusters == "F3"][0] == LOF
 
@@ -935,11 +976,33 @@ class TestPermuteLabelsByCluster:
         homogeneous_before = sum(
             len(set(labels[clusters == fam].tolist())) == 1 for fam in ["F0", "F1", "F2"]
         )
-        permuted, _ = _permute_labels_by_cluster(labels, genes, clusters, rng)
+        permuted, _ = _permute_labels_by_cluster(labels, genes, clusters, _one_fold(labels), rng)
         homogeneous_after = sum(
             len(set(permuted[clusters == fam].tolist())) == 1 for fam in ["F0", "F1", "F2"]
         )
         assert homogeneous_after == homogeneous_before
+
+    def test_blocks_only_swap_with_partners_in_the_same_fold(self):
+        # Two same-size families in different folds are not swap partners: a swap
+        # between them would move labels across the fold boundary.
+        genes = np.array(["a", "b", "c", "d"])
+        clusters = np.array(["F0", "F0", "F1", "F1"])
+        labels = np.array([GOF, GOF, LOF, LOF])
+        folds = np.array([0, 0, 1, 1])
+        rng = np.random.RandomState(0)
+        permuted, immovable = _permute_labels_by_cluster(labels, genes, clusters, folds, rng)
+        assert immovable == 2
+        assert np.array_equal(permuted, labels)
+
+    def test_a_cluster_spanning_two_folds_is_rejected(self):
+        genes = np.array(["a", "b"])
+        clusters = np.array(["F0", "F0"])
+        labels = np.array([GOF, LOF])
+        folds = np.array([0, 1])
+        with pytest.raises(ValueError, match="within-fold shuffle"):
+            _permute_labels_by_cluster(
+                labels, genes, clusters, folds, np.random.RandomState(0)
+            )
 
     def test_every_gene_keeps_one_label_across_its_rows(self):
         rows_per_gene = 3
@@ -947,19 +1010,94 @@ class TestPermuteLabelsByCluster:
         clusters = np.repeat(["F0", "F0", "F1", "F1"], rows_per_gene)
         labels = np.repeat([GOF, LOF, DN, GOF], rows_per_gene)
         rng = np.random.RandomState(4)
-        permuted, _ = _permute_labels_by_cluster(labels, genes, clusters, rng)
+        permuted, _ = _permute_labels_by_cluster(labels, genes, clusters, _one_fold(labels), rng)
         for gene in np.unique(genes):
             assert len(set(permuted[genes == gene].tolist())) == 1
+
+
+def _offset_fold_scales():
+    """Two folds, each ranked perfectly, on probability scales that do not compare.
+
+    Every fold is fitted independently, so its probabilities carry their own scale.
+    Here fold 1 sits entirely above fold 0: within either fold the positives outrank
+    the negatives, but fold 1's negatives outrank fold 0's positives. The fold sizes
+    are lopsided so that ranking the concatenation lands below chance rather than
+    merely below one, which is the symptom the real run showed — per-fold AUROCs of
+    0.55 to 0.61 reported as a pooled 0.40 to 0.48.
+
+    Returns the labels, a one-column probability matrix, the fold index and the
+    gene of each row.
+    """
+    fold_0 = [(GOF, 0.10)] * 8 + [(LOF, 0.00)] * 2
+    fold_1 = [(GOF, 1.00)] * 2 + [(LOF, 0.90)] * 8
+    labels = np.array([cls for cls, _ in fold_0 + fold_1])
+    proba = np.array([[score] for _, score in fold_0 + fold_1])
+    folds = np.array([0] * len(fold_0) + [1] * len(fold_1))
+    genes = np.array([f"G{i}" for i in range(len(labels))])
+    return labels, proba, folds, genes
+
+
+POOLED_AUROC_UNDER_OFFSET_SCALES = 0.36
+
+
+class TestFoldScalesAreNotPooled:
+    """The defect this whole change exists to remove, as one assertion.
+
+    Ranking the concatenation of independently fitted folds compares scores that
+    were never on a common scale. Scoring within each fold and averaging is immune
+    to it, so the fold-aware value is the perfect 1.0 that each fold actually
+    achieved while the pooled value falls below chance.
+    """
+
+    def test_pooled_ranking_really_does_fall_below_chance_here(self):
+        # The counterfactual, so the test below is anchored to a number rather than
+        # to an inequality that a broken implementation could also satisfy.
+        from sklearn.metrics import roc_auc_score
+
+        labels, proba, _, _ = _offset_fold_scales()
+        pooled = roc_auc_score((labels == GOF).astype(int), proba[:, 0])
+        assert pooled == pytest.approx(POOLED_AUROC_UNDER_OFFSET_SCALES)
+
+    def test_macro_ovr_auroc_scores_within_fold(self):
+        labels, proba, folds, _ = _offset_fold_scales()
+        value, scored = macro_ovr_auroc(labels, proba, folds, classes=[GOF])
+        assert scored == (GOF,)
+        assert value == pytest.approx(1.0)
+
+    def test_mechanism_metrics_point_estimate_scores_within_fold(self):
+        labels, proba, folds, genes = _offset_fold_scales()
+        out = bootstrap_mechanism_metrics(
+            labels, proba, genes, folds, classes=[GOF], n_resamples=50
+        )
+        assert out["auroc_GOF"]["point"] == pytest.approx(1.0)
+
+    def test_paired_diff_scores_within_fold(self):
+        # A paired difference carries the distortion on both sides, so it is the
+        # most exposed of the three. Both arms rank perfectly within fold, so their
+        # difference is zero; pooling either side would move it off zero.
+        labels, proba, folds, genes = _offset_fold_scales()
+        arm = {
+            "y_true": labels, "proba": proba, "folds": folds,
+            "genes": genes, "row_ids": np.arange(len(labels)),
+        }
+        out = paired_oof_diff(
+            arm, arm, {gene: gene for gene in genes}, "same-arm",
+            classes=[GOF], metric="auroc_one_vs_rest", pos_class=GOF,
+            n_resamples=50,
+        )
+        assert out["point_a"] == pytest.approx(1.0)
+        assert out["point_diff"] == pytest.approx(0.0)
 
 
 class TestMacroOvrAuroc:
     def test_perfect_ranking_is_one_and_chance_is_half(self):
         rng = np.random.RandomState(0)
-        _, labels = _gene_level_labels(rng, 30, 4)
-        value, scored = macro_ovr_auroc(labels, _proba_matching(labels))
+        genes, labels = _gene_level_labels(rng, 30, 4)
+        folds = _folds_by_unit(genes)
+        value, scored = macro_ovr_auroc(labels, _proba_matching(labels), folds)
         assert value == pytest.approx(1.0)
         assert set(scored) == set(MECHANISM_CLASSES)
-        chance, _ = macro_ovr_auroc(labels, _simplex_proba(rng, len(labels)))
+        chance, _ = macro_ovr_auroc(labels, _simplex_proba(rng, len(labels)), folds)
         assert chance == pytest.approx(0.5, abs=0.15)
 
     def test_absent_class_is_dropped_and_reported(self):
@@ -968,13 +1106,24 @@ class TestMacroOvrAuroc:
         # has to know only two classes were averaged, or it will compare this against
         # a three-class value.
         labels = np.array([GOF, GOF, LOF, LOF])
-        value, scored = macro_ovr_auroc(labels, _proba_matching(labels))
+        folds = np.array([0, 1, 0, 1])
+        value, scored = macro_ovr_auroc(labels, _proba_matching(labels), folds)
         assert value == pytest.approx(1.0)
         assert set(scored) == {GOF, LOF}
 
+    def test_class_missing_from_one_fold_is_dropped(self):
+        # LOF is in both folds. GOF is only in fold 0 and DN only in fold 1, so each
+        # of those would be an average over one fold while LOF averages over two —
+        # different statistics, and only the one both folds can score survives.
+        labels = np.array([GOF, LOF, LOF, LOF, LOF, DN])
+        folds = np.array([0, 0, 0, 1, 1, 1])
+        _, scored = macro_ovr_auroc(labels, _proba_matching(labels), folds)
+        assert set(scored) == {LOF}
+
     def test_single_class_everywhere_returns_none(self):
         labels = np.array([LOF, LOF, LOF])
-        assert macro_ovr_auroc(labels, _proba_matching(labels)) == (None, ())
+        folds = np.array([0, 0, 1])
+        assert macro_ovr_auroc(labels, _proba_matching(labels), folds) == (None, ())
 
 
 class TestOofPermutationPvalue:
@@ -982,7 +1131,8 @@ class TestOofPermutationPvalue:
         rng = np.random.RandomState(0)
         genes, labels = _gene_level_labels(rng, 60, 4)
         out = oof_permutation_pvalue(
-            labels, _proba_matching(labels), groups=genes, n_permutations=200, seed=0
+            labels, _proba_matching(labels), _folds_by_unit(genes),
+            groups=genes, n_permutations=200, seed=0,
         )
         assert out["observed"] == pytest.approx(1.0)
         assert out["null_mean"] == pytest.approx(0.5, abs=0.05)
@@ -994,8 +1144,8 @@ class TestOofPermutationPvalue:
         rng = np.random.RandomState(1)
         genes, labels = _gene_level_labels(rng, 60, 4)
         out = oof_permutation_pvalue(
-            labels, _simplex_proba(rng, len(labels)), groups=genes,
-            n_permutations=200, seed=0,
+            labels, _simplex_proba(rng, len(labels)), _folds_by_unit(genes),
+            groups=genes, n_permutations=200, seed=0,
         )
         assert out["p_value"] > 0.1
 
@@ -1016,11 +1166,13 @@ class TestOofPermutationPvalue:
         genes, clusters, labels = np.array(genes), np.array(clusters), np.array(labels)
         proba = _simplex_proba(rng, len(labels))
 
+        folds = _folds_by_unit(clusters)
         block = oof_permutation_pvalue(
-            labels, proba, groups=genes, clusters=clusters, n_permutations=300, seed=0
+            labels, proba, folds, groups=genes, clusters=clusters,
+            n_permutations=300, seed=0,
         )
         gene_level = oof_permutation_pvalue(
-            labels, proba, groups=genes, n_permutations=300, seed=0
+            labels, proba, folds, groups=genes, n_permutations=300, seed=0
         )
         assert block["permutation_unit"] == "cluster_block"
         assert gene_level["permutation_unit"] == "gene"
@@ -1034,11 +1186,12 @@ class TestOofPermutationPvalue:
         genes, labels = _gene_level_labels(rng, 40, 8)
         proba = _simplex_proba(rng, len(labels))
 
+        folds = _folds_by_unit(genes)
         gene_level = oof_permutation_pvalue(
-            labels, proba, groups=genes, n_permutations=400, seed=0
+            labels, proba, folds, groups=genes, n_permutations=400, seed=0
         )
         variant_level = oof_permutation_pvalue(
-            labels, proba, groups=None, n_permutations=400, seed=0
+            labels, proba, folds, groups=None, n_permutations=400, seed=0
         )
         # Both nulls sit on chance; only their widths differ. 40 genes is the real
         # sample size, 320 variants is not, so the variant-level null is too tight.
@@ -1053,15 +1206,18 @@ class TestOofPermutationPvalue:
         genes, labels = _gene_level_labels(rng, 20, 3)
         proba = _proba_matching(labels)
         before = proba.copy()
-        oof_permutation_pvalue(labels, proba, groups=genes, n_permutations=50, seed=0)
+        oof_permutation_pvalue(
+            labels, proba, _folds_by_unit(genes), groups=genes, n_permutations=50, seed=0
+        )
         assert np.array_equal(proba, before)
 
     def test_deterministic_for_fixed_seed(self):
         rng = np.random.RandomState(4)
         genes, labels = _gene_level_labels(rng, 30, 4)
         proba = _simplex_proba(rng, len(labels))
-        first = oof_permutation_pvalue(labels, proba, groups=genes, n_permutations=64, seed=7)
-        second = oof_permutation_pvalue(labels, proba, groups=genes, n_permutations=64, seed=7)
+        folds = _folds_by_unit(genes)
+        first = oof_permutation_pvalue(labels, proba, folds, groups=genes, n_permutations=64, seed=7)
+        second = oof_permutation_pvalue(labels, proba, folds, groups=genes, n_permutations=64, seed=7)
         assert first["p_value"] == second["p_value"]
         assert first["null_mean"] == second["null_mean"]
 
@@ -1073,7 +1229,10 @@ class TestOofPermutationPvalue:
         genes = np.array(["G0", "G0", "G1", "G1", "G2", "G2"])
         labels = np.array([GOF, GOF, LOF, LOF, DN, DN])
         proba = _simplex_proba(rng, len(labels))
-        out = oof_permutation_pvalue(labels, proba, groups=genes, n_permutations=50, seed=0)
+        out = oof_permutation_pvalue(
+            labels, proba, np.zeros(len(labels), dtype=int),
+            groups=genes, n_permutations=50, seed=0,
+        )
         assert set(out["classes_scored"]) == set(MECHANISM_CLASSES)
         assert out["n_permutations"] + out["n_dropped_class_mismatch"] <= 50
         assert out["n_dropped_class_mismatch"] >= 0
@@ -1083,12 +1242,13 @@ class TestOofPermutationPvalue:
 # paired_oof_diff
 # ---------------------------------------------------------------------------
 
-def _mechanism_oof(row_ids, genes, y_true, proba):
+def _mechanism_oof(row_ids, genes, y_true, proba, folds=None):
     return {
         "row_ids": np.asarray(row_ids),
         "genes": np.asarray(genes, dtype=object),
         "y_true": np.asarray(y_true),
         "proba": np.asarray(proba, dtype=float),
+        "folds": _folds_by_unit(genes) if folds is None else np.asarray(folds),
     }
 
 
@@ -1108,15 +1268,28 @@ def _confident_proba(labels, classes, correct_mask):
 class TestPairedOofDiff:
     """paired_oof_diff aligns two arms by row_ids and pairs one resample across both."""
 
-    def _arms(self, n=120, n_genes=20, n_families=5, a_correct=1.0, b_correct=0.5, seed=0):
+    def _arms(self, n=120, n_genes=20, n_families=5, a_correct=1.0, b_correct=0.5,
+              seed=0, correctness_by_family=False):
         rng = np.random.RandomState(seed)
         row_ids = np.arange(n)
         genes = np.array([f"G{i % n_genes}" for i in row_ids], dtype=object)
         pfam_map = {f"G{i}": f"F{i % n_families}" for i in range(n_genes)}
         classes = list(MECHANISM_CLASSES)
         y_true = np.array([classes[i % len(classes)] for i in row_ids])
-        mask_a = rng.rand(n) < a_correct
-        mask_b = rng.rand(n) < b_correct
+        if correctness_by_family:
+            # Rows in a family succeed or fail together, which is what makes the
+            # family the real independent unit. With row-independent errors the two
+            # resampling units carry almost the same variance and the contrast
+            # between them is not there to measure.
+            families = np.array([pfam_map[g] for g in genes])
+            unique_families = np.unique(families)
+            fam_a = {f: rng.rand() < a_correct for f in unique_families}
+            fam_b = {f: rng.rand() < b_correct for f in unique_families}
+            mask_a = np.array([fam_a[f] for f in families])
+            mask_b = np.array([fam_b[f] for f in families])
+        else:
+            mask_a = rng.rand(n) < a_correct
+            mask_b = rng.rand(n) < b_correct
         arm_a = _mechanism_oof(row_ids, genes, y_true, _confident_proba(y_true, classes, mask_a))
         arm_b = _mechanism_oof(row_ids, genes, y_true, _confident_proba(y_true, classes, mask_b))
         return arm_a, arm_b, pfam_map, classes
@@ -1293,14 +1466,15 @@ class TestPairedOofDiff:
             arm_a, arm_b, pfam_map, "gap", classes=classes,
             cross_partition=True, n_resamples=50,
         )
-        # R7.3: the primary interval resamples the coarser unit (families); the
+        # Pre-registration §1.2: the primary interval resamples the coarser unit (families); the
         # gene-resampled one rides alongside as a labelled sensitivity check.
         assert out["n_clusters"] == 5
         assert out["gene_resampled_sensitivity"]["n_clusters"] == 20
 
     def test_cross_partition_family_interval_is_wider_than_gene(self):
         arm_a, arm_b, pfam_map, classes = self._arms(
-            n=400, n_genes=40, n_families=8, a_correct=0.8, b_correct=0.6
+            n=400, n_genes=40, n_families=8, a_correct=0.8, b_correct=0.6,
+            correctness_by_family=True,
         )
         out = paired_oof_diff(
             arm_a, arm_b, pfam_map, "gap", classes=classes,
@@ -1316,7 +1490,7 @@ class TestPairedOofDiff:
 
 
 # ---------------------------------------------------------------------------
-# adjudicate_diff / adjudicate_level (R7.1 verdicts)
+# adjudicate_diff / adjudicate_level (pre-registration §1.1 verdicts)
 # ---------------------------------------------------------------------------
 
 class TestAdjudicateDiff:
@@ -1457,3 +1631,54 @@ class TestIndependentClusterBootstrapDiff:
             **kwargs,
         )
         assert first == second
+
+
+# ---------------------------------------------------------------------------
+# fold-aware ranking (the defect this module was fixed for)
+# ---------------------------------------------------------------------------
+
+class TestRankingIsFoldAware:
+    """Per-fold probability scales must not leak into a ranking metric.
+
+    Each fold is fitted on its own, so its scores carry their own offset. Within any
+    one fold the ranking here is perfect; ranking the concatenation instead makes
+    fold 1's worst case outscore fold 0's best. A pooled implementation returns
+    roughly 0.5 on this data and a fold-aware one returns 1.0.
+    """
+
+    def _offset_folds(self):
+        n_per_fold = 40
+        folds = np.array([0] * n_per_fold + [1] * n_per_fold)
+        y_bin = np.array(([0] * (n_per_fold // 2) + [1] * (n_per_fold // 2)) * 2)
+        # Fold 0 scores live in [0.0, 0.2]; fold 1's in [0.8, 1.0]. Positives rank
+        # above negatives inside each fold and nowhere near it across the two.
+        scores = np.where(y_bin == 1, 0.15, 0.05).astype(float)
+        scores[folds == 1] = np.where(y_bin[folds == 1] == 1, 0.95, 0.85)
+        genes = np.array([f"G{i}" for i in range(len(y_bin))], dtype=object)
+        return y_bin, scores, folds, genes
+
+    def test_binary_auroc_scores_within_fold(self):
+        y_bin, scores, folds, genes = self._offset_folds()
+        # Fold 1's negatives outrank fold 0's positives, so pooling inverts half the
+        # comparisons; scoring inside each fold keeps the planted order.
+        out = binary_auroc_cluster_bootstrap_ci(
+            {"y_true": y_bin, "proba": scores, "genes": genes, "folds": folds},
+            n_resamples=50,
+        )
+        assert out["point"] == pytest.approx(1.0)
+
+    def test_an_oof_without_folds_is_refused(self):
+        y_bin, scores, _, genes = self._offset_folds()
+        with pytest.raises(KeyError, match="folds"):
+            binary_auroc_cluster_bootstrap_ci(
+                {"y_true": y_bin, "proba": scores, "genes": genes}, n_resamples=10
+            )
+
+    def test_multiclass_auroc_scores_within_fold(self):
+        y_bin, scores, folds, genes = self._offset_folds()
+        y_true = np.where(y_bin == 1, GOF, LOF)
+        proba = np.zeros((len(y_true), len(MECHANISM_CLASSES)))
+        proba[:, MECHANISM_CLASSES.index(GOF)] = scores
+        proba[:, MECHANISM_CLASSES.index(LOF)] = 1.0 - scores
+        out = bootstrap_mechanism_metrics(y_true, proba, genes, folds, n_resamples=50)
+        assert out["auroc_GOF"]["point"] == pytest.approx(1.0)

@@ -13,9 +13,9 @@ import os
 import numpy as np
 from sklearn.metrics import f1_score
 
-from esm2_mech.utils.bootstrap import cluster_bootstrap_ci
+from esm2_mech.utils.bootstrap import cluster_bootstrap_ci, folds_to_arms, score_within_folds
 from esm2_mech.utils.constants import BOOTSTRAP_N_RESAMPLES, mechanism_oof_cache_filename
-from esm2_mech.utils.metrics import majority_baseline_f1, mean_std_n
+from esm2_mech.utils.metrics import mean_std_n
 from esm2_mech.utils.paths import (
     FAMILY_CLUSTERING_JSON,
     LEAKAGE_FRACTION_JSON,
@@ -52,8 +52,8 @@ def _measured_chance():
 
 
 def _pick_macro_f1(arm_result):
-    """Prefer pooled OOF macro-F1 (consistent with bootstrap CI); fall back to fold mean."""
-    return arm_result.get("macro_f1_pooled", arm_result.get("macro_f1_mean"))
+    """The per-fold macro-F1, the basis every other metric in this run uses."""
+    return arm_result.get("macro_f1_mean")
 
 
 def leakage_fraction_per_feature(seeds, feature, chance):
@@ -83,43 +83,91 @@ def leakage_fraction_per_feature(seeds, feature, chance):
     return result
 
 
-def leakage_fraction_ci(oof_cache_entry, pfam_map, n_resamples, seed=0):
-    """Cluster-bootstrap CI on the LF ratio, resampling family clusters shared across both arms."""
-    gene_arm = oof_cache_entry["gene_split"]
-    family_arm = oof_cache_entry["family_split"]
+def _arm_macro_f1(arm: dict, rows: np.ndarray) -> float | None:
+    """Fold-averaged macro-F1 for one cached arm on a set of resampled rows."""
+    y_true = np.asarray(arm["y_true"])
+    pred = np.asarray(arm["pred"])
+    arms = folds_to_arms(pred, np.asarray(arm["folds"]))
 
-    gene_pos_by_row = {row: pos for pos, row in enumerate(gene_arm["row_ids"])}
-    family_pos_by_row = {row: pos for pos, row in enumerate(family_arm["row_ids"])}
-    shared_rows = sorted(set(gene_pos_by_row) & set(family_pos_by_row))
-    if not shared_rows:
+    def _fold_f1(block: np.ndarray, arm_pred: np.ndarray) -> float:
+        return float(
+            f1_score(y_true[block], arm_pred[block], average="macro", zero_division=0)
+        )
+
+    return score_within_folds(rows, arms, _fold_f1)
+
+
+def _align_seed_arms(oof_cache_entries: list[dict]) -> tuple[list[dict], np.ndarray] | None:
+    """Restrict every seed's two arms to the variants all of them scored.
+
+    Each seed reshuffles the folds, so a variant can be scored by one seed's split and
+    dropped by another's. Resampling has to index one shared row space, and the gene
+    names used for clustering have to come from that same space.
+    """
+    per_seed = []
+    for entry in oof_cache_entries:
+        gene_arm, family_arm = entry["gene_split"], entry["family_split"]
+        per_seed.append((
+            {int(row): pos for pos, row in enumerate(gene_arm["row_ids"])},
+            {int(row): pos for pos, row in enumerate(family_arm["row_ids"])},
+            gene_arm,
+            family_arm,
+        ))
+    shared = sorted(
+        set.intersection(*[set(g) & set(f) for g, f, _, _ in per_seed])
+    )
+    if not shared:
         return None
 
-    gene_y_true = np.array(gene_arm["y_true"])
-    gene_pred = np.array(gene_arm["pred"])
-    family_y_true = np.array(family_arm["y_true"])
-    family_pred = np.array(family_arm["pred"])
-    gene_names = np.array(gene_arm["genes"])
+    aligned = []
+    for gene_pos, family_pos, gene_arm, family_arm in per_seed:
+        gene_idx = np.array([gene_pos[row] for row in shared], dtype=int)
+        family_idx = np.array([family_pos[row] for row in shared], dtype=int)
+        aligned.append({
+            "gene": {key: np.asarray(gene_arm[key])[gene_idx] for key in
+                     ("y_true", "pred", "folds")},
+            "family": {key: np.asarray(family_arm[key])[family_idx] for key in
+                       ("y_true", "pred", "folds")},
+        })
+    first_gene_pos, _, first_gene_arm, _ = per_seed[0]
+    gene_names = np.asarray(first_gene_arm["genes"])[
+        np.array([first_gene_pos[row] for row in shared], dtype=int)
+    ]
+    return aligned, gene_names
 
-    gene_positions = np.array([gene_pos_by_row[row] for row in shared_rows])
-    family_positions = np.array([family_pos_by_row[row] for row in shared_rows])
+
+def leakage_fraction_ci(oof_cache_entries, pfam_map, chance, n_resamples, seed=0):
+    """Cluster-bootstrap CI on the leakage fraction, matching the headline exactly.
+
+    The headline averages the per-fold macro-F1 of both arms over every seed and
+    divides by the distance from a floor taken once from the naive baseline. This
+    computes the same expression on each resample: same seeds, same per-fold basis,
+    same fixed floor. Previously the headline used five seeds and a fixed floor while
+    the interval used one seed and recomputed the floor on every draw, so the interval
+    did not bracket the number it was printed beside.
+    """
+    aligned = _align_seed_arms(oof_cache_entries)
+    if aligned is None:
+        return None
+    per_seed, gene_names = aligned
     # Cluster on Pfam family; orphan genes become singleton clusters.
-    row_genes = gene_names[gene_positions]
-    clusters = np.array([pfam_map.get(g) or f"__orphan__{g}" for g in row_genes])
+    clusters = np.array([pfam_map.get(g) or f"__orphan__{g}" for g in gene_names])
 
     def _ratio(rows):
-        g_idx = gene_positions[rows]
-        f_idx = family_positions[rows]
-        gene_f1 = float(
-            f1_score(gene_y_true[g_idx], gene_pred[g_idx], average="macro", zero_division=0)
-        )
-        family_f1 = float(
-            f1_score(family_y_true[f_idx], family_pred[f_idx], average="macro", zero_division=0)
-        )
-        resample_chance, _ = majority_baseline_f1(gene_y_true[g_idx], gene_y_true[g_idx])
-        denom = gene_f1 - resample_chance
+        gene_values, family_values = [], []
+        for arms in per_seed:
+            gene_f1 = _arm_macro_f1(arms["gene"], rows)
+            family_f1 = _arm_macro_f1(arms["family"], rows)
+            if gene_f1 is None or family_f1 is None:
+                return None
+            gene_values.append(gene_f1)
+            family_values.append(family_f1)
+        gene_mean = float(np.mean(gene_values))
+        family_mean = float(np.mean(family_values))
+        denom = gene_mean - chance
         if denom <= MIN_ABOVE_CHANCE:
             return None
-        return (gene_f1 - family_f1) / denom
+        return (gene_mean - family_mean) / denom
 
     return cluster_bootstrap_ci(clusters, _ratio, n_resamples=n_resamples, seed=seed)
 
@@ -147,19 +195,29 @@ def main(compute_ci: bool = True, n_boot: int = BOOTSTRAP_N_RESAMPLES) -> None:
             fc["by_view"]["wt_mean"].get("frac_gene_mech_matches_family_majority")
         )
 
-    oof_cache_path = os.path.join(RESULTS_DIR, mechanism_oof_cache_filename(0))
-    oof_cache = None
+    # One cache per seed, and every seed the headline averages must be present:
+    # an interval built from a subset of the seeds is not the headline's quantity.
+    oof_caches = None
     pfam_map = None
-    if compute_ci and os.path.exists(oof_cache_path):
-        with open(oof_cache_path) as fh:
-            oof_cache = json.load(fh)
-        with open(PFAM_JSON) as fh:
-            pfam_map = json.load(fh)
-    elif compute_ci:
-        print(
-            f"  NOTE: {oof_cache_path} not found — leakage-fraction CI skipped "
-            "for all features (re-run mechanism_delta_family_split seed 0 with CIs on)."
-        )
+    if compute_ci:
+        cache_paths = [
+            os.path.join(RESULTS_DIR, mechanism_oof_cache_filename(seed_i))
+            for seed_i in range(len(seeds))
+        ]
+        missing = [path for path in cache_paths if not os.path.exists(path)]
+        if missing:
+            print(
+                f"  NOTE: {len(missing)} of {len(cache_paths)} seed OOF caches not "
+                "found — leakage-fraction CI skipped for all features (re-run "
+                "mechanism_delta_family_split for every seed with CIs on)."
+            )
+        else:
+            oof_caches = []
+            for path in cache_paths:
+                with open(path) as fh:
+                    oof_caches.append(json.load(fh))
+            with open(PFAM_JSON) as fh:
+                pfam_map = json.load(fh)
 
     print(f"n={results['n_variants']} variants, {results['n_genes']} genes, "
           f"{results['n_families']} families, {results['n_seeds']} seeds")
@@ -168,16 +226,27 @@ def main(compute_ci: bool = True, n_boot: int = BOOTSTRAP_N_RESAMPLES) -> None:
 
     for feature in features:
         cell = leakage_fraction_per_feature(seeds, feature, chance)
-        if oof_cache is not None and feature in oof_cache:
-            ci = leakage_fraction_ci(oof_cache[feature], pfam_map, n_boot, seed=0)
+        if oof_caches is not None and all(feature in cache for cache in oof_caches):
+            ci = leakage_fraction_ci(
+                [cache[feature] for cache in oof_caches], pfam_map, chance, n_boot, seed=0
+            )
             if ci is not None:
                 cell["ci"] = ci
         results["by_feature"][feature] = cell
         lf = cell["leakage_fraction"]
         lf_str = f"{lf:.1%}" if lf is not None else "undefined (at floor)"
+        ci = cell.get("ci") or {}
+        ci_str = ""
+        if ci.get("ci_low") is not None:
+            ci_str = f"  [{ci['ci_low']:+.1%}, {ci['ci_high']:+.1%}]"
+            if ci["ci_low"] <= 0.0 <= ci["ci_high"]:
+                ci_str += " (includes zero)"
+        elif ci:
+            ci_str = "  CI suppressed"
         print(
             f"{feature:18} {cell['gene_macro_f1_mean']:6.3f} "
-            f"{cell['family_macro_f1_mean']:7.3f} {cell['drop_mean']:6.3f} {lf_str:>20}"
+            f"{cell['family_macro_f1_mean']:7.3f} {cell['drop_mean']:6.3f} "
+            f"{lf_str:>20}{ci_str}"
         )
 
     LEAKAGE_FRACTION_JSON.parent.mkdir(parents=True, exist_ok=True)

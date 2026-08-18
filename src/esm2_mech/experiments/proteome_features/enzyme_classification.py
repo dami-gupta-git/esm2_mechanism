@@ -25,6 +25,8 @@ from esm2_mech.utils.splits import gene_split_cv, family_split_cv
 from esm2_mech.utils.data import build_gene_to_row
 from esm2_mech.utils.io import atomic_write_json
 from esm2_mech.utils.bootstrap import (
+    folds_to_arms,
+    score_within_folds,
     adjudicate_equivalence,
     adjudicate_level,
     bootstrap_mechanism_metrics,
@@ -164,9 +166,9 @@ def _run_cv(
     n_cls = len(classes)
     fold_f1s = []
     fold_aurocs = {c: [] for c in classes}
-    oof_y, oof_proba, oof_genes, oof_rows = [], [], [], []
+    oof_y, oof_proba, oof_genes, oof_rows, oof_folds = [], [], [], [], []
 
-    for tr, te in splits:
+    for fold_i, (tr, te) in enumerate(splits):
         tr_clean = tr
         te_clean = te
         if np.isnan(X[tr]).any() or np.isnan(X[te]).any():
@@ -206,6 +208,7 @@ def _run_cv(
             oof_proba.append(proba)
             oof_genes.append(genes[te_clean])
             oof_rows.append(np.asarray(te_clean))
+            oof_folds.append(np.full(len(te_clean), fold_i, dtype=int))
 
     result = {
         "macro_f1_mean": float(np.nanmean(fold_f1s)) if fold_f1s else None,
@@ -226,6 +229,7 @@ def _run_cv(
             "proba": np.concatenate(oof_proba),
             "genes": np.concatenate(oof_genes),
             "row_ids": np.concatenate(oof_rows),
+            "folds": np.concatenate(oof_folds),
         }
     return result, oof
 
@@ -373,22 +377,30 @@ def run_multiseed(
 
     ci_result = None
     permutation_result = None
-    pooled_fs_f1 = None
-    pooled_mlp_f1 = None
+    oof_fs_f1 = None
+    oof_mlp_f1 = None
     paired_mlp_vs_logreg = None
     independent_logreg_vs_mechanism = None
 
+    def _oof_macro_f1(oof):
+        """Seed-0 out-of-fold macro-F1, scored per fold and averaged."""
+        y_str = np.array([classes[i] for i in oof["y_true"]])
+        pred = np.array([classes[col] for col in oof["proba"].argmax(axis=1)])
+        arms = folds_to_arms(pred, oof["folds"])
+
+        def _fold_f1(block, arm_pred):
+            return float(
+                f1_score(y_str[block], arm_pred[block], average="macro", zero_division=0)
+            )
+        return y_str, score_within_folds(np.arange(len(y_str)), arms, _fold_f1)
+
     if seed0_fs_oof is not None:
-        oof_y_str = np.array([classes[i] for i in seed0_fs_oof["y_true"]])
-        oof_pred = np.array([classes[col] for col in seed0_fs_oof["proba"].argmax(axis=1)])
-        pooled_fs_f1 = float(f1_score(oof_y_str, oof_pred, average="macro", zero_division=0))
-        print(f"\n  Pooled OOF LogReg family-split F1: {pooled_fs_f1:.3f}")
+        oof_y_str, oof_fs_f1 = _oof_macro_f1(seed0_fs_oof)
+        print(f"\n  Seed-0 OOF LogReg family-split F1: {oof_fs_f1:.3f}")
 
     if seed0_mlp_fs_oof is not None:
-        mlp_oof_y_str = np.array([classes[i] for i in seed0_mlp_fs_oof["y_true"]])
-        mlp_oof_pred = np.array([classes[col] for col in seed0_mlp_fs_oof["proba"].argmax(axis=1)])
-        pooled_mlp_f1 = float(f1_score(mlp_oof_y_str, mlp_oof_pred, average="macro", zero_division=0))
-        print(f"  Pooled OOF MLP family-split F1: {pooled_mlp_f1:.3f}")
+        mlp_oof_y_str, oof_mlp_f1 = _oof_macro_f1(seed0_mlp_fs_oof)
+        print(f"  Seed-0 OOF MLP family-split F1: {oof_mlp_f1:.3f}")
 
     if compute_ci and seed0_fs_oof is not None:
         print("\n  Computing cluster-bootstrap CIs (seed 0, family-split)...")
@@ -399,6 +411,7 @@ def run_multiseed(
             y_true=oof_y_str,
             proba=seed0_fs_oof["proba"],
             clusters=clusters,
+            folds=seed0_fs_oof["folds"],
             classes=classes,
             n_resamples=n_boot,
             ci_level=BOOTSTRAP_CI_LEVEL,
@@ -474,6 +487,7 @@ def run_multiseed(
             permutation_result = oof_permutation_pvalue(
                 y_true=oof_y_str,
                 proba=seed0_fs_oof["proba"],
+                folds=seed0_fs_oof["folds"],
                 groups=seed0_fs_oof["genes"],
                 clusters=clusters,
                 classes=classes,
@@ -512,10 +526,10 @@ def run_multiseed(
         "leakage_pct": leakage_pct,
     }
 
-    if pooled_fs_f1 is not None:
-        result["logreg_family_split"]["pooled_oof_macro_f1"] = pooled_fs_f1
-    if pooled_mlp_f1 is not None:
-        result["mlp_family_split"]["pooled_oof_macro_f1"] = pooled_mlp_f1
+    if oof_fs_f1 is not None:
+        result["logreg_family_split"]["oof_macro_f1"] = oof_fs_f1
+    if oof_mlp_f1 is not None:
+        result["mlp_family_split"]["oof_macro_f1"] = oof_mlp_f1
     if ci_result is not None:
         result["bootstrap_ci"] = ci_result
     if paired_mlp_vs_logreg is not None:
@@ -628,8 +642,8 @@ def main():
     print("DECISION RULES (PREREGISTRATION_run_biorxiv.md, 2F-2H)")
     print("=" * 60)
 
-    fs_f1 = emb_results["logreg_family_split"].get("pooled_oof_macro_f1")
-    mlp_f1 = emb_results["mlp_family_split"].get("pooled_oof_macro_f1")
+    fs_f1 = emb_results["logreg_family_split"].get("oof_macro_f1")
+    mlp_f1 = emb_results["mlp_family_split"].get("oof_macro_f1")
     gs_f1 = emb_results["logreg_gene_split"]["macro_f1_mean"]
     fs_ci = (emb_results.get("bootstrap_ci") or {}).get("macro_f1")
     paired_ci = emb_results.get("paired_ci_mlp_minus_logreg")

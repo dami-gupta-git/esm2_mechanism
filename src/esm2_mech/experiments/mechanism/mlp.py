@@ -57,7 +57,7 @@ def run_seed(seed, args, labels, genes, delta_mean, delta_pos, pfam_map):
                 oof["genes"], pfam_map, is_family_split=(split_name == SPLIT_FAMILY)
             )
             agg["ci"] = bootstrap_mechanism_metrics(
-                oof["y_true"], oof["proba"], clusters,
+                oof["y_true"], oof["proba"], clusters, oof["folds"],
                 n_resamples=n_boot, seed=seed,
             )
         return agg

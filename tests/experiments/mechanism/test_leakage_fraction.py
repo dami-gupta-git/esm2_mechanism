@@ -7,12 +7,16 @@ Invariants for leakage_fraction_per_feature:
 - leakage_fraction is None ("undefined") when the gene-split score is not
   meaningfully above chance, and when no seed is scorable.
 - on clean above-chance inputs, leakage_fraction is the across-seed-mean ratio.
-- prefers macro_f1_pooled over macro_f1_mean when both are present.
+- the basis is macro_f1_mean (the per-fold average) — the same basis every other
+  metric in this run uses. There is no pooled alternative to prefer.
 
 Invariants for leakage_fraction_ci:
-- the chance floor is recomputed from the resampled gene-split labels on each
-  bootstrap replicate, not held fixed. This matters because resampling families
-  shifts class proportions.
+- computed on the same basis as the headline: every seed the headline averages
+  (not one seed alone), fold-averaged macro-F1 (not pooled), and the chance floor
+  held fixed at the value passed in (not recomputed per resample) — matching
+  _measured_chance, which is a fixed lookup from naive_baseline.json.
+- a seed missing from the cache list means the interval cannot match the headline
+  and the CI is not computed (returns None), rather than silently using a subset.
 """
 
 import numpy as np
@@ -67,33 +71,32 @@ class TestLeakageFractionPerFeature:
         result = leakage_fraction_per_feature(seeds, "delta_mean", chance=0.30)
         assert result["leakage_fraction"] == pytest.approx(0.20 / 0.30)
 
-    def test_prefers_pooled_over_fold_mean(self):
+    def test_basis_is_macro_f1_mean_only(self):
+        # A pooled figure present alongside macro_f1_mean must not be picked up —
+        # there is one basis, the fold mean, used everywhere in this run.
         seeds = [{
-            "gene_split": {"delta_mean": {"macro_f1_mean": 0.50, "macro_f1_pooled": 0.55}},
-            "family_split": {"delta_mean": {"macro_f1_mean": 0.40, "macro_f1_pooled": 0.42}},
+            "gene_split": {"delta_mean": {"macro_f1_mean": 0.50, "macro_f1_pooled": 0.99}},
+            "family_split": {"delta_mean": {"macro_f1_mean": 0.40, "macro_f1_pooled": 0.01}},
         }]
         result = leakage_fraction_per_feature(seeds, "delta_mean", chance=0.30)
-        assert result["gene_macro_f1_mean"] == pytest.approx(0.55)
-        assert result["family_macro_f1_mean"] == pytest.approx(0.42)
-
-    def test_falls_back_to_fold_mean_when_no_pooled(self):
-        seeds = [_seed(0.60, 0.40)]
-        result = leakage_fraction_per_feature(seeds, "delta_mean", chance=0.30)
-        assert result["gene_macro_f1_mean"] == pytest.approx(0.60)
+        assert result["gene_macro_f1_mean"] == pytest.approx(0.50)
+        assert result["family_macro_f1_mean"] == pytest.approx(0.40)
 
 
 class TestLeakageFractionCi:
 
     @staticmethod
-    def _make_oof_cache_entry(n=60, seed=42):
-        """Synthetic OOF cache with gene-split predicting well and family-split
-        predicting worse, so the leakage fraction is positive."""
+    def _make_oof_cache_entry(n=60, seed=42, n_folds=3):
+        """Synthetic per-seed OOF cache: gene-split predicts well, family-split
+        predicts worse, so the leakage fraction is positive. n rows are split evenly
+        across n_folds fold ids, as the real fold-aware cache does."""
         from esm2_mech.utils.constants import MECHANISM_CLASSES
         rng = np.random.RandomState(seed)
         classes = MECHANISM_CLASSES
         y_true = rng.choice(classes, size=n)
         row_ids = list(range(n))
         genes = [f"gene_{i % 6}" for i in range(n)]
+        folds = [i % n_folds for i in range(n)]
 
         gene_pred = y_true.copy()
         gene_pred[n // 2:] = rng.choice(classes, size=n - n // 2)
@@ -106,79 +109,89 @@ class TestLeakageFractionCi:
                 "y_true": y_true.tolist(),
                 "pred": gene_pred.tolist(),
                 "genes": genes,
+                "folds": folds,
             },
             "family_split": {
                 "row_ids": row_ids,
                 "y_true": y_true.tolist(),
                 "pred": family_pred.tolist(),
                 "genes": genes,
+                "folds": folds,
             },
         }
 
     def test_ci_runs_and_returns_result(self):
-        entry = self._make_oof_cache_entry()
+        entries = [self._make_oof_cache_entry(seed=s) for s in range(3)]
         pfam_map = {f"gene_{i}": f"PF{i % 3}" for i in range(6)}
-        ci = leakage_fraction_ci(entry, pfam_map, n_resamples=50, seed=0)
+        ci = leakage_fraction_ci(entries, pfam_map, chance=0.28, n_resamples=50, seed=0)
         assert ci is not None
         assert "point" in ci
 
-    def test_chance_recomputed_per_resample(self):
-        """Verify the chance floor varies across resamples by checking that
-        the CI is different from what a fixed-chance version would give."""
+    def test_missing_seed_variants_are_excluded_from_the_shared_row_space(self):
+        # Seed 1's cache only scored a subset of the rows seed 0 and seed 2 scored.
+        # The CI must restrict to the rows every seed scored, not error or silently
+        # use seed-specific rows that would misalign the fold-average across seeds.
+        full = [self._make_oof_cache_entry(seed=s) for s in (0, 2)]
+        partial = self._make_oof_cache_entry(seed=1)
+        for arm in ("gene_split", "family_split"):
+            for key in ("row_ids", "y_true", "pred", "genes", "folds"):
+                partial[arm][key] = partial[arm][key][:40]
+        entries = [full[0], partial, full[1]]
+        pfam_map = {f"gene_{i}": f"PF{i % 3}" for i in range(6)}
+        ci = leakage_fraction_ci(entries, pfam_map, chance=0.28, n_resamples=50, seed=0)
+        assert ci is not None
+
+    def test_matches_a_hand_computed_fixed_basis_ci(self):
+        # The interval must be the same quantity as the headline: fold-averaged
+        # macro-F1, averaged over these seeds, divided by the distance from a chance
+        # floor that is fixed (not recomputed per resample).
         from sklearn.metrics import f1_score
         from esm2_mech.utils.bootstrap import cluster_bootstrap_ci
 
-        rng = np.random.RandomState(7)
-        n = 80
-        classes = ["GOF", "DN", "LOF"]
-        y_true = np.array(["LOF"] * 50 + ["GOF"] * 20 + ["DN"] * 10)
-        row_ids = list(range(n))
-        genes = [f"gene_{i % 8}" for i in range(n)]
+        entries = [self._make_oof_cache_entry(seed=s, n_folds=4) for s in range(2)]
+        pfam_map = {f"gene_{i}": f"PF{i % 3}" for i in range(6)}
+        chance = 0.25
 
-        gene_pred = y_true.copy()
-        family_pred = y_true.copy()
-        family_pred[40:] = rng.choice(classes, size=40)
+        ci = leakage_fraction_ci(entries, pfam_map, chance=chance, n_resamples=100, seed=0)
 
-        entry = {
-            "gene_split": {
-                "row_ids": row_ids,
-                "y_true": y_true.tolist(),
-                "pred": gene_pred.tolist(),
-                "genes": genes,
-            },
-            "family_split": {
-                "row_ids": row_ids,
-                "y_true": y_true.tolist(),
-                "pred": family_pred.tolist(),
-                "genes": genes,
-            },
-        }
-        pfam_map = {f"gene_{i}": f"PF{i % 4}" for i in range(8)}
+        def _fold_mean_f1(y_true, pred, folds, rows):
+            values = []
+            row_folds = np.asarray(folds)[rows]
+            for fold in np.unique(row_folds):
+                block = rows[row_folds == fold]
+                if len(block) == 0:
+                    return None
+                values.append(
+                    f1_score(y_true[block], pred[block], average="macro", zero_division=0)
+                )
+            return float(np.mean(values))
 
-        ci_resampled = leakage_fraction_ci(entry, pfam_map, n_resamples=200, seed=0)
-
-        gene_y = np.array(entry["gene_split"]["y_true"])
-        gene_p = np.array(entry["gene_split"]["pred"])
-        family_y = np.array(entry["family_split"]["y_true"])
-        family_p = np.array(entry["family_split"]["pred"])
-        gene_positions = np.arange(n)
-        family_positions = np.arange(n)
-        clusters = np.array([pfam_map.get(g, g) for g in genes])
-
-        from esm2_mech.utils.metrics import majority_baseline_f1
-        fixed_chance, _ = majority_baseline_f1(gene_y, gene_y)
+        genes = np.array(entries[0]["gene_split"]["genes"])
+        clusters = np.array([pfam_map.get(g) or f"__orphan__{g}" for g in genes])
 
         def _ratio_fixed(rows):
-            gf1 = float(f1_score(gene_y[rows], gene_p[rows], average="macro", zero_division=0))
-            ff1 = float(f1_score(family_y[rows], family_p[rows], average="macro", zero_division=0))
-            denom = gf1 - fixed_chance
+            gene_vals, family_vals = [], []
+            for entry in entries:
+                gy = np.array(entry["gene_split"]["y_true"])
+                gp = np.array(entry["gene_split"]["pred"])
+                gf = np.array(entry["gene_split"]["folds"])
+                fy = np.array(entry["family_split"]["y_true"])
+                fp = np.array(entry["family_split"]["pred"])
+                ff = np.array(entry["family_split"]["folds"])
+                g_val = _fold_mean_f1(gy, gp, gf, rows)
+                f_val = _fold_mean_f1(fy, fp, ff, rows)
+                if g_val is None or f_val is None:
+                    return None
+                gene_vals.append(g_val)
+                family_vals.append(f_val)
+            gene_mean = float(np.mean(gene_vals))
+            family_mean = float(np.mean(family_vals))
+            denom = gene_mean - chance
             if denom <= MIN_ABOVE_CHANCE:
                 return None
-            return (gf1 - ff1) / denom
+            return (gene_mean - family_mean) / denom
 
-        ci_fixed = cluster_bootstrap_ci(clusters, _ratio_fixed, n_resamples=200, seed=0)
+        ci_hand = cluster_bootstrap_ci(clusters, _ratio_fixed, n_resamples=100, seed=0)
 
-        assert ci_resampled is not None
-        assert ci_fixed is not None
-        if ci_resampled.get("ci_low") is not None and ci_fixed.get("ci_low") is not None:
-            assert ci_resampled["ci_low"] != pytest.approx(ci_fixed["ci_low"], abs=1e-6)
+        assert ci is not None
+        assert ci["point"] == pytest.approx(ci_hand["point"], abs=1e-9)

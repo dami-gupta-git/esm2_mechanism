@@ -32,7 +32,7 @@ from esm2_mech.embeddings.embed_variants import ESM2_MODEL_650M
 from esm2_mech.utils.bootstrap import (
     adjudicate_diff,
     adjudicate_level,
-    average_oof_over_seeds,
+    stack_oof_over_seeds,
     binary_auroc_cluster_bootstrap_ci,
     family_or_gene_clusters,
     paired_oof_diff,
@@ -52,8 +52,8 @@ CONS_CACHE = CONSERVATION_PATHOGENICITY_NPY
 CONS_META = CONSERVATION_PATHOGENICITY_META_JSON
 
 # Pre-registered thresholds
-K1_CONS_MIN = 0.85
-K2_ADD_MIN = 0.02
+CLAIM_2D_CONSERVATION_MIN = 0.85
+CLAIM_2E_DELTA_ADD_MIN = 0.02
 
 PATHOGENIC = 1
 LOGREG_MAX_ITER = 2000
@@ -186,7 +186,7 @@ def auroc_family_split(X, y, genes, pfam, seeds=range(5), n_jobs=-1):
     per_seed = Parallel(n_jobs=n_jobs)(
         delayed(_oof_one_seed)(X, y, genes, pfam, seed) for seed in seeds
     )
-    oof = average_oof_over_seeds(per_seed)
+    oof = stack_oof_over_seeds(per_seed)
     if oof is None:
         return float("nan"), None, None
     clusters = family_or_gene_clusters(oof["genes"], pfam, is_family_split=True)
@@ -256,9 +256,9 @@ def analyse():
 
     print("\n=== PAIRED DIFFERENCES (family-cluster bootstrap) ===")
     contrasts = [
-        ("K2_delta_beyond_conservation", "conservation_plus_delta", "conservation", K2_ADD_MIN),
-        ("K2b_conservation_beyond_delta", "conservation_plus_delta", "delta", 0.0),
-        ("C4_conservation_vs_delta", "conservation", "delta", 0.0),
+        ("2E_delta_beyond_conservation", "conservation_plus_delta", "conservation", CLAIM_2E_DELTA_ADD_MIN),
+        ("descriptive_conservation_beyond_delta", "conservation_plus_delta", "delta", 0.0),
+        ("2D_conservation_vs_delta", "conservation", "delta", 0.0),
     ]
     paired = {}
     for key, arm_a, arm_b, threshold in contrasts:
@@ -282,44 +282,44 @@ def analyse():
     cons_a = auroc["conservation"]
     both_a = auroc["conservation_plus_delta"]
     delta_a = auroc["delta"]
-    k1_passed = bool(cons_a >= K1_CONS_MIN) if np.isfinite(cons_a) else None
-    k2_diff = paired.get("K2_delta_beyond_conservation")
-    k2_passed = (
-        bool(k2_diff["point_diff"] >= K2_ADD_MIN)
-        if k2_diff and k2_diff.get("point_diff") is not None
+    claim_2d_passed = bool(cons_a >= CLAIM_2D_CONSERVATION_MIN) if np.isfinite(cons_a) else None
+    claim_2e_diff = paired.get("2E_delta_beyond_conservation")
+    claim_2e_passed = (
+        bool(claim_2e_diff["point_diff"] >= CLAIM_2E_DELTA_ADD_MIN)
+        if claim_2e_diff and claim_2e_diff.get("point_diff") is not None
         else None
     )
     gates = {
-        "K1_conservation_is_axis": {
+        "2D_conservation_clears_0.85": {
             "value": cons_a,
-            "threshold": K1_CONS_MIN,
+            "threshold": CLAIM_2D_CONSERVATION_MIN,
             "ci": auroc_ci["conservation"],
-            "passed": k1_passed,
-            "verdict": adjudicate_level(cons_a, auroc_ci["conservation"], K1_CONS_MIN),
+            "passed": claim_2d_passed,
+            "verdict": adjudicate_level(cons_a, auroc_ci["conservation"], CLAIM_2D_CONSERVATION_MIN),
         },
-        "K2_delta_beyond_conservation": {
-            "value": k2_diff["point_diff"] if k2_diff else None,
-            "threshold": K2_ADD_MIN,
+        "2E_delta_beyond_conservation": {
+            "value": claim_2e_diff["point_diff"] if claim_2e_diff else None,
+            "threshold": CLAIM_2E_DELTA_ADD_MIN,
             "conservation": cons_a,
             "conservation_plus_delta": both_a,
-            "paired_diff": k2_diff,
-            "passed": k2_passed,
-            "verdict": adjudicate_diff(k2_passed, k2_diff, K2_ADD_MIN),
+            "paired_diff": claim_2e_diff,
+            "passed": claim_2e_passed,
+            "verdict": adjudicate_diff(claim_2e_passed, claim_2e_diff, CLAIM_2E_DELTA_ADD_MIN),
         },
-        "K2b_conservation_beyond_delta": {
+        "descriptive_conservation_beyond_delta": {
             "value": (
-                paired["K2b_conservation_beyond_delta"]["point_diff"]
-                if "K2b_conservation_beyond_delta" in paired
+                paired["descriptive_conservation_beyond_delta"]["point_diff"]
+                if "descriptive_conservation_beyond_delta" in paired
                 else None
             ),
             "delta": delta_a,
             "conservation_plus_delta": both_a,
-            "paired_diff": paired.get("K2b_conservation_beyond_delta"),
+            "paired_diff": paired.get("descriptive_conservation_beyond_delta"),
         },
-        "C4_conservation_vs_delta": {
+        "2D_conservation_vs_delta": {
             "conservation": cons_a,
             "delta": delta_a,
-            "paired_diff": paired.get("C4_conservation_vs_delta"),
+            "paired_diff": paired.get("2D_conservation_vs_delta"),
         },
     }
 
@@ -329,10 +329,10 @@ def analyse():
         "auroc_family_split": auroc,
         "auroc_family_split_ci": auroc_ci,
         "gates": gates,
-        "thresholds": {"K1": K1_CONS_MIN, "K2": K2_ADD_MIN},
+        "thresholds": {"2D": CLAIM_2D_CONSERVATION_MIN, "2E": CLAIM_2E_DELTA_ADD_MIN},
         "calibration_note": (
             "The probes are uncalibrated and measure discrimination only; the "
-            "reported AUROCs are not risk estimates (R7.6)."
+            "reported AUROCs are not risk estimates (pre-registration §1.4)."
         ),
     }
     atomic_write_json(CONSERVATION_AXIS_JSON, result)
@@ -353,13 +353,13 @@ def analyse():
         )
         print(f"    {name:26s} {value:.3f} {interval}")
     print(
-        f"\n  K1 conservation-alone >= {K1_CONS_MIN}: {cons_a:.3f} -> "
-        f"{gates['K1_conservation_is_axis']['verdict']}"
+        f"\n  2D conservation-alone >= {CLAIM_2D_CONSERVATION_MIN}: {cons_a:.3f} -> "
+        f"{gates['2D_conservation_clears_0.85']['verdict']}"
     )
-    k2_value = gates["K2_delta_beyond_conservation"]["value"]
-    k2_shown = f"{k2_value:+.3f}" if k2_value is not None else "no point estimate"
-    print(f"  K2 delta adds over conservation >= {K2_ADD_MIN}: {k2_shown}")
-    print(f"     {gates['K2_delta_beyond_conservation']['verdict']}")
+    claim_2e_value = gates["2E_delta_beyond_conservation"]["value"]
+    claim_2e_shown = f"{claim_2e_value:+.3f}" if claim_2e_value is not None else "no point estimate"
+    print(f"  2E delta adds over conservation >= {CLAIM_2E_DELTA_ADD_MIN}: {claim_2e_shown}")
+    print(f"     {gates['2E_delta_beyond_conservation']['verdict']}")
     print(f"\nResults -> {CONSERVATION_AXIS_JSON}")
 
 

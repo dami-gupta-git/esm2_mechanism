@@ -92,9 +92,15 @@ def _log_fold(label: str, fold_i: int, fm: dict, classes: list[str], pg_str: str
 class _OofCollector:
     """Accumulate per-fold out-of-fold test predictions for dependency-aware inference.
 
-    Shared by run_logreg_cv and run_mlp_cv, which both gather the same four aligned
-    arrays per fold (y_true, proba aligned to `classes`, gene ids, original row ids)
-    and concatenate them into one OOF dict, or None if no fold contributed.
+    Shared by run_logreg_cv and run_mlp_cv, which both gather the same five aligned
+    arrays per fold (y_true, proba aligned to `classes`, gene ids, original row ids,
+    fold index) and concatenate them into one OOF dict, or None if no fold contributed.
+
+    The fold index is mandatory. Each fold is fitted independently, so its
+    probabilities are on their own scale; a consumer that ranks the concatenation as
+    one list compares scores that were never comparable, which pushes weak-signal
+    AUROCs below 0.5. Downstream ranking metrics score within fold and average, and
+    they can only do that if the fold survives collection.
     """
 
     def __init__(self) -> None:
@@ -102,12 +108,22 @@ class _OofCollector:
         self._proba: list = []
         self._genes: list = []
         self._rows: list = []
+        self._folds: list = []
 
-    def add(self, y_te: np.ndarray, proba: np.ndarray, genes_te: np.ndarray, te: np.ndarray) -> None:
+    def add(
+        self,
+        y_te: np.ndarray,
+        proba: np.ndarray,
+        genes_te: np.ndarray,
+        te: np.ndarray,
+        fold_i: int,
+    ) -> None:
+        te = np.asarray(te)
         self._y.append(y_te)
         self._proba.append(proba)
         self._genes.append(genes_te)
-        self._rows.append(np.asarray(te))
+        self._rows.append(te)
+        self._folds.append(np.full(len(te), int(fold_i), dtype=int))
 
     def finalize(self) -> dict | None:
         if not self._y:
@@ -117,6 +133,7 @@ class _OofCollector:
             "proba": np.concatenate(self._proba),
             "genes": np.concatenate(self._genes),
             "row_ids": np.concatenate(self._rows),
+            "folds": np.concatenate(self._folds),
         }
 
 
@@ -188,7 +205,7 @@ def _run_multiclass_cv(
         fm = compute_metrics(y_te, pred, proba, classes)
         fold_results.append(fm)
         if return_oof and genes is not None:
-            oof.add(y_te, proba, genes[te], te)
+            oof.add(y_te, proba, genes[te], te, fold_i)
 
         pg_str = ""
         if genes is not None:
@@ -239,7 +256,7 @@ def run_logreg_cv(
         the same condition.
     return_oof : if True, return (agg, oof) where oof collects the out-of-fold test
         predictions for dependency-aware inference (cluster bootstrap / permutation):
-        {"y_true", "proba" (aligned to `classes`), "genes"}, or None if no fold was
+        {"y_true", "proba" (aligned to `classes`), "genes", "row_ids", "folds"}, or None if no fold was
         scorable. `genes` must be provided for oof to carry gene ids. Default False
         keeps the bare-`agg` return for existing callers.
     """
@@ -256,6 +273,47 @@ def run_logreg_cv(
         )
         clf.fit(X_tr_s, y_tr)
         return clf.predict_proba(X_te_s), clf.classes_
+
+    return _run_multiclass_cv(
+        _fit, X, y, splits, classes, seed, genes, label, min_train_classes, return_oof,
+    )
+
+
+def run_logreg_pca_cv(
+    X: np.ndarray,
+    y: np.ndarray,
+    splits: list[tuple],
+    classes: list[str] = MECHANISM_CLASSES,
+    seed: int = 42,
+    genes: np.ndarray | None = None,
+    label: str = "",
+    n_pca: int | None = None,
+    min_train_classes: int | None = 2,
+    return_oof: bool = False,
+):
+    """Unscaled per-fold PCA then plain multinomial LogReg, over the shared CV body.
+
+    The mechanism experiment's probe. It is not run_logreg_cv: that one standardizes
+    per fold and weights the classes, and swapping the model would change every
+    headline number for a reason unrelated to the metric it is being fixed for. What
+    it does share is the fold loop and the out-of-fold collector, so the fold index
+    reaches the metrics here the same way it does everywhere else.
+
+    n_pca : components fitted on the training rows only, and only when the feature is
+        wider than that. A one-column feature such as FoldX passes through untouched.
+    """
+    from sklearn.decomposition import PCA
+
+    require_no_nan(X, "run_logreg_pca_cv")
+
+    def _fit(X_tr, y_tr, X_te, fold_seed):
+        if n_pca is not None and X_tr.shape[1] > n_pca:
+            pca = PCA(n_components=min(n_pca, X_tr.shape[0] - 1), random_state=fold_seed)
+            X_tr = pca.fit_transform(X_tr)
+            X_te = pca.transform(X_te)
+        clf = LogisticRegression(max_iter=1000, C=1.0, solver="lbfgs", random_state=fold_seed)
+        clf.fit(X_tr, y_tr)
+        return clf.predict_proba(X_te), clf.classes_
 
     return _run_multiclass_cv(
         _fit, X, y, splits, classes, seed, genes, label, min_train_classes, return_oof,
@@ -334,7 +392,8 @@ def _run_binary_cv(
     Shared by run_logreg_binary_cv and run_mlp_binary_cv, which differ only in the
     classifier. Returns {} when no fold had both classes in train and test.
     return_oof : if True, return (agg, oof) with out-of-fold test predictions
-        {"y_true", "proba" (positive-class probability, 1-D), "genes", "row_ids"}
+        {"y_true", "proba" (positive-class probability, 1-D), "genes", "row_ids",
+        "folds"}
         for dependency-aware inference, or None if no fold was scorable. `genes`
         must be provided for oof to carry gene ids. Default False keeps the
         bare-`agg` return for existing callers.
@@ -346,8 +405,8 @@ def _run_binary_cv(
     imbalance_folds: dict[str, list[float]] = {
         "auprc": [], "prevalence": [], "ppv": [], "npv": []
     }
-    oof_y, oof_proba, oof_genes, oof_rows = [], [], [], []
-    for tr, te in splits:
+    oof_y, oof_proba, oof_genes, oof_rows, oof_folds = [], [], [], [], []
+    for fold_i, (tr, te) in enumerate(splits):
         sc = StandardScaler()
         X_tr = sc.fit_transform(X[tr])
         X_te = sc.transform(X[te])
@@ -367,6 +426,7 @@ def _run_binary_cv(
             oof_proba.append(proba)
             oof_genes.append(genes[te])
             oof_rows.append(np.asarray(te))
+            oof_folds.append(np.full(len(te), fold_i, dtype=int))
 
     if not aurocs:
         agg = {}
@@ -391,6 +451,7 @@ def _run_binary_cv(
             "proba": np.concatenate(oof_proba),
             "genes": np.concatenate(oof_genes),
             "row_ids": np.concatenate(oof_rows),
+            "folds": np.concatenate(oof_folds),
         }
     return agg, oof
 
@@ -429,7 +490,7 @@ def run_mlp_cv(
     genes  : if provided, also computes per_gene_f1 per fold
     label  : prefix for per-fold log lines
     return_oof : if True, return (agg, oof) with out-of-fold test predictions
-        {"y_true", "proba" (aligned to `classes`), "genes"} for dependency-aware
+        {"y_true", "proba" (aligned to `classes`), "genes", "row_ids", "folds"} for dependency-aware
         inference, or None if no fold was scorable. `genes` must be provided.
         Default False keeps the bare-`agg` return for existing callers.
     """
@@ -495,7 +556,7 @@ def run_mlp_cv(
         fm = compute_metrics(y_te, pred, proba, classes)
         fold_results.append(fm)
         if return_oof and genes is not None:
-            oof.add(y_te, proba, genes[te], te)
+            oof.add(y_te, proba, genes[te], te, fold_i)
 
         pg_str = ""
         if genes is not None:
@@ -566,7 +627,8 @@ def _run_sklearn_probe_impl(
     n_pca     : if not None, fit per-fold PCA after normalizing (which is forced
                 on when n_pca is set, matching the original run_sklearn_probe_pca).
     return_oof : if True, return (agg, oof) with out-of-fold test predictions
-        {"y_true", "proba" (aligned to MECHANISM_CLASSES), "genes", "row_ids"} for
+        {"y_true", "proba" (aligned to MECHANISM_CLASSES), "genes", "row_ids",
+        "folds"} for
         dependency-aware inference (cluster bootstrap), or None if no fold had
         `predict_proba`. Default False keeps the bare-`agg` return for existing
         callers.
@@ -613,7 +675,7 @@ def _run_sklearn_probe_impl(
                 add_flat_class_metrics(fm, labels[test_idx], proba_by_class, fitted)
             if return_oof and genes is not None:
                 proba_aligned = align_proba(proba, clf_classes_str, MECHANISM_CLASSES)
-                oof.add(labels[test_idx], proba_aligned, genes[test_idx], test_idx)
+                oof.add(labels[test_idx], proba_aligned, genes[test_idx], test_idx, fold_i)
         fold_results.append(fm)
         print(f"  Fold {fold_i+1}: macro_f1={fm['macro_f1']:.3f}")
 
@@ -671,7 +733,8 @@ def run_mlp_probe_cv(
             otherwise 15% of samples are held out randomly.
     label : prefix for per-fold log lines.
     return_oof : if True, return (agg, oof) with out-of-fold test predictions
-        {"y_true", "proba" (aligned to MECHANISM_CLASSES), "genes", "row_ids"} for
+        {"y_true", "proba" (aligned to MECHANISM_CLASSES), "genes", "row_ids",
+        "folds"} for
         dependency-aware inference, or None if no fold was scorable. `genes` must
         be provided for oof to carry gene ids. Default False keeps the bare-`agg`
         return for existing callers.
@@ -782,7 +845,7 @@ def run_mlp_probe_cv(
         add_flat_class_metrics(fm, labels_te, proba, classes)
         fold_results.append(fm)
         if return_oof and genes is not None:
-            oof.add(labels_te, proba, genes[test_idx], test_idx)
+            oof.add(labels_te, proba, genes[test_idx], test_idx, fold_i)
 
         pg_str = ""
         if genes is not None:

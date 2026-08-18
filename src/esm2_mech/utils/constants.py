@@ -168,6 +168,15 @@ PERMUTATION_N_RESAMPLES = 1000
 # be trusted. Below this surviving fraction, cluster_bootstrap_ci returns no CI and
 # flags it so the dropout is visible instead of silently narrowing the interval.
 BOOTSTRAP_MIN_VALID_FRAC = 0.8
+# Every fold-aware metric scores each class inside each fold and averages. A resample
+# in which any fold has lost a class entirely is discarded rather than scored over the
+# folds that survive, so every resample scores the same statistic (all folds, all
+# classes). In the real splits every fold already carries every class with several
+# families to spare, so a discard needs a draw that drops all of a fold's families for
+# one class at once and should be rare. A discard rate above this fraction is a fault
+# signal — most likely the resampling unit or the fold construction — and must be
+# investigated rather than absorbed.
+BOOTSTRAP_MAX_DISCARD_FRAC = 0.01
 # No-signal reference for a one-vs-rest AUROC (ranking metric): a CI clearing this
 # from above, or a permutation p-value against it, marks above-chance separation.
 CHANCE_AUROC = 0.5

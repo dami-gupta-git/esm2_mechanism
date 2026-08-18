@@ -20,10 +20,10 @@ from esm2_mech.utils.constants import (
     MECHANISM_CLASSES,
     BOOTSTRAP_N_RESAMPLES,
 )
-from esm2_mech.utils.splits import gene_split_cv, family_split_cv
+from esm2_mech.utils.splits import gene_split_cv, family_split_cv, fold_index_array
 from esm2_mech.utils.embed import unpack_run_data
 from esm2_mech.utils.io import atomic_write_json
-from esm2_mech.utils.metrics import align_proba
+from esm2_mech.utils.probes import run_logreg_pca_cv
 from esm2_mech.utils.bootstrap import (
     adjudicate_diff,
     bootstrap_mechanism_metrics,
@@ -33,84 +33,11 @@ from esm2_mech.utils.bootstrap import (
     paired_oof_diff,
 )
 
-from sklearn.decomposition import PCA
-from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import roc_auc_score, f1_score, precision_recall_curve, auc
 import functools
 
 PCA_COMPONENTS = 256  # applied to embedding features (dim > PCA_COMPONENTS)
 
 print = functools.partial(print, flush=True)
-
-
-def run_probe_on_splits(X, y, splits, genes=None, seed=42, n_pca=None):
-    """Run logistic regression across splits. Returns (agg, oof).
-
-    n_pca: if set, fit PCA to this many components on training rows only per fold.
-    """
-    fold_results = []
-    oof_y, oof_proba, oof_genes, oof_rows = [], [], [], []
-    for train_idx, test_idx in splits:
-        X_train, X_test = X[train_idx], X[test_idx]
-        y_train, y_test = y[train_idx], y[test_idx]
-        if len(set(y_train)) < 2:
-            continue
-        if n_pca is not None and X_train.shape[1] > n_pca:
-            pca = PCA(
-                n_components=min(n_pca, X_train.shape[0] - 1),
-                random_state=seed,
-            )
-            X_train = pca.fit_transform(X_train)
-            X_test = pca.transform(X_test)
-        clf = LogisticRegression(
-            max_iter=1000, C=1.0, solver="lbfgs", random_state=seed
-        )
-        clf.fit(X_train, y_train)
-        proba = clf.predict_proba(X_test)
-        pred = clf.predict(X_test)
-
-        fm = {
-            "macro_f1": float(f1_score(y_test, pred, average="macro", zero_division=0))
-        }
-        for i, cls in enumerate(clf.classes_):
-            y_bin = (y_test == cls).astype(int)
-            if y_bin.sum() > 0 and (1 - y_bin).sum() > 0:
-                fm[f"auroc_{cls}"] = float(roc_auc_score(y_bin, proba[:, i]))
-                prec, rec, _ = precision_recall_curve(y_bin, proba[:, i])
-                fm[f"pr_auc_{cls}"] = float(auc(rec, prec))
-        fold_results.append(fm)
-
-        if genes is not None:
-            oof_y.append(y_test)
-            oof_proba.append(align_proba(proba, clf.classes_, MECHANISM_CLASSES))
-            oof_genes.append(genes[test_idx])
-            oof_rows.append(np.asarray(test_idx))
-
-    if not fold_results:
-        return {"error": "insufficient data"}, None
-
-    agg = {}
-    all_keys = set().union(*[set(f.keys()) for f in fold_results])
-    for key in all_keys:
-        vals = [f[key] for f in fold_results if key in f and not np.isnan(f[key])]
-        if vals:
-            agg[f"{key}_mean"] = float(np.mean(vals))
-            agg[f"{key}_std"] = float(np.std(vals))
-    agg["n_folds"] = len(fold_results)
-
-    oof = None
-    if oof_y:
-        oof = {
-            "y_true": np.concatenate(oof_y),
-            "proba": np.concatenate(oof_proba),
-            "genes": np.concatenate(oof_genes),
-            "row_ids": np.concatenate(oof_rows),
-        }
-        pooled_pred = [MECHANISM_CLASSES[col] for col in oof["proba"].argmax(axis=1)]
-        agg["macro_f1_pooled"] = float(
-            f1_score(oof["y_true"], pooled_pred, average="macro", zero_division=0)
-        )
-    return agg, oof
 
 
 PERMUTATION_FEATURES = ("delta_mean", "wt_only_mean")
@@ -215,40 +142,49 @@ def run(
             continue
         print(f"\n--- {name} (dim={X.shape[1]}, n={len(feat_labels)}) ---")
 
-        gs, gs_oof = run_probe_on_splits(X, feat_labels, feat_gene_splits, feat_genes, seed=seed, n_pca=PCA_COMPONENTS)
+        gs, gs_oof = run_logreg_pca_cv(
+            X, feat_labels, feat_gene_splits, seed=seed, genes=feat_genes,
+            label=f"{name} gene", n_pca=PCA_COMPONENTS, return_oof=True,
+        )
         if compute_ci and gs_oof is not None:
             gs["ci"] = bootstrap_mechanism_metrics(
-                gs_oof["y_true"], gs_oof["proba"], gs_oof["genes"],
+                gs_oof["y_true"], gs_oof["proba"], gs_oof["genes"], gs_oof["folds"],
                 n_resamples=n_boot, seed=seed,
             )
         results["gene_split"][name] = gs
-        gs_f1 = gs.get("macro_f1_pooled", gs.get("macro_f1_mean", float("nan")))
+        gs_f1 = gs.get("macro_f1_mean", float("nan"))
         print(
             f"  gene-split   macro-F1 = {gs_f1:.3f} "
-            f"(fold mean {gs.get('macro_f1_mean', float('nan')):.3f} "
-            f"± {gs.get('macro_f1_std', float('nan')):.3f})  "
+            f"± {gs.get('macro_f1_std', float('nan')):.3f}  "
             f"(GOF AUROC {gs.get('auroc_GOF_mean', float('nan')):.3f}, "
             f"DN {gs.get('auroc_DN_mean', float('nan')):.3f}, "
             f"LOF {gs.get('auroc_LOF_mean', float('nan')):.3f})"
         )
 
         if feat_family_splits:
-            fs, fs_oof = run_probe_on_splits(X, feat_labels, feat_family_splits, feat_genes, seed=seed, n_pca=PCA_COMPONENTS)
+            fs, fs_oof = run_logreg_pca_cv(
+                X, feat_labels, feat_family_splits, seed=seed, genes=feat_genes,
+                label=f"{name} family", n_pca=PCA_COMPONENTS, return_oof=True,
+            )
             if compute_ci and fs_oof is not None:
                 fs_clusters = family_or_gene_clusters(
                     fs_oof["genes"], pfam_map, is_family_split=True
                 )
                 fs["ci"] = bootstrap_mechanism_metrics(
-                    fs_oof["y_true"], fs_oof["proba"], fs_clusters,
+                    fs_oof["y_true"], fs_oof["proba"], fs_clusters, fs_oof["folds"],
                     n_resamples=n_boot, seed=seed,
                 )
             if n_permutations > 0 and name in REFIT_PERMUTATION_FEATURES:
                 def _family_macro_f1(perm_labels, _X=X, _splits=feat_family_splits, _genes=feat_genes):
-                    agg_perm, _ = run_probe_on_splits(_X, perm_labels, _splits, _genes, seed=seed, n_pca=PCA_COMPONENTS)
-                    return agg_perm.get("macro_f1_pooled", agg_perm.get("macro_f1_mean"))
+                    agg_perm, _ = run_logreg_pca_cv(
+                        _X, perm_labels, _splits, seed=seed, genes=_genes,
+                        n_pca=PCA_COMPONENTS, return_oof=True,
+                    )
+                    return agg_perm.get("macro_f1_mean")
 
                 fs["permutation"] = label_permutation_pvalue(
                     _family_macro_f1, feat_labels, statistic="macro_f1",
+                    folds=fold_index_array(feat_family_splits, len(feat_labels)),
                     groups=feat_genes,
                     clusters=family_or_gene_clusters(
                         feat_genes, pfam_map, is_family_split=True
@@ -257,7 +193,8 @@ def run(
                 )
             elif n_permutations > 0 and name in OOF_PERMUTATION_FEATURES and fs_oof is not None:
                 fs["permutation"] = oof_permutation_pvalue(
-                    fs_oof["y_true"], fs_oof["proba"], groups=fs_oof["genes"],
+                    fs_oof["y_true"], fs_oof["proba"], fs_oof["folds"],
+                    groups=fs_oof["genes"],
                     clusters=family_or_gene_clusters(
                         fs_oof["genes"], pfam_map, is_family_split=True
                     ),
@@ -271,8 +208,11 @@ def run(
                     f"unit {perm.get('permutation_unit')}, "
                     f"observed {perm.get('observed')}, null mean {perm.get('null_mean')})"
                 )
+            # Cached for every seed, not just seed 0: the leakage fraction's headline
+            # averages all five seeds, and an interval built from one seed is a
+            # different quantity from the number it is printed beside.
             if (
-                compute_ci and seed == 0 and name in PERMUTATION_FEATURES
+                compute_ci and name in PERMUTATION_FEATURES
                 and not isinstance(entry, tuple) and gs_oof is not None and fs_oof is not None
             ):
                 def _cache_arm(oof):
@@ -282,6 +222,7 @@ def run(
                         "y_true": oof["y_true"].tolist(),
                         "pred": pred,
                         "genes": oof["genes"].tolist(),
+                        "folds": oof["folds"].tolist(),
                     }
 
                 oof_cache[name] = {
@@ -290,12 +231,11 @@ def run(
                 }
 
             results["family_split"][name] = fs
-            fs_f1 = fs.get("macro_f1_pooled", fs.get("macro_f1_mean", float("nan")))
+            fs_f1 = fs.get("macro_f1_mean", float("nan"))
             delta_macro = gs_f1 - fs_f1
             print(
                 f"  family-split macro-F1 = {fs_f1:.3f} "
-                f"(fold mean {fs.get('macro_f1_mean', float('nan')):.3f} "
-                f"± {fs.get('macro_f1_std', float('nan')):.3f})  "
+                f"± {fs.get('macro_f1_std', float('nan')):.3f}  "
                 f"(GOF AUROC {fs.get('auroc_GOF_mean', float('nan')):.3f}, "
                 f"DN {fs.get('auroc_DN_mean', float('nan')):.3f}, "
                 f"LOF {fs.get('auroc_LOF_mean', float('nan')):.3f})"

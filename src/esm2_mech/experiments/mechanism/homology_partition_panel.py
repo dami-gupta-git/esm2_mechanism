@@ -18,7 +18,7 @@ used by clan_holdout.py/mmseqs_cluster_holdout.py would make the "increasing
 strictness" comparison confounded by a model change. mlp.py's number is still
 cited alongside as a cross-check, never as the row's own CI source.
 
-Per R7.3, each row's CI resamples the unit that row's split actually holds
+Per pre-registration §1.2, each row's CI resamples the unit that row's split actually holds
 out: family-split resamples Pfam families, clan-split resamples Pfam clans,
 MMseqs2-split resamples MMseqs2 clusters. The leakage fraction for each row is
 LF = (gene_split_f1 - partition_split_f1) / (gene_split_f1 - chance), jointly
@@ -96,7 +96,7 @@ def _measured_chance_floors():
     leakage_fraction.py's convention: the ratio's numerator is always the
     gene-split score, so its chance term is the gene-split floor). `family` is
     the single "measured floor" every row's mechanism-null is compared
-    against, matching the floor the rest of the project cites for C1 — not
+    against, matching the floor the rest of the project cites for 2A — not
     recomputed per partition, so it cannot silently diverge.
     """
     with open(NAIVE_BASELINE_JSON) as f:
@@ -124,7 +124,7 @@ def _pred_from_proba(proba):
 
 def leakage_fraction_ci_for_partition(oof_gene, oof_partition, partition_clusters, n_boot, seed):
     """CI on LF = (gene_f1 - partition_f1) / (gene_f1 - chance), jointly
-    resampled at the partition's own held-out unit per replicate (R7.3).
+    resampled at the partition's own held-out unit per replicate (pre-registration §1.2).
 
     The chance floor (majority-class macro-F1) is recomputed from the resampled
     gene-split labels on every bootstrap replicate, because resampling clusters
