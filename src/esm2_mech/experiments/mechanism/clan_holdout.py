@@ -19,14 +19,15 @@ import functools
 
 from esm2_mech.utils.bootstrap import bootstrap_mechanism_metrics
 from esm2_mech.utils.constants import BOOTSTRAP_N_RESAMPLES, MECHANISM_CLASSES
-from esm2_mech.utils.io import load_variants_and_delta
+from esm2_mech.utils.io import load_variants_and_delta, write_result_json
+from esm2_mech.utils.data import load_pfam_map
 from esm2_mech.utils.metrics import align_proba, majority_baseline_f1
 from esm2_mech.utils.paths import (
     CONTRASTIVE_AGGREGATE_JSON,
-    DATA_DIR,
     EMB_MUT_MEAN,
     EMB_WT_MEAN,
     NONLINEAR_RESULTS_SEED_JSON,
+    PFAM_JSON,
     RESULTS_DIR,
     VALID_VARIANTS_JSON,
 )
@@ -41,11 +42,6 @@ def load_data(data_dir, emb_dir):
         VALID_VARIANTS_JSON, EMB_WT_MEAN, EMB_MUT_MEAN
     )
     return variants, labels, genes, delta
-
-
-def load_pfam(data_dir=None):
-    with open(DATA_DIR / "pfam_families.json") as f:
-        return json.load(f)  # gene -> pfam_acc
 
 
 def load_clan_map(clan_file):
@@ -316,7 +312,7 @@ def main():
 
     print("=== Loading data ===")
     variants, labels, genes, delta = load_data(None, None)
-    pfam_map = load_pfam()
+    pfam_map = load_pfam_map(PFAM_JSON)
     clan_map, clan_names = load_clan_map(args.clan_file)
 
     gene_clan = {}
@@ -413,8 +409,7 @@ def main():
 
     os.makedirs(args.out_dir, exist_ok=True)
     out_path = os.path.join(args.out_dir, f"clan_holdout_results_seed{args.seed}.json")
-    with open(out_path, "w") as f:
-        json.dump(results, f, indent=2)
+    write_result_json(out_path, results, seeds=[args.seed], indent=2)
     print(f"\nResults written to {out_path}")
 
 

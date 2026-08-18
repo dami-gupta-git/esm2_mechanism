@@ -20,6 +20,7 @@ from typing import Optional
 import numpy as np
 
 print = functools.partial(print, flush=True)
+from esm2_mech.utils.metrics import majority_baseline_f1
 from esm2_mech.utils.splits import family_split_indices
 from esm2_mech.utils.paths import DATA_DIR, GENE_LIST_TSV, PROTEOME_PILOT_CACHE_DIR, RESULTS_DIR as _PROJECT_RESULTS_DIR
 from esm2_mech.utils.constants import MECHANISM_CLASSES
@@ -410,8 +411,7 @@ def majority_baseline(
     y_true_all, y_pred_all = [], []
     for train_idx, test_idx in family_split_indices(groups, n_folds, seed):
         ytr, yte = y[train_idx], y[test_idx]
-        # Majority class in training fold
-        maj = int(np.bincount(ytr, minlength=len(CLASSES)).argmax())
+        _, maj = majority_baseline_f1(ytr, yte)
         y_true_all.append(yte)
         y_pred_all.append(np.full_like(yte, maj))
     y_true = np.concatenate(y_true_all)

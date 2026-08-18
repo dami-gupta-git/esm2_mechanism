@@ -28,8 +28,8 @@ from esm2_mech.utils.constants import (
     N_SEEDS,
 )
 from esm2_mech.utils.data import load_variants
-from esm2_mech.utils.io import atomic_write_json
-from esm2_mech.utils.metrics import align_proba
+from esm2_mech.utils.io import write_result_json
+from esm2_mech.utils.metrics import align_proba, majority_baseline_f1
 from esm2_mech.utils.paths import (
     EMB_MUT_MEAN,
     EMB_WT_MEAN,
@@ -121,22 +121,6 @@ def select_families(genes, labels, pfam_map, min_genes, min_classes):
         counts = Counter(gene_label[gene] for gene in gene_set)
         print(f"    {family}: {len(gene_set)} genes  {dict(counts)}")
     return ordered, gene_label
-
-
-def _majority_baseline_f1(y, classes):
-    """Macro-F1 of always predicting the most common class in y."""
-    majority = Counter(y).most_common(1)[0][0]
-    preds = np.array([majority] * len(y))
-    f1s = []
-    for cls in classes:
-        if (y == cls).sum() == 0:
-            continue
-        tp = int(np.sum((preds == cls) & (y == cls)))
-        fp = int(np.sum((preds == cls) & (y != cls)))
-        fn = int(np.sum((preds != cls) & (y == cls)))
-        denom = 2 * tp + fp + fn
-        f1s.append(0.0 if denom == 0 else (2 * tp) / denom)
-    return float(np.mean(f1s)) if f1s else float("nan")
 
 
 def _probe_one_family(
@@ -397,7 +381,7 @@ def probe_phase(
             "n_variants": int(row_mask.sum()),
             "classes": present_classes,
             "gene_class_counts": dict(class_counts),
-            "majority_baseline_f1": _majority_baseline_f1(y, present_classes),
+            "majority_baseline_f1": majority_baseline_f1(y, y)[0],
             **family_res,
         }
         delta_oof_by_family[family] = family_oof[VIEW_DELTA]
@@ -414,7 +398,7 @@ def probe_phase(
     )
 
     WITHIN_FAMILY_MECHANISM_JSON.parent.mkdir(parents=True, exist_ok=True)
-    atomic_write_json(WITHIN_FAMILY_MECHANISM_JSON, results)
+    write_result_json(WITHIN_FAMILY_MECHANISM_JSON, results, seeds=list(range(n_seeds)))
     print(f"  Results written to {WITHIN_FAMILY_MECHANISM_JSON}")
     return results
 

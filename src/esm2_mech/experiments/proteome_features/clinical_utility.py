@@ -44,6 +44,7 @@ from esm2_mech.utils.paths import (
 )
 from esm2_mech.utils.constants import MECHANISM_CLASSES, N_FOLDS
 from esm2_mech.utils.data import observed_rows_mask
+from esm2_mech.utils.bootstrap import binary_auroc_cluster_bootstrap_ci
 
 OUT_DIR = RESULTS_DIR
 
@@ -245,22 +246,22 @@ def bootstrap_auroc(
     n_boot: int = N_BOOTSTRAP,
     seed: int = RANDOM_STATE,
 ) -> tuple[float, float, float]:
-    """Returns (point_estimate, ci_low, ci_high) at 95%."""
-    point = roc_auc_score(y_true, y_score)
-    rng = np.random.default_rng(seed)
-    boot_aurocs = []
-    for _ in range(n_boot):
-        idx = rng.integers(0, len(y_true), size=len(y_true))
-        yt, ys = y_true[idx], y_score[idx]
-        if len(np.unique(yt)) < 2:
-            continue
-        boot_aurocs.append(roc_auc_score(yt, ys))
-    boot_aurocs = np.array(boot_aurocs)
-    return (
-        point,
-        float(np.percentile(boot_aurocs, 2.5)),
-        float(np.percentile(boot_aurocs, 97.5)),
+    """Returns (point_estimate, ci_low, ci_high) at 95%, via the shared per-row bootstrap.
+
+    There is no fold or gene-cluster structure left at this point (the CV folds were
+    already pooled into one OOF prediction per gene), so each row resamples as its
+    own cluster in a single fold — the shared machinery then reduces to the same
+    plain per-row bootstrap this used to hand-roll.
+    """
+    oof = {
+        "y_true": y_true,
+        "proba": y_score,
+        "folds": np.zeros(len(y_true), dtype=int),
+    }
+    ci = binary_auroc_cluster_bootstrap_ci(
+        oof, n_resamples=n_boot, seed=seed, clusters=np.arange(len(y_true))
     )
+    return ci["point"], ci["ci_low"], ci["ci_high"]
 
 
 def compute_ece(y_true: np.ndarray, y_prob: np.ndarray, n_bins: int = 10) -> float:

@@ -218,7 +218,7 @@ and `mechanism_delta_family_split` accepts `--no_ci` (skip the confidence-interv
 faster iteration only), `--n_boot N` (number of bootstrap resamples, default 1000), and
 `--n_permutations N` (run a permutation test, default 0 = off).
 
-### Permutation tests (CPU, seed 0 only)
+### Permutation tests (CPU, all five seeds)
 
 A permutation test checks whether the family-split score is better than what pure chance would
 produce, by repeatedly shuffling the labels and re-scoring. Run this separately from steps 4.1–4.5, in its
@@ -227,13 +227,14 @@ the probe once per shuffle.
 
 | Step | Command | Description | Outputs |
 |---|---|---|---|
-| 4.6 | `python -m esm2_mech.experiments.mechanism.classify_by_mechanism --seeds 1 --n_permutations 1000` | 🟡 CPU — more cores help. Permutation p-value for the family-split score, seed 0 only | `results/<run>/...` |
+| 4.6 | `python -m esm2_mech.experiments.mechanism.classify_by_mechanism --seeds 5 --n_permutations 1000` | 🟡 CPU — more cores help. Permutation p-value for the family-split score, all five seeds | `results/<run>/...` |
 
-This only needs to run at seed 0: a permutation test builds its own reference distribution by
-shuffling, so running it at every seed would mostly re-measure the same seed-to-seed noise this
-whole run already accounts for elsewhere. It also only needs to run on the linear probe: the
-headline claim under test is a linear-probe result, so that is the test that has to be well
-powered, and no claim in this run depends on an MLP permutation p-value.
+This runs on all five seeds: the seeds differ in their gene-to-family gap, so a single seed can
+understate the effect and invites the objection that the seed was chosen. Per the pre-registration,
+the refutation for claim 2A fires only when at least three of the five seeds return a p-value below
+0.05; a minority of significant seeds is a split result and refutes nothing. It only needs to run on
+the linear probe: the headline claim under test is a linear-probe result, so that is the test that
+has to be well powered, and no claim in this run depends on an MLP permutation p-value.
 
 Before launching on the pod, time a single re-fit so you know whether the full 1,000-permutation
 run will take hours or days.

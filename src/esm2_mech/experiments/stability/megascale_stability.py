@@ -29,6 +29,7 @@ from esm2_mech.utils.bootstrap import (
     score_within_folds,
 )
 from esm2_mech.utils.constants import BOOTSTRAP_N_RESAMPLES, N_SEEDS, N_FOLDS
+from esm2_mech.utils.data import load_pfam_map
 from esm2_mech.utils.io import atomic_write_json
 from esm2_mech.utils.metrics import auroc_at_median, mean_std_n, standardize
 from esm2_mech.utils.splits import family_split_cv
@@ -482,8 +483,7 @@ def main(compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES, n_jobs=1):
         for path in [VALID_VARIANTS_JSON, EMB_WT_MEAN, EMB_MUT_MEAN, PFAM_JSON]
     ):
         print("\nRunning 3C stability projection test...")
-        with open(PFAM_JSON) as handle:
-            pfam_map = json.load(handle)
+        pfam_map = load_pfam_map(PFAM_JSON)
 
         merged_delta, merged_labels, merged_proteins = load_merged()
 

@@ -45,8 +45,8 @@ from esm2_mech.utils.constants import (
     SEED_RESULT_GLOB,
     SOURCE_GERASIMAVICIUS,
 )
-from esm2_mech.utils.data import build_source_mask, subset_data
-from esm2_mech.utils.io import atomic_write_json
+from esm2_mech.utils.data import build_source_mask, load_pfam_map, subset_data
+from esm2_mech.utils.io import write_result_json
 from esm2_mech.utils.paths import (
     PFAM_JSON,
     SINGLE_SOURCE_AGGREGATE_JSON,
@@ -74,8 +74,7 @@ def compute_subset_floor(
     the merged set. Reuses naive_baseline.evaluate so the floor matches the report's method.
     n_seeds/n_folds must match the probe's --seeds/--n_folds so the floor and the probe it's
     compared against use the same CV setup."""
-    with open(PFAM_JSON) as handle:
-        pfam_map = json.load(handle)
+    pfam_map = load_pfam_map(PFAM_JSON)
     floor = {
         "class_distribution": {k: int(v) for k, v in Counter(labels).items()},
         "gene_split": eval_naive(
@@ -134,7 +133,7 @@ def main() -> None:
     floor = compute_subset_floor(
         subset["labels_3class"], subset["genes_arr"], n_seeds=args.seeds, n_folds=args.n_folds
     )
-    atomic_write_json(SINGLE_SOURCE_NAIVE_BASELINE_JSON, floor)
+    write_result_json(SINGLE_SOURCE_NAIVE_BASELINE_JSON, floor, seeds=list(range(args.seeds)))
     print(f"Wrote {SINGLE_SOURCE_NAIVE_BASELINE_JSON}")
 
     print(f"\n=== Mechanism probe on {SOURCE_GERASIMAVICIUS}-only subset ===")
@@ -147,20 +146,20 @@ def main() -> None:
         )
 
     print("\n=== Aggregating across seeds ===")
-    seed_results = load_seed_files(str(SINGLE_SOURCE_DIR), SEED_RESULT_GLOB)
-    if not seed_results:
-        print(f"WARNING: no seed files to aggregate in {SINGLE_SOURCE_DIR}")
-        return
+    seed_results = load_seed_files(
+        str(SINGLE_SOURCE_DIR), SEED_RESULT_GLOB, expected_seeds=range(args.seeds)
+    )
     aggregated = aggregate_across_seeds(seed_results)
-    atomic_write_json(
+    write_result_json(
         SINGLE_SOURCE_AGGREGATE_JSON,
         {
             "source": SOURCE_GERASIMAVICIUS,
             "n_seeds": len(seed_results),
-            "seed_files": [filename for filename, _ in seed_results],
+            "seed_files": [filename for _seed, filename, _result in seed_results],
             "subset_floor": floor,
             "across_seed": aggregated,
         },
+        seeds=list(range(args.seeds)),
     )
     print_table(aggregated)
     print(f"\nWrote {SINGLE_SOURCE_AGGREGATE_JSON}")

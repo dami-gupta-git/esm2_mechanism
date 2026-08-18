@@ -55,6 +55,16 @@ def pfam_fingerprint(pfam_map: dict, genes: list[str]) -> str:
     return digest.hexdigest()
 
 
+def load_pfam_map(path: Path) -> dict[str, str | None]:
+    """Load the gene -> Pfam family accession map from pfam_families.json.
+
+    A gene with no Pfam hit is present with a null value, not absent — callers
+    checking annotation status must test `is not None`, not truthiness or membership.
+    """
+    with open(path) as f:
+        return json.load(f)
+
+
 def load_variants(path: Path) -> list[dict]:
     """Load and filter the merged variant dataset from path.
 

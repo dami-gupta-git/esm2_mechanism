@@ -46,6 +46,9 @@ from esm2_mech.utils.constants import (
     N_FOLDS,
     N_SEEDS,
 )
+from esm2_mech.utils.data import load_pfam_map
+from esm2_mech.utils.io import write_result_json
+from esm2_mech.utils.metrics import majority_baseline_f1
 from esm2_mech.utils.paths import NAIVE_BASELINE_JSON, PFAM_JSON, VALID_VARIANTS_JSON
 from esm2_mech.utils.splits import family_split_cv, gene_split_cv
 
@@ -134,7 +137,7 @@ def floor_macro_f1_ci(labels, genes, pfam_map, seed=0, n_boot=BOOTSTRAP_N_RESAMP
     resamples whole genes; the family CI resamples whole Pfam families (unannotated
     genes excluded, matching family-split CV). Returns {"gene": ci, "family": ci}.
     """
-    majority = Counter(labels).most_common(1)[0][0]
+    _, majority = majority_baseline_f1(labels, labels)
     pred = np.full(len(labels), majority)
 
     def _macro_f1(rows):
@@ -158,8 +161,7 @@ def floor_macro_f1_ci(labels, genes, pfam_map, seed=0, n_boot=BOOTSTRAP_N_RESAMP
 def main() -> None:
     with open(VALID_VARIANTS_JSON) as fh:
         variants = json.load(fh)
-    with open(PFAM_JSON) as fh:
-        pfam_map = json.load(fh)
+    pfam_map = load_pfam_map(PFAM_JSON)
 
     labels = np.array([v["label_3class"] for v in variants])
     genes = np.array([v["gene"] for v in variants])
@@ -208,8 +210,7 @@ def main() -> None:
         )
 
     NAIVE_BASELINE_JSON.parent.mkdir(parents=True, exist_ok=True)
-    with open(NAIVE_BASELINE_JSON, "w") as fh:
-        json.dump(results, fh, indent=2)
+    write_result_json(NAIVE_BASELINE_JSON, results, seeds=list(range(N_SEEDS)), indent=2)
     print(f"\nResults written to {NAIVE_BASELINE_JSON}")
 
 

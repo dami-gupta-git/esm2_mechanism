@@ -12,11 +12,18 @@ import numpy as np
 from joblib import Parallel, delayed
 
 from esm2_mech.utils.bootstrap import binary_auroc_cluster_bootstrap_ci, family_or_gene_clusters
+from esm2_mech.fetch_data.fetch_pathogenicity_variants import _BALANCE_VERSION
 from esm2_mech.utils.constants import BOOTSTRAP_N_RESAMPLES, N_SEEDS
-from esm2_mech.utils.data import embedding_fingerprint, pfam_fingerprint, variants_fingerprint
+from esm2_mech.utils.data import (
+    embedding_fingerprint,
+    load_pfam_map,
+    pfam_fingerprint,
+    variants_fingerprint,
+)
 from esm2_mech.utils.embed import get_esm2_embeddings_for_pairs
 from esm2_mech.utils.io import atomic_write_json, save_npy
 from esm2_mech.utils.paths import (
+    CLINVAR_PATHOGENICITY_PARAMS_JSON,
     CLINVAR_PATHOGENICITY_VARIANTS_JSON,
     EMB_DIR,
     PATH_EMB_META,
@@ -38,12 +45,44 @@ ESM2_MODEL_650M = "esm2_t33_650M_UR50D"
 
 
 def load_fetched_variants():
-    """Load the variant set written by fetch_pathogenicity_variants.py."""
+    """Load the variant set written by fetch_pathogenicity_variants.py.
+
+    This experiment's validity depends on that script's per-gene balancing step
+    having actually run on the file being loaded — a variant set fetched by an
+    older, unbalanced version of that script produces a gene-prevalence signal
+    that inflates the pathogenicity AUROC this experiment reports (see
+    biorxiv/issues/exp5_issues.md, issue 1). The runbook telling the operator to
+    re-run the fetch step first is not enough: nothing stopped this script from
+    running anyway against a stale file, which is exactly what happened. This
+    reads the params file the fetch step writes alongside its output and refuses
+    to proceed if it predates the current balancing version, rather than
+    silently scoring unbalanced data.
+    """
     if not CLINVAR_PATHOGENICITY_VARIANTS_JSON.exists():
         raise FileNotFoundError(
             f"{CLINVAR_PATHOGENICITY_VARIANTS_JSON} not found. Run "
             "`python -m esm2_mech.fetch_data.fetch_pathogenicity_variants` first "
             "(locally — it's network-only, no GPU needed) and copy its output here."
+        )
+    if not CLINVAR_PATHOGENICITY_PARAMS_JSON.exists():
+        raise FileNotFoundError(
+            f"{CLINVAR_PATHOGENICITY_VARIANTS_JSON} exists but "
+            f"{CLINVAR_PATHOGENICITY_PARAMS_JSON} does not, so its provenance cannot be "
+            "checked. Re-run `python -m esm2_mech.fetch_data.fetch_pathogenicity_variants` "
+            "to regenerate both files together."
+        )
+    with open(CLINVAR_PATHOGENICITY_PARAMS_JSON) as f:
+        fetch_params = json.load(f)
+    cached_version = fetch_params.get("balance_version")
+    if cached_version != _BALANCE_VERSION:
+        raise RuntimeError(
+            f"{CLINVAR_PATHOGENICITY_VARIANTS_JSON} was fetched with balance_version="
+            f"{cached_version!r}, but the current fetch script writes "
+            f"balance_version={_BALANCE_VERSION!r}. This variant set predates the per-gene "
+            "balancing fix and would let gene identity predict the label, which this "
+            "experiment must not permit. Re-run "
+            "`python -m esm2_mech.fetch_data.fetch_pathogenicity_variants` to refetch a "
+            "balanced set, then re-copy it here — do not rebalance in place."
         )
     with open(CLINVAR_PATHOGENICITY_VARIANTS_JSON) as f:
         return json.load(f)
@@ -207,8 +246,7 @@ def probe_phase(variants, n_seeds, n_jobs=-1, compute_ci=True, n_boot=BOOTSTRAP_
     delta = mut_mean - wt_mean
     y = np.array([1 if v["label"] == "pathogenic" else 0 for v in valid])
     genes = np.array([v["gene"] for v in valid])
-    with open(PFAM_JSON) as f:
-        pfam_map = json.load(f)
+    pfam_map = load_pfam_map(PFAM_JSON)
 
     print(f"  {len(valid)} variants  pathogenic={int(y.sum())} benign={int((1 - y).sum())}  "
           f"{len(set(genes))} genes")

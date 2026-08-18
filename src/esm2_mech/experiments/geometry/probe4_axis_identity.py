@@ -11,6 +11,7 @@ import functools
 print = functools.partial(print, flush=True)
 
 from esm2_mech.utils.constants import N_SEEDS
+from esm2_mech.utils.data import load_pfam_map
 from esm2_mech.utils.io import atomic_write_json
 from esm2_mech.utils.paths import (
     GEOMETRY_RESULTS_DIR,
@@ -160,8 +161,7 @@ def run(n_seeds=N_SEEDS):
             f"variant/embedding row mismatch: {len(v)} variants vs "
             f"{delta.shape[0]} embedding rows — canonical file is not row-aligned."
         )
-    with open(PFAM_JSON) as _f:
-        pfam = json.load(_f)
+    pfam = load_pfam_map(PFAM_JSON)
 
     bio, keep = [], []
     for i, x in enumerate(v):

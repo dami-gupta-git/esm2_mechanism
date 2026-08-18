@@ -43,27 +43,75 @@ SEED_MEAN_SUFFIX = "_seed_mean"
 ACROSS_SEED_KEY = "across_seed"
 
 
-def load_seed_files(run_dir: str, seed_glob: str) -> list[tuple[str, dict]]:
-    """Return [(filename, parsed_json), ...] for every seed file in run_dir.
+def load_seed_files(
+    run_dir: str, seed_glob: str, expected_seeds: "list[int] | range | None" = None
+) -> list[tuple[int, str, dict]]:
+    """Return [(seed, filename, parsed_json), ...] for every seed file in run_dir.
 
-    `seed_glob` is the filename pattern of the per-seed result files (e.g.
+    `seed_glob` is the filename pattern of the per-seed result files, with exactly
+    one `*` standing in for the seed number (e.g.
     "family_split_baselines_seed*.json"); the caller supplies it so this helper
-    stays generic. A corrupt seed file is skipped with a warning rather than
-    silently dropped or fabricated.
+    stays generic. Each match's seed number is parsed from that `*` position — a
+    filename where that position is not a plain integer, or a seed number that
+    repeats across two files, is a run in error and raises rather than silently
+    averaging over an unknown or double-counted seed.
+
+    If `expected_seeds` is given, the loaded seed set must equal it exactly:
+    a seed present on disk but outside `expected_seeds`, or a seed in
+    `expected_seeds` with no loadable file, raises. Leave it None when the caller
+    has no fixed expected set (e.g. an aggregator run separately from whatever
+    produced the seed files).
+
+    A corrupt (unparseable JSON) seed file is skipped with a warning rather than
+    silently dropped or fabricated; that seed is then treated as absent for the
+    `expected_seeds` completeness check.
     """
+    if seed_glob.count("*") != 1:
+        raise ValueError(f"seed_glob must contain exactly one '*': {seed_glob!r}")
+    prefix, suffix = seed_glob.split("*")
+
     paths = sorted(glob.glob(os.path.join(run_dir, seed_glob)))
-    loaded: list[tuple[str, dict]] = []
+    loaded: list[tuple[int, str, dict]] = []
+    seed_to_filename: dict[int, str] = {}
     for path in paths:
+        filename = os.path.basename(path)
+        token = filename[len(prefix): len(filename) - len(suffix)]
+        try:
+            seed = int(token)
+        except ValueError:
+            raise ValueError(
+                f"{path}: filename does not encode an integer seed between "
+                f"{prefix!r} and {suffix!r} (got {token!r})"
+            )
+        if seed in seed_to_filename:
+            raise ValueError(
+                f"duplicate seed {seed} in {run_dir}: "
+                f"{seed_to_filename[seed]} and {filename}"
+            )
+        seed_to_filename[seed] = filename
         try:
             with open(path) as handle:
-                loaded.append((os.path.basename(path), json.load(handle)))
+                loaded.append((seed, filename, json.load(handle)))
         except json.JSONDecodeError:
             print(f"  WARNING: corrupt seed file {path} — skipping")
+
+    if expected_seeds is not None:
+        expected = set(expected_seeds)
+        found = {seed for seed, _filename, _result in loaded}
+        missing = sorted(expected - found)
+        unexpected = sorted(found - expected)
+        if missing or unexpected:
+            raise ValueError(
+                f"{run_dir}: seed files for {seed_glob!r} do not match the "
+                f"expected seeds {sorted(expected)} "
+                f"(missing={missing}, unexpected={unexpected})"
+            )
+
     return loaded
 
 
 def aggregate_across_seeds(
-    seed_results: list[tuple[str, dict]]
+    seed_results: list[tuple[int, str, dict]]
 ) -> dict[str, dict[str, dict[str, float]]]:
     """For each split → feature → metric, compute mean/std across seeds.
 
@@ -76,7 +124,7 @@ def aggregate_across_seeds(
         collected: dict[str, dict[str, list[float]]] = defaultdict(
             lambda: defaultdict(list)
         )
-        for _filename, result in seed_results:
+        for _seed, _filename, result in seed_results:
             split_block = result.get(split, {})
             for feature, metrics in split_block.items():
                 for key, value in metrics.items():

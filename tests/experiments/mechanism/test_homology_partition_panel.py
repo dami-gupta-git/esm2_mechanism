@@ -33,6 +33,13 @@ import json
 import numpy as np
 import pytest
 
+pytest.importorskip(
+    "esm2_mech.experiments.mechanism.homology_partition_panel",
+    reason="homology_partition_panel.py is not part of the current pipeline (imports load_pfam, "
+    "removed from clan_holdout.py)",
+    exc_type=ImportError,
+)
+
 from esm2_mech.experiments.mechanism import clan_holdout, homology_partition_panel as panel
 from esm2_mech.utils.constants import DN, GOF, LOF, MECHANISM_CLASSES
 

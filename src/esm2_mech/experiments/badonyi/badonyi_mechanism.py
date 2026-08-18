@@ -10,7 +10,7 @@ from pathlib import Path
 
 import numpy as np
 from esm2_mech.utils.constants import MECHANISM_CLASSES, BOOTSTRAP_N_RESAMPLES
-from esm2_mech.utils.data import build_gene_to_row as _build_gene_to_row
+from esm2_mech.utils.data import build_gene_to_row as _build_gene_to_row, load_pfam_map
 from esm2_mech.utils.splits import family_split_indices
 from esm2_mech.utils.probes import run_mlp_cv, run_logreg_cv, run_histgb_cv
 from esm2_mech.utils.bootstrap import bootstrap_mechanism_metrics, family_or_gene_clusters
@@ -63,11 +63,6 @@ def load_data():
     print(f"Loaded {n} variants, {len(set(genes.tolist()))} unique genes")
     print(f"Class dist: {dict(Counter(labels.tolist()))}")
     return variants, labels, genes, delta
-
-
-def load_pfam() -> dict[str, str]:
-    with open(PFAM_FAMILIES) as f:
-        return json.load(f)
 
 
 def build_gene_to_row() -> dict[str, int]:
@@ -333,7 +328,7 @@ def main():
     variants, labels, genes, delta = load_data()
 
     print("\n=== Loading Pfam families ===")
-    pfam_map = load_pfam()
+    pfam_map = load_pfam_map(PFAM_FAMILIES)
 
     print("\n=== Broadcasting proteome features ===")
     prot_matrix = np.load(PROTEOME_FEATURES).astype(np.float32)

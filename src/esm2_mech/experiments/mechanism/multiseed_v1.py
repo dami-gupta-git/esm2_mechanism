@@ -18,7 +18,7 @@ from esm2_mech.utils.constants import (
 )
 from esm2_mech.utils.splits import gene_split_cv, family_split_cv
 from esm2_mech.utils.probes import run_logreg_binary_cv, run_mlp_binary_cv, run_mlp_probe_cv
-from esm2_mech.utils.io import atomic_write_json, load_json_or_discard
+from esm2_mech.utils.io import atomic_write_json, load_json_or_discard, write_result_json
 from esm2_mech.utils.paths import (
     PFAM_JSON,
     CLINVAR_PATHOGENICITY_VARIANTS_JSON,
@@ -98,7 +98,7 @@ def run_seed(seed, pfam_map, out_dir):
             geras_results[nonlinear_key("mlp", feat_name, SPLIT_FAMILY)] = run_mlp_probe_cv(
                 X, labels, fs, seed=seed, genes=genes, label=f"{feat_name}_family"
             )
-        atomic_write_json(geras_out, geras_results, indent=2)
+        write_result_json(geras_out, geras_results, seeds=[seed], indent=2)
         print(f"  -> {geras_out}")
 
     merged_out = os.path.join(out_dir, f"mechanism_merged_seed{seed}.json")
@@ -119,7 +119,7 @@ def run_seed(seed, pfam_map, out_dir):
         merged_results[MLP_DELTA_MEAN_FAMILY] = run_mlp_probe_cv(
             dm, labels, fs, seed=seed, genes=genes, label="delta_mean_family"
         )
-        atomic_write_json(merged_out, merged_results, indent=2)
+        write_result_json(merged_out, merged_results, seeds=[seed], indent=2)
         print(f"  -> {merged_out}")
 
     path_out = os.path.join(out_dir, f"pathogenicity_seed{seed}.json")
@@ -140,7 +140,7 @@ def run_seed(seed, pfam_map, out_dir):
         path_results["mlp_gene"] = run_mlp_binary_cv(delta, y, gs, seed=seed)
         print(f"  MLP family-split")
         path_results["mlp_family"] = run_mlp_binary_cv(delta, y, fs, seed=seed)
-        atomic_write_json(path_out, path_results, indent=2)
+        write_result_json(path_out, path_results, seeds=[seed], indent=2)
         print(f"  -> {path_out}")
 
     return geras_results, merged_results, path_results
@@ -268,7 +268,7 @@ def summarise(all_seeds, out_dir):
         )
 
     out = os.path.join(out_dir, "summary.json")
-    atomic_write_json(out, summary, indent=2)
+    write_result_json(out, summary, seeds=list(per_seed.keys()), indent=2)
     print(f"\nSummary written to {out}")
     return summary
 

@@ -9,7 +9,7 @@ import numpy as np
 from joblib import Parallel, delayed
 from sklearn.metrics import average_precision_score, f1_score, roc_auc_score
 
-from esm2_mech.utils.metrics import binary_class_target
+from esm2_mech.utils.metrics import binary_class_target, fold_macro_f1
 from esm2_mech.utils.constants import (
     BOOTSTRAP_CI_LEVEL,
     BOOTSTRAP_MAX_DISCARD_FRAC,
@@ -720,10 +720,8 @@ def bootstrap_mechanism_metrics_from_oof(
     ]
 
     def _macro_f1(rows: np.ndarray) -> dict:
-        def _fold_f1(block: np.ndarray, arm_pred: np.ndarray) -> float:
-            return float(
-                f1_score(y_true[block], arm_pred[block], average="macro", zero_division=0)
-            )
+        def _fold_f1(block: np.ndarray, arm_pred: np.ndarray) -> float | None:
+            return fold_macro_f1(y_true, block, arm_pred, classes)
         return {"macro_f1": score_within_folds(rows, pred_arms, _fold_f1)}
 
     def _class_metrics(rows: np.ndarray, *, _col: int, _cls: str) -> dict:

@@ -14,6 +14,7 @@ import numpy as np
 from esm2_mech.experiments.mechanism.loaders import _label_3class
 from esm2_mech.utils.splits import gene_split_cv, family_split_cv
 from esm2_mech.utils.probes import run_mlp_probe_cv
+from esm2_mech.utils.io import write_result_json
 from esm2_mech.utils.paths import (
     EMB_MUT_MEAN,
     EMB_WT_MEAN,
@@ -180,8 +181,7 @@ def main():
             )
 
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
-    with open(args.out, "w") as f:
-        json.dump(results, f, indent=2)
+    write_result_json(args.out, results, seeds=[args.seed], indent=2)
     print(f"\nResults written to {args.out}")
 
     # Headline interpretation against the published delta numbers

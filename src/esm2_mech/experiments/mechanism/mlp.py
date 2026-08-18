@@ -24,7 +24,8 @@ from esm2_mech.utils.paths import (
     PFAM_JSON, RESULTS_DIR, VALID_VARIANTS_JSON,
 )
 from esm2_mech.utils.bootstrap import bootstrap_mechanism_metrics, family_or_gene_clusters
-from esm2_mech.utils.io import atomic_write_json, load_variants_and_delta
+from esm2_mech.utils.data import load_pfam_map
+from esm2_mech.utils.io import load_variants_and_delta, write_result_json
 from esm2_mech.utils.probes import run_mlp_probe_cv, run_sklearn_probe_pca, run_sklearn_probe
 from esm2_mech.utils.splits import gene_split_cv, family_split_cv
 
@@ -38,8 +39,7 @@ def load_data():
         VALID_VARIANTS_JSON, EMB_WT_MEAN, EMB_MUT_MEAN, EMB_WT_POS, EMB_MUT_POS
     )
 
-    with open(PFAM_JSON) as f:
-        pfam_map = json.load(f)
+    pfam_map = load_pfam_map(PFAM_JSON)
 
     return labels, genes, delta_mean, delta_pos, pfam_map
 
@@ -111,7 +111,7 @@ def run_seed(seed, args, labels, genes, delta_mean, delta_pos, pfam_map):
         if overwritten:
             print(f"\nOverwriting existing keys with fresh values: {overwritten}")
         existing.update(new_arms)
-        atomic_write_json(out_path, existing)
+        write_result_json(out_path, existing, seeds=[seed])
         print(f"\nMerged {len(new_arms)} family-split arms into {out_path}")
         for key, res in new_arms.items():
             print(f"  {key}: macro_f1={res.get('macro_f1_mean', float('nan')):.3f}")
@@ -139,7 +139,7 @@ def run_seed(seed, args, labels, genes, delta_mean, delta_pos, pfam_map):
         auroc_gof = res.get("auroc_GOF_mean", float("nan"))
         print(f"  {feat}: macro_f1={mf1:.3f}  auroc_GOF={auroc_gof:.3f}")
 
-    atomic_write_json(out_path, results)
+    write_result_json(out_path, results, seeds=[seed])
     print(f"\nResults written to {out_path}")
 
 

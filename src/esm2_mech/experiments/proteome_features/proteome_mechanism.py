@@ -23,7 +23,7 @@ from esm2_mech.utils.constants import MECHANISM_CLASSES, BOOTSTRAP_N_RESAMPLES
 from esm2_mech.utils.metrics import compute_metrics, mean_std_n, align_proba
 from esm2_mech.utils.probes import run_mlp_cv, run_logreg_cv, run_histgb_cv
 from esm2_mech.utils.bootstrap import bootstrap_mechanism_metrics
-from esm2_mech.utils.data import build_gene_to_row, observed_rows_mask
+from esm2_mech.utils.data import build_gene_to_row, observed_rows_mask, load_pfam_map
 from esm2_mech.utils.io import load_variants_and_delta
 from esm2_mech.utils.paths import (
     RESULTS_DIR,
@@ -127,11 +127,6 @@ def load_data() -> tuple[list[dict], np.ndarray, np.ndarray, np.ndarray]:
         MERGED_VALID_VARIANTS, MERGED_WT_MEAN, MERGED_MUT_MEAN
     )
     return variants, labels, genes, delta
-
-
-def load_pfam() -> dict[str, str]:
-    with open(PFAM_FAMILIES) as f:
-        return json.load(f)
 
 
 def build_gene_to_proteome_row() -> dict[str, int]:
@@ -1069,7 +1064,7 @@ def main():
     variants, labels, genes, delta = load_data()
 
     print("\n=== Loading Pfam families ===")
-    pfam_map = load_pfam()
+    pfam_map = load_pfam_map(PFAM_FAMILIES)
     n_annotated = sum(1 for g in genes if pfam_map.get(g) is not None)
     print(
         f"Pfam coverage: {n_annotated}/{len(genes)} variants have a family annotation"

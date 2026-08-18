@@ -21,8 +21,9 @@ from esm2_mech.utils.constants import (
     N_SEEDS,
     mechanism_oof_cache_filename,
 )
+from esm2_mech.utils.metrics import majority_baseline_f1
 from esm2_mech.utils.splits import gene_split_cv, family_split_cv
-from esm2_mech.utils.data import build_gene_to_row
+from esm2_mech.utils.data import build_gene_to_row, load_pfam_map
 from esm2_mech.utils.io import atomic_write_json
 from esm2_mech.utils.bootstrap import (
     folds_to_arms,
@@ -130,11 +131,6 @@ def load_enzyme_labels() -> dict:
             labels[row["gene"]] = row["enzyme_4class"]
     print(f"Loaded enzyme labels for {len(labels)} genes")
     return labels
-
-
-def load_pfam() -> dict:
-    with open(PFAM_JSON) as fh:
-        return json.load(fh)
 
 
 def load_proteome_features() -> tuple:
@@ -272,12 +268,6 @@ def run_histgb(X, y, splits, classes, genes=None, seed: int = 42):
     )
 
 
-def majority_baseline_f1(y: np.ndarray) -> float:
-    majority = Counter(y.tolist()).most_common(1)[0][0]
-    pred = np.full(len(y), majority)
-    return float(f1_score(y, pred, average="macro", zero_division=0))
-
-
 def run_multiseed(
     X: np.ndarray,
     y: np.ndarray,
@@ -349,7 +339,7 @@ def run_multiseed(
         if seed == seeds[0]:
             seed0_mlp_fs_oof = mlp_oof
 
-    maj_f1 = majority_baseline_f1(y)
+    maj_f1, _ = majority_baseline_f1(y, y)
 
     def _agg(vals):
         arr = np.array([v for v in vals if v is not None], dtype=float)
@@ -570,7 +560,7 @@ def main():
 
     X_emb, gene_list, _ = load_gene_embeddings()
     enzyme_labels = load_enzyme_labels()
-    pfam_map = load_pfam()
+    pfam_map = load_pfam_map(PFAM_JSON)
 
     missing = [g for g in gene_list if g not in enzyme_labels]
     if missing:

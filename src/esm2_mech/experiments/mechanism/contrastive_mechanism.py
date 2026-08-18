@@ -5,7 +5,6 @@ evaluates k-NN in the projected space under family-split CV vs raw-delta k-NN.
 """
 
 import argparse
-import json
 import os
 import warnings
 from collections import Counter
@@ -14,7 +13,8 @@ import numpy as np
 from sklearn.metrics import roc_auc_score, f1_score
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.preprocessing import LabelEncoder
-from esm2_mech.utils.io import atomic_write_json, load_variants_and_delta
+from esm2_mech.utils.data import load_pfam_map
+from esm2_mech.utils.io import load_variants_and_delta, write_result_json
 from esm2_mech.utils.metrics import align_proba
 from esm2_mech.utils.splits import gene_split_cv, family_split_cv
 from esm2_mech.utils.paths import (
@@ -60,15 +60,6 @@ def load_data():
         VALID_VARIANTS_JSON, EMB_WT_MEAN, EMB_MUT_MEAN
     )
     return variants, labels, genes, delta_mean
-
-
-def load_pfam(genes):
-    with open(PFAM_JSON) as f:
-        pfam_map = json.load(f)
-    gene_pfam = np.array([pfam_map.get(g) for g in genes])
-    n_annotated = sum(1 for p in gene_pfam if p is not None)
-    print(f"Pfam coverage: {n_annotated}/{len(genes)} genes")
-    return gene_pfam, pfam_map
 
 
 def build_cross_family_pairs(labels, gene_pfam, le, max_pairs_per_anchor=10, seed=42):
@@ -603,7 +594,7 @@ def run(
 
     os.makedirs(out_dir, exist_ok=True)
     out_path = os.path.join(out_dir, contrastive_seed_result_filename(seed))
-    atomic_write_json(out_path, results)
+    write_result_json(out_path, results, seeds=[seed])
     print(f"\nSeed {seed} results written to {out_path}")
     return results
 
@@ -613,7 +604,10 @@ def load_all_data():
     variants, labels, genes, delta_mean = load_data()
 
     print("\n=== Loading Pfam map ===")
-    gene_pfam, pfam_map = load_pfam(genes)
+    pfam_map = load_pfam_map(PFAM_JSON)
+    gene_pfam = np.array([pfam_map.get(g) for g in genes])
+    n_annotated = sum(1 for p in gene_pfam if p is not None)
+    print(f"Pfam coverage: {n_annotated}/{len(genes)} genes")
 
     le = LabelEncoder()
     le.fit(labels)
@@ -704,22 +698,23 @@ def main():
         return
 
     print("\n=== Aggregating across seeds ===")
-    seed_results = load_seed_files(out_dir, CONTRASTIVE_SEED_RESULT_GLOB)
-    if not seed_results:
-        print(f"WARNING: no seed files to aggregate in {out_dir}")
-        return
+    seed_results = load_seed_files(
+        out_dir, CONTRASTIVE_SEED_RESULT_GLOB, expected_seeds=range(N_SEEDS)
+    )
     print(f"Loaded {len(seed_results)} seed files:")
-    for filename, _result in seed_results:
+    for _seed, filename, _result in seed_results:
         print(f"  {filename}")
 
     aggregated = aggregate_across_seeds(seed_results)
-    atomic_write_json(
+    seed_numbers = [seed for seed, _filename, _result in seed_results]
+    write_result_json(
         CONTRASTIVE_AGGREGATE_JSON,
         {
             "n_seeds": len(seed_results),
-            "seed_files": [filename for filename, _result in seed_results],
+            "seed_files": [filename for _seed, filename, _result in seed_results],
             "across_seed": aggregated,
         },
+        seeds=seed_numbers,
     )
     print_table(aggregated)
     print_interpretation(aggregated)

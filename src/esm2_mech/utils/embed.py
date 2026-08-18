@@ -141,6 +141,38 @@ def load_esm2_model(model_name: str, device: str = "cuda"):
     return model, alphabet
 
 
+def masked_aa_log_probs(
+    model, alphabet, device: str, items: list, aa_order: str, batch_size: int = 32,
+) -> dict:
+    """Batch masked-token log P(aa) over aa_order at one scored position per item.
+
+    items: list of (key, masked_seq, tok_idx) where masked_seq already has the
+    scored residue replaced with '<mask>' and tok_idx is that residue's index into
+    the model's token axis (position 0 is BOS, so tok_idx equals the masked
+    residue's 1-indexed position in the unmasked sequence).
+
+    Returns {key: np.ndarray[len(aa_order)]} of log-softmax probabilities, one row
+    per item, restricted to aa_order.
+    """
+    import torch
+
+    batch_converter = alphabet.get_batch_converter()
+    aa_idx = {aa: alphabet.get_idx(aa) for aa in aa_order}
+
+    out = {}
+    for start in range(0, len(items), batch_size):
+        batch = items[start : start + batch_size]
+        data = [(key, seq) for key, seq, _ in batch]
+        _, _, tokens = batch_converter(data)
+        tokens = tokens.to(device)
+        with torch.inference_mode():
+            logits = model(tokens)["logits"].cpu().float()
+        for i, (key, _, tok_idx) in enumerate(batch):
+            log_probs = torch.log_softmax(logits[i, tok_idx], dim=-1).numpy()
+            out[key] = np.array([log_probs[aa_idx[aa]] for aa in aa_order], dtype=np.float32)
+    return out
+
+
 def get_esm2_embeddings_for_pairs(
     wt_seqs: list[str],
     mut_seqs: list[str],

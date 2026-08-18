@@ -9,7 +9,7 @@ import numpy as np
 from esm2_mech.experiments.mechanism.mechanism_delta_family_split import run as run_family_split
 from esm2_mech.experiments.mechanism.mechanism_delta_probe import _load_alphamissense_scores
 from esm2_mech.utils.data import load_variants
-from esm2_mech.utils.io import atomic_write_json
+from esm2_mech.utils.io import write_result_json
 from esm2_mech.utils.seed_aggregation import (
     aggregate_across_seeds,
     load_seed_files,
@@ -120,22 +120,22 @@ def main():
         )
 
     print("\n=== Aggregating across seeds ===")
-    seed_results = load_seed_files(str(OUT_DIR), SEED_RESULT_GLOB)
-    if not seed_results:
-        print(f"WARNING: no seed files to aggregate in {OUT_DIR}")
-        return
+    seed_results = load_seed_files(
+        str(OUT_DIR), SEED_RESULT_GLOB, expected_seeds=range(args.seeds)
+    )
     print(f"Loaded {len(seed_results)} seed files:")
-    for filename, _result in seed_results:
+    for _seed, filename, _result in seed_results:
         print(f"  {filename}")
 
     aggregated = aggregate_across_seeds(seed_results)
-    atomic_write_json(
+    write_result_json(
         MECHANISM_AGGREGATE_JSON,
         {
             "n_seeds": len(seed_results),
-            "seed_files": [filename for filename, _result in seed_results],
+            "seed_files": [filename for _seed, filename, _result in seed_results],
             "across_seed": aggregated,
         },
+        seeds=list(range(args.seeds)),
     )
     print_table(aggregated)
     print(f"\nWrote {MECHANISM_AGGREGATE_JSON}")

@@ -11,7 +11,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from esm2_mech.utils.constants import MECHANISM_CLASSES, BOOTSTRAP_N_RESAMPLES
-from esm2_mech.utils.data import build_gene_to_row as _build_gene_to_row
+from esm2_mech.utils.data import build_gene_to_row as _build_gene_to_row, load_pfam_map
 from esm2_mech.utils.splits import family_split_indices
 from esm2_mech.utils.probes import run_histgb_cv
 from esm2_mech.utils.bootstrap import bootstrap_mechanism_metrics, family_or_gene_clusters
@@ -56,11 +56,6 @@ def load_data():
     genes = np.array([v["gene"] for v in variants])
     print(f"Loaded {len(variants)} variants, {len(set(genes.tolist()))} genes")
     return labels, genes
-
-
-def load_pfam():
-    with open(PFAM_FAMILIES) as f:
-        return json.load(f)
 
 
 def build_gene_to_row():
@@ -365,7 +360,7 @@ def main():
 
     print("=== Loading data ===")
     labels, genes = load_data()
-    pfam_map = load_pfam()
+    pfam_map = load_pfam_map(PFAM_FAMILIES)
 
     print("\n=== Broadcasting feature matrices ===")
     gene_to_row = build_gene_to_row()

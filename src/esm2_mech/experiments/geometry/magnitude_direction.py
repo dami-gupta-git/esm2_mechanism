@@ -20,6 +20,7 @@ from esm2_mech.utils.bootstrap import (
     family_or_gene_clusters,
 )
 from esm2_mech.utils.constants import BOOTSTRAP_N_RESAMPLES, MIN_TRAIN_CLASSES, N_SEEDS
+from esm2_mech.utils.data import load_pfam_map
 from esm2_mech.utils.io import atomic_write_json
 from esm2_mech.utils.paths import (
     GEOMETRY_RESULTS_DIR,
@@ -462,8 +463,7 @@ def _run_seeds(
     seeds, stability_dataset=DEFAULT_STABILITY_DATASET,
     compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES,
 ):
-    with open(PFAM_JSON) as fh:
-        pfam_map = json.load(fh)
+    pfam_map = load_pfam_map(PFAM_JSON)
 
     path_res = run_pathogenicity(pfam_map, seeds, compute_ci=compute_ci, n_boot=n_boot)
     mech_res = run_mechanism(pfam_map, seeds, compute_ci=compute_ci, n_boot=n_boot)

@@ -9,7 +9,7 @@ from pathlib import Path
 
 from esm2_mech.utils.paths import EMB_MUT_MEAN, EMB_WT_MEAN, LL_CKPT_JSON, RESULTS_DIR as _RESULTS_DIR, SCAN_FEATURES_META_JSON, SCAN_FEATURES_NPY, SCAN_PROBE_CACHE_JSON, SEQUENCES_EXTENDED_JSON, SEQUENCES_JSON, VALID_VARIANTS_JSON
 from esm2_mech.utils.constants import AA_ORDER
-from esm2_mech.utils.embed import load_gene_delta
+from esm2_mech.utils.embed import load_esm2_model, load_gene_delta, masked_aa_log_probs
 from esm2_mech.utils.probes import run_logreg_cv
 
 print = functools.partial(print, flush=True)
@@ -61,7 +61,6 @@ def load_sequences():
 def extract_ll_scores(covered_genes, gene_positions, seqs, batch_size=32):
     """Mask each probe position and record log P for wt and probe AAs."""
     import torch
-    import esm
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     if device != "cuda":
@@ -87,13 +86,7 @@ def extract_ll_scores(covered_genes, gene_positions, seqs, batch_size=32):
             f"Resuming from checkpoint: {len(done_genes)}/{len(covered_genes)} genes done"
         )
 
-    model, alphabet = esm.pretrained.load_model_and_alphabet(ESM2_MODEL_650M)
-    model = model.to(device).eval()
-    batch_converter = alphabet.get_batch_converter()
-    mask_idx = alphabet.mask_idx
-
-    aa_to_idx = {aa: alphabet.get_idx(aa) for aa in AA_ORDER}
-    probe_aas = ["A", "D", "W"]
+    model, alphabet = load_esm2_model(ESM2_MODEL_650M, device=device)
 
     remaining = [g for g in covered_genes if g not in done_genes]
     print(f"Extracting LL scores for {len(remaining)} genes on {device}...")
@@ -108,58 +101,43 @@ def extract_ll_scores(covered_genes, gene_positions, seqs, batch_size=32):
         gene_scores = []
         pos_list = sorted(positions.keys())
 
-        for batch_start in range(0, len(pos_list), batch_size):
-            batch_pos = pos_list[batch_start : batch_start + batch_size]
-            batch_data = []
+        items = []
+        for pos in pos_list:
+            wt_win, new_pos, _ = window_sequence(seq, pos)
+            masked = list(wt_win)
+            masked[new_pos - 1] = "<mask>"
+            # tok_idx = new_pos: BOS occupies token 0, so token i = seq position i.
+            items.append((pos, "".join(masked), new_pos))
 
-            for pos in batch_pos:
-                wt_win, new_pos, _ = window_sequence(seq, pos)
-                masked = list(wt_win)
-                masked[new_pos - 1] = "<mask>"
-                masked_seq = "".join(masked)
-                batch_data.append((f"{gene}_{pos}", masked_seq))
+        log_probs_by_pos = masked_aa_log_probs(
+            model, alphabet, device, items, AA_ORDER, batch_size=batch_size
+        )
 
-            _, _, tokens = batch_converter(batch_data)
-            tokens = tokens.to(device)
+        for pos in pos_list:
+            wt_aa = positions[pos]["wt_aa"]
+            log_probs = log_probs_by_pos[pos]
 
-            with torch.inference_mode():
-                out = model(tokens)
-            logits = out["logits"].cpu().float()
+            ll_wt = (
+                float(log_probs[AA_ORDER.index(wt_aa)])
+                if wt_aa in AA_ORDER
+                else float("nan")
+            )
+            ll_ala = float(log_probs[AA_ORDER.index("A")])
+            ll_asp = float(log_probs[AA_ORDER.index("D")])
+            ll_trp = float(log_probs[AA_ORDER.index("W")])
+            full_probs = [float(np.exp(lp)) for lp in log_probs]
 
-            for i, pos in enumerate(batch_pos):
-                wt_win, new_pos, _ = window_sequence(seq, pos)
-                wt_aa = positions[pos]["wt_aa"]
-
-                # Token index for the masked position (BOS at 0, so token i = seq position i)
-                tok_idx = new_pos  # new_pos is 1-indexed, matches token position with BOS offset
-
-                log_probs = torch.log_softmax(logits[i, tok_idx], dim=-1).numpy()
-
-                ll_wt = (
-                    float(log_probs[aa_to_idx[wt_aa]])
-                    if wt_aa in aa_to_idx
-                    else float("nan")
-                )
-                ll_ala = float(log_probs[aa_to_idx["A"]])
-                ll_asp = float(log_probs[aa_to_idx["D"]])
-                ll_trp = float(log_probs[aa_to_idx["W"]])
-
-                aa_order = AA_ORDER
-                full_probs = [
-                    float(np.exp(log_probs[aa_to_idx[aa]])) for aa in aa_order
-                ]
-
-                gene_scores.append(
-                    {
-                        "aa_pos": pos,
-                        "wt_aa": wt_aa,
-                        "ll_wt": ll_wt,
-                        "ll_ala": ll_ala,
-                        "ll_asp": ll_asp,
-                        "ll_trp": ll_trp,
-                        "full_probs": full_probs,
-                    }
-                )
+            gene_scores.append(
+                {
+                    "aa_pos": pos,
+                    "wt_aa": wt_aa,
+                    "ll_wt": ll_wt,
+                    "ll_ala": ll_ala,
+                    "ll_asp": ll_asp,
+                    "ll_trp": ll_trp,
+                    "full_probs": full_probs,
+                }
+            )
 
         all_scores[gene] = gene_scores
         done_genes.add(gene)

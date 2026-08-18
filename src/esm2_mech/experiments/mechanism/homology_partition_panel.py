@@ -61,7 +61,7 @@ from esm2_mech.utils.bootstrap import (
 )
 from esm2_mech.utils.constants import BOOTSTRAP_N_RESAMPLES, MECHANISM_CLASSES
 from esm2_mech.utils.metrics import majority_baseline_f1
-from esm2_mech.utils.io import atomic_write_json, load_variants_and_delta
+from esm2_mech.utils.io import load_variants_and_delta, write_result_json
 from esm2_mech.utils.paths import (
     EMB_MUT_MEAN,
     EMB_WT_MEAN,
@@ -330,7 +330,7 @@ def main():
     }
 
     HOMOLOGY_PARTITION_PANEL_DIR.mkdir(parents=True, exist_ok=True)
-    atomic_write_json(HOMOLOGY_PARTITION_PANEL_JSON, results, indent=2)
+    write_result_json(HOMOLOGY_PARTITION_PANEL_JSON, results, seeds=[args.seed], indent=2)
     print(f"\nResults written to {HOMOLOGY_PARTITION_PANEL_JSON}")
 
 

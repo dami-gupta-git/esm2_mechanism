@@ -3,12 +3,54 @@
 import functools
 import json
 import os
+import subprocess
 from collections import Counter
 from pathlib import Path
 
 import numpy as np
 
 print = functools.partial(print, flush=True)
+
+
+def _git_provenance() -> dict:
+    """Commit hash and working-tree dirty flag for the repo `cwd` is run in.
+
+    None for either field means git itself failed (not installed, or the path is
+    not a repo) rather than a clean/absent commit — the two must stay distinguishable
+    so a missing field reads as "couldn't determine", not as "clean".
+    """
+    try:
+        commit = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], text=True, stderr=subprocess.DEVNULL
+        ).strip()
+    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
+        commit = None
+    try:
+        status = subprocess.check_output(
+            ["git", "status", "--porcelain"], text=True, stderr=subprocess.DEVNULL
+        )
+        dirty = bool(status.strip())
+    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
+        dirty = None
+    return {"commit": commit, "commit_dirty": dirty}
+
+
+def write_result_json(path, results: dict, seeds=None, **json_kwargs) -> None:
+    """Atomically write a result JSON, stamped with the commit hash and seed list.
+
+    Every writer of a top-level result file (the ones run reports cite) must go
+    through this so a pre-fix result can never be mistaken for a post-fix one by
+    comparing file timestamps against git log — comparing timestamps against git log
+    is what produced a result predating its own decision-rule fix by twelve seconds
+    in a prior review. `seeds` is the list of seeds the result was computed over
+    (a single seed is still passed as a one-element list); pass None only when the
+    result has no seed of its own (e.g. a static config dump).
+    """
+    stamped = {
+        **results,
+        "provenance": {**_git_provenance(), "seeds": list(seeds) if seeds is not None else None},
+    }
+    atomic_write_json(path, stamped, **json_kwargs)
 
 
 def load_variants_and_delta(

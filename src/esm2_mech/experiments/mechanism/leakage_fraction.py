@@ -6,16 +6,21 @@ from __future__ import annotations
 
 import argparse
 import functools
-import glob
 import json
 import os
 
 import numpy as np
-from sklearn.metrics import f1_score
 
 from esm2_mech.utils.bootstrap import cluster_bootstrap_ci, folds_to_arms, score_within_folds
-from esm2_mech.utils.constants import BOOTSTRAP_N_RESAMPLES, mechanism_oof_cache_filename
-from esm2_mech.utils.metrics import mean_std_n
+from esm2_mech.utils.constants import (
+    BOOTSTRAP_N_RESAMPLES,
+    MECHANISM_CLASSES,
+    SEED_RESULT_GLOB,
+    mechanism_oof_cache_filename,
+)
+from esm2_mech.utils.data import load_pfam_map
+from esm2_mech.utils.io import write_result_json
+from esm2_mech.utils.metrics import fold_macro_f1, mean_std_n
 from esm2_mech.utils.paths import (
     FAMILY_CLUSTERING_JSON,
     LEAKAGE_FRACTION_JSON,
@@ -23,25 +28,28 @@ from esm2_mech.utils.paths import (
     PFAM_JSON,
     RESULTS_DIR,
 )
+from esm2_mech.utils.seed_aggregation import load_seed_files
 
 print = functools.partial(print, flush=True)
-
-BASELINES_GLOB = str(RESULTS_DIR / "family_split_baselines_seed*.json")
 
 # Below this margin the denominator is ~0 and the ratio is noise.
 MIN_ABOVE_CHANCE = 0.02
 
 
 def _load_seed_baselines():
-    """Per-seed gene/family macro-F1 for every feature."""
-    files = sorted(glob.glob(BASELINES_GLOB))
-    if not files:
-        raise FileNotFoundError(BASELINES_GLOB)
-    seeds = []
-    for path in files:
-        with open(path) as fh:
-            seeds.append(json.load(fh))
-    return seeds
+    """Per-seed (seed number, gene/family macro-F1) for every feature.
+
+    No expected seed count is known here — leakage_fraction runs as a downstream
+    aggregator over whatever family_split_baselines_seed*.json files
+    classify_by_mechanism already wrote — but load_seed_files still rejects a
+    filename with no parseable seed number or two files claiming the same seed.
+    """
+    seed_results = load_seed_files(str(RESULTS_DIR), SEED_RESULT_GLOB)
+    if not seed_results:
+        raise FileNotFoundError(f"no seed files matching {SEED_RESULT_GLOB!r} in {RESULTS_DIR}")
+    seed_numbers = [seed for seed, _filename, _result in seed_results]
+    seeds = [result for _seed, _filename, result in seed_results]
+    return seed_numbers, seeds
 
 
 def _measured_chance():
@@ -56,10 +64,36 @@ def _pick_macro_f1(arm_result):
     return arm_result.get("macro_f1_mean")
 
 
-def leakage_fraction_per_feature(seeds, feature, chance):
-    """Leakage fraction for one feature, from seed-averaged macro-F1."""
-    gene_f1 = [_pick_macro_f1(s["gene_split"][feature]) for s in seeds]
-    family_f1 = [_pick_macro_f1(s["family_split"][feature]) for s in seeds]
+def leakage_fraction_per_feature(seeds, feature, chance, oof_cache_entries=None):
+    """Leakage fraction for one feature, from seed-averaged macro-F1.
+
+    The gene-split arm's macro-F1 in the per-seed baseline files is scored over
+    every variant, while the family-split arm's is scored only over the rows whose
+    gene has a Pfam annotation (family_split_cv excludes the rest). Reading both
+    straight from the baseline files therefore compares two arms over different row
+    sets. When this feature's OOF cache is available, both arms are instead
+    rescored on the rows they share — the same row-alignment leakage_fraction_ci
+    already uses — so the headline and the interval describe the same quantity.
+    Falls back to the unrestricted baseline-file reading when no cache exists
+    (foldx_ddg / alphamissense, whose row space is feature-local to begin with).
+    """
+    n_excluded = None
+    if oof_cache_entries is not None:
+        aligned = _align_seed_arms(oof_cache_entries)
+        if aligned is not None:
+            per_seed, _ = aligned
+            n_shared = len(per_seed[0]["gene"]["y_true"])
+            n_total = len(oof_cache_entries[0]["gene_split"]["row_ids"])
+            n_excluded = n_total - n_shared
+            rows = np.arange(n_shared)
+            gene_f1 = [_arm_macro_f1(s["gene"], rows) for s in per_seed]
+            family_f1 = [_arm_macro_f1(s["family"], rows) for s in per_seed]
+        else:
+            gene_f1 = family_f1 = []
+    else:
+        gene_f1 = [_pick_macro_f1(s["gene_split"][feature]) for s in seeds]
+        family_f1 = [_pick_macro_f1(s["family_split"][feature]) for s in seeds]
+
     gene_mean, gene_std, gene_n = mean_std_n(gene_f1)
     family_mean, family_std, _ = mean_std_n(family_f1)
 
@@ -70,6 +104,8 @@ def leakage_fraction_per_feature(seeds, feature, chance):
         "family_macro_f1_std": family_std,
         "drop_mean": gene_mean - family_mean,
     }
+    if n_excluded is not None:
+        result["n_excluded_unannotated"] = n_excluded
     if gene_n == 0:
         result["leakage_fraction"] = None
         result["note"] = "no scorable gene-split seed; LF undefined"
@@ -89,10 +125,8 @@ def _arm_macro_f1(arm: dict, rows: np.ndarray) -> float | None:
     pred = np.asarray(arm["pred"])
     arms = folds_to_arms(pred, np.asarray(arm["folds"]))
 
-    def _fold_f1(block: np.ndarray, arm_pred: np.ndarray) -> float:
-        return float(
-            f1_score(y_true[block], arm_pred[block], average="macro", zero_division=0)
-        )
+    def _fold_f1(block: np.ndarray, arm_pred: np.ndarray) -> float | None:
+        return fold_macro_f1(y_true, block, arm_pred, MECHANISM_CLASSES)
 
     return score_within_folds(rows, arms, _fold_f1)
 
@@ -173,7 +207,7 @@ def leakage_fraction_ci(oof_cache_entries, pfam_map, chance, n_resamples, seed=0
 
 
 def main(compute_ci: bool = True, n_boot: int = BOOTSTRAP_N_RESAMPLES) -> None:
-    seeds = _load_seed_baselines()
+    seed_numbers, seeds = _load_seed_baselines()
     chance = _measured_chance()
     features = list(seeds[0]["gene_split"].keys())
 
@@ -195,29 +229,32 @@ def main(compute_ci: bool = True, n_boot: int = BOOTSTRAP_N_RESAMPLES) -> None:
             fc["by_view"]["wt_mean"].get("frac_gene_mech_matches_family_majority")
         )
 
-    # One cache per seed, and every seed the headline averages must be present:
-    # an interval built from a subset of the seeds is not the headline's quantity.
+    # One cache per seed, and every seed the headline averages must be present: a
+    # headline or interval built from a subset of the seeds is not the reported
+    # quantity. The cache is also what lets the headline restrict the gene-split
+    # arm to the rows the family-split arm actually scored (see
+    # leakage_fraction_per_feature), so it is loaded whenever available, not only
+    # when compute_ci is set — compute_ci gates the interval, not the row alignment.
     oof_caches = None
     pfam_map = None
-    if compute_ci:
-        cache_paths = [
-            os.path.join(RESULTS_DIR, mechanism_oof_cache_filename(seed_i))
-            for seed_i in range(len(seeds))
-        ]
-        missing = [path for path in cache_paths if not os.path.exists(path)]
-        if missing:
-            print(
-                f"  NOTE: {len(missing)} of {len(cache_paths)} seed OOF caches not "
-                "found — leakage-fraction CI skipped for all features (re-run "
-                "mechanism_delta_family_split for every seed with CIs on)."
-            )
-        else:
-            oof_caches = []
-            for path in cache_paths:
-                with open(path) as fh:
-                    oof_caches.append(json.load(fh))
-            with open(PFAM_JSON) as fh:
-                pfam_map = json.load(fh)
+    cache_paths = [
+        os.path.join(RESULTS_DIR, mechanism_oof_cache_filename(seed_i))
+        for seed_i in seed_numbers
+    ]
+    missing = [path for path in cache_paths if not os.path.exists(path)]
+    if missing:
+        print(
+            f"  NOTE: {len(missing)} of {len(cache_paths)} seed OOF caches not "
+            "found — leakage-fraction headline falls back to the unrestricted "
+            "gene-split score, and CI is skipped for all features (re-run "
+            "mechanism_delta_family_split for every seed with CIs on)."
+        )
+    else:
+        oof_caches = []
+        for path in cache_paths:
+            with open(path) as fh:
+                oof_caches.append(json.load(fh))
+        pfam_map = load_pfam_map(PFAM_JSON)
 
     print(f"n={results['n_variants']} variants, {results['n_genes']} genes, "
           f"{results['n_families']} families, {results['n_seeds']} seeds")
@@ -225,11 +262,12 @@ def main(compute_ci: bool = True, n_boot: int = BOOTSTRAP_N_RESAMPLES) -> None:
     print(f"{'feature':18} {'gene':>6} {'family':>7} {'drop':>6} {'leakage_fraction':>20}")
 
     for feature in features:
-        cell = leakage_fraction_per_feature(seeds, feature, chance)
+        feature_caches = None
         if oof_caches is not None and all(feature in cache for cache in oof_caches):
-            ci = leakage_fraction_ci(
-                [cache[feature] for cache in oof_caches], pfam_map, chance, n_boot, seed=0
-            )
+            feature_caches = [cache[feature] for cache in oof_caches]
+        cell = leakage_fraction_per_feature(seeds, feature, chance, feature_caches)
+        if compute_ci and feature_caches is not None:
+            ci = leakage_fraction_ci(feature_caches, pfam_map, chance, n_boot, seed=0)
             if ci is not None:
                 cell["ci"] = ci
         results["by_feature"][feature] = cell
@@ -250,8 +288,7 @@ def main(compute_ci: bool = True, n_boot: int = BOOTSTRAP_N_RESAMPLES) -> None:
         )
 
     LEAKAGE_FRACTION_JSON.parent.mkdir(parents=True, exist_ok=True)
-    with open(LEAKAGE_FRACTION_JSON, "w") as fh:
-        json.dump(results, fh, indent=2)
+    write_result_json(LEAKAGE_FRACTION_JSON, results, seeds=seed_numbers, indent=2)
     print(f"\nResults written to {LEAKAGE_FRACTION_JSON}")
 
 

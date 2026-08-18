@@ -11,6 +11,7 @@ import functools
 print = functools.partial(print, flush=True)
 
 from esm2_mech.utils.constants import N_SEEDS
+from esm2_mech.utils.data import load_pfam_map
 from esm2_mech.utils.io import atomic_write_json
 from esm2_mech.utils.paths import (
     GEOMETRY_RESULTS_DIR,
@@ -51,8 +52,7 @@ def load():
         )
     genes = np.array([v["gene"] for v in variants])
     y = np.array([_pathogenicity_label(v["label"]) for v in variants])
-    with open(PFAM_JSON) as _f:
-        pfam = json.load(_f)
+    pfam = load_pfam_map(PFAM_JSON)
     fam = np.array([(pfam.get(g) or "NA") for g in genes])
     print(
         f"Loaded {len(y)} variants, {len(set(genes))} genes, "
@@ -220,8 +220,7 @@ def probe2_universal(delta, y, genes, fam, n_partitions=10, seeds=(0,)):
 def run(n_seeds=N_SEEDS):
     seeds = tuple(range(n_seeds))
     delta, y, genes, fam = load()
-    with open(PFAM_JSON) as _f:
-        pfam_map = json.load(_f)
+    pfam_map = load_pfam_map(PFAM_JSON)
 
     r1 = probe1_rank(delta, y, genes, pfam_map, seeds=seeds)
     r2 = probe2_universal(delta, y, genes, fam, seeds=seeds)

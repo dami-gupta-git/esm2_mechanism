@@ -46,15 +46,33 @@ def gene_split_cv(
     return splits
 
 
+def is_pfam_annotated(gene, pfam_map: dict) -> bool:
+    """Whether `gene` carries a real Pfam family annotation (not absent, not null)."""
+    return pfam_map.get(gene) is not None
+
+
+def annotated_gene_mask(genes: np.ndarray, pfam_map: dict) -> np.ndarray:
+    """Rows whose gene has a Pfam family annotation — the rows family_split_cv scores.
+
+    family_split_cv excludes unannotated genes from both sides of every fold, so
+    anything computed against its fold layout (a permutation test's fold index, a
+    row-aligned comparison against the gene split) has to be restricted to this same
+    subset first, rather than recomputing the filter independently and risking it
+    drift out of sync with the fold builder.
+    """
+    return np.array([is_pfam_annotated(g, pfam_map) for g in genes])
+
+
 def family_split_cv(
     genes: np.ndarray, pfam_map: dict, n_folds: int = 5, seed: int = 42
 ) -> list[tuple]:
     """Family-disjoint CV using a {gene: pfam_family} map.
 
-    Only annotated genes (present in pfam_map) are included in train/test;
-    unannotated genes are excluded from both sides.
+    Only annotated genes (present in pfam_map, with a non-null value) are included
+    in train/test; unannotated genes are excluded from both sides — same predicate
+    as annotated_gene_mask, so the two never drift apart on what counts as annotated.
     """
-    g2p = {g: pfam_map[g] for g in np.unique(genes) if pfam_map.get(g)}
+    g2p = {g: pfam_map[g] for g in np.unique(genes) if is_pfam_annotated(g, pfam_map)}
     fams = np.array(sorted(set(g2p.values())))
     np.random.RandomState(seed).shuffle(fams)
     n = len(genes)

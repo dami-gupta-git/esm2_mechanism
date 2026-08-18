@@ -7,6 +7,7 @@ from collections import Counter
 
 import numpy as np
 
+from esm2_mech.utils.data import load_pfam_map
 from esm2_mech.utils.paths import (
     EMB_WT_MEAN, EMB_MUT_MEAN, EMB_WT_POS, EMB_MUT_POS,
     SEQUENCES_JSON, VARIANTS_JSON, RESULTS_DIR, PFAM_JSON,
@@ -20,9 +21,11 @@ from esm2_mech.utils.constants import (
     MECHANISM_CLASSES,
     BOOTSTRAP_N_RESAMPLES,
 )
-from esm2_mech.utils.splits import gene_split_cv, family_split_cv, fold_index_array
+from esm2_mech.utils.splits import (
+    annotated_gene_mask, gene_split_cv, family_split_cv, fold_index_array,
+)
 from esm2_mech.utils.embed import unpack_run_data
-from esm2_mech.utils.io import atomic_write_json
+from esm2_mech.utils.io import atomic_write_json, write_result_json
 from esm2_mech.utils.probes import run_logreg_pca_cv
 from esm2_mech.utils.bootstrap import (
     adjudicate_diff,
@@ -104,8 +107,7 @@ def run(
     print("\n=== Building CV splits ===")
     if not PFAM_JSON.exists():
         raise FileNotFoundError(f"{PFAM_JSON} not found — run fetch_data/fetch_annotations --step pfam first")
-    with open(PFAM_JSON) as f:
-        pfam_map = json.load(f)
+    pfam_map = load_pfam_map(PFAM_JSON)
     gene_splits = gene_split_cv(genes_arr, n_folds=n_folds, seed=seed)
     family_splits = family_split_cv(
         genes_arr, pfam_map, n_folds=n_folds, seed=seed
@@ -175,7 +177,27 @@ def run(
                     n_resamples=n_boot, seed=seed,
                 )
             if n_permutations > 0 and name in REFIT_PERMUTATION_FEATURES:
-                def _family_macro_f1(perm_labels, _X=X, _splits=feat_family_splits, _genes=feat_genes):
+                # feat_family_splits only ever spans rows whose gene has a Pfam
+                # annotation (family_split_cv excludes the rest from both sides of
+                # every fold), so the fold index it defines is not a partition of
+                # every row — building fold_index_array over the full row count
+                # raises. Restrict the permutation to the same annotated subset the
+                # family split actually scores, remapping the splits' row indices
+                # into that subset's own index space.
+                ann_mask = annotated_gene_mask(feat_genes, pfam_map)
+                n_excluded = int((~ann_mask).sum())
+                row_map = np.where(ann_mask)[0]
+                inv_map = np.full(len(feat_genes), -1, dtype=int)
+                inv_map[row_map] = np.arange(len(row_map))
+
+                X_ann = X[row_map]
+                labels_ann = feat_labels[row_map]
+                genes_ann = feat_genes[row_map]
+                family_splits_ann = [
+                    (inv_map[tr], inv_map[te]) for tr, te in feat_family_splits
+                ]
+
+                def _family_macro_f1(perm_labels, _X=X_ann, _splits=family_splits_ann, _genes=genes_ann):
                     agg_perm, _ = run_logreg_pca_cv(
                         _X, perm_labels, _splits, seed=seed, genes=_genes,
                         n_pca=PCA_COMPONENTS, return_oof=True,
@@ -183,14 +205,15 @@ def run(
                     return agg_perm.get("macro_f1_mean")
 
                 fs["permutation"] = label_permutation_pvalue(
-                    _family_macro_f1, feat_labels, statistic="macro_f1",
-                    folds=fold_index_array(feat_family_splits, len(feat_labels)),
-                    groups=feat_genes,
+                    _family_macro_f1, labels_ann, statistic="macro_f1",
+                    folds=fold_index_array(family_splits_ann, len(labels_ann)),
+                    groups=genes_ann,
                     clusters=family_or_gene_clusters(
-                        feat_genes, pfam_map, is_family_split=True
+                        genes_ann, pfam_map, is_family_split=True
                     ),
                     n_permutations=n_permutations, seed=seed,
                 )
+                fs["permutation"]["n_excluded_unannotated"] = n_excluded
             elif n_permutations > 0 and name in OOF_PERMUTATION_FEATURES and fs_oof is not None:
                 fs["permutation"] = oof_permutation_pvalue(
                     fs_oof["y_true"], fs_oof["proba"], fs_oof["folds"],
@@ -202,17 +225,27 @@ def run(
                 )
             if "permutation" in fs:
                 perm = fs["permutation"]
+                excluded_str = (
+                    f", excluded {perm['n_excluded_unannotated']} unannotated-gene rows"
+                    if "n_excluded_unannotated" in perm else ""
+                )
                 print(
                     f"  family-split permutation p = {perm.get('p_value')} "
                     f"({perm.get('statistic')} via {perm.get('null_type')}, "
                     f"unit {perm.get('permutation_unit')}, "
-                    f"observed {perm.get('observed')}, null mean {perm.get('null_mean')})"
+                    f"observed {perm.get('observed')}, null mean {perm.get('null_mean')}"
+                    f"{excluded_str})"
                 )
-            # Cached for every seed, not just seed 0: the leakage fraction's headline
-            # averages all five seeds, and an interval built from one seed is a
-            # different quantity from the number it is printed beside.
+            # Cached for every feature and every seed, not just the permutation
+            # features at seed 0: the leakage fraction's headline reads each arm's
+            # macro-F1 from this cache (restricted to the rows both arms scored) for
+            # every feature it reports, and an interval (or headline) built from a
+            # subset of seeds or features is a different quantity from the number
+            # it is printed beside. Tuple-entry features (foldx_ddg, alphamissense)
+            # are excluded because their row_ids index a feature-local observed
+            # subset, not the row space every other feature's row_ids share.
             if (
-                compute_ci and name in PERMUTATION_FEATURES
+                compute_ci
                 and not isinstance(entry, tuple) and gs_oof is not None and fs_oof is not None
             ):
                 def _cache_arm(oof):
@@ -277,8 +310,7 @@ def run(
                             )
 
     out_path = os.path.join(out_dir, seed_result_filename(seed))
-    with open(out_path, "w") as f:
-        json.dump(results, f, indent=2)
+    write_result_json(out_path, results, seeds=[seed], indent=2)
     print(f"\nResults written to {out_path}")
 
     if oof_cache:

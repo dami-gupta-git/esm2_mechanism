@@ -8,6 +8,7 @@ import functools
 
 print = functools.partial(print, flush=True)
 
+from esm2_mech.utils.data import load_pfam_map
 from esm2_mech.utils.io import atomic_write_json
 from esm2_mech.utils.paths import (
     GEOMETRY_RESULTS_DIR,
@@ -120,8 +121,7 @@ def load_pathogenicity():
             f"variant/embedding row mismatch: {len(v)} variants vs "
             f"{delta.shape[0]} embedding rows — canonical file is not row-aligned."
         )
-    with open(PFAM_JSON) as _f:
-        pfam = json.load(_f)
+    pfam = load_pfam_map(PFAM_JSON)
     genes = [x["gene"] for x in v]
     groups = np.array([(pfam.get(g) or "NA") for g in genes])
     y = np.array([_pathogenicity_label(x["label"]) for x in v])
@@ -158,8 +158,7 @@ def load_stability(stability_dataset=DEFAULT_STABILITY_DATASET):
 
 
 def load_mechanism_gof():
-    with open(PFAM_JSON) as _f:
-        pfam = json.load(_f)
+    pfam = load_pfam_map(PFAM_JSON)
     dm, _dp, labels, genes = load_mechanism_variants(pfam)
     groups = np.array([(pfam.get(g) or "NA") for g in genes])
     y = (np.asarray(labels) == GOF).astype(int)

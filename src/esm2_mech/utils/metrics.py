@@ -95,6 +95,33 @@ def binary_class_target(y_true: np.ndarray, cls: str) -> np.ndarray | None:
     return y_bin
 
 
+def fold_macro_f1(
+    y_true: np.ndarray,
+    block: np.ndarray,
+    arm_pred: np.ndarray,
+    classes: list[str] = MECHANISM_CLASSES,
+) -> float | None:
+    """Macro-F1 on one fold's block, or None when the block cannot score every class.
+
+    Pins `labels=classes` so the average always runs over the same class set rather
+    than whichever classes happen to appear in the block, and refuses (returns None)
+    a block missing one of them rather than silently zero-filling it via
+    zero_division. This gives macro-F1 the same discard contract as the per-class
+    scorers built on binary_class_target: a resample that loses a class is a
+    different statistic, not a noisier draw of the same one, and the caller
+    (score_within_folds) drops it rather than mixing it into the average.
+    """
+    present = set(np.unique(np.asarray(y_true)[block]))
+    if not present.issuperset(classes):
+        return None
+    return float(
+        f1_score(
+            np.asarray(y_true)[block], np.asarray(arm_pred)[block],
+            labels=list(classes), average="macro", zero_division=0,
+        )
+    )
+
+
 def imbalance_metrics(y_bin: np.ndarray, scores: np.ndarray) -> dict | None:
     """AUPRC, its prevalence baseline, and PPV/NPV at the class-prevalence operating point.
 

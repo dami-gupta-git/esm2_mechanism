@@ -60,6 +60,56 @@ defaults to the old behaviour is how this defect would survive its own fix.
 
 ---
 
+## `homology_partition_panel.py` import broken
+
+**Status:** deferred alongside the fold-aware scoring fix above — this script is already out of
+scope until that lands, so this is a second, independent reason it will not run as-is.
+
+**The defect.** It imports `load_pfam` from `mechanism/clan_holdout.py`, which no longer exists
+there — `clan_holdout.py` was switched onto the shared `utils/data.load_pfam_map(PFAM_JSON)`
+during the `load_pfam()` duplication cleanup, and the old wrapper was removed rather than kept as
+a shim. `tests/experiments/mechanism/test_homology_partition_panel.py` currently
+`pytest.importorskip`s the whole module for this reason.
+
+**What has to happen when this script is next run.** Switch its import to
+`utils/data.load_pfam_map(PFAM_JSON)` (the same fix already applied to `clan_holdout.py`), then
+remove the `importorskip` guard from the test file — at that point the two pre-existing strict
+`xfail` marks described above are what should still be gating the suite, not an import error.
+
+---
+
+## `load_pfam()` duplication outside the current runbook
+
+**Status:** deferred. `duplicates.md` found the gene-to-Pfam-family JSON re-read (copy-pasted or
+near-identical) in about 20 files. The ones under `experiments/mechanism/`, `experiments/
+proteome_features/enzyme_classification.py` and `proteome_mechanism.py`, `experiments/geometry/`,
+and `experiments/stability/megascale_stability.py` — the scripts the `run_biorxiv` runbook (section
+4, 6, 7) actually runs — were switched onto the shared `utils/data.load_pfam_map(path)`. The rest
+were left alone because they sit outside that runbook and touching them is unrelated churn until
+they are next run.
+
+**Files still reading the Pfam JSON directly**, by area:
+
+| File | Note |
+|---|---|
+| `mechanism/mut_only_mlp.py` | not called from the runbook |
+| `mechanism/mechanism_delta_probe.py` | not called from the runbook |
+| `mechanism/multiseed_v1.py` | not called from the runbook |
+| `mechanism/homology_partition_panel.py` | already broken (see the import-error item above); fix both together |
+| `proteome_features/proteome_pilot.py` | already deferred above, own fold loop |
+| `proteome_features/per_gene_ablation.py` | already deferred above, own fold loop |
+| `esm3/esm3_mechanism.py` | separate ESM-3 pipeline, not `run_biorxiv` |
+| `badonyi/badonyi_holdout_survival.py` | Badonyi pipeline, not `run_biorxiv` |
+| `alphamissense/esm1v_family_split.py`, `alphamissense_family_split.py`, `proteingym_esm2_ll.py` | AlphaMissense/ESM1v comparison pipeline, not `run_biorxiv` |
+| `perturbation/ll_scan.py`, `perturbation_probe.py`, `perturbation_pattern.py` | perturbation-scan pipeline, not `run_biorxiv` |
+
+**What has to happen when one of these is next run.** Replace its direct `open(...); json.load(...)`
+of the Pfam families file with `esm2_mech.utils.data.load_pfam_map(PFAM_JSON)` (or the file's local
+`PFAM_FAMILIES` alias for that same path). Mechanical, one call site or a couple per file — same
+change already made across the `run_biorxiv` scripts.
+
+---
+
 ## Reports carrying superseded numbers
 
 **Status:** deferred alongside the above.

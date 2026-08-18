@@ -14,6 +14,7 @@ import functools
 
 print = functools.partial(print, flush=True)
 
+from esm2_mech.utils.data import load_pfam_map
 from esm2_mech.utils.io import atomic_write_json, save_npy, load_npy_or_discard
 from esm2_mech.utils.paths import (
     GEOMETRY_RESULTS_DIR,
@@ -29,6 +30,7 @@ from esm2_mech.utils.paths import (
 from joblib import Parallel, delayed
 
 from esm2_mech.embeddings.embed_variants import ESM2_MODEL_650M
+from esm2_mech.utils.embed import load_esm2_model, masked_aa_log_probs
 from esm2_mech.utils.bootstrap import (
     adjudicate_diff,
     adjudicate_level,
@@ -69,7 +71,6 @@ def _variant_fingerprint(variants):
 def extract_conservation(variants, seqs, batch_size=64, ckpt_every=2000):
     """Returns (N,3) array [logP_wt, logP_mut, entropy]; NaN where unavailable."""
     import torch
-    import esm
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     if device != "cuda":
@@ -97,10 +98,7 @@ def extract_conservation(variants, seqs, batch_size=64, ckpt_every=2000):
                 f"ordering. Delete the cache and re-extract."
             )
 
-    model, alphabet = esm.pretrained.load_model_and_alphabet(ESM2_MODEL_650M)
-    model = model.to(device).eval()
-    batch_converter = alphabet.get_batch_converter()
-    aa_idx = {aa: alphabet.get_idx(aa) for aa in AA_ORDER}
+    model, alphabet = load_esm2_model(ESM2_MODEL_650M, device=device)
 
     work = []
     skipped = 0
@@ -122,24 +120,19 @@ def extract_conservation(variants, seqs, batch_size=64, ckpt_every=2000):
         f"To extract: {len(work)} variants ({skipped} skipped: missing seq / pos / WT mismatch)"
     )
 
-    import torch as _t
-
     for bs in range(0, len(work), batch_size):
         batch = work[bs : bs + batch_size]
-        data = [(f"v{idx}", mseq) for (idx, mseq, *_) in batch]
-        _, _, tokens = batch_converter(data)
-        tokens = tokens.to(device)
-        with _t.inference_mode():
-            logits = model(tokens)["logits"].cpu().float()
-        for j, (idx, _mseq, new_pos, wt, mut) in enumerate(batch):
-            lp = _t.log_softmax(
-                logits[j, new_pos], dim=-1
-            ).numpy()  # BOS at 0 → token new_pos
-            p20 = np.array([np.exp(lp[aa_idx[a]]) for a in AA_ORDER])
+        items = [(idx, mseq, new_pos) for (idx, mseq, new_pos, _wt, _mut) in batch]
+        log_probs_by_idx = masked_aa_log_probs(
+            model, alphabet, device, items, AA_ORDER, batch_size=batch_size
+        )
+        for idx, _mseq, _new_pos, wt, mut in batch:
+            log_probs = log_probs_by_idx[idx]
+            p20 = np.exp(log_probs)
             p20 = p20 / p20.sum()
             entropy = float(-(p20 * np.log(p20 + 1e-12)).sum())
-            out[idx, 0] = float(lp[aa_idx[wt]]) if wt in aa_idx else np.nan
-            out[idx, 1] = float(lp[aa_idx[mut]]) if mut in aa_idx else np.nan
+            out[idx, 0] = float(log_probs[AA_ORDER.index(wt)]) if wt in AA_ORDER else np.nan
+            out[idx, 1] = float(log_probs[AA_ORDER.index(mut)]) if mut in AA_ORDER else np.nan
             out[idx, 2] = entropy
         done = int(np.isfinite(out[:, 0]).sum())
         if (bs // batch_size) % max(1, (ckpt_every // batch_size)) == 0:
@@ -206,8 +199,7 @@ def analyse():
         variants = json.load(_f)
     delta = np.load(MUT_EMB) - np.load(WT_EMB)
     cons = np.load(CONS_CACHE)
-    with open(PFAM_JSON) as _f:
-        pfam = json.load(_f)
+    pfam = load_pfam_map(PFAM_JSON)
     genes_all = np.array([v["gene"] for v in variants])
     y_all = np.array([_pathogenicity_label(v["label"]) for v in variants])
 

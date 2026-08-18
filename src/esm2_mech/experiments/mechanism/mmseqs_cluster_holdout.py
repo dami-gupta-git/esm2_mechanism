@@ -18,7 +18,7 @@ from esm2_mech.utils.bootstrap import bootstrap_mechanism_metrics
 from esm2_mech.utils.constants import BOOTSTRAP_N_RESAMPLES, MECHANISM_CLASSES
 from esm2_mech.utils.data import build_gene_to_row as _build_gene_to_row
 from esm2_mech.utils.metrics import mean_std_n
-from esm2_mech.utils.io import load_variants_and_delta
+from esm2_mech.utils.io import load_variants_and_delta, write_result_json
 from esm2_mech.utils.probes import run_mlp_cv, run_histgb_cv
 from esm2_mech.utils.paths import (
     RESULTS_DIR,
@@ -348,12 +348,12 @@ def main():
         )
         all_res.append(res)
         path = OUT_DIR / f"cluster_seed{s}.json"
-        path.write_text(json.dumps(res, indent=2))
+        write_result_json(path, res, seeds=[s], indent=2)
         print(f"  Saved: {path}")
 
     summary = aggregate_seeds(all_res)
     spath = OUT_DIR / "cluster_summary.json"
-    spath.write_text(json.dumps(summary, indent=2))
+    write_result_json(spath, summary, seeds=seeds, indent=2)
     print(f"\nSaved summary: {spath}")
     print_table(summary)
 

@@ -25,8 +25,9 @@ from esm2_mech.utils.bootstrap import (
     within_stratum_bootstrap_ci,
 )
 from esm2_mech.utils.constants import BOOTSTRAP_N_RESAMPLES, N_SEEDS
-from esm2_mech.utils.data import load_variants
-from esm2_mech.utils.metrics import mean_std_n
+from esm2_mech.utils.data import load_pfam_map, load_variants
+from esm2_mech.utils.io import write_result_json
+from esm2_mech.utils.metrics import fold_macro_f1, majority_baseline_f1, mean_std_n
 from esm2_mech.utils.paths import (
     EMB_MUT_MEAN,
     EMB_WT_MEAN,
@@ -185,6 +186,7 @@ def family_probe(
         return (result, None) if return_oof else result
     X = gene_emb[mask]
     y = np.array(gene_families)[mask]
+    classes = sorted(set(y))
 
     # n_splits cannot exceed the smallest kept-family size.
     min_kept_size = min(c for f, c in fam_counts.items() if f in kept)
@@ -193,7 +195,7 @@ def family_probe(
         result = {"note": "smallest kept family too small for CV"}
         return (result, None) if return_oof else result
 
-    majority_overall = Counter(y).most_common(1)[0][0]
+    _, majority_overall = majority_baseline_f1(y, y)
     skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=seed)
 
     accs, f1s, baseline_accs = [], [], []
@@ -207,7 +209,7 @@ def family_probe(
         baseline_pred = np.full_like(y[test_idx], majority_overall)
         accs.append(float(accuracy_score(y[test_idx], pred)))
         f1s.append(
-            float(f1_score(y[test_idx], pred, average="macro", zero_division=0))
+            float(f1_score(y[test_idx], pred, labels=classes, average="macro", zero_division=0))
         )
         baseline_accs.append(float(accuracy_score(y[test_idx], baseline_pred)))
         if return_oof:
@@ -237,6 +239,7 @@ def family_probe(
             "pred": np.concatenate(oof_pred),
             "families": y_true,
             "folds": np.concatenate(oof_folds),
+            "classes": classes,
         }
     return result, oof
 
@@ -244,29 +247,37 @@ def family_probe(
 def _family_probe_bootstrap_ci(oof, n_resamples, seed):
     """Bootstrap CI on the family probe's accuracy and macro-F1, from its OOF rows.
 
-    Resamples genes inside each family rather than resampling families. The family is
-    this probe's prediction target, so dropping families from a draw changes the class
-    set the macro average runs over and moves the value systematically; the reported
-    point estimate then sits outside its own interval. Scoring stays within fold and
-    averages, matching the point estimate, which is a fold mean.
+    Resamples genes inside each (family, fold) cell rather than inside each family as
+    a whole. The family is this probe's prediction target, so dropping families from a
+    draw changes the class set the macro average runs over and moves the value
+    systematically; the reported point estimate then sits outside its own interval.
+    Resampling within family alone does not fully fix this: a family's rows are spread
+    across folds by the stratified split, and pooling them before resampling can, by
+    chance, draw a family's rows entirely out of one of its folds, starving that fold's
+    block in score_within_folds and forcing the whole resample to be discarded (or, for
+    families that keep some rows in a fold, silently shifting that fold's class
+    balance). Resampling within each (family, fold) cell keeps every family's per-fold
+    row count fixed across draws, matching the point estimate, which is a fold mean.
     """
-    y_true, pred = oof["y_true"], oof["pred"]
+    y_true, pred, classes = oof["y_true"], oof["pred"], oof["classes"]
     arms = folds_to_arms(pred, oof["folds"])
 
     def _fold_accuracy(block, arm_pred):
         return float(accuracy_score(y_true[block], arm_pred[block]))
 
     def _fold_macro_f1(block, arm_pred):
-        return float(
-            f1_score(y_true[block], arm_pred[block], average="macro", zero_division=0)
-        )
+        return fold_macro_f1(y_true, block, arm_pred, classes)
 
     def _scored(fold_fn):
         return lambda rows: score_within_folds(rows, arms, fold_fn)
 
+    family_fold_strata = np.array(
+        [f"{family}::{fold}" for family, fold in zip(oof["families"], oof["folds"])],
+        dtype=object,
+    )
     return {
         name: within_stratum_bootstrap_ci(
-            oof["families"], _scored(fold_fn), n_resamples=n_resamples, seed=seed
+            family_fold_strata, _scored(fold_fn), n_resamples=n_resamples, seed=seed
         )
         for name, fold_fn in (("accuracy", _fold_accuracy), ("macro_f1", _fold_macro_f1))
     }
@@ -305,8 +316,7 @@ def main():
     labels_arr = np.array([v["label_3class"] for v in valid_variants])
 
     # Pfam map
-    with open(PFAM_JSON) as f:
-        pfam_map = json.load(f)
+    pfam_map = load_pfam_map(PFAM_JSON)
 
     # Gene-level views (one row per gene). gene_names defines the canonical
     # per-gene ordering used by every per-view embedding below.
@@ -453,6 +463,8 @@ def main():
         if per_seed_acc:
             acc_mean, acc_std, n_seeds_used = mean_std_n(per_seed_acc)
             f1_mean, f1_std, _ = mean_std_n(per_seed_f1)
+            seed0_accuracy = probe["accuracy"]
+            seed0_macro_f1 = probe["macro_f1"]
             probe = {
                 **probe,
                 "accuracy": acc_mean,
@@ -462,6 +474,14 @@ def main():
                 "n_seeds": n_seeds_used,
             }
             if compute_ci and probe_oof is not None:
+                # This CI is a cluster bootstrap over seed 0's OOF rows only, so
+                # it brackets seed 0's point estimate, not the multi-seed mean
+                # above. Store both together so the mismatch can't be mistaken
+                # for a CI on the 5-seed mean.
+                probe["ci_seed0_point"] = {
+                    "accuracy": seed0_accuracy,
+                    "macro_f1": seed0_macro_f1,
+                }
                 probe["ci"] = _family_probe_bootstrap_ci(probe_oof, args.n_boot, seed=0)
         view_res["family_probe"] = probe
         if probe and "accuracy" in probe:
@@ -525,8 +545,10 @@ def main():
         results["by_view"][view_name] = view_res
 
     FAMILY_CLUSTERING_JSON.parent.mkdir(parents=True, exist_ok=True)
-    with open(FAMILY_CLUSTERING_JSON, "w") as f:
-        json.dump(results, f, indent=2, default=str)
+    write_result_json(
+        FAMILY_CLUSTERING_JSON, results, seeds=list(range(args.seeds)),
+        indent=2, default=str,
+    )
     print(f"\nResults written to {FAMILY_CLUSTERING_JSON}")
 
     print("\n" + "=" * 60)
