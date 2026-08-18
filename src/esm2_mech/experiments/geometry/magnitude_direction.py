@@ -72,8 +72,8 @@ def _pathogenicity_label(label):
 
 def load_pathogenicity_canonical():
     """Load the canonical pathogenicity set (row-aligned to PATH_EMB_*; matches result_6)."""
-    with open(PATH_CANON_VARIANTS) as _f:
-        variants = json.load(_f)
+    with open(PATH_CANON_VARIANTS) as fh:
+        variants = json.load(fh)
     wt = np.load(PATH_CANON_WT_EMB)
     mut = np.load(PATH_CANON_MUT_EMB)
     delta = mut - wt
@@ -309,8 +309,8 @@ def run_biophysical_direction(seeds, stability_dataset=DEFAULT_STABILITY_DATASET
     print("=" * 60)
     from scipy.stats import spearmanr
 
-    with open(variants_json) as _f:
-        variants = json.load(_f)
+    with open(variants_json) as fh:
+        variants = json.load(fh)
     ddg = np.array(
         [v["ddg"] if v["ddg"] is not None else np.nan for v in variants],
         dtype=np.float64,
@@ -462,8 +462,8 @@ def _run_seeds(
     seeds, stability_dataset=DEFAULT_STABILITY_DATASET,
     compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES,
 ):
-    with open(PFAM_JSON) as _f:
-        pfam_map = json.load(_f)
+    with open(PFAM_JSON) as fh:
+        pfam_map = json.load(fh)
 
     path_res = run_pathogenicity(pfam_map, seeds, compute_ci=compute_ci, n_boot=n_boot)
     mech_res = run_mechanism(pfam_map, seeds, compute_ci=compute_ci, n_boot=n_boot)

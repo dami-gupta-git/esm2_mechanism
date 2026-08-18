@@ -76,12 +76,12 @@ learning something about the mechanism.
 | Step | Command | Outputs | Status |
 |---|---|---|---|
 | 4.1 | `python -m esm2_mech.experiments.mechanism.classify_by_mechanism --seeds 5` | `results/run_biorxiv/family_split_baselines_seed{0..4}.json`, `aggregate.json` | ✅ 2026-08-17 | |
-| 4.2 | `python -m esm2_mech.experiments.mechanism.mlp --seeds 5` | `results/run_biorxiv/nonlinear_results_seed{0..4}.json` | 🔄 running | |
+| 4.2 | `python -m esm2_mech.experiments.mechanism.mlp --seeds 5` | `results/run_biorxiv/nonlinear_results_seed{0..4}.json` | ✅ 2026-08-18 | |
 | 4.3 | `python -m esm2_mech.experiments.mechanism.family_clustering --seeds 5` | `results/run_biorxiv/family_clustering.json` | ✅ 2026-08-17 | |
 | 4.4 | `python -m esm2_mech.experiments.mechanism.naive_baseline` | `results/run_biorxiv/naive_baseline.json` | ✅ 2026-08-17 | |
-| 4.5 | `python -m esm2_mech.experiments.mechanism.leakage_fraction` | `results/run_biorxiv/leakage_fraction.json` | ⬜ |
+| 4.5 | `python -m esm2_mech.experiments.mechanism.leakage_fraction` | `results/run_biorxiv/leakage_fraction.json` | ✅ 2026-08-18 | Log: `logs/biorxiv/step_4_5.log` |
 | 4.6 | `python -m esm2_mech.experiments.mechanism.classify_by_mechanism --seeds 1 --n_permutations 1000` | `results/run_biorxiv/...` | ✅ 2026-08-18 | |
-| 4.7 | `python -m esm2_mech.experiments.mechanism.single_source_mechanism --seeds 5` | `results/run_biorxiv/single_source_gerasimavicius/...` | 🔄 running | |
+| 4.7 | `python -m esm2_mech.experiments.mechanism.single_source_mechanism --seeds 5` | `results/run_biorxiv/single_source_gerasimavicius/...` | ✅ 2026-08-18 | |
 
 ## 5. Experiment: Pathogenicity positive control
 
@@ -90,9 +90,11 @@ they carry usable signal at all.
 
 | Step | Command | Outputs | Status |
 |---|---|---|---|
-| 5.1 | `scp -i ~/.ssh/id_runpod_2 -P <pod-port> data/clinvar_pathogenicity_variants.json root@<pod-ip>:/workspace/repo/data/` | | ⬜ |
-| 5.2 | `python -m esm2_mech.experiments.pathogenicity.pathogenicity_control --model esm2_t33_650M_UR50D` | `results/run_biorxiv/pathogenicity_control.json`, per-seed files, embedding arrays | ⬜ |
-| 5.3 | `scp -i ~/.ssh/id_runpod_2 -P <pod-port> root@<pod-ip>:/workspace/repo/data/embeddings/esm2_t33_650M_UR50D/pathogenicity_*.npy root@<pod-ip>:/workspace/repo/data/embeddings/esm2_t33_650M_UR50D/pathogenicity_meta.json root@<pod-ip>:/workspace/repo/results/run_biorxiv/pathogenicity_control.json data/embeddings/esm2_t33_650M_UR50D/` | | ⬜ |
+| 5.1 | `scp clinvar_pathogenicity_variants.json` to pod | | ✅ reused | Already on pod from previous run |
+| 5.2 | `scp pfam_families.json` to pod | | ✅ reused | Already on pod from previous run |
+| 5.3 | `python -m esm2_mech.experiments.pathogenicity.pathogenicity_control --phase embed --model esm2_t33_650M_UR50D` | `pathogenicity_{wt,mut}_mean.npy`, `pathogenicity_meta.json` | ✅ reused | Embeddings from previous run |
+| 5.4 | Copy embeddings back to local | | ✅ reused | All files present locally |
+| 5.5 | `python -m esm2_mech.experiments.pathogenicity.pathogenicity_control --phase probe` | `results/run_biorxiv/pathogenicity_control.json` | ✅ 2026-08-18 | Log: `logs/biorxiv/step_5_5.log` |
 
 ## 6. Experiment: Geometry of the pathogenicity direction
 
@@ -100,13 +102,10 @@ Asks what the pathogenicity direction in embedding space actually corresponds to
 
 | Step | Command | Outputs | Status |
 |---|---|---|---|
-| 6.1 | `python -m esm2_mech.experiments.geometry.build_canonical_pathogenicity` | `data/pathogenicity_valid_variants_canonical.json` | ⬜ |
-| 6.2 | `python -m esm2_mech.experiments.geometry.run_geometry --seeds 5` | `results/run_biorxiv/magnitude_direction/{probe_results,geometry_results,transfer_contrast,probe4_axis_identity}.json` | ⬜ |
-| 6.3 | `scp -i ~/.ssh/id_runpod_2 -P <pod-port> data/pathogenicity_valid_variants_canonical.json root@<pod-ip>:/workspace/repo/data/` | | ⬜ |
-| 6.4 | `scp -i ~/.ssh/id_runpod_2 -P <pod-port> data/cache/sequences.json root@<pod-ip>:/workspace/repo/data/cache/` | | ⬜ |
-| 6.5 | `python -m esm2_mech.experiments.geometry.conservation_axis --extract` | `data/conservation_pathogenicity.npy`, `data/conservation_pathogenicity_meta.json` | ⬜ |
-| 6.6 | `scp -i ~/.ssh/id_runpod_2 -P <pod-port> root@<pod-ip>:/workspace/repo/data/conservation_pathogenicity.npy root@<pod-ip>:/workspace/repo/data/conservation_pathogenicity_meta.json data/` | | ⬜ |
-| 6.7 | `python -m esm2_mech.experiments.geometry.conservation_axis` | `results/run_biorxiv/magnitude_direction/conservation_axis.json` | ⬜ |
+| 6.1 | `python -m esm2_mech.experiments.geometry.build_canonical_pathogenicity` | `data/pathogenicity_valid_variants_canonical.json` | ✅ 2026-08-18 | |
+| 6.2 | `python -m esm2_mech.experiments.geometry.run_geometry --seeds 5 --stability-dataset tsuboyama` | `results/run_biorxiv/magnitude_direction/{probe_results,geometry_results,transfer_contrast,probe4_axis_identity}.json` | 🔄 running | |
+| 6.5 | `python -m esm2_mech.experiments.geometry.conservation_axis --extract` | `data/conservation_pathogenicity.npy`, `data/conservation_pathogenicity_meta.json` | ⬜ | Queued after 6.2 |
+| 6.7 | `python -m esm2_mech.experiments.geometry.conservation_axis` | `results/run_biorxiv/magnitude_direction/conservation_axis.json` | ⬜ | Queued after 6.5 |
 
 ## 7. Experiment: Megascale stability positive control
 
@@ -115,10 +114,11 @@ labels, to confirm the embeddings carry signal independent of ClinVar curation.
 
 | Step | Command | Outputs | Status |
 |---|---|---|---|
-| 7.1 | `python -m esm2_mech.experiments.stability.build_domain_families` | `data/megascale_domain_families.json` | ⬜ |
-| 7.2 | `python -m esm2_mech.experiments.stability.megascale_stability` | `results/run_biorxiv/megascale_stability/per_protein_spearman.json`, `h3_stability_projection.json`, `summary.json` | ⬜ |
-| 7.3 | `python -m esm2_mech.experiments.stability.megascale_mlp --xgboost` | `results/run_biorxiv/megascale_stability/mlp_summary_xgb.json` | ⬜ |
-| 7.4 | `python -m esm2_mech.experiments.stability.stability_baselines` | `results/run_biorxiv/megascale_stability/baselines.json` | ⬜ |
+| 7.1 | `python -m esm2_mech.experiments.stability.build_domain_families` | `data/megascale_domain_families.json` | ✅ reused | File already present on pod |
+| 7.2 | `python -m esm2_mech.experiments.stability.megascale_stability` | `results/run_biorxiv/megascale_stability/per_protein_spearman.json`, `h3_stability_projection.json`, `summary.json` | 🔄 running | tmux `step72` |
+| 7.3 | `python -m esm2_mech.experiments.stability.megascale_mlp` | `results/run_biorxiv/megascale_stability/mlp_summary.json` | 🔄 running | tmux `step73` |
+| 7.3a | `python -m esm2_mech.experiments.stability.megascale_mlp --xgboost` | `results/run_biorxiv/megascale_stability/mlp_summary_xgb.json` | 🔄 running | tmux `step73a` |
+| 7.4 | `python -m esm2_mech.experiments.stability.stability_baselines` | `results/run_biorxiv/megascale_stability/baselines.json` | 🔄 running | tmux `step74` |
 
 ## 8. Experiment: Enzyme type classification (positive control)
 
