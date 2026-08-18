@@ -22,6 +22,7 @@ from esm2_mech.experiments.stability.stability_data import (
 )
 from esm2_mech.utils.bootstrap import (
     cluster_bootstrap_ci,
+    paired_cluster_bootstrap_diff,
     paired_cluster_bootstrap_diff_cross_partition,
 )
 from esm2_mech.utils.constants import BOOTSTRAP_N_RESAMPLES, N_SEEDS, N_FOLDS
@@ -159,6 +160,7 @@ def run_h3_stability_projection(
     stability_ddg,
     n_folds=5,
     n_seeds=5,
+    n_boot=BOOTSTRAP_N_RESAMPLES,
 ):
     """Project stability out of mechanism delta_mean; compare family-split F1."""
     from sklearn.linear_model import LogisticRegression
@@ -197,10 +199,12 @@ def run_h3_stability_projection(
     y = le.fit_transform(merged_labels)
 
     baseline_f1s, projected_f1s = [], []
+    seed0_oof = {}
     for seed in range(n_seeds):
         splits = family_split_cv(merged_proteins, pfam_map, n_folds=n_folds, seed=seed)
         for X, tag in [(merged_scaled, "baseline"), (residuals, "projected")]:
             fold_f1s = []
+            oof_y, oof_pred, oof_genes = [], [], []
             for tr, te in splits:
                 # No per-fold StandardScaler: X is already sc_s-standardised, and
                 # re-standardising would undo the projection (see note above). Both
@@ -216,31 +220,92 @@ def run_h3_stability_projection(
                 fold_f1s.append(
                     float(f1_score(y[te], pred, average="macro", zero_division=0))
                 )
+                if seed == 0:
+                    oof_y.append(y[te])
+                    oof_pred.append(pred)
+                    oof_genes.append(merged_proteins[te])
             seed_f1_mean, _, _ = mean_std_n(fold_f1s)
             if tag == "baseline":
                 baseline_f1s.append(seed_f1_mean)
             else:
                 projected_f1s.append(seed_f1_mean)
+            if seed == 0 and oof_y:
+                seed0_oof[tag] = {
+                    "y_true": np.concatenate(oof_y),
+                    "pred": np.concatenate(oof_pred),
+                    "genes": np.concatenate(oof_genes),
+                }
 
     baseline_f1_mean, baseline_f1_std, _ = mean_std_n(baseline_f1s)
     projected_f1_mean, projected_f1_std, _ = mean_std_n(projected_f1s)
+    difference_ci = None
+    if "baseline" in seed0_oof and "projected" in seed0_oof:
+        baseline_oof = seed0_oof["baseline"]
+        projected_oof = seed0_oof["projected"]
+        if not np.array_equal(baseline_oof["genes"], projected_oof["genes"]):
+            raise AssertionError("H3 baseline and projected OOF rows are not aligned")
+        clusters = np.array(
+            [pfam_map[gene] for gene in baseline_oof["genes"]], dtype=object
+        )
+
+        def _projected_f1(rows):
+            return float(
+                f1_score(
+                    projected_oof["y_true"][rows],
+                    projected_oof["pred"][rows],
+                    average="macro",
+                    zero_division=0,
+                )
+            )
+
+        def _baseline_f1(rows):
+            return float(
+                f1_score(
+                    baseline_oof["y_true"][rows],
+                    baseline_oof["pred"][rows],
+                    average="macro",
+                    zero_division=0,
+                )
+            )
+
+        difference_ci = paired_cluster_bootstrap_diff(
+            clusters,
+            _projected_f1,
+            _baseline_f1,
+            n_resamples=n_boot,
+            seed=0,
+        )
+    if difference_ci is None or difference_ci.get("ci_high") is None:
+        h3_verdict = "not adjudicated (paired family-bootstrap CI unavailable)"
+    elif difference_ci["ci_high"] <= 0.01:
+        h3_verdict = "pass — established"
+    elif difference_ci["ci_low"] > 0.01:
+        h3_verdict = "fail — established"
+    else:
+        h3_verdict = "underpowered — CI overlaps +0.01 threshold"
     return {
         "baseline_f1_mean": baseline_f1_mean,
         "baseline_f1_std": baseline_f1_std,
         "projected_f1_mean": projected_f1_mean,
         "projected_f1_std": projected_f1_std,
         "delta_f1": projected_f1_mean - baseline_f1_mean,
-        "h3_passes": projected_f1_mean <= baseline_f1_mean + 0.01,
+        "difference_ci": difference_ci,
+        "h3_passes": h3_verdict == "pass — established",
+        "h3_verdict": h3_verdict,
     }
 
 
 
-def apply_decision_rule(random_rho, protein_rho, per_prot_std):
+def apply_decision_rule(random_rho, protein_rho, per_prot_std, h2_gap_ci=None):
     """Apply pre-registered decision rule, ordered by informativeness."""
     delta = random_rho - protein_rho
     # Check in order of informativeness
     if random_rho >= 0.5 and delta >= 0.10:
-        return "LEAKY"
+        if h2_gap_ci is None or h2_gap_ci.get("ci_low") is None:
+            return "NOT ADJUDICATED (H2 paired CI unavailable)"
+        if h2_gap_ci["ci_low"] >= 0.10:
+            return "LEAKY"
+        return "UNDERPOWERED (H2 point estimate is LEAKY; CI overlaps 0.10)"
     if random_rho >= 0.5 and delta <= 0.05 and per_prot_std >= 0.15:
         return "HETEROGENEOUS"
     if random_rho >= 0.5 and delta <= 0.05 and per_prot_std <= 0.10:
@@ -385,6 +450,7 @@ def main(compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES):
             ddg,
             n_folds=N_FOLDS,
             n_seeds=N_SEEDS,
+            n_boot=n_boot,
         )
         print(
             f"  H3: baseline F1={h3_result['baseline_f1_mean']:.3f}  "
@@ -442,7 +508,7 @@ def main(compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES):
     dm_random = summary.get("delta_mean_random", {}).get("spearman_mean", float("nan"))
     dm_family = summary.get("delta_mean_family", {}).get("spearman_mean", float("nan"))
 
-    verdict = apply_decision_rule(dm_random, dm_family, per_prot_std)
+    verdict = apply_decision_rule(dm_random, dm_family, per_prot_std, h2_gap_ci)
     summary["verdict"] = verdict
     if h2_gap_ci is not None:
         summary["h2_gap_ci"] = h2_gap_ci
