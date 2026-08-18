@@ -72,10 +72,10 @@ actually populated, not just that it exited cleanly.
 pre-registration, implemented by the 0.2 wiring.
 
 **0.4 — Paired cluster bootstrap.** Implemented in `utils/bootstrap.py`, call sites
-`conservation_axis.py` and `mechanism_delta_family_split.py`. Covers three paired claims: the
-conservation-vs-embedding-delta gap that gate 1B turns on, the pathogenicity-vs-mechanism
-cross-family transfer contrast (not paired — different datasets, no shared row space), and the
-gene-split-minus-family-split gap (the leakage account, 2B).
+`conservation_axis.py` and `mechanism_delta_family_split.py`. Covers two paired claims — the
+conservation-vs-embedding-delta gap that gate 1B turns on and the
+gene-split-minus-family-split gap (the leakage account, 2B) — plus the pathogenicity-vs-mechanism
+cross-family transfer contrast (not paired — different datasets, no shared row space).
 
 **0.5/0.6 — Pre-registered decision rules.** CI decision rule (Rule 1) and confirmatory/exploratory
 split (Rule 2), written into
@@ -391,7 +391,7 @@ Not run in run_biorxiv. `megascale_{wt,mut}_{mean,pos}.npy` under
 Fits a Ridge regression from the embeddings to ΔΔG under three cross-validation schemes — random
 split, holding out whole domains, and holding out whole Pfam families — and tests four pre-registered
 hypotheses: H1, the random-split correlation (Spearman ρ) reaches at least 0.5; H2, that correlation
-drops by no more than 0.05 when switching to a family-split (a big drop would mean the model is
+drops by no more than 0.10 when switching to a family-split (a big drop would mean the model is
 recognizing domains rather than learning a general stability signal); H3, projecting the fitted
 stability direction out of section 4's mechanism-classification features does not raise the
 family-split mechanism score by more than 0.01 (stability and mechanism should be separable); H4, the

@@ -80,7 +80,7 @@ estimates. Stated in every probe report, since every claim in the paper is a dis
 
 ### 1.5 No multiplicity correction
 
-No verdict in the five-claim confirmatory set (Part 2) turns on a borderline p or CI: two clear
+No verdict in the four-claim confirmatory set (Part 2) turns on a borderline p or CI: two clear
 their thresholds by wide margins and one is a null claim, where raising the bar for rejection would
 make it easier to assert, not harder. Enumerating the set in advance (Part 2) is the safeguard
 instead.
@@ -213,14 +213,14 @@ sample size.
 
 ### 2C — pathogenicity positive control (Runbook §5)
 
-CI must exclude 0.85. Resampled by gene, not family — this experiment's classes are balanced by
+CI must exclude 0.85. Resampled by family, not gene — this experiment's classes are balanced by
 construction, but genes still cluster into families, so the resampling unit rule (§1.2) still
 applies; the calibration caveat (§1.4) still governs how the result is described. **Would overturn
 2C:** the CI includes 0.85 — the positive control would no longer license the dissociation, and the
 whole paper weakens.
 
 **Checklist:**
-- [ ] CI is resampled by gene, not family.
+- [ ] CI is resampled by family, not gene.
 - [ ] Report states the probe measures discrimination only, not a calibrated risk estimate (§1.4).
 - [ ] Verdict recorded as overturned only if the CI includes 0.85.
 
@@ -252,7 +252,7 @@ a positive finding under test.
 ### Not part of the confirmatory set: stability control gates H1–H4 (Runbook §7)
 
 A second positive control with its own pass bar (H1–H4), governed by the same verdict rule (§1.1)
-and resampling rule (§1.2), but not one of the five claims the paper's thesis rests on.
+and resampling rule (§1.2), but not one of the four claims the paper's thesis rests on.
 
 ---
 

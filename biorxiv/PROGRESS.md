@@ -140,9 +140,9 @@ labels, to confirm the embeddings carry signal independent of ClinVar curation.
 | Step | Command | Outputs | Status |
 |---|---|---|---|
 | 7.1 | `python -m esm2_mech.experiments.stability.build_domain_families` | `data/megascale_domain_families.json` | ⬜ |
-| 7.2 | `python -m esm2_mech.experiments.stability.megascale_stability` | `results/<run>/megascale_stability/per_protein_spearman.json`, `h3_stability_projection.json`, `summary.json` | ⬜ |
-| 7.3 | `python -m esm2_mech.experiments.stability.megascale_mlp --xgboost` | `results/<run>/megascale_stability/mlp_summary_xgb.json` | ⬜ |
-| 7.4 | `python -m esm2_mech.experiments.stability.stability_baselines` | `results/<run>/megascale_stability/baselines.json` | ⬜ |
+| 7.2 | `python -m esm2_mech.experiments.stability.megascale_stability` | `results/run_biorxiv/megascale_stability/per_protein_spearman.json`, `h3_stability_projection.json`, `summary.json` | ⬜ |
+| 7.3 | `python -m esm2_mech.experiments.stability.megascale_mlp --xgboost` | `results/run_biorxiv/megascale_stability/mlp_summary_xgb.json` | ⬜ |
+| 7.4 | `python -m esm2_mech.experiments.stability.stability_baselines` | `results/run_biorxiv/megascale_stability/baselines.json` | ⬜ |
 
 ## Verification checklist
 
