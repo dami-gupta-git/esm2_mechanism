@@ -106,4 +106,4 @@ Computed by `experiments/mechanism/leakage_fraction.py` from
 seeds), with the chance floor read from `results/run6/naive_baseline.json` (majority-class
 macro-F1 = 0.288) and within-family agreement from `results/run6/family_clustering.json`.
 Output: [`results/run6/leakage_fraction.json`](../../results/run6/leakage_fraction.json). Full
-run log: [`RUN_PROGRESS.md`](../../RUN_PROGRESS.md), Run 6.
+run log: [`RUN_PROGRESS.md`](../../bak/RUN_PROGRESS.md), Run 6.

@@ -373,7 +373,7 @@ than biology.
 
 The embedding step is skipped: `megascale_{wt,mut}_{mean,pos}.npy` already exist locally, extracted
 in an earlier run, and are unaffected by this run's ClinVar refresh since this experiment has no
-ClinVar dependency. Step 7.2's H3 test does read `valid_variants.json` and the section 4
+ClinVar dependency. Step 7.2's 3C test does read `valid_variants.json` and the section 4
 embeddings, so run step 7.2 after step 4.1 has produced a current `valid_variants.json`.
 
 ### Assign Pfam families (CPU)
@@ -396,18 +396,18 @@ Not run in run_biorxiv. `megascale_{wt,mut}_{mean,pos}.npy` under
 
 Fits a Ridge regression from the embeddings to ΔΔG under three cross-validation schemes — random
 split, holding out whole domains, and holding out whole Pfam families — and tests four pre-registered
-hypotheses: H1, the random-split correlation (Spearman ρ) reaches at least 0.5; H2, that correlation
+hypotheses: 3A, the random-split correlation (Spearman ρ) reaches at least 0.5; 3B, that correlation
 drops by no more than 0.10 when switching to a family-split (a big drop would mean the model is
-recognizing domains rather than learning a general stability signal); H3, projecting the fitted
+recognizing domains rather than learning a general stability signal); 3C, projecting the fitted
 stability direction out of section 4's mechanism-classification features does not raise the
-family-split mechanism score by more than 0.01 (stability and mechanism should be separable); H4, the
+family-split mechanism score by more than 0.01 (stability and mechanism should be separable); 3D, the
 per-domain spread in correlation stays tight (standard deviation ≤ 0.10).
 
 | Step | Command | Description | Inputs | Outputs |
 |---|---|---|---|---|
-| 7.2 | `python -m esm2_mech.experiments.stability.megascale_stability --n_jobs 4` | 🟡 CPU — more cores help. Ridge probe from embeddings to ΔΔG under random/domain/family splits | `megascale_tsuboyama_variants.json`, `megascale_domain_families.json`, `data/embeddings/esm2_t33_650M_UR50D/megascale_{wt,mut}_{mean,pos}.npy`, `valid_variants.json` | `results/<run>/megascale_stability/per_protein_spearman.json`, `h3_stability_projection.json`, `summary.json` |
+| 7.2 | `python -m esm2_mech.experiments.stability.megascale_stability --n_jobs 4` | 🟡 CPU — more cores help. Ridge probe from embeddings to ΔΔG under random/domain/family splits | `megascale_tsuboyama_variants.json`, `megascale_domain_families.json`, `data/embeddings/esm2_t33_650M_UR50D/megascale_{wt,mut}_{mean,pos}.npy`, `valid_variants.json` | `results/<run>/megascale_stability/per_protein_spearman.json`, `stability_projection_3c.json`, `summary.json` |
 
-`--n_jobs` is required, not optional: the per-seed, per-protein, and H3 loops each fork a worker
+`--n_jobs` is required, not optional: the per-seed, per-protein, and 3C loops each fork a worker
 that standardizes and fits against most of the 177k×1280 embedding matrix, so an unbounded worker
 count (`-1`) can exhaust RAM. Start at `--n_jobs 4`, watch peak RAM, and raise only if it fits.
 
@@ -427,7 +427,7 @@ scikit-learn gradient boosting. The separate `--xgboost` command runs only XGBoo
 
 ### Controls (CPU)
 
-Exploratory checks on the step 7.2 linear signal, not part of the pre-registered H1–H4 verdict:
+Exploratory checks on the step 7.2 linear signal, not part of the pre-registered 3A–3D verdict:
 whether a single feature (the size of the embedding shift, ignoring its direction) recovers most of
 the full signal; the regularization strength chosen by nested cross-validation, so the main probe's
 result isn't an artifact of one fixed setting; a label-shuffle null, where the ΔΔG values are
@@ -442,8 +442,8 @@ stability signal actually occupies.
 `--n_jobs` is required here too, for the same reason as step 7.2 — its per-seed loops fork workers
 against the full embedding matrix. Start at `--n_jobs 4`.
 
-Gates are unchanged from run6: H1 random-split ρ ≥ 0.5, H2 the random-to-family-split drop stays
-below 0.10, H3 the mechanism-F1 change from projecting out stability stays ≤ +0.01, H4 per-domain ρ
+Gates are unchanged from run6: 3A random-split ρ ≥ 0.5, 3B the random-to-family-split drop stays
+below 0.10, 3C the mechanism-F1 change from projecting out stability stays ≤ +0.01, 3D per-domain ρ
 standard deviation stays tight. run_biorxiv's only addition here is confidence intervals on these
 figures; since this experiment has no ClinVar dependency, it is the one part of this run that
 isolates the effect of the new statistics from any effect of the refreshed ClinVar snapshot.

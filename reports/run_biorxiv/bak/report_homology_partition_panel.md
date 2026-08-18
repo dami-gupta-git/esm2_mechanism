@@ -136,4 +136,4 @@ cross-check only). Chance floor from `results/run6/naive_baseline.json`. Clan as
 `data/downloads/Pfam-A.clans.tsv.gz` (Pfam-A clans release); MMseqs2 clusters from
 `data/mmseqs_clusters.json` (20% sequence-identity clustering). Output:
 [`results/run6/homology_partition_panel/panel.json`](../../../for_me/homology_partition_panel/panel.json).
-Full run log: [`RUN_PROGRESS.md`](../../../RUN_PROGRESS.md), Run 6.
+Full run log: [`RUN_PROGRESS.md`](../../../bak/RUN_PROGRESS.md), Run 6.

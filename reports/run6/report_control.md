@@ -162,4 +162,4 @@ probe). ClinVar `variant_summary.txt.gz` filtered to GRCh38 missense, balanced p
 wt_only} × {gene-split, family-split}, written per seed to
 `results/run6/pathogenicity_control_seed{0..4}.json` and aggregated to
 [`pathogenicity_control.json`](../../results/run6/pathogenicity_control.json). Full run log:
-[`RUN_PROGRESS.md`](../../RUN_PROGRESS.md), Run 6, row 15.
+[`RUN_PROGRESS.md`](../../bak/RUN_PROGRESS.md), Run 6, row 15.

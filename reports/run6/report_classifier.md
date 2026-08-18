@@ -291,4 +291,4 @@ Sources:
 - Nonlinear results (all four models, both splits): `experiments/mechanism/mlp`, 5 seeds → `results/run6/nonlinear_results_seed{0..4}.json`. Keys: `<model>_delta_mean_<split>` for `model ∈ {mlp, knn, gbm, rf}` and `split ∈ {gene, family}`.
 - Naive baseline row (0.288 / 0.50): `experiments/mechanism/naive_baseline.py`, a majority-class `DummyClassifier` run under the same labels and 5-seed gene/family-split CV as the feature rows → `results/run6/naive_baseline.json`.
 
-Full log: [`RUN_PROGRESS.md`](../../RUN_PROGRESS.md), Run 6.
+Full log: [`RUN_PROGRESS.md`](../../bak/RUN_PROGRESS.md), Run 6.

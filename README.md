@@ -72,27 +72,7 @@ Embedding extraction needs a CUDA GPU; every probe and bootstrap step runs on CP
 
 ---
 
-## Quickstart
-
-Run from the repo root. Each command writes into the run directory named by `RUN_NAME` in
-`utils/paths.py`.
-
-```bash
-# Mechanism: linear baselines under gene-split and family-split CV (CPU, 5 seeds)
-python -m esm2_mech.experiments.mechanism.classify_by_mechanism --seeds 5
-
-# Mechanism: nonlinear probes on cached embeddings (CPU, 5 seeds)
-python -m esm2_mech.experiments.mechanism.mlp --seeds 5
-
-# Pathogenicity positive control (CPU probe phase, 5 seeds)
-python -m esm2_mech.experiments.pathogenicity.pathogenicity_control --phase probe
-
-# Megascale stability positive control (CPU, parallelism must be set explicitly)
-python -m esm2_mech.experiments.stability.megascale_stability --n_jobs 4
-
-# Enzyme-type positive control (CPU, 5 seeds)
-python -m esm2_mech.experiments.proteome_features.enzyme_classification --seeds 5
-```
+## RUN
 
 `biorxiv/RUNBOOK_biorxiv.md` has the full ordered command list, including the GPU embedding steps,
 and `biorxiv/PROGRESS.md` records what has been executed. For RunPod setup and remote execution, see

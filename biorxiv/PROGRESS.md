@@ -105,7 +105,7 @@ Asks what the pathogenicity direction in embedding space actually corresponds to
 | 6.1 | `python -m esm2_mech.experiments.geometry.build_canonical_pathogenicity` | `data/pathogenicity_valid_variants_canonical.json` | ✅ 2026-08-18 | |
 | 6.2 | `python -m esm2_mech.experiments.geometry.run_geometry --seeds 5 --stability-dataset tsuboyama` | `results/run_biorxiv/magnitude_direction/{probe_results,geometry_results,transfer_contrast,probe4_axis_identity}.json` | ✅ 2026-08-18 | |
 | 6.5 | `python -m esm2_mech.experiments.geometry.conservation_axis --extract` | `data/conservation_pathogenicity.npy`, `data/conservation_pathogenicity_meta.json` | ✅ 2026-08-18 | |
-| 6.7 | `python -m esm2_mech.experiments.geometry.conservation_axis` | `results/run_biorxiv/magnitude_direction/conservation_axis.json` | ✅ 2026-08-18 | |
+| 6.7 | `python -m esm2_mech.experiments.geometry.conservation_axis` | `results/run_biorxiv/magnitude_direction/conservation_axis.json` | ⚠️ regenerate | Analysis completed on 2026-08-18, but its saved output uses obsolete K1/K2/C4 identifiers and must be regenerated after the numbering correction. |
 
 ## 7. Experiment: Megascale stability positive control
 
@@ -115,7 +115,7 @@ labels, to confirm the embeddings carry signal independent of ClinVar curation.
 | Step | Command | Outputs | Status |
 |---|---|---|---|
 | 7.1 | `python -m esm2_mech.experiments.stability.build_domain_families` | `data/megascale_domain_families.json` | ✅ reused | |
-| 7.2 | `python -m esm2_mech.experiments.stability.megascale_stability --n_jobs 4` | `results/run_biorxiv/megascale_stability/per_protein_spearman.json`, `h3_stability_projection.json`, `summary.json` | ✅ 2026-08-18 | Reran on new pod after fixing stale pre-loaded data files and adding required `--n_jobs`; verdict matches prior run (LEAKY) |
+| 7.2 | `python -m esm2_mech.experiments.stability.megascale_stability --n_jobs 4` | `results/run_biorxiv/megascale_stability/per_protein_spearman.json`, `stability_projection_3c.json`, `summary.json` | ⚠️ regenerate | Analysis completed on 2026-08-18 with the expected verdict, but its saved output uses obsolete H2/H3 identifiers and must be regenerated after the numbering correction. |
 | 7.3 | `python -m esm2_mech.experiments.stability.megascale_mlp` | `results/run_biorxiv/megascale_stability/mlp_summary.json` | ✅ 2026-08-18 | cuML GPU RF |
 | 7.4 | `python -m esm2_mech.experiments.stability.megascale_mlp --xgboost` | `results/run_biorxiv/megascale_stability/mlp_summary_xgb.json` | ✅ 2026-08-18 | GPU XGBoost |
 | 7.5 | `python -m esm2_mech.experiments.stability.stability_baselines --n_jobs 64` | `results/run_biorxiv/megascale_stability/baselines.json` | ✅ 2026-08-18 | |
@@ -127,7 +127,7 @@ from its WT mean-pooled ESM-2 embedding.
 
 | Step | Command | Outputs | Status |
 |---|---|---|---|
-| 8.1 | `python -m esm2_mech.experiments.proteome_features.enzyme_classification --seeds 5` | `results/run_biorxiv/enzyme_classification/enzyme_classification_summary.json` | ✅ 2026-08-18 | 2E.1 fails (underpowered, F1=0.691 CI covers 0.70); 2E.2 passes; 2E.3 passes on point estimate only |
+| 8.1 | `python -m esm2_mech.experiments.proteome_features.enzyme_classification --seeds 5` | `results/run_biorxiv/enzyme_classification/enzyme_classification_summary.json` | ✅ 2026-08-18 | 2F fails (underpowered, F1=0.691 CI covers 0.70); 2G passes; 2H passes on point estimate only |
 
 ## Verification checklist
 

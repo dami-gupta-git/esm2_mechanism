@@ -22,9 +22,9 @@ that are actually specified.
 
 ## Task 2b — homology-partition robustness panel (cut from run_biorxiv, committed panel withdrawn)
 
-The mechanism null is measured under the Pfam family partition only. C6 was removed from the
-confirmatory set and the coarser-partition check is named in the paper as follow-up work, so the
-paper claims partition-independence nowhere and must not imply it (Rule 2).
+The mechanism null is measured under the Pfam family partition only. A proposed partition-robustness
+claim was removed from the confirmatory set, and the coarser-partition check is named in the paper as
+follow-up work. The paper claims partition-independence nowhere and must not imply it.
 
 **The committed panel is defective and is withdrawn, not amended.** Anyone reviving this starts
 from a rerun, not from `results/run_biorxiv/homology_partition_panel/panel.json`, which is deleted.
@@ -173,7 +173,7 @@ is a second reference implementation.
    step, and the only meaningful compute cost in this task.
 2. **Deriving the axis.** Conservation is a scalar per variant, not a vector, so "the
    conservation axis" in embedding space has to be constructed — regress `delta_mean` on the
-   conservation scalar and take the fitted direction, exactly as H3 does with predicted
+   conservation scalar and take the fitted direction, exactly as stability control 3C does with predicted
    stability. This is the one part worth designing rather than copying.
 
 **Two preconditions, both cheap, both determining whether the result is interpretable at all.**
@@ -200,7 +200,7 @@ exactly when a framing chosen afterwards is indefensible. Write the prediction i
 >
 > Floor is the measured majority-class macro-F1 from `naive_baseline.json`, not a nominal 1/3.
 
-**Precedent — the structurally identical test already returned ~zero.** H3 in
+**Precedent — the structurally identical test already returned ~zero.** Stability control 3C in
 `megascale_stability.py` performed the same operation with the *stability* axis and moved
 mechanism family-split macro-F1 by **−0.00053** (baseline 0.3947 → projected 0.3942,
 `results/run6/megascale_stability/h3_stability_projection.json`). It replicates: the same test

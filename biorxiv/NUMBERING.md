@@ -1,49 +1,47 @@
 # Numbering key
 
-Old identifiers used in earlier drafts, mapped to the current numbering. This file exists so a
-reference to an old ID can still be resolved; new writing should use the current ID only.
+`PREREGISTRATION_run_biorxiv.md` is the authority for current identifiers. This file maps identifiers
+from earlier drafts to that schema. New writing and generated outputs use only the current identifiers.
 
-## Rules
+## General rules
 
-| Old | Current | Title |
+| Old | Current | Subject |
 |---|---|---|
-| R7.1 | Rule 1 | CI decision rule for gate verdicts |
-| R7.2 | Rule 2 | Confirmatory / exploratory split |
-| R7.3 | Rule 3 | Resampling unit |
-| R7.4 | Rule 4 | Rare-class intervals |
-| R7.5 | Rule 5 | Permutation budget |
-| R7.6 | Rule 6 | Calibration |
-| R7.7 | Rule 7 | What would change the conclusions |
+| R7.1 | 1.1 | Gate verdicts |
+| R7.3 | 1.2 | Resampling units and pairing |
+| R7.4 | 1.3 | Rare-class intervals |
+| R7.6 | 1.4 | Calibration |
+| R7.2 | Part 2 and Part 4 | Confirmatory and exploratory analyses |
+| R7.5 | 2A | Permutation-test design and budget |
+| R7.7 | Part 5 | Conditions that would change the conclusions |
 
-## Gates (Rule 1's table)
-
-| Old | Current | Criterion |
-|---|---|---|
-| K1 | 1A | conservation alone AUROC > 0.85 |
-| K2 | 1B | conservation + delta improves over conservation by > 0.02 |
-| K2b | 1C | conservation + delta improves over delta alone |
-| H2 | 1D | stability random→family rho drop < 0.10 (LEAKY) |
-
-## Confirmatory claims (Rule 2's table)
+## Confirmatory claims
 
 | Old | Current | Claim |
 |---|---|---|
-| C1 | 2A | mechanism delta sits at the measured chance floor under family-split |
-| C2 | 2B | absolute-embedding gene→family gap is non-zero (homology leakage exists) |
-| C3 | 2C | pathogenicity clears AUROC 0.85 family-split (positive control) |
-| C4 | 2D | conservation alone matches or beats the embedding delta for pathogenicity |
+| C1 | 2A | Mechanism delta sits at the measured chance floor under family-split evaluation |
+| C2 | 2B | The absolute-embedding gene-to-family gap is non-zero |
+| C3 | 2C | Pathogenicity clears family-split AUROC 0.85 |
+| K1, C4 | 2D | Conservation alone clears family-split AUROC 0.85 |
+| K2 | 2E | Adding the embedding delta to conservation improves AUROC by more than 0.02 |
+| 2E.1 | 2F | Enzyme classification clears family-split LogReg macro-F1 0.70 |
+| 2E.2 | 2G | Enzyme family-split F1 substantially exceeds the mechanism floor |
+| 2E.3 | 2H | MLP does not substantially outperform LogReg for enzyme classification |
+
+`K2b`, conservation plus delta versus delta alone, is descriptive and has no confirmatory claim
+identifier in the current preregistration.
+
+## Stability controls
+
+| Old | Current | Control |
+|---|---|---|
+| H1 | 3A | Random-split Spearman correlation reaches 0.5 |
+| H2 | 3B | Random-to-family Spearman drop stays below 0.10 |
+| H3 | 3C | Removing the stability direction does not improve mechanism F1 by more than 0.01 |
+| H4 | 3D | Per-domain Spearman spread remains within its threshold |
 
 ## Scope
 
-This mapping applies to the live documents only: `PREREGISTRATION_run_biorxiv.md`,
-`RUNBOOK_biorxiv.md`, `PROGRESS.md`, `FOLLOWUP_biorxiv.md`, `README.md`, `new_ideas.md`.
-
-Retired documents (`PLAN.md`, `PLAN_short.md`, `RUNBOOK_biorxiv_old.md`,
-`RUNBOOK_biorxiv_original.md`) and every reference outside `biorxiv/` — including run0/run6 reports
-and the source code that implements these gates — keep the old identifiers. They are frozen
-records of what was written and run at the time; renumbering them would misrepresent that record.
-
-Not covered by this mapping: `H1`, `H3`, `H4` in `RUNBOOK_biorxiv.md` section 7 are a separate,
-experiment-local hypothesis set for the megascale stability probe. They were never part of the
-pre-registration's Rule 1 gate table (only `H2`/`1D` was), so they are left as-is rather than
-folded into this scheme.
+The current identifiers apply to live bioRxiv documents, source code that emits bioRxiv results,
+tests of those contracts, and newly generated reports. Retired plans, prior-run reports, and saved
+logs remain historical records and are not rewritten.
