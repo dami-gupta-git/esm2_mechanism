@@ -65,6 +65,21 @@ def load_pfam_map(path: Path) -> dict[str, str | None]:
         return json.load(f)
 
 
+def load_gene_universe(tsv_path: Path) -> tuple[list[str], dict[str, str]]:
+    """Return (genes_in_order, {gene: pfam_family}) from gene_universe.tsv."""
+    genes: list[str] = []
+    families: dict[str, str] = {}
+    with open(tsv_path) as f:
+        reader = csv.DictReader(f, delimiter="\t")
+        for row in reader:
+            g = row["gene"].strip()
+            if g and g not in families:
+                genes.append(g)
+                families[g] = row["pfam_family"].strip()
+    print(f"Gene universe: {len(genes)} genes from {tsv_path.name}")
+    return genes, families
+
+
 def load_variants(path: Path) -> list[dict]:
     """Load and filter the merged variant dataset from path.
 

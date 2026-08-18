@@ -6,6 +6,7 @@ import pandas as pd
 from pathlib import Path
 import functools
 
+from esm2_mech.utils.data import load_gene_universe
 from esm2_mech.utils.io import save_npy
 from esm2_mech.utils.paths import (
     BADONYI_FEATURES_ALIGNED,
@@ -32,12 +33,6 @@ def load_badonyi_predictions():
     df = df[["gene", "pDN", "pGOF", "pLOF"]].copy()
     df = df.rename(columns={"gene": "gene_badonyi"})
     print(f"  Loaded {len(df)} genes from S3 Table")
-    return df
-
-
-def load_gene_universe():
-    df = pd.read_csv(GENE_UNIVERSE, sep="\t")
-    print(f"  Gene universe: {len(df)} genes")
     return df
 
 
@@ -86,8 +81,8 @@ def main():
         )
 
     bad = load_badonyi_predictions()
-    merged = load_gene_universe()
-    pfam = dict(zip(merged["gene"], merged["pfam_family"]))
+    genes, pfam = load_gene_universe(GENE_UNIVERSE)
+    pfam = {gene: (family or None) for gene, family in pfam.items()}
 
     dup_mask = bad["gene_badonyi"].duplicated(keep=False)
     if dup_mask.any():
@@ -99,7 +94,7 @@ def main():
         bad = bad.drop_duplicates(subset="gene_badonyi", keep="first")
     bad_lookup = bad.set_index("gene_badonyi")[["pDN", "pGOF", "pLOF"]]
 
-    result = merged[["gene"]].copy()
+    result = pd.DataFrame({"gene": genes})
     result["pDN"] = result["gene"].map(bad_lookup["pDN"])
     result["pGOF"] = result["gene"].map(bad_lookup["pGOF"])
     result["pLOF"] = result["gene"].map(bad_lookup["pLOF"])

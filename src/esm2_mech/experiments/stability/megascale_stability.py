@@ -28,10 +28,15 @@ from esm2_mech.utils.bootstrap import (
     paired_cluster_bootstrap_diff_cross_partition,
     score_within_folds,
 )
-from esm2_mech.utils.constants import BOOTSTRAP_N_RESAMPLES, N_SEEDS, N_FOLDS
+from esm2_mech.utils.constants import (
+    BOOTSTRAP_N_RESAMPLES,
+    MECHANISM_CLASSES,
+    N_SEEDS,
+    N_FOLDS,
+)
 from esm2_mech.utils.data import load_pfam_map
 from esm2_mech.utils.io import atomic_write_json
-from esm2_mech.utils.metrics import auroc_at_median, mean_std_n, standardize
+from esm2_mech.utils.metrics import auroc_at_median, fold_macro_f1, mean_std_n, standardize
 from esm2_mech.utils.splits import family_split_cv
 from esm2_mech.utils.paths import (
     DATA_DIR as _DATA_DIR,
@@ -193,7 +198,6 @@ def run_stability_projection_3c(
 ):
     """Project stability out of mechanism delta_mean; compare family-split F1."""
     from sklearn.linear_model import LogisticRegression
-    from sklearn.preprocessing import LabelEncoder
     from sklearn.metrics import f1_score
 
     # Fit stability Ridge on the stability (Tsuboyama) set
@@ -224,8 +228,7 @@ def run_stability_projection_3c(
             "leaked back in, so the projected arm still contains stability signal."
         )
 
-    le = LabelEncoder()
-    y = le.fit_transform(merged_labels)
+    y = np.asarray(merged_labels)
 
     def _run_3c_seed(seed, collect_oof):
         splits = family_split_cv(merged_proteins, pfam_map, n_folds=n_folds, seed=seed)
@@ -291,9 +294,7 @@ def run_stability_projection_3c(
             arms = folds_to_arms(oof["pred"], oof["folds"])
 
             def _score(block, arm_pred):
-                return float(
-                    f1_score(y_true[block], arm_pred[block], average="macro", zero_division=0)
-                )
+                return fold_macro_f1(y_true, block, arm_pred, MECHANISM_CLASSES)
             return lambda rows: score_within_folds(rows, arms, _score)
 
         # Both arms are the same fold assignment (one seed, one split), so the paired

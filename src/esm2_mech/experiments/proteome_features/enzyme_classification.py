@@ -21,7 +21,7 @@ from esm2_mech.utils.constants import (
     N_SEEDS,
     mechanism_oof_cache_filename,
 )
-from esm2_mech.utils.metrics import majority_baseline_f1
+from esm2_mech.utils.metrics import fold_macro_f1, majority_baseline_f1
 from esm2_mech.utils.splits import gene_split_cv, family_split_cv
 from esm2_mech.utils.data import build_gene_to_row, load_pfam_map
 from esm2_mech.utils.io import atomic_write_json
@@ -379,9 +379,7 @@ def run_multiseed(
         arms = folds_to_arms(pred, oof["folds"])
 
         def _fold_f1(block, arm_pred):
-            return float(
-                f1_score(y_str[block], arm_pred[block], average="macro", zero_division=0)
-            )
+            return fold_macro_f1(y_str, block, arm_pred, classes)
         return y_str, score_within_folds(np.arange(len(y_str)), arms, _fold_f1)
 
     if seed0_fs_oof is not None:

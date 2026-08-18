@@ -55,10 +55,14 @@ def _make_clf(kind, seed):
 
 def transfer_test(delta, y, groups, kind="linear", n_partitions=10, seed=0, min_pos=5):
     """Fit a probe on half the groups, score the disjoint half. Returns transfer
-    AUROC (mean over both directions and partitions) and a pooled random-split
-    reference. `kind` in {linear, gbm}."""
+    AUROC (mean over both directions and partitions) and a pooled group-disjoint
+    reference. `kind` in {linear, gbm}. `groups` (protein/family id per row) is
+    respected by both scores — a plain label-stratified split for the pooled
+    reference would let rows from the same protein/family land on both sides of
+    a fold, leaking the same signal the transfer score is designed to rule out."""
     from sklearn.preprocessing import StandardScaler
-    from sklearn.model_selection import StratifiedKFold
+
+    from esm2_mech.utils.splits import family_split_indices
 
     y = np.asarray(y).astype(int)
     groups = np.asarray(groups)
@@ -87,8 +91,11 @@ def transfer_test(delta, y, groups, kind="linear", n_partitions=10, seed=0, min_
     minority = int(min(y.sum(), (1 - y).sum()))
     n_splits = min(5, minority)
     if n_splits >= 2:
-        skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=seed)
-        for tr, te in skf.split(delta, y):
+        for tr, te in family_split_indices(groups, n_splits, seed):
+            if y[tr].sum() < min_pos or (1 - y[tr]).sum() < min_pos:
+                continue
+            if y[te].sum() < min_pos or (1 - y[te]).sum() < min_pos:
+                continue
             sc = StandardScaler().fit(delta[tr])
             Xtr = sc.transform(delta[tr])
             Xte = sc.transform(delta[te])

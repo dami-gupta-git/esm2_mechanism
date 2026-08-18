@@ -8,7 +8,7 @@ from __future__ import annotations
 import argparse
 import json
 import warnings
-from collections import Counter, defaultdict
+from collections import defaultdict
 from pathlib import Path
 
 import numpy as np
@@ -19,15 +19,13 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from sklearn.ensemble import HistGradientBoostingClassifier
 from sklearn.inspection import permutation_importance
-from sklearn.neural_network import MLPClassifier
-from sklearn.preprocessing import StandardScaler, LabelEncoder
+from sklearn.preprocessing import LabelEncoder
 from sklearn.metrics import (
     roc_auc_score,
     roc_curve,
     precision_recall_curve,
     average_precision_score,
 )
-from sklearn.utils import resample
 from sklearn.calibration import calibration_curve
 import functools
 
@@ -45,6 +43,7 @@ from esm2_mech.utils.paths import (
 from esm2_mech.utils.constants import MECHANISM_CLASSES, N_FOLDS
 from esm2_mech.utils.data import observed_rows_mask
 from esm2_mech.utils.bootstrap import binary_auroc_cluster_bootstrap_ci
+from esm2_mech.utils.probes import run_mlp_cv as _shared_run_mlp_cv
 
 OUT_DIR = RESULTS_DIR
 
@@ -177,8 +176,17 @@ def run_mlp_cv(
     y: np.ndarray,
     families: np.ndarray,
     feature_idx: list[int],
+    genes: np.ndarray,
+    le: LabelEncoder,
 ) -> np.ndarray:
-    """MLP family-split CV on the fully-observed gene subset (MLPClassifier cannot consume NaN)."""
+    """MLP family-split CV on the fully-observed gene subset (MLPClassifier cannot consume NaN).
+
+    Delegates the fit/oversample/scale loop to the shared `utils.probes.run_mlp_cv`
+    (also used by 5 other experiments) rather than a second hand-rolled copy. Only
+    the restricted-subset fold construction stays local: MLPClassifier cannot
+    consume NaN, so folds must be built on the fully-observed rows, not the full
+    gene list.
+    """
     n = len(y)
     probs = np.full((n, len(CLASSES)), np.nan)
 
@@ -190,51 +198,27 @@ def run_mlp_cv(
 
     obs_rows = np.where(observed)[0]
     X_obs, y_obs = X_sub[obs_rows], y[obs_rows]
+    y_obs_str = le.inverse_transform(y_obs)
+    genes_obs = genes[obs_rows]
 
     # Folds are recomputed on the restricted subset: reusing the full-data folds
     # would leave test folds with unequal, unpredictable coverage.
     rng = np.random.default_rng(RANDOM_STATE)
     test_fold_indices = build_family_folds(families[obs_rows], N_FOLDS, rng)
-
+    splits = []
     for test_idx in test_fold_indices:
         if len(test_idx) == 0:
             continue
         train_mask = np.ones(len(obs_rows), dtype=bool)
         train_mask[test_idx] = False
-        train_idx = np.where(train_mask)[0]
+        splits.append((np.where(train_mask)[0], test_idx))
 
-        X_train, y_train = X_obs[train_idx], y_obs[train_idx]
-        scaler = StandardScaler()
-        X_train_sc = scaler.fit_transform(X_train)
-        X_test_sc = scaler.transform(X_obs[test_idx])
-
-        # Oversample minority classes
-        counts = Counter(y_train)
-        max_count = max(counts.values())
-        X_bal, y_bal = [], []
-        for cls_idx, cnt in counts.items():
-            mask = y_train == cls_idx
-            Xc, yc = X_train_sc[mask], y_train[mask]
-            if cnt < max_count:
-                Xc, yc = resample(
-                    Xc, yc, replace=True, n_samples=max_count, random_state=RANDOM_STATE
-                )
-            X_bal.append(Xc)
-            y_bal.append(yc)
-        X_bal = np.vstack(X_bal)
-        y_bal = np.concatenate(y_bal)
-
-        mlp = MLPClassifier(
-            hidden_layer_sizes=(64, 32),
-            max_iter=500,
-            early_stopping=True,
-            validation_fraction=0.1,
-            random_state=RANDOM_STATE,
-        )
-        mlp.fit(X_bal, y_bal)
-        _scatter_aligned_proba(
-            probs, obs_rows[test_idx], mlp.predict_proba(X_test_sc), mlp.classes_
-        )
+    _, oof = _shared_run_mlp_cv(
+        X_obs, y_obs_str, splits, hidden=(64, 32), seed=RANDOM_STATE,
+        classes=CLASSES, genes=genes_obs, label="MLP", return_oof=True,
+    )
+    if oof is not None:
+        probs[obs_rows[oof["row_ids"]]] = oof["proba"]
 
     _warn_unpredicted(probs, "MLP")
     return probs
@@ -846,7 +830,9 @@ def main(out_dir: Path) -> None:
     )
 
     print("Running family-split CV (MLP FULL features)...")
-    oos_probs_mlp_full = run_mlp_cv(X_labeled, y, families, full_idx)
+    oos_probs_mlp_full = run_mlp_cv(
+        X_labeled, y, families, full_idx, labeled["gene"].values, le
+    )
 
     probs_lr_full_df = np.full((len(df), len(CLASSES)), np.nan)
     probs_lr_nomiss_df = np.full((len(df), len(CLASSES)), np.nan)
@@ -1004,7 +990,9 @@ def run_seed(
     oos_lr_nomiss = run_family_split_cv(
         X_labeled, y, families, "NO_MISS", nomiss_idx, le
     )
-    oos_mlp_full = run_mlp_cv(X_labeled, y, families, full_idx)
+    oos_mlp_full = run_mlp_cv(
+        X_labeled, y, families, full_idx, labeled["gene"].values, le
+    )
 
     probs_lr_full_df = np.full((len(df), len(CLASSES)), np.nan)
     probs_lr_nomiss_df = np.full((len(df), len(CLASSES)), np.nan)

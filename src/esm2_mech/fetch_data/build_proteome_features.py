@@ -18,6 +18,7 @@ from typing import Optional
 
 import numpy as np
 
+from esm2_mech.utils.data import load_gene_universe
 from esm2_mech.utils.paths import (
     DATA_DIR,
     GENE_UNIVERSE,
@@ -102,21 +103,6 @@ def _fnum(v: str) -> Optional[float]:
         return float(v)
     except ValueError:
         return None
-
-
-def load_gene_universe(tsv_path: Path) -> tuple[list[str], dict[str, str]]:
-    """Return (genes_in_order, {gene: pfam_family}) from gene_universe.tsv."""
-    genes: list[str] = []
-    families: dict[str, str] = {}
-    with open(tsv_path) as f:
-        reader = csv.DictReader(f, delimiter="\t")
-        for row in reader:
-            g = row["gene"].strip()
-            if g and g not in families:
-                genes.append(g)
-                families[g] = row["pfam_family"].strip()
-    print(f"Gene universe: {len(genes)} genes from {tsv_path.name}")
-    return genes, families
 
 
 def get_gnomad_constraint(force: bool = False) -> dict[str, dict]:
