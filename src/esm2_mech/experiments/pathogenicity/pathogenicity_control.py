@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import functools
 import json
-from collections import defaultdict
+from collections import Counter, defaultdict
 from pathlib import Path
 
 import numpy as np
@@ -13,7 +13,7 @@ from joblib import Parallel, delayed
 
 from esm2_mech.utils.bootstrap import binary_auroc_cluster_bootstrap_ci, family_or_gene_clusters
 from esm2_mech.utils.constants import BOOTSTRAP_N_RESAMPLES, N_SEEDS
-from esm2_mech.utils.data import variants_fingerprint
+from esm2_mech.utils.data import embedding_fingerprint, pfam_fingerprint, variants_fingerprint
 from esm2_mech.utils.embed import get_esm2_embeddings_for_pairs
 from esm2_mech.utils.io import atomic_write_json, save_npy
 from esm2_mech.utils.paths import (
@@ -78,6 +78,41 @@ def _build_valid_pairs_indexed(variants, seq_cache):
     return valid_indices, valid, wt_seqs, mut_seqs, positions
 
 
+def _rebalance_after_filter(valid_indices, valid, wt_seqs, mut_seqs, positions):
+    """Re-equalize pathogenic/benign counts per gene after filtering dropped variants unevenly."""
+    pre_counts = Counter(v["label"] for v in valid)
+    by_gene_class = defaultdict(list)
+    for i, v in enumerate(valid):
+        by_gene_class[(v["gene"], v["label"])].append(i)
+
+    keep = []
+    genes_with_both = {
+        gene for (gene, label) in by_gene_class
+        if (gene, "pathogenic") in by_gene_class and (gene, "benign") in by_gene_class
+    }
+    n_dropped_genes = len({g for (g, _) in by_gene_class} - genes_with_both)
+    for gene in sorted(genes_with_both):
+        p_idx = by_gene_class[(gene, "pathogenic")]
+        b_idx = by_gene_class[(gene, "benign")]
+        n = min(len(p_idx), len(b_idx))
+        keep.extend(p_idx[:n])
+        keep.extend(b_idx[:n])
+    keep.sort()
+
+    out_indices = [valid_indices[i] for i in keep]
+    out_valid = [valid[i] for i in keep]
+    out_wt = [wt_seqs[i] for i in keep]
+    out_mut = [mut_seqs[i] for i in keep]
+    out_pos = [positions[i] for i in keep]
+
+    post_counts = Counter(v["label"] for v in out_valid)
+    n_removed = len(valid) - len(out_valid)
+    if n_removed:
+        print(f"  Rebalanced after filter: {pre_counts} -> {post_counts} "
+              f"(removed {n_removed} variants, dropped {n_dropped_genes} single-class genes)")
+    return out_indices, out_valid, out_wt, out_mut, out_pos
+
+
 def _embeddings_complete(valid_fingerprint, n_valid):
     """True only if cached embeddings match the current valid set by content fingerprint."""
     if not all(p.exists() for p in [PATH_EMB_WT_MEAN, PATH_EMB_MUT_MEAN, PATH_EMB_META]):
@@ -104,6 +139,9 @@ def embed_phase(variants, model, batch_size):
 
     valid_indices, valid, wt_seqs, mut_seqs, positions = _build_valid_pairs_indexed(
         variants, seq_cache
+    )
+    valid_indices, valid, wt_seqs, mut_seqs, positions = _rebalance_after_filter(
+        valid_indices, valid, wt_seqs, mut_seqs, positions
     )
     valid_fingerprint = variants_fingerprint(valid)
 
@@ -180,18 +218,13 @@ def probe_phase(variants, n_seeds, n_jobs=-1, compute_ci=True, n_boot=BOOTSTRAP_
 
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
-    # Run one seed at a time, writing that seed's per-cell AUROCs to its own file
-    # as it completes (resume + progress visibility). Within a seed the 8 cells
-    # (2 features x 2 probes x 2 splits) are independent, so they run in parallel.
-    # Cache freshness is keyed on more than existence: a seed file built with
-    # --no_ci (or a different --n_boot) looks complete on disk but is missing
-    # CIs a later CI-on run needs, so the params that produced each file are
-    # stored alongside it and checked before treating it as reusable.
     seed_params = {
         "compute_ci": compute_ci,
         "n_boot": n_boot if compute_ci else None,
         "variant_fingerprint": meta["fingerprint"],
         "model": meta.get("model"),
+        "pfam_fingerprint": pfam_fingerprint(pfam_map, list(set(genes))),
+        "embedding_fingerprint": embedding_fingerprint(wt_mean, mut_mean),
     }
     for seed in range(n_seeds):
         seed_path = Path(PATHOGENICITY_CONTROL_SEED_JSON.format(seed=seed))

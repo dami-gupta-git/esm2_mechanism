@@ -24,9 +24,12 @@ from esm2_mech.utils.splits import gene_split_cv, family_split_cv
 from esm2_mech.utils.data import build_gene_to_row
 from esm2_mech.utils.io import atomic_write_json
 from esm2_mech.utils.bootstrap import (
+    adjudicate_equivalence,
+    adjudicate_level,
     bootstrap_mechanism_metrics,
     family_or_gene_clusters,
     oof_permutation_pvalue,
+    paired_oof_diff,
 )
 from esm2_mech.utils.paths import (
     EMB_WT_MEAN,
@@ -276,6 +279,7 @@ def run_multiseed(
     mlp_aurocs = {c: [] for c in classes}
 
     seed0_fs_oof = None
+    seed0_mlp_fs_oof = None
 
     for seed in seeds:
         print(f"\n  Seed {seed}:")
@@ -308,13 +312,16 @@ def run_multiseed(
         if seed == seeds[0]:
             seed0_fs_oof = fs_oof
 
-        mlp, _ = nonlinear_probe(X, y, fs_splits, classes, genes=genes_arr, seed=seed)
+        mlp, mlp_oof = nonlinear_probe(X, y, fs_splits, classes, genes=genes_arr, seed=seed)
         mlp_f1s.append(mlp["macro_f1_mean"])
         for c in classes:
             v = mlp["per_class_auroc_mean"].get(c)
             if v is not None:
                 mlp_aurocs[c].append(v)
         print(f"    MLP    family-split F1={mlp['macro_f1_mean']:.3f}")
+
+        if seed == seeds[0]:
+            seed0_mlp_fs_oof = mlp_oof
 
     maj_f1 = majority_baseline_f1(y)
 
@@ -344,13 +351,27 @@ def run_multiseed(
 
     ci_result = None
     permutation_result = None
+    pooled_fs_f1 = None
+    pooled_mlp_f1 = None
+    paired_mlp_vs_logreg = None
+
+    if seed0_fs_oof is not None:
+        oof_y_str = np.array([classes[i] for i in seed0_fs_oof["y_true"]])
+        oof_pred = np.array([classes[col] for col in seed0_fs_oof["proba"].argmax(axis=1)])
+        pooled_fs_f1 = float(f1_score(oof_y_str, oof_pred, average="macro", zero_division=0))
+        print(f"\n  Pooled OOF LogReg family-split F1: {pooled_fs_f1:.3f}")
+
+    if seed0_mlp_fs_oof is not None:
+        mlp_oof_y_str = np.array([classes[i] for i in seed0_mlp_fs_oof["y_true"]])
+        mlp_oof_pred = np.array([classes[col] for col in seed0_mlp_fs_oof["proba"].argmax(axis=1)])
+        pooled_mlp_f1 = float(f1_score(mlp_oof_y_str, mlp_oof_pred, average="macro", zero_division=0))
+        print(f"  Pooled OOF MLP family-split F1: {pooled_mlp_f1:.3f}")
 
     if compute_ci and seed0_fs_oof is not None:
         print("\n  Computing cluster-bootstrap CIs (seed 0, family-split)...")
         clusters = family_or_gene_clusters(
             seed0_fs_oof["genes"], pfam_map, is_family_split=True
         )
-        oof_y_str = np.array([classes[i] for i in seed0_fs_oof["y_true"]])
         ci_result = bootstrap_mechanism_metrics(
             y_true=oof_y_str,
             proba=seed0_fs_oof["proba"],
@@ -366,6 +387,28 @@ def run_multiseed(
             pt = ci.get("point")
             if lo is not None and hi is not None and pt is not None:
                 print(f"    {metric_name}: {pt:.3f} [{lo:.3f}, {hi:.3f}]")
+
+        if seed0_mlp_fs_oof is not None:
+            print("\n  Computing paired CI: MLP minus LogReg (family-split)...")
+            mlp_oof_for_diff = {**seed0_mlp_fs_oof, "y_true": mlp_oof_y_str}
+            lr_oof_for_diff = {**seed0_fs_oof, "y_true": oof_y_str}
+            paired_mlp_vs_logreg = paired_oof_diff(
+                oof_a=mlp_oof_for_diff,
+                oof_b=lr_oof_for_diff,
+                pfam_map=pfam_map,
+                label="2E.3 MLP-LogReg",
+                classes=classes,
+                metric="macro_f1",
+                is_family_split=True,
+                n_resamples=n_boot,
+                seed=0,
+            )
+            if paired_mlp_vs_logreg is not None:
+                lo = paired_mlp_vs_logreg.get("ci_low")
+                hi = paired_mlp_vs_logreg.get("ci_high")
+                pt = paired_mlp_vs_logreg.get("point_diff")
+                if lo is not None and hi is not None and pt is not None:
+                    print(f"    MLP-LogReg diff: {pt:+.3f} [{lo:+.3f}, {hi:+.3f}]")
 
         if n_permutations > 0:
             print(f"\n  Computing permutation p-value ({n_permutations} reps)...")
@@ -410,8 +453,14 @@ def run_multiseed(
         "leakage_pct": leakage_pct,
     }
 
+    if pooled_fs_f1 is not None:
+        result["logreg_family_split"]["pooled_oof_macro_f1"] = pooled_fs_f1
+    if pooled_mlp_f1 is not None:
+        result["mlp_family_split"]["pooled_oof_macro_f1"] = pooled_mlp_f1
     if ci_result is not None:
         result["bootstrap_ci"] = ci_result
+    if paired_mlp_vs_logreg is not None:
+        result["paired_ci_mlp_minus_logreg"] = paired_mlp_vs_logreg
     if permutation_result is not None:
         result["permutation_test"] = permutation_result
 
@@ -515,9 +564,12 @@ def main():
     print("\n" + "=" * 60)
     print("DECISION RULES (PREREGISTRATION_run_biorxiv.md, 2E)")
     print("=" * 60)
-    fs_f1 = emb_results["logreg_family_split"]["macro_f1_mean"]
-    mlp_f1 = emb_results["mlp_family_split"]["macro_f1_mean"]
+
+    fs_f1 = emb_results["logreg_family_split"].get("pooled_oof_macro_f1")
+    mlp_f1 = emb_results["mlp_family_split"].get("pooled_oof_macro_f1")
     gs_f1 = emb_results["logreg_gene_split"]["macro_f1_mean"]
+    fs_ci = (emb_results.get("bootstrap_ci") or {}).get("macro_f1")
+    paired_ci = emb_results.get("paired_ci_mlp_minus_logreg")
 
     gate_2e1 = fs_f1 is not None and fs_f1 >= 0.70
     gate_2e2 = (
@@ -527,20 +579,29 @@ def main():
     )
     gate_2e3 = mlp_f1 is not None and fs_f1 is not None and abs(mlp_f1 - fs_f1) < 0.05
 
-    print(
-        f"\n2E.1 — family-split F1 >= 0.70:  {'PASS' if gate_2e1 else 'FAIL'}  (F1={fs_f1:.3f})"
-    )
+    verdict_2e1 = adjudicate_level(fs_f1, fs_ci, 0.70)
+    if mechanism_ref_f1 is not None:
+        verdict_2e2 = adjudicate_level(fs_f1, fs_ci, mechanism_ref_f1 + 0.10)
+        verdict_2e2 += " (mechanism estimate treated as fixed; no paired CI available)"
+    else:
+        verdict_2e2 = "not adjudicated (mechanism reference unavailable)"
+    verdict_2e3 = adjudicate_equivalence(gate_2e3, paired_ci, 0.05)
+
+    print(f"\n2E.1 — family-split F1 >= 0.70:  {verdict_2e1}  (F1={fs_f1:.3f})")
     if mechanism_ref_f1 is not None:
         print(
-            f"2E.2 — enzyme >> mechanism floor:  {'CONFIRMED' if gate_2e2 else 'NOT CONFIRMED'}  "
+            f"2E.2 — enzyme >> mechanism floor:  {verdict_2e2}  "
             f"(delta={fs_f1 - mechanism_ref_f1:+.3f})"
         )
     else:
         print("2E.2 — enzyme >> mechanism floor:  SKIPPED (mechanism reference unavailable)")
-    print(
-        f"2E.3 — MLP approx LogReg family-split:  {'CONFIRMED' if gate_2e3 else 'NOT CONFIRMED'}  "
-        f"(delta_MLP-LR={mlp_f1 - fs_f1:+.3f})"
-    )
+    if mlp_f1 is not None and fs_f1 is not None:
+        print(
+            f"2E.3 — MLP approx LogReg family-split:  {verdict_2e3}  "
+            f"(delta_MLP-LR={mlp_f1 - fs_f1:+.3f})"
+        )
+    else:
+        print("2E.3 — MLP approx LogReg family-split:  SKIPPED (missing OOF)")
 
     output = {
         "description": (
@@ -560,12 +621,16 @@ def main():
         "proteome_features": proteome_results,
         "gate_evaluation": {
             "2E.1_family_split_f1_ge_0.70": bool(gate_2e1),
+            "2E.1_verdict": verdict_2e1,
             "2E.2_enzyme_beats_mechanism_by_0.10": bool(gate_2e2),
+            "2E.2_verdict": verdict_2e2,
             "2E.3_mlp_approx_logreg": bool(gate_2e3),
+            "2E.3_verdict": verdict_2e3,
             "fs_f1": fs_f1,
             "mlp_f1": mlp_f1,
             "gs_f1": gs_f1,
             "mechanism_reference_f1": mechanism_ref_f1,
+            "note": "fs_f1 and mlp_f1 are pooled-OOF macro F1 (matching the bootstrap CI)",
         },
     }
 

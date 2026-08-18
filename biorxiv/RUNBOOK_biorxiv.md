@@ -3,15 +3,15 @@
 This pipeline tests whether ESM-2 embeddings encode the *mechanism* of a pathogenic missense
 variant — whether it acts as dominant-negative, loss-of-function, or gain-of-function — beyond
 what is explained by homology between genes in the same protein family. Alongside the mechanism
-test, two positive controls establish that the embeddings carry usable signal at all: a
-pathogenicity classifier (ClinVar pathogenic vs. benign) and a physical stability predictor
-(Tsuboyama ΔΔG). A geometry analysis asks what the pathogenicity direction in embedding space
-actually corresponds to (conservation, largely). run_biorxiv re-scores this whole pipeline with
-statistics that account for genes in the same family not being independent — cluster-bootstrap
-confidence intervals, permutation p-values, and paired tests behind every "beats baseline" or "A
-beats B" claim — replacing run6's 5-seed fold-jitter error bars. The experiments, hypotheses, and
-gates are the same as run6's; only the statistics and, where the data changed, the ClinVar
-snapshot are new.
+test, three positive controls establish that the embeddings carry usable signal at all: a
+pathogenicity classifier (ClinVar pathogenic vs. benign), a physical stability predictor
+(Tsuboyama ΔΔG), and an enzyme type classifier (kinase/protease/oxidoreductase/non-enzyme from WT
+embeddings). A geometry analysis asks what the pathogenicity direction in embedding space actually
+corresponds to (conservation, largely). run_biorxiv re-scores this whole pipeline with statistics
+that account for genes in the same family not being independent — cluster-bootstrap confidence
+intervals, permutation p-values, and paired tests behind every "beats baseline" or "A beats B"
+claim — replacing run6's 5-seed fold-jitter error bars. The experiments, hypotheses, and gates are
+the same as run6's; only the statistics and, where the data changed, the ClinVar snapshot are new.
 
 Supersedes `RUNBOOK_biorxiv_old.md`, which became inconsistent after a second ClinVar refetch and
 is kept for reference only, not as a status source.
@@ -433,6 +433,56 @@ below 0.10, H3 the mechanism-F1 change from projecting out stability stays ≤ +
 standard deviation stays tight. run_biorxiv's only addition here is confidence intervals on these
 figures; since this experiment has no ClinVar dependency, it is the one part of this run that
 isolates the effect of the new statistics from any effect of the refreshed ClinVar snapshot.
+
+---
+
+## 8. Experiment: Enzyme type classification (positive control)
+
+A third positive control that uses a wildtype-sequence property rather than a mutation property:
+classifying each gene as kinase, protease, oxidoreductase, or non-enzyme from its WT mean-pooled
+ESM-2 embedding. Enzyme class is strongly associated with protein fold, so ESM-2's known Pfam
+clustering should help here — making it a direct test of whether the mechanism null (section 4) is a
+property of the task, not a failure of the pipeline or the embeddings.
+
+The experiment mirrors section 4's structure: gene-split, family-split, and the gap between them
+(leakage fraction), run across 5 seeds with cluster-bootstrap CIs on the seed-0 family-split OOF
+predictions. A proteome-features baseline (37 gene-level biology features) runs alongside as a
+negative control — enzyme class is a structural property, not a population-genetics one, so
+proteome features should be near chance.
+
+### Prerequisites
+
+No new data to fetch or embed. This experiment uses:
+
+- `data/enzyme_labels.tsv` — already produced by step 2's annotation fetch (`fetch_annotations --step enzyme`)
+- `data/embeddings/esm2_t33_650M_UR50D/embeddings_wt_mean.npy` — the WT embeddings from section 3
+- `data/proteome_features_aligned.npy` — the gene-level proteome feature matrix
+
+All three must exist before running. If `enzyme_labels.tsv` is missing, run:
+
+```bash
+python -m esm2_mech.fetch_data.fetch_annotations --step enzyme
+```
+
+### Run analysis (CPU)
+
+| Step | Command | Description | Inputs | Outputs |
+|---|---|---|---|---|
+| 8.1 | `python -m esm2_mech.experiments.proteome_features.enzyme_classification --seeds 5` | Enzyme type classification: LogReg + MLP on WT embeddings and proteome features, gene-split and family-split, with cluster-bootstrap CIs | `valid_variants.json`, `embeddings_wt_mean.npy`, `enzyme_labels.tsv`, `pfam_families.json`, `proteome_features_aligned.npy`, `results/<run>/aggregate.json` (mechanism reference) | `results/<run>/enzyme_classification/enzyme_classification_summary.json` |
+
+The script accepts `--no_ci` (skip cluster-bootstrap CIs), `--n_boot N` (default 1000), and
+`--n_permutations N` (OOF permutation test, default 0 = skip), matching sections 4–7. The mechanism
+reference F1 is read from section 4's aggregate result, not hardcoded — run section 4 first.
+
+Decision rules (pre-registration §2E):
+
+- **2E.1** — family-split LogReg macro-F1 ≥ 0.70. Enzyme class is strongly encoded in ESM-2 WT
+  embeddings and family-split CV is a meaningful discriminator.
+- **2E.2** — enzyme family-split F1 substantially exceeds the mechanism family-split floor (read
+  from section 4's aggregate, not hardcoded). The mechanism null is task-specific, not a probe or
+  data failure.
+- **2E.3** — MLP does not substantially outperform LogReg under family-split (|delta F1| < 0.05).
+  Linear readout is sufficient, paralleling pathogenicity and contrasting with stability.
 
 ---
 

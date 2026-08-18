@@ -201,6 +201,7 @@ MEGASCALE_EMB_WT_MEAN = EMB_DIR / "megascale_wt_mean.npy"
 MEGASCALE_EMB_MUT_MEAN = EMB_DIR / "megascale_mut_mean.npy"
 MEGASCALE_EMB_WT_POS = EMB_DIR / "megascale_wt_pos.npy"
 MEGASCALE_EMB_MUT_POS = EMB_DIR / "megascale_mut_pos.npy"
+MEGASCALE_EMB_FINGERPRINT = EMB_DIR / "megascale_fingerprint.json"
 
 # ── Stability subspace (esm2_mechanism.py) ───────────────────────────────────
 STABILITY_SUBSPACE = EMB_DIR / "stability_subspace.npy"

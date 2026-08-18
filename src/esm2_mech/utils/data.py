@@ -29,6 +29,32 @@ def variants_fingerprint(variants: list[dict]) -> str:
     return digest.hexdigest()
 
 
+def embedding_fingerprint(*arrays: np.ndarray) -> str:
+    """Content hash of one or more embedding arrays.
+
+    Catches cases where embeddings change (e.g. model weights updated)
+    while the variant list and model name stay the same.
+    """
+    digest = hashlib.sha256()
+    for arr in arrays:
+        digest.update(arr.tobytes())
+    return digest.hexdigest()
+
+
+def pfam_fingerprint(pfam_map: dict, genes: list[str]) -> str:
+    """Content hash of the Pfam family assignments for a set of genes.
+
+    Changes to Pfam mappings alter family-split CV folds, invalidating any
+    cached probe results that used the old splits.
+    """
+    digest = hashlib.sha256()
+    for gene in sorted(set(genes)):
+        family = pfam_map.get(gene, "")
+        digest.update(f"{gene}|{family}".encode())
+        digest.update(b"\x00")
+    return digest.hexdigest()
+
+
 def load_variants(path: Path) -> list[dict]:
     """Load and filter the merged variant dataset from path.
 

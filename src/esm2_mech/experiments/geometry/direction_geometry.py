@@ -171,22 +171,29 @@ def probe2_universal(delta, y, genes, fam, n_partitions=10, seeds=(0,)):
                 continue
             sc_a = StandardScaler().fit(X[a])
             sc_b = StandardScaler().fit(X[b])
-            Xa = sc_a.transform(X[a])
+            Xa_own = sc_a.transform(X[a])
+            Xb_own = sc_b.transform(X[b])
+            wA, clfA = fit_direction(Xa_own, yy[a], seed=seed)
+            wB, clfB = fit_direction(Xb_own, yy[b], seed=seed)
+            wA_orig = sc_a.scale_ * wA
+            wB_orig = sc_b.scale_ * wB
+            wA_orig /= np.linalg.norm(wA_orig) + 1e-12
+            wB_orig /= np.linalg.norm(wB_orig) + 1e-12
+            cos_obs.append(float(np.dot(wA_orig, wB_orig)))
             Xb_via_a = sc_a.transform(X[b])
-            Xb = sc_b.transform(X[b])
-            Xa_via_b = sc_b.transform(X[a])
-            wA, clfA = fit_direction(Xa, yy[a], seed=seed)
-            wB, clfB = fit_direction(Xb, yy[b], seed=seed)
-            cos_obs.append(float(np.dot(wA, wB)))
             transfer.append(auroc_for_clf(clfA, Xb_via_a, yy[b]))
 
             yA_s = yy[a].copy()
             rng.shuffle(yA_s)
             yB_s = yy[b].copy()
             rng.shuffle(yB_s)
-            wAn, _ = fit_direction(Xa, yA_s, seed=seed)
-            wBn, _ = fit_direction(Xb, yB_s, seed=seed)
-            cos_null.append(float(np.dot(wAn, wBn)))
+            wAn, _ = fit_direction(Xa_own, yA_s, seed=seed)
+            wBn, _ = fit_direction(Xb_own, yB_s, seed=seed)
+            wAn_orig = sc_a.scale_ * wAn
+            wBn_orig = sc_b.scale_ * wBn
+            wAn_orig /= np.linalg.norm(wAn_orig) + 1e-12
+            wBn_orig /= np.linalg.norm(wBn_orig) + 1e-12
+            cos_null.append(float(np.dot(wAn_orig, wBn_orig)))
             part += 1
 
     def agg(v):

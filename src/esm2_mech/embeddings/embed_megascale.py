@@ -16,6 +16,7 @@ import numpy as np
 print = functools.partial(print, flush=True)
 
 from esm2_mech.experiments.stability.tsuboyama_loader import load_tsuboyama_variants
+from esm2_mech.experiments.stability.stability_data import save_fingerprint
 from esm2_mech.utils.embed import (
     EMB_ARRAY_NAMES,
     get_esm2_embeddings_for_pairs,
@@ -104,6 +105,7 @@ def main():
     if status == "complete":
         print("Embeddings already complete — promoting checkpoint.")
         _promote_checkpoint(ckpt_dir, len(wt_seqs), target_dir)
+        save_fingerprint(variants)
         return
     if status == "resume":
         resume_start, resume_arrays = payload
@@ -124,6 +126,7 @@ def main():
     )
 
     _promote_checkpoint(ckpt_dir, len(wt_seqs), target_dir)
+    save_fingerprint(variants)
     print("Done.")
 
 

@@ -91,9 +91,11 @@ def extract_conservation(variants, seqs, batch_size=64, ckpt_every=2000):
             done = int(np.isfinite(out[:, 0]).sum())
             print(f"Resuming: {done}/{N} variants already extracted")
         elif cached is not None and len(cached) == N and "fingerprint" not in meta:
-            out = cached
-            done = int(np.isfinite(out[:, 0]).sum())
-            print(f"Resuming (legacy cache, no fingerprint): {done}/{N} already extracted")
+            raise ValueError(
+                f"Conservation cache at {CONS_CACHE} has {N} rows but no fingerprint "
+                f"in {CONS_META}. A row-count match alone cannot verify the variant "
+                f"ordering. Delete the cache and re-extract."
+            )
 
     model, alphabet = esm.pretrained.load_model_and_alphabet(ESM2_MODEL_650M)
     model = model.to(device).eval()

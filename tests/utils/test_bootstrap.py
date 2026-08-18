@@ -49,6 +49,7 @@ import pytest
 
 from esm2_mech.utils.bootstrap import (
     adjudicate_diff,
+    adjudicate_equivalence,
     adjudicate_level,
     average_oof_over_seeds,
     bootstrap_mechanism_metrics,
@@ -1379,3 +1380,34 @@ class TestAdjudicateLevel:
 
     def test_suppressed_ci_reports_no_ci(self):
         assert adjudicate_level(0.9, {"ci_suppressed": True}, 0.85) == "pass, no CI"
+
+
+class TestAdjudicateEquivalence:
+    def test_pass_ci_within_band_is_established(self):
+        ci = {"ci_low": -0.02, "ci_high": 0.03}
+        assert "established" in adjudicate_equivalence(True, ci, 0.05)
+
+    def test_pass_ci_exceeding_band_is_not_established(self):
+        # Point estimate within ±0.05 but CI extends past the band.
+        ci = {"ci_low": 0.01, "ci_high": 0.08}
+        result = adjudicate_equivalence(True, ci, 0.05)
+        assert "not established" in result
+
+    def test_fail_ci_outside_band_is_established(self):
+        ci = {"ci_low": 0.06, "ci_high": 0.10}
+        assert "established" in adjudicate_equivalence(False, ci, 0.05)
+
+    def test_fail_ci_overlapping_band_is_underpowered(self):
+        ci = {"ci_low": -0.02, "ci_high": 0.02}
+        # Point estimate outside ±0.05 but CI overlaps.
+        result = adjudicate_equivalence(False, ci, 0.05)
+        assert "underpowered" in result
+
+    def test_suppressed_or_absent_ci_reports_no_ci(self):
+        assert adjudicate_equivalence(True, None, 0.05) == "pass, no CI"
+        assert adjudicate_equivalence(False, {"ci_suppressed": True}, 0.05) == "fail, no CI"
+
+    def test_no_point_estimate_is_not_adjudicated(self):
+        assert adjudicate_equivalence(None, {"ci_low": -0.01, "ci_high": 0.01}, 0.05) == (
+            "not adjudicated (no point estimate)"
+        )

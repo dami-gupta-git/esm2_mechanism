@@ -598,6 +598,32 @@ def adjudicate_diff(passed: bool | None, diff_ci: dict | None, threshold: float)
     return "fail, established (CI excludes the pre-registered threshold)"
 
 
+def adjudicate_equivalence(
+    passed: bool | None, diff_ci: dict | None, margin: float
+) -> str:
+    """Verdict for an equivalence claim: is |difference| < margin?
+
+    'passed' is True when the point estimate is within [-margin, +margin].
+    The CI establishes equivalence only if the entire interval falls within
+    that band; it refutes equivalence only if the entire interval falls
+    outside it.
+    """
+    if passed is None:
+        return "not adjudicated (no point estimate)"
+    if diff_ci is None or diff_ci.get("ci_suppressed") or diff_ci.get("ci_low") is None:
+        return f"{'pass' if passed else 'fail'}, no CI"
+    ci_low, ci_high = diff_ci["ci_low"], diff_ci["ci_high"]
+    ci_within = ci_low > -margin and ci_high < margin
+    ci_outside = ci_low > margin or ci_high < -margin
+    if passed:
+        if ci_within:
+            return "pass, established (CI within equivalence band)"
+        return "pass on point estimate, not established (CI exceeds equivalence band)"
+    if ci_outside:
+        return "fail, established (CI outside equivalence band)"
+    return "fail, underpowered (CI overlaps equivalence band)"
+
+
 def adjudicate_level(value: float | None, ci: dict | None, threshold: float) -> str:
     """R7.1 verdict for a level claim: is the value above the threshold."""
     if value is None or not np.isfinite(value):

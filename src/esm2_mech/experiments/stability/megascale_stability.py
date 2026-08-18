@@ -20,7 +20,10 @@ from esm2_mech.experiments.stability.stability_data import (
     load_stability_inputs,
     stability_splits,
 )
-from esm2_mech.utils.bootstrap import cluster_bootstrap_ci
+from esm2_mech.utils.bootstrap import (
+    cluster_bootstrap_ci,
+    paired_cluster_bootstrap_diff_cross_partition,
+)
 from esm2_mech.utils.constants import BOOTSTRAP_N_RESAMPLES, N_SEEDS, N_FOLDS
 from esm2_mech.utils.io import atomic_write_json
 from esm2_mech.utils.metrics import auroc_at_median, mean_std_n, standardize
@@ -42,10 +45,11 @@ os.makedirs(str(_DATA_DIR / "embeddings" / ESM2_MODEL), exist_ok=True)
 
 
 
-def run_regression_cv(X, y, splits, clf_fn, with_pearson=True, clusters=None, return_oof=False):
+def run_regression_cv(X, y, splits, clf_fn, with_pearson=True, clusters=None,
+                      return_oof=False, median=None):
     """Standardise-fit-predict a regressor over CV folds; return ρ/AUROC."""
     rhos, pearsons, aurocs = [], [], []
-    oof_y, oof_pred, oof_clusters = [], [], []
+    oof_y, oof_pred, oof_clusters, oof_indices = [], [], [], []
     for tr, te in splits:
         Xtr, Xte = standardize(X[tr], X[te])
         clf = clf_fn()
@@ -53,7 +57,7 @@ def run_regression_cv(X, y, splits, clf_fn, with_pearson=True, clusters=None, re
         pred = clf.predict(Xte)
         rho, _ = spearmanr(y[te], pred)
         rhos.append(float(rho))
-        aurocs.append(auroc_at_median(y[te], pred))
+        aurocs.append(auroc_at_median(y[te], pred, median=median))
         if with_pearson:
             pearson, _ = pearsonr(y[te], pred)
             pearsons.append(float(pearson))
@@ -61,6 +65,7 @@ def run_regression_cv(X, y, splits, clf_fn, with_pearson=True, clusters=None, re
             oof_y.append(y[te])
             oof_pred.append(pred)
             oof_clusters.append(clusters[te])
+            oof_indices.append(te)
     if not rhos:
         out = {}
     else:
@@ -81,19 +86,25 @@ def run_regression_cv(X, y, splits, clf_fn, with_pearson=True, clusters=None, re
         return out
     oof = None
     if oof_y:
+        all_y = np.concatenate(oof_y)
+        all_pred = np.concatenate(oof_pred)
         oof = {
-            "y_true": np.concatenate(oof_y),
-            "pred": np.concatenate(oof_pred),
+            "y_true": all_y,
+            "pred": all_pred,
             "clusters": np.concatenate(oof_clusters),
+            "indices": np.concatenate(oof_indices),
         }
+        pooled_rho, _ = spearmanr(all_y, all_pred)
+        if np.isfinite(pooled_rho):
+            out["spearman_pooled"] = float(pooled_rho)
     return out, oof
 
 
-def run_ridge_with_auroc(X, y, splits, clusters=None, return_oof=False):
+def run_ridge_with_auroc(X, y, splits, clusters=None, return_oof=False, median=None):
     """Ridge alpha=1.0 stability probe."""
     return run_regression_cv(
         X, y, splits, lambda: Ridge(alpha=1.0), with_pearson=True,
-        clusters=clusters, return_oof=return_oof,
+        clusters=clusters, return_oof=return_oof, median=median,
     )
 
 
@@ -254,7 +265,11 @@ def main(compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES):
 
     print(f"Embeddings: delta_mean {delta_mean.shape}, delta_pos {delta_pos.shape}")
 
+    global_median = float(np.median(ddg))
+    print(f"Global ΔΔG median: {global_median:.4f}")
+
     results_by_seed = []
+    seed0_oofs = {}
     for seed in range(N_SEEDS):
         print(f"\n── Seed {seed} ──")
 
@@ -266,8 +281,6 @@ def main(compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES):
             for split_name, splits in splits_by_name.items():
                 key = f"{feat_name}_{split_name}"
                 if compute_ci and seed == 0:
-                    # CI resampling unit matches the split's holdout unit:
-                    # proteins for random/domain, Pfam families for family split.
                     ci_clusters = (
                         np.array(
                             [family_map.get(p, f"__orphan__{p}") for p in proteins]
@@ -276,14 +289,18 @@ def main(compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES):
                         else proteins
                     )
                     res, oof = run_ridge_with_auroc(
-                        X, ddg, splits, clusters=ci_clusters, return_oof=True
+                        X, ddg, splits, clusters=ci_clusters, return_oof=True,
+                        median=global_median,
                     )
                     if oof is not None:
                         res["ci"] = spearman_cluster_bootstrap_ci(
                             oof, n_resamples=n_boot, seed=seed
                         )
+                        seed0_oofs[key] = oof
                 else:
-                    res = run_ridge_with_auroc(X, ddg, splits)
+                    res = run_ridge_with_auroc(
+                        X, ddg, splits, median=global_median,
+                    )
                 seed_result[key] = res
                 if res:
                     print(
@@ -381,11 +398,54 @@ def main(compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES):
     else:
         print("\nSkipping H3 (merged embeddings not found — run on pod with full data)")
 
+    h2_gap_ci = None
+    oof_random = seed0_oofs.get("delta_mean_random")
+    oof_family = seed0_oofs.get("delta_mean_family")
+    if compute_ci and oof_random is not None and oof_family is not None:
+        print("\nComputing paired CI on random-to-family Spearman gap (H2)...")
+        idx_r = oof_random["indices"]
+        idx_f = oof_family["indices"]
+        shared = np.intersect1d(idx_r, idx_f)
+        pos_r = {int(idx): i for i, idx in enumerate(idx_r)}
+        pos_f = {int(idx): i for i, idx in enumerate(idx_f)}
+        sel_r = np.array([pos_r[int(s)] for s in shared])
+        sel_f = np.array([pos_f[int(s)] for s in shared])
+
+        shared_y = oof_random["y_true"][sel_r]
+        shared_pred_random = oof_random["pred"][sel_r]
+        shared_pred_family = oof_family["pred"][sel_f]
+        shared_families = np.array(
+            [family_map.get(proteins[int(s)], f"__orphan__{proteins[int(s)]}")
+             for s in shared]
+        )
+
+        def _rho_random(rows):
+            rho, _ = spearmanr(shared_y[rows], shared_pred_random[rows])
+            return float(rho) if np.isfinite(rho) else None
+
+        def _rho_family(rows):
+            rho, _ = spearmanr(shared_y[rows], shared_pred_family[rows])
+            return float(rho) if np.isfinite(rho) else None
+
+        h2_gap_ci = paired_cluster_bootstrap_diff_cross_partition(
+            resample_clusters=shared_families,
+            metric_fn_a=_rho_random,
+            metric_fn_b=_rho_family,
+            n_resamples=n_boot,
+            seed=0,
+        )
+        print(
+            f"  H2 gap: {h2_gap_ci['point_diff']:.3f} "
+            f"[{h2_gap_ci.get('ci_low', '?')}, {h2_gap_ci.get('ci_high', '?')}]"
+        )
+
     dm_random = summary.get("delta_mean_random", {}).get("spearman_mean", float("nan"))
     dm_family = summary.get("delta_mean_family", {}).get("spearman_mean", float("nan"))
 
     verdict = apply_decision_rule(dm_random, dm_family, per_prot_std)
     summary["verdict"] = verdict
+    if h2_gap_ci is not None:
+        summary["h2_gap_ci"] = h2_gap_ci
     summary["n_variants"] = len(variants)
     summary["n_proteins"] = len(set(proteins))
     summary["n_families"] = n_families

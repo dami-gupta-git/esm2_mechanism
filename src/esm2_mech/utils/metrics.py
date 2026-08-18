@@ -63,14 +63,18 @@ def standardize(X_fit: np.ndarray, *others: np.ndarray) -> tuple[np.ndarray, ...
     return tuple((arr - mean) / std for arr in (X_fit, *others))
 
 
-def auroc_at_median(y_true: np.ndarray, y_pred: np.ndarray) -> float:
+def auroc_at_median(
+    y_true: np.ndarray, y_pred: np.ndarray, median: float | None = None
+) -> float:
     """Binary AUROC for a continuous target: above-median = positive class.
 
-    Binarises a continuous ground truth (e.g. ΔΔG) at its own median and scores
-    the continuous predictions against that. Returns NaN if the median split
-    leaves only one class. Shared by the megascale stability regression probes.
+    Binarises a continuous ground truth (e.g. ΔΔG) at a fixed median and scores
+    the continuous predictions against that. When `median` is None (legacy
+    behaviour), the median is computed from y_true, which gives each fold a
+    different binary threshold. Pass a precomputed global median so every fold
+    predicts the same binary outcome.
     """
-    med = np.median(y_true)
+    med = np.median(y_true) if median is None else median
     binary = (y_true >= med).astype(int)
     if binary.sum() == 0 or (1 - binary).sum() == 0:
         return float("nan")

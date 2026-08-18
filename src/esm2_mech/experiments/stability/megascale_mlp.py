@@ -34,6 +34,7 @@ def run_mlp_regression(
     max_epochs=60,
     patience=15,
     batch_size=2048,
+    median=None,
 ):
     import torch
     import torch.nn as nn
@@ -111,7 +112,7 @@ def run_mlp_regression(
         r, _ = pearsonr(y_te, pred)
         rhos.append(float(rho))
         rs.append(float(r))
-        aurocs.append(auroc_at_median(y_te, pred))
+        aurocs.append(auroc_at_median(y_te, pred, median=median))
 
     if not rhos:
         return {}
@@ -139,19 +140,13 @@ def main(use_xgboost=False):
     X = inputs.delta_mean
     print(f"Embeddings: {X.shape}")
 
-    # The three CV schemes, built per-seed via the shared stability_splits helper.
+    global_median = float(np.median(ddg))
+
     split_names = ("random", "domain", "family")
     build_splits = lambda name, seed: stability_splits(
         seed, len(variants), proteins, family_map
     )[name]
 
-    # Each probe maps (X, y, splits, seed) -> per-fold-aggregated dict. The MLP
-    # uses its own torch runner; RF/GBM use run_regression_cv with a fresh
-    # estimator per seed. The Ridge linear baseline is NOT recomputed here — it is
-    # produced (identically) by megascale_stability.py; running it again was the
-    # slow stage (ill-conditioned at alpha=1.0, ~75 fits) and added nothing. Read
-    # the Ridge row from results/<run>/megascale_stability/summary.json when
-    # building the comparison table in the report.
     def _rf(seed):
         return RandomForestRegressor(n_estimators=100, random_state=seed, n_jobs=-1)
 
@@ -180,13 +175,13 @@ def main(use_xgboost=False):
             )
 
         probe_runners = [
-            ("xgb", lambda X, y, splits, seed: run_regression_cv(X, y, splits, lambda: _xgb(seed), with_pearson=False)),
+            ("xgb", lambda X, y, splits, seed: run_regression_cv(X, y, splits, lambda: _xgb(seed), with_pearson=False, median=global_median)),
         ]
     else:
         probe_runners = [
-            ("mlp", lambda X, y, splits, seed: run_mlp_regression(X, y, splits, seed=seed)),
-            ("rf", lambda X, y, splits, seed: run_regression_cv(X, y, splits, lambda: _rf(seed), with_pearson=False)),
-            ("gbm", lambda X, y, splits, seed: run_regression_cv(X, y, splits, lambda: _gbm(seed), with_pearson=False)),
+            ("mlp", lambda X, y, splits, seed: run_mlp_regression(X, y, splits, seed=seed, median=global_median)),
+            ("rf", lambda X, y, splits, seed: run_regression_cv(X, y, splits, lambda: _rf(seed), with_pearson=False, median=global_median)),
+            ("gbm", lambda X, y, splits, seed: run_regression_cv(X, y, splits, lambda: _gbm(seed), with_pearson=False, median=global_median)),
         ]
 
     summary = {}

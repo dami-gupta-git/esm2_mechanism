@@ -69,6 +69,9 @@ AA3 = {
 }
 HGVSP_PAT = re.compile(r"p\.([A-Z][a-z]{2})(\d+)([A-Z][a-z]{2})(?=[^a-zA-Z]|$)")
 
+# Bump whenever the balancing algorithm changes so old caches are invalidated.
+_BALANCE_VERSION = 1
+
 
 def _fetch_clinvar(target_genes, max_per_gene_per_class, seed):
     """Download and filter ClinVar to balanced P/B missense variants."""
@@ -209,6 +212,7 @@ def fetch_phase(max_per_gene_per_class=20, seed=42):
         "max_per_gene_per_class": max_per_gene_per_class,
         "seed": seed,
         "source_fingerprint": _source_fingerprint(mechanism_variants),
+        "balance_version": _BALANCE_VERSION,
     }
     if CLINVAR_PATHOGENICITY_VARIANTS_JSON.exists():
         cached_params = None

@@ -80,27 +80,31 @@ estimates. Stated in every probe report, since every claim in the paper is a dis
 
 ### 1.5 No multiplicity correction
 
-No verdict in the four-claim confirmatory set (Part 2) turns on a borderline p or CI: two clear
-their thresholds by wide margins and one is a null claim, where raising the bar for rejection would
-make it easier to assert, not harder. Enumerating the set in advance (Part 2) is the safeguard
-instead.
+No verdict in the confirmatory set (Part 2) turns on a borderline p or CI. The stated thresholds and
+null-claim rules govern each verdict. Enumerating the set in advance (Part 2) is the safeguard.
 
 ---
 
 ## Part 2 — The confirmatory claims
 
 Enumerated before the run so a result cannot be selected as load-bearing after the fact. Everything
-not listed here is exploratory (Part 3) and asserts nothing the paper relies on.
+not listed here is either a stability control (Part 3) or exploratory (Part 4) and asserts nothing
+the paper relies on.
 
 | # | Claim | Instrument | Runbook |
 |---|---|---|---|
 | 2A | The mechanism delta sits at the measured chance floor, family-split | CI upper bound below floor + 0.05; permutation p as a refutation-only test | §4 |
 | 2B | The absolute-embedding gene→family gap is non-zero (homology leakage exists) | paired bootstrap on the split gap | §4.5 |
 | 2C | Pathogenicity clears AUROC 0.85, family-split (positive control) | CI excludes 0.85 | §5 |
-| 2D | Conservation alone matches or beats the embedding delta for pathogenicity | paired bootstrap, gates 1A/1B | §6.7 |
+| 2D | Conservation alone clears AUROC 0.85 for pathogenicity | paired bootstrap | §6.7 |
+| 2E | Adding the embedding delta to conservation improves AUROC by more than 0.02 | paired bootstrap | §6.7 |
+| 2F | Enzyme type classification clears family-split LogReg macro-F1 0.70 | cluster-bootstrap CI | §8 |
+| 2G | Enzyme family-split F1 substantially exceeds the mechanism family-split floor | paired cluster-bootstrap CI | §8 |
+| 2H | The enzyme signal is linearly separable: MLP does not substantially outperform LogReg under family-split | paired cluster-bootstrap CI | §8 |
 
-2A and 2C are the load-bearing pair (the dissociation); 2B is the leakage account. Those three are
-the paper. 2D is the characterisation payoff — if the set must be trimmed, trim 2D, never 2A–2C.
+Claims 2A and 2C form the load-bearing dissociation, and 2B provides the leakage account. Claims
+2D–2E address characterisation, and 2F–2H address task specificity. If the set must be trimmed,
+retain 2A–2C.
 
 ### 2A — mechanism null (Runbook §4, permutation §4.6)
 
@@ -224,39 +228,73 @@ whole paper weakens.
 - [ ] Report states the probe measures discrimination only, not a calibrated risk estimate (§1.4).
 - [ ] Verdict recorded as overturned only if the CI includes 0.85.
 
-### 2D — conservation vs. embedding delta (Runbook §6.7)
+### 2D–2E — conservation vs. embedding delta (Runbook §6.7)
 
-Paired bootstrap on gates 1A/1B, run6 values recorded for reference:
+Paired bootstrap on claims 2D/2E, with run6 values recorded for reference:
 
 | Gate | Criterion | Run6 value | Margin | Run6 verdict |
 |---|---|---|---|---|
-| 1A | conservation alone AUROC > 0.85 | 0.891 | +0.041 | pass |
-| 1B | conservation + delta improves over conservation by > 0.02 | +0.0023 | −0.018 | fail |
-| 1C | conservation + delta improves over delta alone | +0.0345 | — | descriptive (no threshold) |
-| 1D | stability random→family rho drop < 0.10 (LEAKY) | — | descriptive | descriptive |
+| 2D | conservation alone AUROC > 0.85 | 0.891 | +0.041 | pass |
+| 2E | conservation + delta improves over conservation by > 0.02 | +0.0023 | −0.018 | fail |
+| Descriptive | conservation + delta improves over delta alone | +0.0345 | — | descriptive (no threshold) |
 
 Margins are stated against the threshold, never the bare floor — against the bare floor the lifts
 look much larger (seq +0.058, seq_struct +0.072) and the CI question becomes trivial; the two
-framings must not be interchanged. 1B already fails, so a CI spanning zero reinforces that reading
-— the underpowered clause (§1.1) applies, it does not threaten the conclusion. A failing gate makes
-no confirmatory claim: 1B is not a confirmatory item, since reporting it as one would imply it was
-a positive finding under test.
+framings must not be interchanged. 2E already fails, so a CI spanning zero reinforces that reading.
+The underpowered clause (§1.1) applies; it does not threaten the conclusion. A failed gate makes no
+positive claim.
 
 **Checklist:**
 - [ ] Margins reported are stated against the threshold (e.g. 0.85, 0.02), never against the bare
       chance floor.
-- [ ] 1B's CI, however it lands, is reported under the underpowered clause (§1.1) — not relabeled
+- [ ] 2E's CI, however it lands, is reported under the underpowered clause (§1.1) — not relabeled
       as a confirmatory pass.
-- [ ] The 1A/1B gap CI is computed as a paired bootstrap (§1.2), same-fold pairing.
+- [ ] The 2D/2E gap CI is computed as a paired bootstrap (§1.2), same-fold pairing.
 
-### Not part of the confirmatory set: stability control gates H1–H4 (Runbook §7)
+### 2F–2H — enzyme type classification (Runbook §8)
 
-A second positive control with its own pass bar (H1–H4), governed by the same verdict rule (§1.1)
-and resampling rule (§1.2), but not one of the four claims the paper's thesis rests on.
+A positive control using a wildtype-sequence property: classifying each gene as kinase, protease,
+oxidoreductase, or non-enzyme from its WT mean-pooled ESM-2 embedding. Enzyme class is strongly
+associated with protein fold, so ESM-2's known Pfam clustering should help — making this a direct
+test of whether the mechanism null (2A) is a property of the task, not a failure of the pipeline.
+Governed by the same verdict rule (§1.1) and resampling rule (§1.2) as the other experiments.
+Decision rules from `docs/plans/plan_enzyme_classification.md`:
+
+| # | Criterion | Run0 value | Interpretation |
+|---|---|---|---|
+| 2F | Family-split LogReg macro-F1 ≥ 0.70 | 0.655 | Enzyme class is strongly encoded in ESM-2 WT embeddings |
+| 2G | Enzyme family-split F1 substantially exceeds the mechanism family-split floor | +0.270 above 0.385 | The mechanism null is task-specific, not a probe or data failure |
+| 2H | MLP does not substantially outperform LogReg under family-split (\|ΔF1\| < 0.05) | −0.058 (LogReg wins) | Linear readout is sufficient, paralleling pathogenicity |
+
+2G is the central claim: the same pipeline that shows mechanism at floor achieves strong enzyme
+classification, so the mechanism null reflects what ESM-2 encodes, not a methodological ceiling.
+2F sets an absolute bar. 2H tests whether the signal is linearly separable (as for
+pathogenicity) or requires nonlinear probes (as for stability).
+
+The mechanism reference F1 in 2G is read from section 4's aggregate result, not hardcoded — the
+same "floor is a rule, not a fixed number" principle as 2A. Run0's value was 0.385; run_biorxiv
+recomputes it.
+
+CIs are cluster-bootstrap on seed-0 family-split OOF predictions, resampled by family (§1.2). The
+rare-class caveat (§1.3) applies to protease (68 genes in run0). A proteome-features baseline runs
+alongside as a negative control — enzyme class is a structural property, not a population-genetics
+one, so proteome features should be near chance.
+
+**Checklist:**
+- [ ] Mechanism reference F1 is read from the current run's aggregate, not hardcoded from run0.
+- [ ] CIs are resampled by family, not gene.
+- [ ] Protease per-class AUROC is flagged under the rare-class caveat (§1.3).
 
 ---
 
-## Part 3 — Exploratory (labelled, not corrected)
+## Part 3 — Stability controls (Runbook §7)
+
+A second positive control with its own gates, 3A–3D, governed by the same verdict rule (§1.1) and
+resampling rule (§1.2). These gates are not part of the confirmatory set.
+
+---
+
+## Part 4 — Exploratory analyses
 
 Per-class AUROCs, the 28-family within-family table and its per-family cells, the biochemistry R²,
 the magnitude/direction decomposition, per-feature leakage fractions, and all descriptive geometry.
@@ -266,7 +304,7 @@ was confirmatory.
 
 ---
 
-## Part 4 — What would change the conclusions
+## Part 5 — What would change the conclusions
 
 Recorded in advance so "the CIs corroborated the point estimates" is a falsifiable statement, not
 an assumption. Per-claim conditions are under each claim in Part 2. Overall: run_biorxiv changes
