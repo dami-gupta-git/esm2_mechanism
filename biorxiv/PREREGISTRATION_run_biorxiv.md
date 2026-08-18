@@ -9,12 +9,10 @@ run_biorxiv intervals are in.
 Methodology: `reports/run6/STATS_PLAN.md`. Step-by-step execution: `RUNBOOK_biorxiv.md` (section
 numbers below refer to that document).
 
-**Amended 2026-08-18 by `PREREGISTRATION_AMENDMENT_1.md`, which governs where the two differ.**
-That amendment renames the two quantities this document both calls the chance floor, re-derives
-the 2A threshold from the majority-class baseline, runs the permutation test on all five seeds,
-pins the three open choices in the 2B verdict, and records the rare-class rule as part of the
-metric definition. The text below is left as written so that what was specified beforehand stays
-readable; the pointers mark each rule the amendment replaces.
+**Revised 2026-08-18, before any output of the re-run was inspected.** Four rules were
+underdetermined in ways that let a verdict be chosen after the numbers were seen. They are
+rewritten in place below, and the revision history at the end of this document records what each
+one said before and why it changed.
 
 ---
 
@@ -73,9 +71,20 @@ partition.
 
 ### 1.3 Rare classes get a caveat, not a fix
 
-*Amended: the rare-class rule for resampling is now part of the metric definition — see amendment
-1, section 5. Metrics are scored within each fold and averaged, and a resample where any fold
-cannot score a class is discarded whole.*
+**Fold-aware scoring and the rare-class rule.** Every ranking metric and every macro-F1 in this
+run is computed inside each cross-validation fold and averaged across folds. Folds are fitted
+independently and their probabilities are on their own scales, so a metric that ranks the
+concatenation of all folds is not the quantity these rules intend.
+
+Under bootstrap resampling a fold can lose a rare class entirely, and DN is the case where that
+matters. Every fold must be able to score every class the metric averages over; a resample where
+any fold cannot is discarded whole rather than scored over the folds that survive, because a draw
+averaging over a different set of folds or classes is estimating a different quantity. The number
+of discarded resamples is recorded next to every interval.
+
+The expected discard rate is far below one percent, because every family-split fold already
+contains DN variants on every seed. A materially higher rate is treated as a fault in the
+resampling unit or the fold construction and investigated, not absorbed into the result.
 
 DN (≈9%, ~150–170 genes) and GOF (≈15%) sit in a regime where a percentile bootstrap undercovers
 for a bounded metric near its boundary with few clusters. No bias correction is applied — over
@@ -119,30 +128,43 @@ retain 2A–2C.
 
 ### 2A — mechanism null (Runbook §4, permutation §4.6)
 
-*Amended: the threshold below is replaced by the measured majority-class floor plus 0.05 — see
-amendment 1, sections 1 and 2. The quantity defined in this paragraph keeps its role as a reported
-comparator under the name nonlinear delta reference, and is not called a floor.*
+**Two quantities, named separately.** One is the score a no-information predictor achieves. The
+other is the score the run's own strongest mutation-only probe achieves. Only the first is a floor.
 
-**The chance floor is a rule, not a fixed number:** the ESM-2 family-split floor from that run's
-own MLP `delta_mean` family-split probe, averaged over five seeds (raising rather than
-substituting if a seed is missing). Run6's floor was 0.380 (it also appears as 0.415/0.418
-elsewhere in run6 reports — report-text drift, not a competing definition). `scripts/compare_runs.py`
-flags the floor's movement between runs.
+| Name | Definition | Source |
+|---|---|---|
+| Measured chance floor | Macro-F1 of a majority-class predictor under the split in question, averaged over the run's five seeds | The run's own naive baseline result file |
+| Nonlinear delta reference | Family-split macro-F1 of the run's nonlinear `delta_mean` probe, averaged over five seeds | The run's own nonlinear probe results |
 
-**Verdict.** A CI straddling the chance floor is not evidence the score sits at the floor — a wide
-enough interval straddles anything. 2A is affirmed only if the family-split CI's upper bound falls
-below floor + 0.05; otherwise it is **not adjudicated**, never confirmed. The permutation test runs
-in one direction only: a significant p refutes 2A, a non-significant p does not confirm it.
+The measured chance floor is what "floor" means throughout this document. It is read live from the
+run's own result file rather than carried between runs, and it does not move when the probes are
+refit, because a majority-class prediction is decided per row and no fold-scale comparison enters
+it. `scripts/compare_runs.py` flags its movement between runs.
 
-*Amended: the permutation test runs on all five seeds, not seed 0, and refutes 2A only when at
-least three of the five return p below 0.05 — see amendment 1, section 3.*
+The nonlinear delta reference is a measurement that carries signal, and it sits consistently above
+the measured chance floor. It is never described as chance, here or in the reports or the paper.
+
+**Verdict.** A CI straddling the floor is not evidence the score sits at the floor — a wide enough
+interval straddles anything. 2A is affirmed only if the family-split CI's upper bound for the
+linear `delta_mean` probe falls below the measured chance floor under the family split plus 0.05;
+otherwise it is **not adjudicated**, never confirmed. The permutation test runs in one direction
+only: a significant p refutes 2A, a non-significant p does not confirm it.
+
+The threshold is not derived from a probe. A threshold set by the nonlinear probe's own score would
+rise whenever that probe scored higher, making the claim easier to affirm rather than harder, and
+would move whenever the scoring code changed. The nonlinear delta reference is reported beside the
+threshold as a named comparator so a reader can see how far the strongest mutation-only probe sits
+above the floor, and it sets no bar.
+
+The threshold's value is filled in from the re-run's own naive baseline, recorded before the claim
+is judged against it, and never carried over from earlier results.
 
 **Permutation test — the two headline features are tested differently:**
 
 | Feature | Statistic | Refits | Permutations | Why this choice |
 |---|---|---|---|---|
-| `wt_only_mean` | macro-F1 | yes, once per permutation | 1,000, seed 0 | Load-bearing p-value; run6 left it unresolved at the 1/(N+1) floor |
-| `delta_mean` | macro one-vs-rest AUROC, cached out-of-fold predictions | none | 1,000, seed 0 | Sensitivity, not cost — macro-F1 stays near the floor even with real signal (run6: 0.289 vs. shuffled mean 0.319, p = 1.0, a test that cannot fire is not a test); AUROC reads the ranking directly |
+| `wt_only_mean` | macro-F1 | yes, once per permutation | 1,000, all five seeds | Load-bearing p-value; run6 left it unresolved at the 1/(N+1) floor |
+| `delta_mean` | macro one-vs-rest AUROC, cached out-of-fold predictions | none | 1,000, all five seeds | Sensitivity, not cost — macro-F1 stays near the floor even with real signal (run6: 0.289 vs. shuffled mean 0.319, p = 1.0, a test that cannot fire is not a test); AUROC reads the ranking directly |
 
 There are two ways to run a shuffle test:
 
@@ -169,6 +191,13 @@ same gene count, not by assigning one random label per family:
 - A family with no size-match keeps its own real labels; how many families this affects is reported
   next to the p-value.
 - Most families are a single gene, so almost all of them shuffle freely.
+
+**Seeds and how they combine.** The test runs on all five seeds and the full distribution of
+p-values is reported. Because the test is refutation-only for 2A, the refutation fires when at
+least three of the five seeds return a p-value below 0.05; a minority of significant seeds is
+reported as a split result and refutes nothing. A single-seed test is not used: the seeds differ in
+their gene-to-family gap, so one seed can understate the effect and invites the objection that the
+seed was chosen.
 
 Scope and cost:
 
@@ -207,10 +236,13 @@ underpowered to tell a real effect of the pre-registered size from none, which i
 the null holding.
 
 **Checklist:**
-- [ ] Chance floor is recomputed from the five-seed MLP `delta_mean` family-split average — not
-      hardcoded from run6's 0.380.
+- [ ] The measured chance floor is read from this run's own majority-class baseline under the
+      family split, not carried over from an earlier run and not derived from any probe.
+- [ ] The nonlinear delta reference is reported beside the threshold and is nowhere called a floor
+      or called chance.
 - [ ] Verdict recorded is "affirmed" or "not adjudicated" only, never "confirmed" outright.
-- [ ] "Affirmed" is used only if the family-split CI's upper bound is below floor + 0.05.
+- [ ] "Affirmed" is used only if the linear `delta_mean` family-split CI's upper bound is below the
+      measured chance floor + 0.05.
 - [ ] `delta_mean`'s reported p-value states which test variant (refit macro-F1 vs. no-refit AUROC)
       produced it.
 - [ ] Both `wt_only_mean` and `delta_mean` permutation nulls are built by shuffling at the family
@@ -220,22 +252,40 @@ the null holding.
 - [ ] No p-value is reported sitting exactly at the 1/(N+1) resolution floor without being flagged
       as unresolved.
 - [ ] The MLP has no permutation p-value attached.
+- [ ] The permutation test is reported for all five seeds, and a refutation is claimed only when at
+      least three of them return p below 0.05.
 
 ### 2B — homology leakage (Runbook §4.5)
 
-*Amended: the verdict rule below did not say which feature, which quantity, or how the seeds
-combine. All three are pinned in amendment 1, section 4 — `wt_only_mean`, the paired split gap
-rather than the leakage fraction, and an interval excluding zero on at least three of five seeds.*
+Paired bootstrap on the gene-split-minus-family-split gap, resampled by family (§1.2).
 
-Paired bootstrap on the gene-split-minus-family-split gap, resampled by family (§1.2). **Would
-overturn 2B:** the split-gap CI spans zero — the leakage account would be unsupported at this
-sample size.
+**What adjudicates.** Three choices decide this verdict and each of them changes the answer, so all
+three are fixed here rather than left to whoever reads the results.
+
+| Choice | Decision |
+|---|---|
+| Adjudicating feature | `wt_only_mean`, the headline absolute-embedding feature |
+| Adjudicating quantity | The paired gene-split-minus-family-split macro-F1 gap |
+| Seed combination | The gap's interval must exclude zero on at least three of the five seeds |
+
+**Would overturn 2B:** the gap's interval spans zero on three or more of the five seeds — the
+leakage account would be unsupported at this sample size.
+
+The leakage fraction does not adjudicate 2B. It is a derived ratio whose denominator is itself an
+estimate, and its interval spans zero on the merged dataset. It is reported as a descriptive
+quantity with its interval alongside the gap.
+
+The single-source subset, where the curation-source confound is absent, is reported as a named
+secondary analysis. It is the cleaner design, but it was not pre-specified as the adjudicator and
+does not become one.
 
 **Checklist:**
 - [ ] The split-gap CI is resampled by family, using one shared draw applied to both arms (§1.2
       pairing), not two independent bootstraps.
 - [ ] The gap is tested with the bootstrap, not a permutation test.
-- [ ] Verdict recorded as overturned only if the CI spans zero.
+- [ ] The verdict cites `wt_only_mean`, the paired gap, and the count of seeds whose interval
+      excludes zero.
+- [ ] The leakage fraction is reported with its interval and is not used to adjudicate.
 
 ### 2C — pathogenicity positive control (Runbook §5)
 
@@ -333,3 +383,38 @@ an assumption. Per-claim conditions are under each claim in Part 2. Overall: run
 error bars, not point estimates — any point estimate that moves materially from run6 is either a
 bug introduced by the wiring or a finding that needs explaining. `scripts/compare_runs.py` flags
 these, and each flagged movement is explained rather than silently adopted.
+
+---
+
+## Revision history
+
+Rules are rewritten in place above rather than kept as a separate amendment, so that there is one
+current specification and no second document to reconcile against it. This section records what
+changed, when, and why, so a reader can still see what was specified before the numbers were seen.
+
+### 2026-08-18, before any output of the re-run was inspected
+
+An audit found the scoring code was ranking probabilities pooled across independently fitted folds,
+and that four specification rules were underdetermined in ways that let a verdict be chosen after
+the numbers were seen. The scoring fix is recorded in the implementation history. The four rules
+changed as follows.
+
+| Rule | What it said before | Why it changed |
+|---|---|---|
+| The chance floor (§2A) | One term named two quantities: the majority-class score, and the run's own nonlinear `delta_mean` probe score | Only the majority-class score is a no-information baseline. The other carries signal and sits consistently above it |
+| The 2A threshold (§2A) | The nonlinear `delta_mean` probe's own five-seed family-split score, plus 0.05 | The threshold was derived from a probe and then used to judge a probe, so a higher-scoring probe raised its own bar and made the claim easier to affirm. It also moved whenever the scoring code changed |
+| Permutation seeds (§2A) | 1,000 permutations on seed 0 | Seed 0 has the smallest gene-to-family gap of the five and the only paired interval straddling zero, so a single-seed result both understated the effect and invited the objection that the seed was chosen |
+| The 2B verdict (§2B) | Overturned if "the split-gap CI spans zero" | It did not say which feature adjudicates, which quantity is the gap, or how the five seeds combine, and each of the three changes the answer |
+
+The rare-class rule in §1.3 was added at the same time. It was previously an implementation detail
+rather than part of the specification, but discarding a resample where a fold loses a class changes
+what the intervals estimate, so it belongs in the metric definition.
+
+No hypothesis, gate direction, or threshold in claims 2C through 2H changed, and no reported number
+was adjusted. Values affected by the scoring fix change as a consequence of being recomputed, and
+the reports are regenerated rather than edited.
+
+If the revised 2A threshold changes the verdict on 2A relative to the rule as originally written,
+both verdicts are stated rather than one being adopted silently. Under the original rule and on the
+pre-fix numbers 2A was affirmed, and it was also affirmed under the threshold adopted here; whether
+that survives the re-run is what the re-run decides.

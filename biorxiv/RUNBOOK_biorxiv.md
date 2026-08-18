@@ -17,9 +17,8 @@ Supersedes `RUNBOOK_biorxiv_old.md`, which became inconsistent after a second Cl
 is kept for reference only, not as a status source.
 
 Decision rules, resampling units, and the confirmatory/exploratory split: see
-[`PREREGISTRATION_run_biorxiv.md`](PREREGISTRATION_run_biorxiv.md), amended on 2026-08-18 by
-[`PREREGISTRATION_AMENDMENT_1.md`](PREREGISTRATION_AMENDMENT_1.md), which governs where the two
-differ. Design of the statistics
+[`PREREGISTRATION_run_biorxiv.md`](PREREGISTRATION_run_biorxiv.md), whose revision history records
+the rules revised on 2026-08-18 before the re-run. Design of the statistics
 machinery and non-obvious findings: see [`docs/FINDINGS.md`](../docs/FINDINGS.md).
 
 Outputs go to `results/run_biorxiv/` and `reports/run_biorxiv/`. `results/run6/` and
