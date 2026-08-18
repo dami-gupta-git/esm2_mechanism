@@ -419,7 +419,7 @@ def run_multiseed(
                 oof_a=mlp_oof_for_diff,
                 oof_b=lr_oof_for_diff,
                 pfam_map=pfam_map,
-                label="2E.3 MLP-LogReg",
+                label="2H MLP-LogReg",
                 classes=classes,
                 metric="macro_f1",
                 is_family_split=True,
@@ -625,7 +625,7 @@ def main():
     )
 
     print("\n" + "=" * 60)
-    print("DECISION RULES (PREREGISTRATION_run_biorxiv.md, 2E)")
+    print("DECISION RULES (PREREGISTRATION_run_biorxiv.md, 2F-2H)")
     print("=" * 60)
 
     fs_f1 = emb_results["logreg_family_split"].get("pooled_oof_macro_f1")
@@ -635,36 +635,36 @@ def main():
     paired_ci = emb_results.get("paired_ci_mlp_minus_logreg")
     independent_ci = emb_results.get("independent_ci_logreg_minus_mechanism")
 
-    gate_2e1 = fs_f1 is not None and fs_f1 >= 0.70
+    gate_2f = fs_f1 is not None and fs_f1 >= 0.70
     mechanism_point = independent_ci.get("point_b") if independent_ci is not None else None
     enzyme_mechanism_diff = (
         independent_ci.get("point_diff") if independent_ci is not None else None
     )
-    gate_2e2 = enzyme_mechanism_diff is not None and enzyme_mechanism_diff > 0.10
-    gate_2e3 = mlp_f1 is not None and fs_f1 is not None and abs(mlp_f1 - fs_f1) < 0.05
+    gate_2g = enzyme_mechanism_diff is not None and enzyme_mechanism_diff > 0.10
+    gate_2h = mlp_f1 is not None and fs_f1 is not None and abs(mlp_f1 - fs_f1) < 0.05
 
-    verdict_2e1 = adjudicate_level(fs_f1, fs_ci, 0.70)
+    verdict_2f = adjudicate_level(fs_f1, fs_ci, 0.70)
     if independent_ci is not None:
-        verdict_2e2 = adjudicate_level(enzyme_mechanism_diff, independent_ci, 0.10)
+        verdict_2g = adjudicate_level(enzyme_mechanism_diff, independent_ci, 0.10)
     else:
-        verdict_2e2 = "not adjudicated (independent difference CI unavailable)"
-    verdict_2e3 = adjudicate_equivalence(gate_2e3, paired_ci, 0.05)
+        verdict_2g = "not adjudicated (independent difference CI unavailable)"
+    verdict_2h = adjudicate_equivalence(gate_2h, paired_ci, 0.05)
 
-    print(f"\n2E.1 — family-split F1 >= 0.70:  {verdict_2e1}  (F1={fs_f1:.3f})")
+    print(f"\n2F — family-split F1 >= 0.70:  {verdict_2f}  (F1={fs_f1:.3f})")
     if mechanism_point is not None:
         print(
-            f"2E.2 — enzyme >> mechanism floor:  {verdict_2e2}  "
+            f"2G — enzyme >> mechanism floor:  {verdict_2g}  "
             f"(delta={enzyme_mechanism_diff:+.3f})"
         )
     else:
-        print("2E.2 — enzyme >> mechanism floor:  SKIPPED (mechanism reference unavailable)")
+        print("2G — enzyme >> mechanism floor:  SKIPPED (mechanism reference unavailable)")
     if mlp_f1 is not None and fs_f1 is not None:
         print(
-            f"2E.3 — MLP approx LogReg family-split:  {verdict_2e3}  "
+            f"2H — MLP approx LogReg family-split:  {verdict_2h}  "
             f"(delta_MLP-LR={mlp_f1 - fs_f1:+.3f})"
         )
     else:
-        print("2E.3 — MLP approx LogReg family-split:  SKIPPED (missing OOF)")
+        print("2H — MLP approx LogReg family-split:  SKIPPED (missing OOF)")
 
     output = {
         "description": (
@@ -683,12 +683,12 @@ def main():
         "esm2_wt_embedding": emb_results,
         "proteome_features": proteome_results,
         "gate_evaluation": {
-            "2E.1_family_split_f1_ge_0.70": bool(gate_2e1),
-            "2E.1_verdict": verdict_2e1,
-            "2E.2_enzyme_beats_mechanism_by_0.10": bool(gate_2e2),
-            "2E.2_verdict": verdict_2e2,
-            "2E.3_mlp_approx_logreg": bool(gate_2e3),
-            "2E.3_verdict": verdict_2e3,
+            "2F_family_split_f1_ge_0.70": bool(gate_2f),
+            "2F_verdict": verdict_2f,
+            "2G_enzyme_beats_mechanism_by_0.10": bool(gate_2g),
+            "2G_verdict": verdict_2g,
+            "2H_mlp_approx_logreg": bool(gate_2h),
+            "2H_verdict": verdict_2h,
             "fs_f1": fs_f1,
             "mlp_f1": mlp_f1,
             "gs_f1": gs_f1,

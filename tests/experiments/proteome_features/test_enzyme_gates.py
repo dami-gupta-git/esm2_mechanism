@@ -82,7 +82,7 @@ class TestPairedCiPresence:
             compute_ci=True, n_boot=50,
         )
         assert "paired_ci_mlp_minus_logreg" in result, (
-            "Gate 2E.3 requires a paired CI on MLP-LogReg difference"
+            "Gate 2H requires a paired CI on MLP-LogReg difference"
         )
         ci = result["paired_ci_mlp_minus_logreg"]
         assert ci is not None
