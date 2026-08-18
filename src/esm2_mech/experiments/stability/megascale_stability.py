@@ -47,11 +47,13 @@ os.makedirs(str(_DATA_DIR / "embeddings" / ESM2_MODEL), exist_ok=True)
 
 
 def run_regression_cv(X, y, splits, clf_fn, with_pearson=True, clusters=None,
-                      return_oof=False, median=None):
+                      return_oof=False, median=None, label=None):
     """Standardise-fit-predict a regressor over CV folds; return ρ/AUROC."""
     rhos, pearsons, aurocs = [], [], []
     oof_y, oof_pred, oof_clusters, oof_indices = [], [], [], []
-    for tr, te in splits:
+    splits = list(splits)
+    n_folds = len(splits)
+    for fold_i, (tr, te) in enumerate(splits):
         Xtr, Xte = standardize(X[tr], X[te])
         clf = clf_fn()
         clf.fit(Xtr, y[tr])
@@ -59,6 +61,8 @@ def run_regression_cv(X, y, splits, clf_fn, with_pearson=True, clusters=None,
         rho, _ = spearmanr(y[te], pred)
         rhos.append(float(rho))
         aurocs.append(auroc_at_median(y[te], pred, median=median))
+        if label:
+            print(f"    {label} fold {fold_i+1}/{n_folds}: ρ={float(rho):.3f}")
         if with_pearson:
             pearson, _ = pearsonr(y[te], pred)
             pearsons.append(float(pearson))

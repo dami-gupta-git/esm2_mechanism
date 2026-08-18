@@ -1,6 +1,7 @@
-"""Nonlinear stability probe (MLP, RF, GBM) companion to megascale_stability.py.
+"""Nonlinear stability probe (MLP, RF) companion to megascale_stability.py.
 
-RF and GBM are EXPLORATORY / post-hoc — only Ridge and MLP are pre-registered.
+RF is EXPLORATORY / post-hoc — only Ridge and MLP are pre-registered.
+Uses cuML GPU random forest when available, falls back to sklearn on CPU.
 """
 
 import functools
@@ -9,7 +10,18 @@ import numpy as np
 from scipy.stats import spearmanr, pearsonr
 
 print = functools.partial(print, flush=True)
-from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
+
+import torch
+
+_HAS_CUML = False
+try:
+    from cuml.ensemble import RandomForestRegressor as CumlRFRegressor
+    _HAS_CUML = torch.cuda.is_available()
+except ImportError:
+    pass
+
+if not _HAS_CUML:
+    from sklearn.ensemble import RandomForestRegressor
 
 from esm2_mech.experiments.stability.stability_data import (
     load_stability_inputs,
@@ -139,6 +151,7 @@ def main(use_xgboost=False):
     family_map = inputs.family_map
     X = inputs.delta_mean
     print(f"Embeddings: {X.shape}")
+    print(f"RF backend: {'cuML (GPU)' if _HAS_CUML else 'sklearn (CPU)'}")
 
     global_median = float(np.median(ddg))
 
@@ -148,10 +161,9 @@ def main(use_xgboost=False):
     )[name]
 
     def _rf(seed):
+        if _HAS_CUML:
+            return CumlRFRegressor(n_estimators=100, random_state=seed)
         return RandomForestRegressor(n_estimators=100, random_state=seed, n_jobs=-1)
-
-    def _gbm(seed):
-        return GradientBoostingRegressor(n_estimators=100, random_state=seed)
 
     if use_xgboost:
         # xgboost mode runs ONLY the GPU tree booster — the MLP is already produced
@@ -175,13 +187,12 @@ def main(use_xgboost=False):
             )
 
         probe_runners = [
-            ("xgb", lambda X, y, splits, seed: run_regression_cv(X, y, splits, lambda: _xgb(seed), with_pearson=False, median=global_median)),
+            ("xgb", lambda X, y, splits, seed: run_regression_cv(X, y, splits, lambda: _xgb(seed), with_pearson=False, median=global_median, label=f"xgb/seed{seed}")),
         ]
     else:
         probe_runners = [
             ("mlp", lambda X, y, splits, seed: run_mlp_regression(X, y, splits, seed=seed, median=global_median)),
-            ("rf", lambda X, y, splits, seed: run_regression_cv(X, y, splits, lambda: _rf(seed), with_pearson=False, median=global_median)),
-            ("gbm", lambda X, y, splits, seed: run_regression_cv(X, y, splits, lambda: _gbm(seed), with_pearson=False, median=global_median)),
+            ("rf", lambda X, y, splits, seed: run_regression_cv(X, y, splits, lambda: _rf(seed), with_pearson=False, median=global_median, label=f"rf/seed{seed}")),
         ]
 
     summary = {}
