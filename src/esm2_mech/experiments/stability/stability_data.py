@@ -3,7 +3,6 @@
 import functools
 import hashlib
 import json
-import os
 from collections import namedtuple
 
 import numpy as np
@@ -11,7 +10,7 @@ import numpy as np
 from esm2_mech.experiments.stability.tsuboyama_loader import load_tsuboyama_variants
 from esm2_mech.experiments.stability.build_domain_families import build_family_map
 from esm2_mech.utils.constants import N_FOLDS
-from esm2_mech.utils.io import load_json_or_discard
+from esm2_mech.utils.io import atomic_write_json, load_json_or_discard
 from esm2_mech.utils.splits import random_split_cv, gene_split_cv, family_split_cv
 from esm2_mech.utils.paths import (
     MEGASCALE_EMB_WT_MEAN,
@@ -75,17 +74,14 @@ def variant_fingerprint(variants):
     changed variant cache is detected when compared against the fingerprint
     saved alongside the embedding arrays.
     """
-    content = "\n".join(
-        f"{v['protein']}|{v['mutation_code']}" for v in variants
-    )
+    content = "\n".join(f"{v['protein']}|{v['mutation_code']}" for v in variants)
     return hashlib.sha256(content.encode()).hexdigest()
 
 
 def save_fingerprint(variants, path=MEGASCALE_EMB_FINGERPRINT):
     """Write the variant fingerprint alongside the embedding arrays."""
     fp = variant_fingerprint(variants)
-    with open(path, "w") as fh:
-        json.dump({"sha256": fp, "n_variants": len(variants)}, fh)
+    atomic_write_json(path, {"sha256": fp, "n_variants": len(variants)})
 
 
 def _check_alignment(embedding, n_variants, path):
@@ -98,20 +94,19 @@ def _check_alignment(embedding, n_variants, path):
 
 def _check_fingerprint(variants):
     """Verify embedding fingerprint matches the current variant list."""
-    if not os.path.exists(MEGASCALE_EMB_FINGERPRINT):
-        print(
-            f"WARNING: no embedding fingerprint file at {MEGASCALE_EMB_FINGERPRINT}. "
-            "Row alignment cannot be verified. Re-run embed_megascale to generate one."
+    if not MEGASCALE_EMB_FINGERPRINT.exists():
+        raise FileNotFoundError(
+            f"no embedding fingerprint file at {MEGASCALE_EMB_FINGERPRINT}; "
+            "re-run embed_megascale before using the embedding arrays"
         )
-        return
     with open(MEGASCALE_EMB_FINGERPRINT) as fh:
         stored = json.load(fh)
     current = variant_fingerprint(variants)
-    if stored["sha256"] != current:
+    if stored.get("sha256") != current or stored.get("n_variants") != len(variants):
         raise ValueError(
             f"embedding fingerprint mismatch: the variant list has changed since "
             f"embeddings were extracted. Stored fingerprint covers "
-            f"{stored['n_variants']} variants; current list has {len(variants)}. "
+            f"{stored.get('n_variants')} variants; current list has {len(variants)}. "
             f"Re-run embed_megascale.py to re-extract embeddings."
         )
 

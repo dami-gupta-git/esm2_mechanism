@@ -2,32 +2,31 @@
 signal, or does the embedding carry pathogenicity beyond masked-LM likelihood?
 
 Phase 1 (GPU, --extract): mask WT position, read log P over 20 AAs.
-Phase 2 (CPU): compare conservation features to the result_23 axis, same family-split.
+Phase 2 (CPU): compare conservation features to a family-held-out pathogenicity axis.
 """
 
 import argparse
-import hashlib
 import json
-import os
 import numpy as np
 import functools
+from joblib import Parallel, delayed
 
-print = functools.partial(print, flush=True)
-
-from esm2_mech.utils.data import load_pfam_map
-from esm2_mech.utils.io import atomic_write_json, save_npy, load_npy_or_discard, write_result_json
+from esm2_mech.utils.data import load_pfam_map, variants_fingerprint
+from esm2_mech.utils.io import (
+    atomic_write_json,
+    load_npy_or_discard,
+    save_npy,
+    write_result_json,
+)
 from esm2_mech.utils.paths import (
     GEOMETRY_RESULTS_DIR,
     CONSERVATION_AXIS_JSON,
     CONSERVATION_PATHOGENICITY_NPY,
     CONSERVATION_PATHOGENICITY_META_JSON,
-    PATH_EMB_WT_MEAN,
-    PATH_EMB_MUT_MEAN,
     PATHOGENICITY_CANONICAL_VARIANTS_JSON,
     PFAM_JSON,
     SEQUENCES_JSON,
 )
-from joblib import Parallel, delayed
 
 from esm2_mech.embeddings.embed_variants import ESM2_MODEL_650M
 from esm2_mech.utils.embed import load_esm2_model, masked_aa_log_probs
@@ -43,12 +42,20 @@ from esm2_mech.utils.constants import AA_ORDER
 from esm2_mech.utils.probes import run_logreg_binary_cv
 from esm2_mech.utils.sequences import window_sequence
 from esm2_mech.utils.splits import family_split_cv
+from esm2_mech.experiments.geometry.axis_analysis import (
+    family_held_out_axis_analysis,
+    format_axis_summary,
+)
+from esm2_mech.experiments.geometry.data import (
+    load_pathogenicity_geometry_inputs,
+    pathogenicity_geometry_provenance,
+)
+
+print = functools.partial(print, flush=True)
 
 GEOMETRY_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
 VARIANTS = PATHOGENICITY_CANONICAL_VARIANTS_JSON
-WT_EMB = PATH_EMB_WT_MEAN
-MUT_EMB = PATH_EMB_MUT_MEAN
 SEQS = SEQUENCES_JSON
 CONS_CACHE = CONSERVATION_PATHOGENICITY_NPY
 CONS_META = CONSERVATION_PATHOGENICITY_META_JSON
@@ -59,13 +66,72 @@ CLAIM_2E_DELTA_ADD_MIN = 0.02
 
 PATHOGENIC = 1
 LOGREG_MAX_ITER = 2000
+CONSERVATION_CACHE_VERSION = 2
 
-def _variant_fingerprint(variants):
-    key = json.dumps(
-        [(v["gene"], v["aa_pos"], v["aa_wt"], v["aa_mut"]) for v in variants],
-        sort_keys=True,
-    )
-    return hashlib.sha256(key.encode()).hexdigest()[:16]
+
+def _sequence_fingerprint(variants, seqs):
+    """Hash every sequence entry used by the ordered canonical variant set."""
+    import hashlib
+
+    digest = hashlib.sha256()
+    for uniprot_id in sorted({variant["uniprot_id"] for variant in variants}):
+        sequence = seqs.get(uniprot_id)
+        marker = "<missing>" if sequence is None else sequence
+        digest.update(f"{uniprot_id}|{marker}".encode())
+        digest.update(b"\x00")
+    return digest.hexdigest()
+
+
+def conservation_cache_identity(variants, seqs):
+    """Describe all mutable inputs that determine the conservation array."""
+    import hashlib
+
+    identity = {
+        "version": CONSERVATION_CACHE_VERSION,
+        "n": len(variants),
+        "variant_fingerprint": variants_fingerprint(variants),
+        "sequence_fingerprint": _sequence_fingerprint(variants, seqs),
+        "model": ESM2_MODEL_650M,
+        "aa_order": AA_ORDER,
+        "features": ["logP_wt", "logP_mut", "entropy"],
+    }
+    payload = json.dumps(identity, sort_keys=True, separators=(",", ":"))
+    identity["fingerprint"] = hashlib.sha256(payload.encode()).hexdigest()
+    return identity
+
+
+def _save_conservation_cache(values, identity):
+    save_npy(CONS_CACHE, values)
+    metadata = dict(identity)
+    metadata["coverage"] = int(np.isfinite(values).all(axis=1).sum())
+    atomic_write_json(CONS_META, metadata)
+
+
+def load_validated_conservation_cache(variants, seqs):
+    """Load a conservation cache only when its full provenance matches."""
+    if not CONS_CACHE.exists():
+        raise FileNotFoundError(CONS_CACHE)
+    if not CONS_META.exists():
+        raise FileNotFoundError(
+            f"conservation metadata is missing at {CONS_META}; re-run --extract"
+        )
+    values = load_npy_or_discard(CONS_CACHE)
+    if values is None:
+        raise ValueError(f"conservation cache at {CONS_CACHE} could not be loaded")
+    with open(CONS_META) as handle:
+        metadata = json.load(handle)
+    expected = conservation_cache_identity(variants, seqs)
+    if metadata.get("fingerprint") != expected["fingerprint"]:
+        raise ValueError(
+            "conservation cache provenance does not match the current variants, "
+            "sequences, model, or amino-acid order; re-run --extract"
+        )
+    expected_shape = (len(variants), 3)
+    if values.shape != expected_shape:
+        raise ValueError(
+            f"conservation cache has shape {values.shape}; expected {expected_shape}"
+        )
+    return values, metadata
 
 
 def extract_conservation(variants, seqs, batch_size=64, ckpt_every=2000):
@@ -80,16 +146,20 @@ def extract_conservation(variants, seqs, batch_size=64, ckpt_every=2000):
         )
 
     N = len(variants)
-    fp = _variant_fingerprint(variants)
+    identity = conservation_cache_identity(variants, seqs)
     out = np.full((N, 3), np.nan, dtype=np.float32)
     done = 0
     if CONS_CACHE.exists() and CONS_META.exists():
         cached = load_npy_or_discard(CONS_CACHE)
         with open(CONS_META) as _f:
             meta = json.load(_f)
-        if cached is not None and len(cached) == N and meta.get("fingerprint") == fp:
+        if (
+            cached is not None
+            and cached.shape == (N, 3)
+            and meta.get("fingerprint") == identity["fingerprint"]
+        ):
             out = cached
-            done = int(np.isfinite(out[:, 0]).sum())
+            done = int(np.isfinite(out).all(axis=1).sum())
             print(f"Resuming: {done}/{N} variants already extracted")
         elif cached is not None and len(cached) == N and "fingerprint" not in meta:
             raise ValueError(
@@ -97,13 +167,15 @@ def extract_conservation(variants, seqs, batch_size=64, ckpt_every=2000):
                 f"in {CONS_META}. A row-count match alone cannot verify the variant "
                 f"ordering. Delete the cache and re-extract."
             )
+        else:
+            print("Existing conservation cache has stale provenance; recomputing it")
 
     model, alphabet = load_esm2_model(ESM2_MODEL_650M, device=device)
 
     work = []
     skipped = 0
     for i, v in enumerate(variants):
-        if np.isfinite(out[i, 0]):
+        if np.isfinite(out[i]).all():
             continue
         seq = seqs.get(v.get("uniprot_id"))
         if not seq or not (1 <= v["aa_pos"] <= len(seq)):
@@ -131,45 +203,35 @@ def extract_conservation(variants, seqs, batch_size=64, ckpt_every=2000):
             p20 = np.exp(log_probs)
             p20 = p20 / p20.sum()
             entropy = float(-(p20 * np.log(p20 + 1e-12)).sum())
-            out[idx, 0] = float(log_probs[AA_ORDER.index(wt)]) if wt in AA_ORDER else np.nan
-            out[idx, 1] = float(log_probs[AA_ORDER.index(mut)]) if mut in AA_ORDER else np.nan
+            out[idx, 0] = (
+                float(log_probs[AA_ORDER.index(wt)]) if wt in AA_ORDER else np.nan
+            )
+            out[idx, 1] = (
+                float(log_probs[AA_ORDER.index(mut)]) if mut in AA_ORDER else np.nan
+            )
             out[idx, 2] = entropy
-        done = int(np.isfinite(out[:, 0]).sum())
+        done = int(np.isfinite(out).all(axis=1).sum())
         if (bs // batch_size) % max(1, (ckpt_every // batch_size)) == 0:
-            save_npy(CONS_CACHE, out)
+            _save_conservation_cache(out, identity)
             print(f"  {done}/{N} done (checkpointed)")
 
-    save_npy(CONS_CACHE, out)
-    atomic_write_json(
-        CONS_META,
-        {
-            "n": N,
-            "fingerprint": fp,
-            "coverage": done,
-            "features": ["logP_wt", "logP_mut", "entropy"],
-            "model": ESM2_MODEL_650M,
-        },
-    )
+    _save_conservation_cache(out, identity)
     print(f"Saved {CONS_CACHE}: {done}/{N} variants with conservation scores")
     return out
-
-
-
-def _pathogenicity_label(label):
-    """Map a canonical-set label to 1 (pathogenic) / 0 (benign); never a catch-all."""
-    if label == "pathogenic":
-        return 1
-    if label == "benign":
-        return 0
-    raise ValueError(f"unexpected pathogenicity label {label!r} (expected 'pathogenic'/'benign')")
 
 
 def _oof_one_seed(X, y, genes, pfam, seed):
     """Family-split out-of-fold positive-class probabilities for one seed."""
     splits = list(family_split_cv(genes, pfam, seed=seed))
     _, oof = run_logreg_binary_cv(
-        X, y, splits, seed=seed, pos_label=PATHOGENIC, genes=genes,
-        return_oof=True, max_iter=LOGREG_MAX_ITER,
+        X,
+        y,
+        splits,
+        seed=seed,
+        pos_label=PATHOGENIC,
+        genes=genes,
+        return_oof=True,
+        max_iter=LOGREG_MAX_ITER,
     )
     return oof
 
@@ -188,39 +250,34 @@ def auroc_family_split(X, y, genes, pfam, seeds=range(5), n_jobs=-1):
 
 
 def analyse():
-    from sklearn.preprocessing import StandardScaler
-    from sklearn.linear_model import LogisticRegression
-    from scipy.stats import spearmanr
-
-    if not CONS_CACHE.exists():
-        raise FileNotFoundError(CONS_CACHE)
-
-    with open(VARIANTS) as _f:
-        variants = json.load(_f)
-    delta = np.load(MUT_EMB) - np.load(WT_EMB)
-    cons = np.load(CONS_CACHE)
+    inputs = load_pathogenicity_geometry_inputs()
+    with open(SEQS) as handle:
+        seqs = json.load(handle)
+    cons, conservation_meta = load_validated_conservation_cache(inputs.variants, seqs)
     pfam = load_pfam_map(PFAM_JSON)
-    genes_all = np.array([v["gene"] for v in variants])
-    y_all = np.array([_pathogenicity_label(v["label"]) for v in variants])
 
     valid = np.isfinite(cons).all(axis=1)
     print(f"Conservation coverage: {valid.sum()}/{len(valid)} variants")
-    delta, cons, genes, y = delta[valid], cons[valid], genes_all[valid], y_all[valid]
+    delta = inputs.delta[valid]
+    cons = cons[valid]
+    genes = inputs.genes[valid]
+    y = inputs.labels[valid]
 
     logP_wt, logP_mut, entropy = cons[:, 0], cons[:, 1], cons[:, 2]
     masked_marginal = logP_wt - logP_mut
     cons_feats = np.column_stack([logP_wt, logP_mut, entropy, masked_marginal])
 
-    Xs = StandardScaler().fit_transform(delta)
-    w = LogisticRegression(max_iter=2000, C=1.0).fit(Xs, y).coef_.ravel()
-    w /= np.linalg.norm(w) + 1e-12
-    s = Xs @ w
-
-    k3 = {
-        "masked_marginal": float(spearmanr(s, masked_marginal).correlation),
-        "entropy": float(spearmanr(s, entropy).correlation),
-        "logP_wt": float(spearmanr(s, logP_wt).correlation),
-    }
+    axis_associations = family_held_out_axis_analysis(
+        delta,
+        y,
+        genes,
+        pfam,
+        {
+            "masked_marginal": masked_marginal,
+            "entropy": entropy,
+            "logP_wt": logP_wt,
+        },
+    )
 
     print("\nRunning family-split AUROCs (5 seeds)...")
     feature_sets = {
@@ -248,16 +305,30 @@ def analyse():
 
     print("\n=== PAIRED DIFFERENCES (family-cluster bootstrap) ===")
     contrasts = [
-        ("2E_delta_beyond_conservation", "conservation_plus_delta", "conservation", CLAIM_2E_DELTA_ADD_MIN),
-        ("descriptive_conservation_beyond_delta", "conservation_plus_delta", "delta", 0.0),
-        ("2D_conservation_vs_delta", "conservation", "delta", 0.0),
+        (
+            "2E_delta_beyond_conservation",
+            "conservation_plus_delta",
+            "conservation",
+            CLAIM_2E_DELTA_ADD_MIN,
+        ),
+        (
+            "descriptive_conservation_beyond_delta",
+            "conservation_plus_delta",
+            "delta",
+            0.0,
+        ),
+        ("descriptive_conservation_vs_delta", "conservation", "delta", 0.0),
     ]
     paired = {}
     for key, arm_a, arm_b, threshold in contrasts:
         label = f"{key}: {arm_a} − {arm_b}"
         diff = paired_oof_diff(
-            oof_by_feature.get(arm_a), oof_by_feature.get(arm_b), pfam, label,
-            metric="auroc_binary", is_family_split=True,
+            oof_by_feature.get(arm_a),
+            oof_by_feature.get(arm_b),
+            pfam,
+            label,
+            metric="auroc_binary",
+            is_family_split=True,
         )
         if diff is None:
             continue
@@ -274,20 +345,24 @@ def analyse():
     cons_a = auroc["conservation"]
     both_a = auroc["conservation_plus_delta"]
     delta_a = auroc["delta"]
-    claim_2d_passed = bool(cons_a >= CLAIM_2D_CONSERVATION_MIN) if np.isfinite(cons_a) else None
+    claim_2d_passed = (
+        bool(cons_a >= CLAIM_2D_CONSERVATION_MIN) if np.isfinite(cons_a) else None
+    )
     claim_2e_diff = paired.get("2E_delta_beyond_conservation")
     claim_2e_passed = (
         bool(claim_2e_diff["point_diff"] >= CLAIM_2E_DELTA_ADD_MIN)
         if claim_2e_diff and claim_2e_diff.get("point_diff") is not None
         else None
     )
-    gates = {
+    claims = {
         "2D_conservation_clears_0.85": {
             "value": cons_a,
             "threshold": CLAIM_2D_CONSERVATION_MIN,
             "ci": auroc_ci["conservation"],
             "passed": claim_2d_passed,
-            "verdict": adjudicate_level(cons_a, auroc_ci["conservation"], CLAIM_2D_CONSERVATION_MIN),
+            "verdict": adjudicate_level(
+                cons_a, auroc_ci["conservation"], CLAIM_2D_CONSERVATION_MIN
+            ),
         },
         "2E_delta_beyond_conservation": {
             "value": claim_2e_diff["point_diff"] if claim_2e_diff else None,
@@ -296,7 +371,9 @@ def analyse():
             "conservation_plus_delta": both_a,
             "paired_diff": claim_2e_diff,
             "passed": claim_2e_passed,
-            "verdict": adjudicate_diff(claim_2e_passed, claim_2e_diff, CLAIM_2E_DELTA_ADD_MIN),
+            "verdict": adjudicate_diff(
+                claim_2e_passed, claim_2e_diff, CLAIM_2E_DELTA_ADD_MIN
+            ),
         },
         "descriptive_conservation_beyond_delta": {
             "value": (
@@ -308,20 +385,32 @@ def analyse():
             "conservation_plus_delta": both_a,
             "paired_diff": paired.get("descriptive_conservation_beyond_delta"),
         },
-        "2D_conservation_vs_delta": {
+        "descriptive_conservation_vs_delta": {
             "conservation": cons_a,
             "delta": delta_a,
-            "paired_diff": paired.get("2D_conservation_vs_delta"),
+            "paired_diff": paired.get("descriptive_conservation_vs_delta"),
         },
     }
 
+    provenance = pathogenicity_geometry_provenance(inputs, pfam)
+    provenance.update(
+        {
+            "conservation_cache_fingerprint": conservation_meta["fingerprint"],
+            "conservation_sequence_fingerprint": conservation_meta[
+                "sequence_fingerprint"
+            ],
+        }
+    )
     result = {
         "n_valid": int(valid.sum()),
-        "k3_spearman_axis_vs": k3,
+        "axis_conservation_correlations_family_held_out": axis_associations[
+            "correlations"
+        ],
         "auroc_family_split": auroc,
         "auroc_family_split_ci": auroc_ci,
-        "gates": gates,
+        "claims": claims,
         "thresholds": {"2D": CLAIM_2D_CONSERVATION_MIN, "2E": CLAIM_2E_DELTA_ADD_MIN},
+        "input_provenance": provenance,
         "calibration_note": (
             "The probes are uncalibrated and measure discrimination only; the "
             "reported AUROCs are not risk estimates (pre-registration §1.4)."
@@ -332,10 +421,10 @@ def analyse():
     print("\n" + "=" * 60)
     print("CONSERVATION DECIDER")
     print("=" * 60)
-    print(f"  K3 Spearman(axis, masked_marginal) = {k3['masked_marginal']:+.3f}")
-    print(f"     Spearman(axis, entropy)         = {k3['entropy']:+.3f}")
-    print(f"     Spearman(axis, logP_wt)         = {k3['logP_wt']:+.3f}")
-    print(f"\n  AUROC (family-split, seed-averaged OOF):")
+    print("  Family-held-out axis correlations:")
+    for name, summary in axis_associations["correlations"].items():
+        print(f"    {name:20s} rho = {format_axis_summary(summary)}")
+    print("\n  AUROC (family-split, seed-averaged OOF):")
     for name, value in auroc.items():
         ci = auroc_ci.get(name)
         interval = (
@@ -346,12 +435,16 @@ def analyse():
         print(f"    {name:26s} {value:.3f} {interval}")
     print(
         f"\n  2D conservation-alone >= {CLAIM_2D_CONSERVATION_MIN}: {cons_a:.3f} -> "
-        f"{gates['2D_conservation_clears_0.85']['verdict']}"
+        f"{claims['2D_conservation_clears_0.85']['verdict']}"
     )
-    claim_2e_value = gates["2E_delta_beyond_conservation"]["value"]
-    claim_2e_shown = f"{claim_2e_value:+.3f}" if claim_2e_value is not None else "no point estimate"
-    print(f"  2E delta adds over conservation >= {CLAIM_2E_DELTA_ADD_MIN}: {claim_2e_shown}")
-    print(f"     {gates['2E_delta_beyond_conservation']['verdict']}")
+    claim_2e_value = claims["2E_delta_beyond_conservation"]["value"]
+    claim_2e_shown = (
+        f"{claim_2e_value:+.3f}" if claim_2e_value is not None else "no point estimate"
+    )
+    print(
+        f"  2E delta adds over conservation >= {CLAIM_2E_DELTA_ADD_MIN}: {claim_2e_shown}"
+    )
+    print(f"     {claims['2E_delta_beyond_conservation']['verdict']}")
     print(f"\nResults -> {CONSERVATION_AXIS_JSON}")
 
 
@@ -372,15 +465,8 @@ def main():
             seqs = json.load(_f)
         print(f"Variants: {len(variants)}  Sequences available: {len(seqs)}")
         extract_conservation(variants, seqs, batch_size=args.batch_size)
-
-    if MUT_EMB.exists() and CONS_CACHE.exists():
-        analyse()
-    else:
-        print(
-            "Skipping Phase 2 analysis: "
-            f"{'embeddings' if not MUT_EMB.exists() else 'conservation cache'} not present here. "
-            "Run Phase 2 where the embeddings live."
-        )
+        return
+    analyse()
 
 
 if __name__ == "__main__":

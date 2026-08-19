@@ -4,11 +4,8 @@ Tests context-free substitution biochemistry (BLOSUM62, hydropathy, charge, volu
 against the ESM-2 axis. Does not cover position-specific conservation (see conservation_axis).
 """
 
-import json
 import numpy as np
 import functools
-
-print = functools.partial(print, flush=True)
 
 from esm2_mech.utils.constants import N_SEEDS
 from esm2_mech.utils.data import load_pfam_map
@@ -16,14 +13,21 @@ from esm2_mech.utils.io import write_result_json
 from esm2_mech.utils.paths import (
     GEOMETRY_RESULTS_DIR,
     PROBE4_AXIS_IDENTITY_JSON,
-    PATH_EMB_WT_MEAN,
-    PATH_EMB_MUT_MEAN,
-    PATHOGENICITY_CANONICAL_VARIANTS_JSON,
     PFAM_JSON,
 )
 from esm2_mech.utils.metrics import mean_std_n
 from esm2_mech.utils.probes import auroc_for_clf
 from esm2_mech.utils.splits import family_split_cv
+from esm2_mech.experiments.geometry.axis_analysis import (
+    family_held_out_axis_analysis,
+    format_axis_summary,
+)
+from esm2_mech.experiments.geometry.data import (
+    load_pathogenicity_geometry_inputs,
+    pathogenicity_geometry_provenance,
+)
+
+print = functools.partial(print, flush=True)
 
 GEOMETRY_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -114,15 +118,6 @@ VOLUME = dict(
 )
 
 
-def _pathogenicity_label(label):
-    """Map a canonical-set label to 1 (pathogenic) / 0 (benign); never a catch-all."""
-    if label == "pathogenic":
-        return 1
-    if label == "benign":
-        return 0
-    raise ValueError(f"unexpected pathogenicity label {label!r} (expected 'pathogenic'/'benign')")
-
-
 def biochem_features(wt, mut):
     if wt not in AA or mut not in AA:
         return None
@@ -148,19 +143,10 @@ FEAT_NAMES = [
 
 def run(n_seeds=N_SEEDS):
     from sklearn.preprocessing import StandardScaler
-    from sklearn.linear_model import LogisticRegression, Ridge
-    from sklearn.model_selection import KFold
-    from sklearn.metrics import r2_score
-    from scipy.stats import spearmanr
+    from sklearn.linear_model import LogisticRegression
 
-    with open(PATHOGENICITY_CANONICAL_VARIANTS_JSON) as _f:
-        v = json.load(_f)
-    delta = np.load(PATH_EMB_MUT_MEAN) - np.load(PATH_EMB_WT_MEAN)
-    if len(v) != delta.shape[0]:
-        raise ValueError(
-            f"variant/embedding row mismatch: {len(v)} variants vs "
-            f"{delta.shape[0]} embedding rows — canonical file is not row-aligned."
-        )
+    inputs = load_pathogenicity_geometry_inputs()
+    v = inputs.variants
     pfam = load_pfam_map(PFAM_JSON)
 
     bio, keep = [], []
@@ -171,38 +157,29 @@ def run(n_seeds=N_SEEDS):
             keep.append(i)
     keep = np.array(keep)
     bio = np.array(bio, dtype=float)
-    delta = delta[keep]
-    y = np.array([_pathogenicity_label(v[i]["label"]) for i in keep])
-    genes = np.array([v[i]["gene"] for i in keep])
+    delta = inputs.delta[keep]
+    y = inputs.labels[keep]
+    genes = inputs.genes[keep]
     mag = np.linalg.norm(delta, axis=1)
     print(f"Variants with biochem features: {len(keep)} / {len(v)}")
 
-    Xs = StandardScaler().fit_transform(delta)
-    w = LogisticRegression(max_iter=2000, C=1.0).fit(Xs, y).coef_.ravel()
-    w /= np.linalg.norm(w) + 1e-12
-    s = Xs @ w
-    print("\n=== A. Spearman(axis score, feature) ===")
-    corrA = {}
-    for j, name in enumerate(FEAT_NAMES):
-        rho = float(spearmanr(s, bio[:, j]).correlation)
-        corrA[name] = rho
-        print(f"  {name:14s} rho = {rho:+.3f}")
-    rho_mag = float(spearmanr(s, mag).correlation)
-    rho_y = float(spearmanr(s, y).correlation)
-    print(f"  {'magnitude ||d||':14s} rho = {rho_mag:+.3f}")
-    print(f"  {'(label)':14s} rho = {rho_y:+.3f}  (sanity: axis aligns with label)")
-
-    print("\n=== B. predict axis score from biochem features (Ridge, 5-fold) ===")
-    bs = StandardScaler().fit_transform(bio)
-    r2s = []
-    for tr, te in KFold(5, shuffle=True, random_state=0).split(bs):
-        rg = Ridge(alpha=1.0).fit(bs[tr], s[tr])
-        r2s.append(r2_score(s[te], rg.predict(bs[te])))
-    r2 = float(np.mean(r2s))
-    print(
-        f"  R^2(axis ~ biochem) = {r2:.3f}   "
-        f"({'mostly context-free biochemistry' if r2 > 0.5 else 'mostly context-dependent (beyond AA identity)'})"
+    association_features = {name: bio[:, j] for j, name in enumerate(FEAT_NAMES)}
+    association_features["magnitude"] = mag
+    axis_analysis = family_held_out_axis_analysis(
+        delta,
+        y,
+        genes,
+        pfam,
+        association_features,
+        regression_features=bio,
+        seeds=range(n_seeds),
     )
+    print("\n=== A. Family-held-out Spearman(axis score, feature) ===")
+    for name, summary in axis_analysis["correlations"].items():
+        print(f"  {name:14s} rho = {format_axis_summary(summary)}")
+    r2 = axis_analysis["regression_r2"]
+    print("\n=== B. Family-held-out prediction of axis score from biochemistry ===")
+    print(f"  R^2(axis ~ biochem) = {format_axis_summary(r2)}")
 
     print("\n=== C. pathogenicity AUROC, family-split (5 seeds) ===")
 
@@ -226,38 +203,43 @@ def run(n_seeds=N_SEEDS):
         both += auroc_cv(np.hstack([delta, bio]), fs, seed)
 
     def agg(a):
-        mean, std, _ = mean_std_n(a)
-        return (mean, std)
+        mean, std, n = mean_std_n(a)
+        return {"mean": mean, "std": std, "n": n}
 
-    cm, cstd = agg(cf)
-    em, estd = agg(esm)
-    bm, bstd = agg(both)
-    print(f"  context-free biochem only : {cm:.3f} ± {cstd:.3f}")
-    print(f"  ESM-2 delta only          : {em:.3f} ± {estd:.3f}")
-    print(f"  ESM-2 + biochem           : {bm:.3f} ± {bstd:.3f}")
+    context_free = agg(cf)
+    esm2_delta = agg(esm)
+    combined = agg(both)
+    print(
+        f"  context-free biochem only : {context_free['mean']:.3f} "
+        f"± {context_free['std']:.3f}"
+    )
+    print(
+        f"  ESM-2 delta only          : {esm2_delta['mean']:.3f} "
+        f"± {esm2_delta['std']:.3f}"
+    )
+    print(
+        f"  ESM-2 + biochem           : {combined['mean']:.3f} ± {combined['std']:.3f}"
+    )
 
     result = {
         "n": int(len(keep)),
-        "A_spearman_axis_vs_feature": corrA,
-        "A_spearman_axis_vs_magnitude": rho_mag,
-        "B_r2_axis_from_biochem": r2,
-        "C_auroc_family_split": {
-            "context_free": [cm, cstd],
-            "esm2_delta": [em, estd],
-            "esm2_plus_biochem": [bm, bstd],
+        "axis_analysis_family_held_out": axis_analysis,
+        "pathogenicity_auroc_family_split": {
+            "context_free": context_free,
+            "esm2_delta": esm2_delta,
+            "esm2_plus_biochem": combined,
         },
+        "analysis_status": "exploratory",
+        "input_provenance": pathogenicity_geometry_provenance(inputs, pfam),
     }
     write_result_json(PROBE4_AXIS_IDENTITY_JSON, result, seeds=list(range(n_seeds)))
     print(f"\nResults -> {PROBE4_AXIS_IDENTITY_JSON}")
 
-    print("\n=== READ ===")
+    print("\n=== DESCRIPTIVE SUMMARY ===")
+    print(f"  Family-held-out R^2(axis ~ biochem) = {format_axis_summary(r2)}")
     print(
-        f"  Axis is {'largely' if r2 > 0.5 else 'only partly'} explained by context-free biochemistry "
-        f"(R^2={r2:.2f})."
-    )
-    print(
-        f"  Context-free biochem reaches {cm:.3f} AUROC vs ESM-2's {em:.3f}: "
-        f"ESM-2 adds {em - cm:+.3f} of context-dependent signal."
+        f"  Context-free biochemistry AUROC = {context_free['mean']:.3f}; "
+        f"ESM-2 delta AUROC = {esm2_delta['mean']:.3f}."
     )
     return result
 

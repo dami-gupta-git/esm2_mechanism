@@ -1,5 +1,4 @@
-"""Orchestrator for geometry probes (all CPU). Conservation decider runs separately (GPU).
-"""
+"""Orchestrator for geometry probes (all CPU). Conservation decider runs separately (GPU)."""
 
 from __future__ import annotations
 
@@ -26,7 +25,9 @@ PROBES = {
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--seeds", type=int, default=N_SEEDS, help="number of seeds (>=1)")
+    parser.add_argument(
+        "--seeds", type=int, default=N_SEEDS, help="number of seeds (>=1)"
+    )
     parser.add_argument(
         "--probe",
         nargs="+",
@@ -40,13 +41,14 @@ def main():
         default="none",
         help=(
             "dataset for the stability arm of the magnitude and transfer probes "
-            "(Probe C / P4 and the transfer-contrast stability row); default none = skip"
+            "(default none = skip); a selected dataset must have validated inputs"
         ),
     )
     parser.add_argument(
-        "--no_ci", action="store_true",
+        "--no_ci",
+        action="store_true",
         help="skip cluster-bootstrap CIs (magnitude probe only — the others are "
-        "rank/correlation probes with no cluster-bootstrap CI wired)",
+        "exploratory correlation/transfer probes without bootstrap CIs)",
     )
     parser.add_argument("--n_boot", type=int, default=BOOTSTRAP_N_RESAMPLES)
     args = parser.parse_args()

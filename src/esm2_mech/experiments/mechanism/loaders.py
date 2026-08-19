@@ -37,7 +37,11 @@ def load_mechanism_variants(
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Load mechanism variants + ESM-2 embeddings. Returns (delta_mean, delta_pos, labels, genes)."""
     variants, _labels, genes, delta_mean, delta_pos = load_variants_and_delta(
-        VALID_VARIANTS_JSON, EMB_WT_MEAN, EMB_MUT_MEAN, EMB_WT_POS, EMB_MUT_POS,
+        VALID_VARIANTS_JSON,
+        EMB_WT_MEAN,
+        EMB_MUT_MEAN,
+        EMB_WT_POS,
+        EMB_MUT_POS,
         verbose=False,
     )
     labels = np.array([_label_3class(v) for v in variants])
@@ -45,7 +49,16 @@ def load_mechanism_variants(
     return delta_mean, delta_pos, labels, genes
 
 
-def load_merged(pfam_map: dict | None = None) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+def load_merged(
+    pfam_map: dict | None = None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Mean-pooled mechanism variants: (delta_mean, labels, genes)."""
-    delta_mean, _delta_pos, labels, genes = load_mechanism_variants(pfam_map)
+    variants, _labels, genes, delta_mean, _delta_pos = load_variants_and_delta(
+        VALID_VARIANTS_JSON,
+        EMB_WT_MEAN,
+        EMB_MUT_MEAN,
+        verbose=False,
+    )
+    labels = np.array([_label_3class(variant) for variant in variants])
+    print(f"  Mechanism set: {len(variants)} variants, {len(set(genes))} genes")
     return delta_mean, labels, genes

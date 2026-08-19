@@ -1,7 +1,7 @@
-"""Magnitude-vs-direction decomposition of ESM-2 deltas (plan_magnitude_direction.md).
+"""Exploratory magnitude-vs-direction decomposition of ESM-2 deltas.
 
 Splits each delta into magnitude and direction, re-runs pathogenicity/mechanism
-probes on each component, and evaluates pre-registered gates P1–P4.
+probes on each component, and reports a signed-stability arm when requested.
 """
 
 import argparse
@@ -10,12 +10,11 @@ import numpy as np
 from collections import defaultdict
 import functools
 
-print = functools.partial(print, flush=True)
-
 from joblib import Parallel, delayed
 
 from esm2_mech.utils.bootstrap import (
-    binary_auroc_cluster_bootstrap_ci, bootstrap_mechanism_metrics_from_oof,
+    binary_auroc_cluster_bootstrap_ci,
+    bootstrap_mechanism_metrics_from_oof,
     stack_oof_over_seeds,
     family_or_gene_clusters,
 )
@@ -26,72 +25,43 @@ from esm2_mech.utils.paths import (
     GEOMETRY_RESULTS_DIR,
     MAGNITUDE_DIRECTION_JSON,
     NAIVE_BASELINE_JSON,
-    MEGASCALE_TSUBOYAMA_VARIANTS_JSON,
-    PATH_EMB_WT_MEAN,
-    PATH_EMB_MUT_MEAN,
-    PATHOGENICITY_CANONICAL_VARIANTS_JSON,
     PFAM_JSON,
-    MEGASCALE_EMB_WT_MEAN,
-    MEGASCALE_EMB_MUT_MEAN,
 )
-from esm2_mech.experiments.mechanism.loaders import load_mechanism_variants
+from esm2_mech.experiments.mechanism.loaders import load_merged
 from esm2_mech.utils.metrics import mean_std_n
 from esm2_mech.utils.splits import gene_split_cv, family_split_cv
 from esm2_mech.utils.probes import run_mlp_binary_cv, run_mlp_probe_cv, run_logreg_cv
 from esm2_mech.utils.probes import run_logreg_binary_cv
+from esm2_mech.utils.data import embedding_fingerprint
+from esm2_mech.experiments.geometry.data import (
+    load_pathogenicity_geometry_inputs,
+    mechanism_geometry_provenance,
+    pathogenicity_geometry_provenance,
+)
+from esm2_mech.experiments.stability.stability_data import (
+    load_stability_inputs,
+    variant_fingerprint as stability_variant_fingerprint,
+)
+
+print = functools.partial(print, flush=True)
 
 GEOMETRY_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
-P1_PATH_MAG_MIN = 0.85
-P2_PATH_DIR_MAX = 0.70
-P3_MECH_MARGIN = 0.02
-P4_SIGN_AUROC_MIN = 0.65
-P4_MAG_SPEARMAN_MIN = 0.30
-
 STABILITY_DATASETS = {
     "none": None,
-    "tsuboyama": (
-        MEGASCALE_TSUBOYAMA_VARIANTS_JSON,
-        MEGASCALE_EMB_WT_MEAN,
-        MEGASCALE_EMB_MUT_MEAN,
-    ),
+    "tsuboyama": "tsuboyama",
 }
 DEFAULT_STABILITY_DATASET = "none"
 
-PATH_CANON_VARIANTS = PATHOGENICITY_CANONICAL_VARIANTS_JSON
-PATH_CANON_WT_EMB = PATH_EMB_WT_MEAN
-PATH_CANON_MUT_EMB = PATH_EMB_MUT_MEAN
 
-
-def _pathogenicity_label(label):
-    """Map a canonical-set label to 1 (pathogenic) / 0 (benign); never a catch-all."""
-    if label == "pathogenic":
-        return 1
-    if label == "benign":
-        return 0
-    raise ValueError(f"unexpected pathogenicity label {label!r} (expected 'pathogenic'/'benign')")
-
-
-def load_pathogenicity_canonical():
-    """Load the canonical pathogenicity set (row-aligned to PATH_EMB_*; matches result_6)."""
-    with open(PATH_CANON_VARIANTS) as fh:
-        variants = json.load(fh)
-    wt = np.load(PATH_CANON_WT_EMB)
-    mut = np.load(PATH_CANON_MUT_EMB)
-    delta = mut - wt
-    if not (len(variants) == delta.shape[0]):
-        raise ValueError(
-            f"variant/embedding row mismatch: {len(variants)} variants vs "
-            f"{delta.shape[0]} embedding rows — canonical file is not row-aligned."
-        )
-    genes = np.array([v["gene"] for v in variants])
-    y = np.array([_pathogenicity_label(v["label"]) for v in variants])
+def load_pathogenicity_canonical(inputs):
+    """Expose the validated canonical pathogenicity arrays used by this probe."""
     print(
-        f"  Pathogenicity (canonical): {len(variants)} variants, "
-        f"{len(set(genes))} genes, {int(y.sum())} path / {int((1-y).sum())} benign"
+        f"  Pathogenicity (canonical): {len(inputs.variants)} variants, "
+        f"{len(set(inputs.genes))} genes, {int(inputs.labels.sum())} path / "
+        f"{int((1 - inputs.labels).sum())} benign"
     )
-    return delta, y, genes
-
+    return inputs.delta, inputs.labels, inputs.genes
 
 
 def decompose(delta):
@@ -102,11 +72,15 @@ def decompose(delta):
     return {"full": delta.astype(np.float32), "mag": mag, "dir": direction}
 
 
-
 def run_logreg_multi(X, labels, splits, seed=42, genes=None, return_oof=False):
     return run_logreg_cv(
-        X, labels, splits, seed=seed, min_train_classes=MIN_TRAIN_CLASSES,
-        genes=genes, return_oof=return_oof,
+        X,
+        labels,
+        splits,
+        seed=seed,
+        min_train_classes=MIN_TRAIN_CLASSES,
+        genes=genes,
+        return_oof=return_oof,
     )
 
 
@@ -127,10 +101,10 @@ def _read_chance_floor(strategy="most_frequent"):
     }
 
 
-
 def agg_seeds(per_seed_vals):
     mean, std, n = mean_std_n(per_seed_vals)
     return {"mean": mean, "std": std, "n": n}
+
 
 def _pathogenicity_one_seed(seed, feats, y, genes, pfam_map):
     print(f"  [pathogenicity] seed {seed} started", flush=True)
@@ -158,11 +132,18 @@ def _pathogenicity_one_seed(seed, feats, y, genes, pfam_map):
     return res
 
 
-def run_pathogenicity(pfam_map, seeds, n_jobs=-1, compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES):
+def run_pathogenicity(
+    pfam_map,
+    seeds,
+    inputs,
+    n_jobs=-1,
+    compute_ci=True,
+    n_boot=BOOTSTRAP_N_RESAMPLES,
+):
     print("\n" + "=" * 60)
     print("PATHOGENICITY  (binary, variant-level, delta_mean)")
     print("=" * 60)
-    delta, y, genes = load_pathogenicity_canonical()
+    delta, y, genes = load_pathogenicity_canonical(inputs)
     feats = decompose(delta)
 
     per_seed = Parallel(n_jobs=n_jobs, verbose=10)(
@@ -189,19 +170,25 @@ def run_pathogenicity(pfam_map, seeds, n_jobs=-1, compute_ci=True, n_boot=BOOTST
             }
             if compute_ci:
                 for probe in ("logreg", "mlp"):
-                    combined = stack_oof_over_seeds(oof_collect[fname][split_name][probe])
+                    combined = stack_oof_over_seeds(
+                        oof_collect[fname][split_name][probe]
+                    )
                     if combined is not None:
                         clusters = family_or_gene_clusters(
-                            combined["genes"], pfam_map,
+                            combined["genes"],
+                            pfam_map,
                             is_family_split=(split_name == "family_split"),
                         )
                         out[fname][split_name][f"{probe}_auroc"]["ci"] = (
                             binary_auroc_cluster_bootstrap_ci(
-                                combined, n_resamples=n_boot, seed=0,
+                                combined,
+                                n_resamples=n_boot,
+                                seed=0,
                                 clusters=clusters,
                             )
                         )
     return out
+
 
 def _mechanism_one_seed(seed, feats, labels, genes, pfam_map):
     print(f"  [mechanism] seed {seed} started", flush=True)
@@ -233,11 +220,13 @@ def _mechanism_one_seed(seed, feats, labels, genes, pfam_map):
     return res
 
 
-def run_mechanism(pfam_map, seeds, n_jobs=-1, compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES):
+def run_mechanism(
+    pfam_map, seeds, n_jobs=-1, compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES
+):
     print("\n" + "=" * 60)
     print("MECHANISM  (3-class GOF/LOF/DN, variant-level Gerasimavicius, delta_mean)")
     print("=" * 60)
-    dm, _dp, labels, genes = load_mechanism_variants(pfam_map)
+    dm, labels, genes = load_merged(pfam_map)
     feats = decompose(dm)
 
     per_seed = Parallel(n_jobs=n_jobs, verbose=10)(
@@ -260,7 +249,10 @@ def run_mechanism(pfam_map, seeds, n_jobs=-1, compute_ci=True, n_boot=BOOTSTRAP_
                 f"F1(lr={_f(cell['logreg_f1'])} mlp={_f(cell['mlp_f1'])})"
             )
 
-    out = {"chance_floor": _read_chance_floor()}
+    out = {
+        "chance_floor": _read_chance_floor(),
+        "input_provenance": mechanism_geometry_provenance(dm, labels, genes, pfam_map),
+    }
     for fname in feats:
         out[fname] = {}
         for split_name in ("gene_split", "family_split"):
@@ -272,59 +264,46 @@ def run_mechanism(pfam_map, seeds, n_jobs=-1, compute_ci=True, n_boot=BOOTSTRAP_
                 "mlp_gof_auroc": agg_seeds(c["mlp_gof"]),
             }
             if compute_ci:
-                for probe, out_key in (("logreg", "logreg_macro_f1"), ("mlp", "mlp_macro_f1")):
-                    combined = stack_oof_over_seeds(oof_collect[fname][split_name][probe])
+                for probe, out_key in (
+                    ("logreg", "logreg_macro_f1"),
+                    ("mlp", "mlp_macro_f1"),
+                ):
+                    combined = stack_oof_over_seeds(
+                        oof_collect[fname][split_name][probe]
+                    )
                     if combined is not None:
                         clusters = family_or_gene_clusters(
-                            combined["genes"], pfam_map,
+                            combined["genes"],
+                            pfam_map,
                             is_family_split=(split_name == "family_split"),
                         )
                         cell[out_key]["ci"] = bootstrap_mechanism_metrics_from_oof(
-                            combined, clusters, n_resamples=n_boot, seed=0,
+                            combined,
+                            clusters,
+                            n_resamples=n_boot,
+                            seed=0,
                         )
             out[fname][split_name] = cell
     return out
 
 
-
 def run_biophysical_direction(seeds, stability_dataset=DEFAULT_STABILITY_DATASET):
-    cfg = STABILITY_DATASETS.get(stability_dataset)
-    if cfg is None:
-        print(
-            f"\n[Probe C] stability_dataset='{stability_dataset}' — skipping "
-            "biophysical-direction arm (no stability set selected)."
-        )
-        return None
-    variants_json, wt_emb, mut_emb = cfg
-    if not (wt_emb.exists() and mut_emb.exists() and variants_json.exists()):
-        print(
-            f"\n[Probe C] stability_dataset='{stability_dataset}' selected but its "
-            f"variants/embeddings are not present ({variants_json.name}) — skipping."
-        )
+    if stability_dataset not in STABILITY_DATASETS:
+        raise ValueError(f"unknown stability dataset {stability_dataset!r}")
+    if stability_dataset == "none":
+        print("\nStability arm not requested (stability_dataset='none').")
         return None
 
     print("\n" + "=" * 60)
-    print(
-        f"PROBE C  biophysical direction ({stability_dataset} signed ddG, protein-holdout)"
-    )
+    print(f"BIOPHYSICAL DIRECTION ({stability_dataset} signed ddG, protein-holdout)")
     print("=" * 60)
     from scipy.stats import spearmanr
 
-    with open(variants_json) as fh:
-        variants = json.load(fh)
-    ddg = np.array(
-        [v["ddg"] if v["ddg"] is not None else np.nan for v in variants],
-        dtype=np.float64,
-    )
-    proteins = np.array([v["protein"] for v in variants])
-    wt = np.load(wt_emb)
-    mut = np.load(mut_emb)
-    delta = mut - wt
-    if not (len(delta) == len(ddg) == len(proteins)):
-        raise ValueError(
-            f"row mismatch in {variants_json.name}: {len(delta)} embedding rows vs "
-            f"{len(ddg)} ddG values vs {len(proteins)} proteins — not row-aligned."
-        )
+    stability = load_stability_inputs()
+    variants = stability.variants
+    ddg = np.asarray(stability.ddg, dtype=np.float64)
+    proteins = stability.proteins
+    delta = stability.delta_mean
     finite = np.isfinite(ddg)
     n_dropped = int((~finite).sum())
     if n_dropped:
@@ -346,16 +325,20 @@ def run_biophysical_direction(seeds, stability_dataset=DEFAULT_STABILITY_DATASET
             per_seed.append(r.get("auroc_mean"))
         c2[fname] = agg_seeds(per_seed)
 
-    print(f"  C1 Spearman(||d||, |ddG|) = {c1_rho:.3f}")
+    print(f"  Spearman(||d||, |ddG|) = {c1_rho:.3f}")
     print(
-        f"  C2 sign(ddG) AUROC full={_f(c2['full']['mean'])} dir={_f(c2['dir']['mean'])}"
+        f"  sign(ddG) AUROC full={_f(c2['full']['mean'])} dir={_f(c2['dir']['mean'])}"
     )
     return {
         "n_variants": int(n),
         "n_proteins": int(len(set(proteins.tolist()))),
         "frac_destabilising": float(y_sign.mean()),
-        "c1_spearman_mag_absddg": c1_rho,
-        "c2_sign_auroc": c2,
+        "spearman_magnitude_vs_abs_ddg": c1_rho,
+        "sign_ddg_auroc": c2,
+        "input_provenance": {
+            "variant_fingerprint": stability_variant_fingerprint(variants),
+            "delta_embedding_fingerprint": embedding_fingerprint(stability.delta_mean),
+        },
     }
 
 
@@ -363,79 +346,18 @@ def _f(x):
     return "nan" if x is None or (isinstance(x, float) and np.isnan(x)) else f"{x:.3f}"
 
 
-def _best(path_block, split, metric_lr, metric_mlp):
-    lr = path_block[split][metric_lr]["mean"]
-    mlp = path_block[split][metric_mlp]["mean"]
-    vals = [v for v in (lr, mlp) if not np.isnan(v)]
-    return max(vals) if vals else float("nan")
-
-def _is_missing(x):
-    return x is None or (isinstance(x, float) and np.isnan(x))
-
-
-def evaluate_gates(path_res, mech_res, bio_res):
-    gates = {}
-
-    p1_val = _best(path_res["mag"], "family_split", "logreg_auroc", "mlp_auroc")
-    gates["P1"] = {
-        "desc": "magnitude-only pathogenicity AUROC >= 0.85 (family-split)",
-        "value": p1_val,
-        "threshold": P1_PATH_MAG_MIN,
-        "passed": None if _is_missing(p1_val) else bool(p1_val >= P1_PATH_MAG_MIN),
-    }
-
-    p2_val = _best(path_res["dir"], "family_split", "logreg_auroc", "mlp_auroc")
-    gates["P2"] = {
-        "desc": "direction-only pathogenicity AUROC <= 0.70 (family-split)",
-        "value": p2_val,
-        "threshold": P2_PATH_DIR_MAX,
-        "passed": None if _is_missing(p2_val) else bool(p2_val <= P2_PATH_DIR_MAX),
-    }
-
-    floor = mech_res["chance_floor"]["family_split"]["mean"]
-    p3_val = mech_res["dir"]["family_split"]["mlp_macro_f1"]["mean"]
-    p3_missing = _is_missing(floor) or _is_missing(p3_val)
-    p3_thr = None if _is_missing(floor) else floor + P3_MECH_MARGIN
-    gates["P3"] = {
-        "desc": "direction-only mechanism macro-F1 <= chance_floor + 0.02 (family-split)",
-        "value": p3_val,
-        "chance_floor": floor,
-        "threshold": p3_thr,
-        "passed": None if p3_missing else bool(p3_val <= p3_thr),
-    }
-
-    if bio_res is not None:
-        full_mean = bio_res["c2_sign_auroc"]["full"]["mean"]
-        dir_mean = bio_res["c2_sign_auroc"]["dir"]["mean"]
-        scorable = [v for v in (full_mean, dir_mean) if not _is_missing(v)]
-        sign_auroc = max(scorable) if scorable else float("nan")
-        rho = bio_res["c1_spearman_mag_absddg"]
-        p4_missing = _is_missing(sign_auroc) or _is_missing(rho)
-        gates["P4"] = {
-            "desc": "S1724 sign(ddG) AUROC >= 0.65 AND Spearman >= 0.30",
-            "sign_auroc": sign_auroc,
-            "spearman": rho,
-            "passed": None if p4_missing else bool(
-                sign_auroc >= P4_SIGN_AUROC_MIN and rho >= P4_MAG_SPEARMAN_MIN
-            ),
-        }
-    else:
-        gates["P4"] = {
-            "desc": "stability biophysical-direction arm not run — Probe C skipped",
-            "passed": None,
-        }
-
-    return gates
-
-
 def run(
-    n_seeds=N_SEEDS, stability_dataset=DEFAULT_STABILITY_DATASET,
-    compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES,
+    n_seeds=N_SEEDS,
+    stability_dataset=DEFAULT_STABILITY_DATASET,
+    compute_ci=True,
+    n_boot=BOOTSTRAP_N_RESAMPLES,
 ):
     """Run the magnitude/direction decomposition over range(n_seeds)."""
     return _run_seeds(
-        list(range(n_seeds)), stability_dataset=stability_dataset,
-        compute_ci=compute_ci, n_boot=n_boot,
+        list(range(n_seeds)),
+        stability_dataset=stability_dataset,
+        compute_ci=compute_ci,
+        n_boot=n_boot,
     )
 
 
@@ -446,7 +368,7 @@ def main():
         "--stability-dataset",
         choices=list(STABILITY_DATASETS),
         default=DEFAULT_STABILITY_DATASET,
-        help="dataset for the Probe C biophysical-direction arm (default: none = skip)",
+        help="dataset for the biophysical-direction arm (default: none = skip)",
     )
     ap.add_argument("--no_ci", action="store_true", help="skip cluster-bootstrap CIs")
     ap.add_argument("--n_boot", type=int, default=BOOTSTRAP_N_RESAMPLES)
@@ -454,22 +376,27 @@ def main():
     if args.seeds < 1:
         ap.error("--seeds must be >= 1")
     run(
-        n_seeds=args.seeds, stability_dataset=args.stability_dataset,
-        compute_ci=not args.no_ci, n_boot=args.n_boot,
+        n_seeds=args.seeds,
+        stability_dataset=args.stability_dataset,
+        compute_ci=not args.no_ci,
+        n_boot=args.n_boot,
     )
 
 
 def _run_seeds(
-    seeds, stability_dataset=DEFAULT_STABILITY_DATASET,
-    compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES,
+    seeds,
+    stability_dataset=DEFAULT_STABILITY_DATASET,
+    compute_ci=True,
+    n_boot=BOOTSTRAP_N_RESAMPLES,
 ):
     pfam_map = load_pfam_map(PFAM_JSON)
+    path_inputs = load_pathogenicity_geometry_inputs()
 
-    path_res = run_pathogenicity(pfam_map, seeds, compute_ci=compute_ci, n_boot=n_boot)
+    path_res = run_pathogenicity(
+        pfam_map, seeds, path_inputs, compute_ci=compute_ci, n_boot=n_boot
+    )
     mech_res = run_mechanism(pfam_map, seeds, compute_ci=compute_ci, n_boot=n_boot)
     bio_res = run_biophysical_direction(seeds, stability_dataset=stability_dataset)
-
-    gates = evaluate_gates(path_res, mech_res, bio_res)
 
     print("\n" + "=" * 60)
     print("HEADLINE — magnitude vs direction (family-split)")
@@ -483,13 +410,13 @@ def _run_seeds(
 
     print("  Pathogenicity AUROC (family-split):")
     print(
-        f"    full delta   logreg={pa('full','logreg_auroc'):.3f}  mlp={pa('full','mlp_auroc'):.3f}"
+        f"    full delta   logreg={pa('full', 'logreg_auroc'):.3f}  mlp={pa('full', 'mlp_auroc'):.3f}"
     )
     print(
-        f"    magnitude    logreg={pa('mag','logreg_auroc'):.3f}  mlp={pa('mag','mlp_auroc'):.3f}"
+        f"    magnitude    logreg={pa('mag', 'logreg_auroc'):.3f}  mlp={pa('mag', 'mlp_auroc'):.3f}"
     )
     print(
-        f"    direction    logreg={pa('dir','logreg_auroc'):.3f}  mlp={pa('dir','mlp_auroc'):.3f}"
+        f"    direction    logreg={pa('dir', 'logreg_auroc'):.3f}  mlp={pa('dir', 'mlp_auroc'):.3f}"
     )
     print("  Mechanism macro-F1 (family-split, MLP):")
     print(f"    chance floor = {mech_res['chance_floor']['family_split']['mean']:.3f}")
@@ -497,37 +424,22 @@ def _run_seeds(
     print(f"    magnitude    = {me('mag'):.3f}")
     print(f"    direction    = {me('dir'):.3f}")
 
-    print("\n" + "=" * 60)
-    print("DECISION GATES")
-    print("=" * 60)
-    for g, d in gates.items():
-        status = "SKIP" if d["passed"] is None else ("PASS" if d["passed"] else "FAIL")
-        print(f"  {g}: {d['desc']}")
-        print(f"       -> {status}")
-
-    p1, p3 = gates["P1"]["passed"], gates["P3"]["passed"]
-    print(
-        "\n  Load-bearing (P1 AND P3):",
-        (
-            "PASS — magnitude carries pathogenicity, direction carries no mechanism."
-            if (p1 and p3)
-            else "NOT MET — see plan failure modes."
-        ),
-    )
-
     result = {
         "seeds": list(seeds),
         "pathogenicity": path_res,
         "mechanism": mech_res,
         "biophysical_direction": bio_res,
-        "gates": gates,
-        "thresholds": {
-            "P1_path_mag_min": P1_PATH_MAG_MIN,
-            "P2_path_dir_max": P2_PATH_DIR_MAX,
-            "P3_mech_margin": P3_MECH_MARGIN,
-            "P4_sign_auroc_min": P4_SIGN_AUROC_MIN,
-            "P4_mag_spearman_min": P4_MAG_SPEARMAN_MIN,
+        "descriptive_family_split_summary": {
+            "pathogenicity_full": path_res["full"]["family_split"],
+            "pathogenicity_magnitude": path_res["mag"]["family_split"],
+            "pathogenicity_direction": path_res["dir"]["family_split"],
+            "mechanism_chance_floor": mech_res["chance_floor"]["family_split"],
+            "mechanism_full": mech_res["full"]["family_split"],
+            "mechanism_magnitude": mech_res["mag"]["family_split"],
+            "mechanism_direction": mech_res["dir"]["family_split"],
         },
+        "analysis_status": "exploratory",
+        "input_provenance": pathogenicity_geometry_provenance(path_inputs, pfam_map),
     }
     write_result_json(MAGNITUDE_DIRECTION_JSON, result, seeds=list(seeds))
     print(f"\nResults -> {MAGNITUDE_DIRECTION_JSON}")

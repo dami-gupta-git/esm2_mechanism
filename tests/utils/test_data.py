@@ -15,20 +15,32 @@ Covers:
 - build_gene_to_row: returns empty dict for header-only TSV
 """
 
+import hashlib
 import json
 
 import numpy as np
-import pytest
 
-from esm2_mech.utils.data import build_gene_to_row, load_variants, observed_rows_mask
+from esm2_mech.utils.data import (
+    build_gene_to_row,
+    embedding_fingerprint,
+    load_variants,
+    observed_rows_mask,
+)
 
 
 # ---------------------------------------------------------------------------
 # helpers
 # ---------------------------------------------------------------------------
 
+
 def _variant(uid="P1", aa_wt="M", aa_mut="V", aa_pos=5, **extra):
-    return {"uniprot_id": uid, "aa_wt": aa_wt, "aa_mut": aa_mut, "aa_pos": aa_pos, **extra}
+    return {
+        "uniprot_id": uid,
+        "aa_wt": aa_wt,
+        "aa_mut": aa_mut,
+        "aa_pos": aa_pos,
+        **extra,
+    }
 
 
 def _write_json(path, data):
@@ -47,8 +59,8 @@ def _write_tsv(path, rows):
 # load_variants
 # ---------------------------------------------------------------------------
 
-class TestLoadVariants:
 
+class TestLoadVariants:
     def test_valid_variant_passes_through(self, tmp_path):
         data = [_variant()]
         path = _write_json(tmp_path / "v.json", data)
@@ -114,8 +126,8 @@ class TestLoadVariants:
 # build_gene_to_row
 # ---------------------------------------------------------------------------
 
-class TestBuildGeneToRow:
 
+class TestBuildGeneToRow:
     def test_assigns_indices_in_order(self, tmp_path):
         path = _write_tsv(tmp_path / "genes.tsv", ["BRCA1", "TP53", "MYC"])
         result = build_gene_to_row(path)
@@ -158,8 +170,8 @@ class TestBuildGeneToRow:
 # observed_rows_mask — complete-case restriction for models that reject NaN
 # ---------------------------------------------------------------------------
 
-class TestObservedRowsMask:
 
+class TestObservedRowsMask:
     def test_all_observed_keeps_every_row(self):
         X = np.array([[1.0, 2.0], [3.0, 4.0]])
         assert observed_rows_mask(X).all()
@@ -184,3 +196,15 @@ class TestObservedRowsMask:
         mask = observed_rows_mask(X)
         assert mask.dtype == bool
         assert len(mask) == len(X)
+
+
+class TestEmbeddingFingerprint:
+    def test_streamed_hash_matches_original_byte_hash(self):
+        array = np.arange(40, dtype=np.float32).reshape(8, 5)
+        expected = hashlib.sha256(array.tobytes()).hexdigest()
+        assert embedding_fingerprint(array) == expected
+
+    def test_noncontiguous_view_has_c_order_content_hash(self):
+        array = np.arange(40, dtype=np.float32).reshape(8, 5)[:, ::2]
+        expected = hashlib.sha256(array.tobytes()).hexdigest()
+        assert embedding_fingerprint(array) == expected

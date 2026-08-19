@@ -104,7 +104,7 @@ learning something about the mechanism.
 
 | Step | Command | Outputs | Status |
 |---|---|---|---|
-| 4.1 | `python -m esm2_mech.experiments.mechanism.classify_by_mechanism --seeds 5` | `results/run_biorxiv/family_split_baselines_seed{0..4}.json`, `aggregate.json` | ✅ 2026-08-18 | Ran on pod (GPU box, CPU-bound step). Log: `logs/biorxiv_18Aug_2026/step_4_1.log` |
+| 4.1 | `python -m esm2_mech.experiments.mechanism.classify_by_mechanism --seeds 5` | `results/run_biorxiv/family_split_baselines_seed{0..4}.json`, `aggregate.json` | ✅ 2026-08-18 | Re-ran on pod (GPU box, CPU-bound step) after the bootstrap discard-reason fix. Log: `logs/biorxiv_18Aug_2026/step_4_1.log` |
 | 4.2 | `python -m esm2_mech.experiments.mechanism.mlp --seeds 5` | `results/run_biorxiv/nonlinear_results_seed{0..4}.json` | ✅ 2026-08-18 | Ran on pod. Log: `logs/biorxiv_18Aug_2026/step_4_2.log` |
 | 4.3 | `python -m esm2_mech.experiments.mechanism.family_clustering --seeds 5` | `results/run_biorxiv/family_clustering.json` | ✅ 2026-08-18 | Ran on pod. Log: `logs/biorxiv_18Aug_2026/step_4_3.log` |
 | 4.4 | `python -m esm2_mech.experiments.mechanism.naive_baseline` | `results/run_biorxiv/naive_baseline.json` | ✅ 2026-08-18 | Ran on pod. Log: `logs/biorxiv_18Aug_2026/step_4_4.log` |
@@ -133,8 +133,8 @@ Asks what the pathogenicity direction in embedding space actually corresponds to
 | Step | Command | Outputs | Status |
 |---|---|---|---|
 | 6.1 | `python -m esm2_mech.experiments.geometry.build_canonical_pathogenicity` | `data/pathogenicity_valid_variants_canonical.json` | ✅ 2026-08-18 | Rebuilt — section 5's refetch/re-embed changed the row set; 24,516 variants, matches embedding row count |
-| 6.2 | `python -m esm2_mech.experiments.geometry.run_geometry --seeds 5 --stability-dataset tsuboyama` | `results/run_biorxiv/magnitude_direction/{probe_results,geometry_results,transfer_contrast,probe4_axis_identity}.json` | ⬜ | |
-| 6.5 | `python -m esm2_mech.experiments.geometry.conservation_axis --extract` | `data/conservation_pathogenicity.npy`, `data/conservation_pathogenicity_meta.json` | ⬜ stale | Previous run predates the 6.1 rebuild — needs re-extraction on the pod (GPU) against the new canonical variant list |
+| 6.2 | `python -m esm2_mech.experiments.geometry.run_geometry --seeds 5 --stability-dataset tsuboyama` | `results/run_biorxiv/magnitude_direction/{probe_results,geometry_results,transfer_contrast,probe4_axis_identity}.json` | 🔄 running | On pod, tmux `step6_2`. Log: `logs/biorxiv_18Aug_2026/step_6_2.log` |
+| 6.5 | `python -m esm2_mech.experiments.geometry.conservation_axis --extract` | `data/conservation_pathogenicity.npy`, `data/conservation_pathogenicity_meta.json` | 🔄 running | Re-extraction against the new canonical variant list. On pod (GPU), tmux `step6_5`. Log: `logs/biorxiv_18Aug_2026/step_6_5.log` |
 | 6.7 | `python -m esm2_mech.experiments.geometry.conservation_axis` | `results/run_biorxiv/magnitude_direction/conservation_axis.json` | ⬜ | Previous output also used obsolete K1/K2/C4 identifiers; confirm the numbering correction is in before running |
 
 ## 7. Experiment: Megascale stability positive control

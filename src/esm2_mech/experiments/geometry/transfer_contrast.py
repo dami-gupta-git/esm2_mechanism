@@ -1,40 +1,41 @@
-"""Transfer contrast: does a linear direction fit on one group of proteins/families
-transfer to a disjoint group, for pathogenicity, stability, and mechanism?
+"""Exploratory transfer of full-delta probes across disjoint group halves.
+
+The linear and gradient-boosted probes both consume the complete delta vector;
+this analysis does not estimate or compare a single biological direction.
 """
 
-import json
 import numpy as np
 import functools
-
-print = functools.partial(print, flush=True)
 
 from esm2_mech.utils.data import load_pfam_map
 from esm2_mech.utils.io import write_result_json
 from esm2_mech.utils.paths import (
     GEOMETRY_RESULTS_DIR,
     TRANSFER_CONTRAST_JSON,
-    MEGASCALE_TSUBOYAMA_VARIANTS_JSON,
-    PATH_EMB_WT_MEAN,
-    PATH_EMB_MUT_MEAN,
-    PATHOGENICITY_CANONICAL_VARIANTS_JSON,
     PFAM_JSON,
-    MEGASCALE_EMB_WT_MEAN,
-    MEGASCALE_EMB_MUT_MEAN,
 )
-
-STABILITY_DATASETS = {
-    "none": None,
-    "tsuboyama": (
-        MEGASCALE_TSUBOYAMA_VARIANTS_JSON,
-        MEGASCALE_EMB_WT_MEAN,
-        MEGASCALE_EMB_MUT_MEAN,
-    ),
-}
-DEFAULT_STABILITY_DATASET = "none"
-from esm2_mech.experiments.mechanism.loaders import load_mechanism_variants
+from esm2_mech.experiments.mechanism.loaders import load_merged
 from esm2_mech.utils.constants import GOF, N_SEEDS
 from esm2_mech.utils.metrics import mean_std_n
 from esm2_mech.utils.probes import auroc_for_clf
+from esm2_mech.utils.data import embedding_fingerprint
+from esm2_mech.experiments.geometry.data import (
+    load_pathogenicity_geometry_inputs,
+    mechanism_geometry_provenance,
+    pathogenicity_geometry_provenance,
+)
+from esm2_mech.experiments.stability.stability_data import (
+    load_stability_inputs,
+    variant_fingerprint as stability_variant_fingerprint,
+)
+
+print = functools.partial(print, flush=True)
+
+STABILITY_DATASETS = {
+    "none": None,
+    "tsuboyama": "tsuboyama",
+}
+DEFAULT_STABILITY_DATASET = "none"
 
 GEOMETRY_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -55,10 +56,10 @@ def _make_clf(kind, seed):
 
 def transfer_test(delta, y, groups, kind="linear", n_partitions=10, seed=0, min_pos=5):
     """Fit a probe on half the groups, score the disjoint half. Returns transfer
-    AUROC (mean over both directions and partitions) and a pooled group-disjoint
-    reference. `kind` in {linear, gbm}. `groups` (protein/family id per row) is
-    respected by both scores — a plain label-stratified split for the pooled
-    reference would let rows from the same protein/family land on both sides of
+    AUROC (mean over both directions and partitions) and a group-disjoint
+    five-fold reference. `kind` in {linear, gbm}. `groups` (protein/family id per row) is
+    respected by both scores — a plain label-stratified split for the reference
+    would let rows from the same protein/family land on both sides of
     a fold, leaking the same signal the transfer score is designed to rule out."""
     from sklearn.preprocessing import StandardScaler
 
@@ -87,7 +88,7 @@ def transfer_test(delta, y, groups, kind="linear", n_partitions=10, seed=0, min_
             clf = _make_clf(kind, seed).fit(Xtr, y[tr])
             transfer.append(auroc_for_clf(clf, Xte, y[te]))
 
-    pooled = []
+    group_cv = []
     minority = int(min(y.sum(), (1 - y).sum()))
     n_splits = min(5, minority)
     if n_splits >= 2:
@@ -100,116 +101,115 @@ def transfer_test(delta, y, groups, kind="linear", n_partitions=10, seed=0, min_
             Xtr = sc.transform(delta[tr])
             Xte = sc.transform(delta[te])
             clf = _make_clf(kind, seed).fit(Xtr, y[tr])
-            pooled.append(auroc_for_clf(clf, Xte, y[te]))
+            group_cv.append(auroc_for_clf(clf, Xte, y[te]))
 
     def agg(v):
         mean, std, n = mean_std_n(v)
-        return (mean, std, n)
+        return {"mean": mean, "std": std, "n": n}
 
-    return {"transfer_auroc": agg(transfer), "pooled_auroc": agg(pooled)}
-
-
-
-def _pathogenicity_label(label):
-    """Map a canonical-set label to 1 (pathogenic) / 0 (benign); never a catch-all."""
-    if label == "pathogenic":
-        return 1
-    if label == "benign":
-        return 0
-    raise ValueError(f"unexpected pathogenicity label {label!r} (expected 'pathogenic'/'benign')")
+    return {"transfer_auroc": agg(transfer), "group_cv_auroc": agg(group_cv)}
 
 
-def load_pathogenicity():
-    with open(PATHOGENICITY_CANONICAL_VARIANTS_JSON) as _f:
-        v = json.load(_f)
-    delta = np.load(PATH_EMB_MUT_MEAN) - np.load(PATH_EMB_WT_MEAN)
-    if len(v) != delta.shape[0]:
-        raise ValueError(
-            f"variant/embedding row mismatch: {len(v)} variants vs "
-            f"{delta.shape[0]} embedding rows — canonical file is not row-aligned."
-        )
-    pfam = load_pfam_map(PFAM_JSON)
-    genes = [x["gene"] for x in v]
-    groups = np.array([(pfam.get(g) or "NA") for g in genes])
-    y = np.array([_pathogenicity_label(x["label"]) for x in v])
+def load_pathogenicity(inputs, pfam):
+    groups = np.array([(pfam.get(gene) or "NA") for gene in inputs.genes])
     m = groups != "NA"
-    return delta[m], y[m], groups[m]
+    return inputs.delta[m], inputs.labels[m], groups[m]
 
 
 def load_stability(stability_dataset=DEFAULT_STABILITY_DATASET):
-    cfg = STABILITY_DATASETS.get(stability_dataset)
-    if cfg is None:
+    if stability_dataset not in STABILITY_DATASETS:
+        raise ValueError(f"unknown stability dataset {stability_dataset!r}")
+    if stability_dataset == "none":
         return None
-    variants_json, wt_emb, mut_emb = cfg
-    if not (variants_json.exists() and wt_emb.exists() and mut_emb.exists()):
-        return None
-    with open(variants_json) as _f:
-        v = json.load(_f)
-    delta = np.load(mut_emb) - np.load(wt_emb)
-    if len(v) != len(delta):
-        raise ValueError(
-            f"row mismatch in {variants_json.name}: {len(delta)} embedding rows vs "
-            f"{len(v)} variants — not row-aligned."
-        )
-    ddg = np.array(
-        [x["ddg"] if x["ddg"] is not None else np.nan for x in v], dtype=float
-    )
-    groups = np.array([x["protein"] for x in v])
+    stability = load_stability_inputs()
+    ddg = np.asarray(stability.ddg, dtype=float)
+    groups = stability.proteins
     finite = np.isfinite(ddg)
     n_dropped = int((~finite).sum())
     if n_dropped:
         print(f"  Dropped {n_dropped}/{len(ddg)} variants with non-finite ddG")
-    delta, ddg, groups = delta[finite], ddg[finite], groups[finite]
+    delta = stability.delta_mean[finite]
+    ddg = ddg[finite]
+    groups = groups[finite]
     y = (ddg > np.median(ddg)).astype(int)  # median split
-    return delta, y, groups
+    provenance = {
+        "variant_fingerprint": stability_variant_fingerprint(stability.variants),
+        "delta_embedding_fingerprint": embedding_fingerprint(stability.delta_mean),
+    }
+    return (delta, y, groups), provenance
 
 
 def load_mechanism_gof():
     pfam = load_pfam_map(PFAM_JSON)
-    dm, _dp, labels, genes = load_mechanism_variants(pfam)
+    dm, labels, genes = load_merged(pfam)
     groups = np.array([(pfam.get(g) or "NA") for g in genes])
     y = (np.asarray(labels) == GOF).astype(int)
     m = groups != "NA"
-    return dm[m], y[m], groups[m]
+    provenance = mechanism_geometry_provenance(dm, labels, genes, pfam)
+    return (dm[m], y[m], groups[m]), provenance
 
 
 def run(n_seeds=N_SEEDS, stability_dataset=DEFAULT_STABILITY_DATASET):
     tasks = {}
+    pfam = load_pfam_map(PFAM_JSON)
+    pathogenicity_inputs = load_pathogenicity_geometry_inputs()
+    provenance = {
+        "pathogenicity": pathogenicity_geometry_provenance(pathogenicity_inputs, pfam)
+    }
     print("Loading tasks...")
-    tasks["pathogenicity (path vs benign, family-split)"] = load_pathogenicity()
-    tasks["mechanism (GOF vs rest, family-split)"] = load_mechanism_gof()
+    tasks["pathogenicity (path vs benign, family-split)"] = load_pathogenicity(
+        pathogenicity_inputs, pfam
+    )
+    mechanism_task, mechanism_provenance = load_mechanism_gof()
+    tasks["mechanism (GOF vs rest, family-split)"] = mechanism_task
+    provenance["mechanism"] = mechanism_provenance
     stab = load_stability(stability_dataset=stability_dataset)
     if stab is not None:
-        tasks["stability (ΔΔG>median, protein-split)"] = stab
+        stability_task, stability_provenance = stab
+        tasks["stability (ΔΔG>median, protein-split)"] = stability_task
+        provenance["stability"] = stability_provenance
     else:
-        print(
-            f"  stability: dataset='{stability_dataset}' not run — skipping"
-        )
+        print(f"  stability: dataset='{stability_dataset}' not run — skipping")
 
     results = {}
     print("\n" + "=" * 86)
-    print(f"{'task':42s} {'probe':7s} {'pooled':>12s} {'transfer':>13s}")
+    print(f"{'task':42s} {'probe':7s} {'group CV':>12s} {'half-transfer':>13s}")
     print("=" * 86)
     for name, (delta, y, groups) in tasks.items():
         results[name] = {}
         npart = 5 if len(y) > 5000 else 10
         for kind in ("linear", "gbm"):
-            transfer_vals, pooled_vals = [], []
+            transfer_vals, group_cv_vals = [], []
             for seed in range(n_seeds):
-                r = transfer_test(delta, y, groups, kind=kind, n_partitions=npart, seed=seed)
-                transfer_vals.append(r["transfer_auroc"][0])
-                pooled_vals.append(r["pooled_auroc"][0])
+                r = transfer_test(
+                    delta, y, groups, kind=kind, n_partitions=npart, seed=seed
+                )
+                transfer_vals.append(r["transfer_auroc"]["mean"])
+                group_cv_vals.append(r["group_cv_auroc"]["mean"])
             tm, ts, tn = mean_std_n(transfer_vals)
-            pm, ps, _ = mean_std_n(pooled_vals)
+            gm, gs, gn = mean_std_n(group_cv_vals)
             results[name][kind] = {
-                "transfer_auroc": (tm, ts, tn),
-                "pooled_auroc": (pm, ps, len(pooled_vals)),
+                "half_group_transfer_auroc": {"mean": tm, "std": ts, "n": tn},
+                "group_cv_auroc": {"mean": gm, "std": gs, "n": gn},
             }
-            print(f"{name:42s} {kind:7s} {pm:.3f}±{ps:.3f}  {tm:.3f}±{ts:.3f}  (seeds={n_seeds})")
+            print(
+                f"{name:42s} {kind:7s} {gm:.3f}±{gs:.3f}  "
+                f"{tm:.3f}±{ts:.3f}  (seeds={n_seeds})"
+            )
 
-    write_result_json(TRANSFER_CONTRAST_JSON, results, seeds=list(range(n_seeds)))
+    result = {
+        "tasks": results,
+        "analysis_status": "exploratory",
+        "interpretation_note": (
+            "Both probes use the full delta vector. Group CV and half-group "
+            "transfer use different training-set sizes, so their difference is "
+            "not an isolated estimate of transfer failure."
+        ),
+        "input_provenance": provenance,
+    }
+    write_result_json(TRANSFER_CONTRAST_JSON, result, seeds=list(range(n_seeds)))
     print(f"\nResults -> {TRANSFER_CONTRAST_JSON}")
-    return results
+    return result
 
 
 def main():
@@ -225,15 +225,10 @@ def main():
     )
     args = ap.parse_args()
     run(n_seeds=args.seeds, stability_dataset=args.stability_dataset)
-    print("\nRead: 'pooled' = group-disjoint k-fold (easy: most groups seen in train).")
-    print("'transfer' = probe fit on one group-half, scored on the disjoint half.")
-    print("linear vs gbm shows whether")
-    print("nonlinearity recovers cross-group signal (result_21: it does for stability,")
-    print("not for mechanism). NOTE: stability grouped by protein (S1724 has no local")
+    print("\nRead: group CV and half-group transfer are both group-disjoint.")
     print(
-        "Pfam map); shared-family proteins leak somewhat — result_21's Pfam-split GBM"
+        "The half-transfer arm trains on fewer groups, so the two scores are descriptive."
     )
-    print("(0.750) is the authoritative stability number.")
 
 
 if __name__ == "__main__":

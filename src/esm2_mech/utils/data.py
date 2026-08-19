@@ -33,11 +33,17 @@ def embedding_fingerprint(*arrays: np.ndarray) -> str:
     """Content hash of one or more embedding arrays.
 
     Catches cases where embeddings change (e.g. model weights updated)
-    while the variant list and model name stay the same.
+    while the variant list and model name stay the same. Arrays are streamed into
+    the digest so fingerprinting the Tsuboyama matrix does not allocate another
+    copy of the full embedding array.
     """
     digest = hashlib.sha256()
     for arr in arrays:
-        digest.update(arr.tobytes())
+        contiguous = np.ascontiguousarray(arr)
+        byte_view = memoryview(contiguous).cast("B")
+        chunk_size = 8 * 1024 * 1024
+        for start in range(0, byte_view.nbytes, chunk_size):
+            digest.update(byte_view[start : start + chunk_size])
     return digest.hexdigest()
 
 
@@ -146,7 +152,9 @@ def build_source_mask(valid_variants: list[dict], source: str) -> np.ndarray:
             n_missing += 1
         flags.append(variant_source == source)
     if n_missing:
-        print(f"WARNING: {n_missing} variants have no `source` field — excluded from subset")
+        print(
+            f"WARNING: {n_missing} variants have no `source` field — excluded from subset"
+        )
     return np.array(flags, dtype=bool)
 
 
@@ -207,5 +215,7 @@ def subset_data(data: dict, mask: np.ndarray) -> dict:
                 )
             subset[key] = [item for item, keep in zip(value, mask) if keep]
         else:
-            raise TypeError(f"Unexpected non-row-aligned value in data['{key}']: {type(value)}")
+            raise TypeError(
+                f"Unexpected non-row-aligned value in data['{key}']: {type(value)}"
+            )
     return subset

@@ -1,5 +1,5 @@
 """
-Tests for direction_geometry.probe2_universal — the cross-family direction cosine.
+Tests for direction_geometry.probe2_family_transfer — the cross-family direction cosine.
 
 Invariants:
 - The cosine is computed in the original (unscaled) embedding space by
@@ -18,12 +18,11 @@ import numpy as np
 from esm2_mech.experiments.geometry.direction_geometry import (
     fit_direction,
     original_space_direction,
-    probe2_universal,
+    probe2_family_transfer,
 )
 
 
 class TestDirectionCosine:
-
     def test_identical_signal_gives_high_cosine(self):
         rng = np.random.RandomState(42)
         n = 400
@@ -35,9 +34,9 @@ class TestDirectionCosine:
         genes = np.array([f"G{i}" for i in range(n)])
         fam = np.array([f"F{i % 50}" for i in range(n)])
 
-        result = probe2_universal(X, y, genes, fam, n_partitions=5, seeds=(0,))
+        result = probe2_family_transfer(X, y, genes, fam, n_partitions=5, seeds=(0,))
 
-        cos_mean = result["cosine_observed"][0]
+        cos_mean = result["cosine_observed"]["mean"]
         assert cos_mean > 0.7, (
             f"With a shared linear signal, cosine should be high; got {cos_mean:.3f}"
         )
@@ -51,9 +50,9 @@ class TestDirectionCosine:
         genes = np.array([f"G{i}" for i in range(n)])
         fam = np.array([f"F{i % 50}" for i in range(n)])
 
-        result = probe2_universal(X, y, genes, fam, n_partitions=5, seeds=(0,))
+        result = probe2_family_transfer(X, y, genes, fam, n_partitions=5, seeds=(0,))
 
-        cos_null_mean = result["cosine_null_shuffled"][0]
+        cos_null_mean = result["cosine_null_shuffled"]["mean"]
         assert abs(cos_null_mean) < 0.5, (
             f"With random labels, null cosine should be near zero; got {cos_null_mean:.3f}"
         )
@@ -98,14 +97,14 @@ class TestDirectionCosine:
         y = (X @ w_true > 0).astype(int)
 
         X_shifted = X.copy()
-        X_shifted[n // 2:] += 100.0
+        X_shifted[n // 2 :] += 100.0
 
-        sc_a = StandardScaler().fit(X_shifted[:n // 2])
-        sc_b = StandardScaler().fit(X_shifted[n // 2:])
-        Xa = sc_a.transform(X_shifted[:n // 2])
-        Xb = sc_b.transform(X_shifted[n // 2:])
-        wA, _ = fit_direction(Xa, y[:n // 2], seed=0)
-        wB, _ = fit_direction(Xb, y[n // 2:], seed=0)
+        sc_a = StandardScaler().fit(X_shifted[: n // 2])
+        sc_b = StandardScaler().fit(X_shifted[n // 2 :])
+        Xa = sc_a.transform(X_shifted[: n // 2])
+        Xb = sc_b.transform(X_shifted[n // 2 :])
+        wA, _ = fit_direction(Xa, y[: n // 2], seed=0)
+        wB, _ = fit_direction(Xb, y[n // 2 :], seed=0)
 
         wA_orig = original_space_direction(wA, sc_a)
         wB_orig = original_space_direction(wB, sc_b)

@@ -296,9 +296,10 @@ estimate for any single variant.
 Section 5 shows the delta embeddings separate pathogenic from benign variants. This experiment
 asks what that pathogenicity direction actually is: whether it is one shared direction across
 protein families or many family-specific ones, whether it is more about how far a variant moves
-the embedding or which way, whether it is explained by simple substitution chemistry (e.g. amino
-acid size or charge change) or by ESM-2's own sense of how conserved a position is, and whether the
-same direction transfers to the stability and mechanism tasks.
+the embedding or which way, and whether it is explained by simple substitution chemistry (e.g.
+amino acid size or charge change) or by ESM-2's own sense of how conserved a position is. Separate
+exploratory probes measure cross-family direction alignment and full-delta generalisation across
+pathogenicity, stability, and mechanism tasks.
 
 
 ### Build canonical variant list (CPU)
@@ -320,17 +321,18 @@ this to a subset (e.g. `--probe magnitude geometry`); the default is all four.
 | Probe | What it asks |
 |---|---|
 | magnitude | Does the pathogenicity signal come from how far the delta moves the embedding (magnitude), or which direction it moves in? |
-| geometry | Is pathogenicity carried by a single direction (rank-1) or a higher-dimensional subspace, and does a direction fit on one set of protein families transfer to a disjoint set? |
-| transfer | Under one identical protocol, does a direction fit on one half of the data transfer to the other half, compared for the pathogenicity, stability, and mechanism tasks? |
-| biochem | How much of the direction is explained by context-free substitution chemistry (BLOSUM62 score, and changes in hydropathy, charge, and volume) rather than sequence context? |
+| geometry | How much linear pathogenicity signal remains after fitted directions are removed in sequence, and how well do directions fitted on disjoint family halves align and transfer? |
+| transfer | How do full-delta linear and gradient-boosted probes perform under group-disjoint cross-validation and when trained on one group half and scored on the other? The two scores are descriptive because their training-set sizes differ. |
+| biochem | How strongly does a family-held-out pathogenicity axis associate with context-free substitution chemistry (BLOSUM62 score, and changes in hydropathy, charge, and volume), and how well does that chemistry predict the held-out axis score? |
 
 | Step | Command | Description | Inputs | Outputs |
 |---|---|---|---|---|
-| 6.2 | `python -m esm2_mech.experiments.geometry.run_geometry --seeds 5 --stability-dataset tsuboyama` | 🟡 CPU — more cores help. Run all geometry probes, including the Tsuboyama stability arms | `pathogenicity_valid_variants_canonical.json`, `data/embeddings/esm2_t33_650M_UR50D/pathogenicity_{wt,mut}_mean.npy`, `megascale_tsuboyama_variants.json`, `megascale_domain_families.json`, `data/embeddings/esm2_t33_650M_UR50D/megascale_{wt,mut}_mean.npy` | `results/<run>/magnitude_direction/probe_results.json`, `geometry_results.json`, `transfer_contrast.json`, `probe4_axis_identity.json` |
+| 6.2 | `python -m esm2_mech.experiments.geometry.run_geometry --seeds 5 --stability-dataset tsuboyama` | 🟡 CPU — more cores help. Run all geometry probes, including the Tsuboyama stability arms | Canonical pathogenicity variants, `pathogenicity_meta.json`, pathogenicity WT/mutant mean embeddings, `valid_variants.json`, mechanism WT/mutant mean embeddings, `pfam_families.json`, `naive_baseline.json`, Tsuboyama variants, domain-family map, embedding fingerprint, and WT/mutant mean embeddings | `results/<run>/magnitude_direction/probe_results.json`, `geometry_results.json`, `transfer_contrast.json`, `probe4_axis_identity.json` |
 
 Only the magnitude probe has cluster-bootstrap confidence intervals wired (`--no_ci` / `--n_boot`
-apply to it only); the others are rank and correlation probes with no CI attached. `--seeds`
-applies to all probes.
+apply to it only). The direction ablation, cross-family transfer, full-delta transfer, and
+biochemistry analyses are exploratory summaries without bootstrap intervals. `--seeds` applies to
+all probes.
 
 ### Conservation extract (GPU)
 
@@ -355,12 +357,13 @@ AUROC by ≥ 0.02 (the embedding carries pathogenicity signal beyond conservatio
 
 | Step | Command | Description |
 |---|---|---|
-| 6.7 | `python -m esm2_mech.experiments.geometry.conservation_axis` | 🟡 CPU — more cores help. Compare conservation features to the embedding-derived pathogenicity direction. Inputs: `conservation_pathogenicity.npy`, `pathogenicity_valid_variants_canonical.json`, `data/embeddings/esm2_t33_650M_UR50D/pathogenicity_{wt,mut}_mean.npy`. Output: `results/<run>/magnitude_direction/conservation_axis.json` |
+| 6.7 | `python -m esm2_mech.experiments.geometry.conservation_axis` | 🟡 CPU — more cores help. Compare conservation features to the embedding-derived pathogenicity direction. Inputs: `conservation_pathogenicity.npy`, `conservation_pathogenicity_meta.json`, `cache/sequences.json`, `pathogenicity_valid_variants_canonical.json`, `pathogenicity_meta.json`, `data/embeddings/esm2_t33_650M_UR50D/pathogenicity_{wt,mut}_mean.npy`. Output: `results/<run>/magnitude_direction/conservation_axis.json` |
 
 run_biorxiv adds family-cluster confidence intervals to each pathogenicity AUROC in this experiment
 (resampled over Pfam families, not genes or individual variants), and a paired cluster-bootstrap confidence
 interval on the 2E gap (conservation-alone AUROC vs. conservation-plus-
-embedding-delta AUROC) and on the pathogenicity-vs-mechanism transfer contrast.
+embedding-delta AUROC). The descriptive correlations with the pathogenicity axis fit that axis
+within each training-family fold and score the association only in the held-out families.
 
 ---
 

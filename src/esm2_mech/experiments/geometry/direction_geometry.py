@@ -1,14 +1,7 @@
-"""Direction geometry of the pathogenicity axis.
+"""Exploratory ablation and cross-family transfer of pathogenicity directions."""
 
-Probe 1: is pathogenicity one direction or a subspace? (iterative rank removal)
-Probe 2: is that direction family-universal? (cross-family cosine + transfer AUROC)
-"""
-
-import json
 import numpy as np
 import functools
-
-print = functools.partial(print, flush=True)
 
 from esm2_mech.utils.constants import N_SEEDS
 from esm2_mech.utils.data import load_pfam_map
@@ -16,50 +9,31 @@ from esm2_mech.utils.io import write_result_json
 from esm2_mech.utils.paths import (
     GEOMETRY_RESULTS_DIR,
     DIRECTION_GEOMETRY_JSON,
-    PATH_EMB_WT_MEAN,
-    PATH_EMB_MUT_MEAN,
-    PATHOGENICITY_CANONICAL_VARIANTS_JSON,
     PFAM_JSON,
 )
 from esm2_mech.utils.metrics import mean_std_n
 from esm2_mech.utils.probes import auroc_for_clf
 from esm2_mech.utils.splits import family_split_cv
+from esm2_mech.experiments.geometry.data import (
+    load_pathogenicity_geometry_inputs,
+    pathogenicity_geometry_provenance,
+)
+
+print = functools.partial(print, flush=True)
 
 GEOMETRY_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
-PATH_VARIANTS = PATHOGENICITY_CANONICAL_VARIANTS_JSON
-PATH_WT = PATH_EMB_WT_MEAN
-PATH_MUT = PATH_EMB_MUT_MEAN
 
-
-def _pathogenicity_label(label):
-    """Map a canonical-set label to 1 (pathogenic) / 0 (benign); never a catch-all."""
-    if label == "pathogenic":
-        return 1
-    if label == "benign":
-        return 0
-    raise ValueError(f"unexpected pathogenicity label {label!r} (expected 'pathogenic'/'benign')")
-
-
-def load():
-    with open(PATH_VARIANTS) as _f:
-        variants = json.load(_f)
-    delta = np.load(PATH_MUT) - np.load(PATH_WT)
-    if len(variants) != delta.shape[0]:
-        raise ValueError(
-            f"variant/embedding row mismatch: {len(variants)} variants vs "
-            f"{delta.shape[0]} embedding rows — canonical file is not row-aligned."
-        )
-    genes = np.array([v["gene"] for v in variants])
-    y = np.array([_pathogenicity_label(v["label"]) for v in variants])
-    pfam = load_pfam_map(PFAM_JSON)
-    fam = np.array([(pfam.get(g) or "NA") for g in genes])
+def load(pfam_map):
+    inputs = load_pathogenicity_geometry_inputs()
+    fam = np.array([(pfam_map.get(gene) or "NA") for gene in inputs.genes])
     print(
-        f"Loaded {len(y)} variants, {len(set(genes))} genes, "
-        f"{int(y.sum())} path / {int((1-y).sum())} benign, "
-        f"{len(set(fam[fam!='NA']))} Pfam families"
+        f"Loaded {len(inputs.labels)} variants, {len(set(inputs.genes))} genes, "
+        f"{int(inputs.labels.sum())} path / "
+        f"{int((1 - inputs.labels).sum())} benign, "
+        f"{len(set(fam[fam != 'NA']))} Pfam families"
     )
-    return delta.astype(np.float64), y, genes, fam
+    return inputs, fam
 
 
 def fit_direction(X, y, seed=0):
@@ -77,18 +51,18 @@ def original_space_direction(scaled_direction, scaler):
     direction = np.asarray(scaled_direction) / scaler.scale_
     return direction / (np.linalg.norm(direction) + 1e-12)
 
-def probe1_rank(delta, y, genes, pfam_map, k_max=5, seeds=(0, 1, 2, 3, 4)):
+
+def probe1_direction_ablation(
+    delta, y, genes, pfam_map, k_max=5, seeds=(0, 1, 2, 3, 4)
+):
     from sklearn.preprocessing import StandardScaler
     from sklearn.linear_model import LogisticRegression
-    from sklearn.metrics import roc_auc_score
 
     print("\n" + "=" * 60)
-    print("PROBE 1 — is pathogenicity one direction or a subspace? (family-split)")
+    print("ITERATIVE LINEAR-DIRECTION ABLATION (family-split, exploratory)")
     print("=" * 60)
 
     decay = {k: [] for k in range(k_max + 1)}
-    proj1 = []
-
     for seed in seeds:
         fs = family_split_cv(genes, pfam_map, seed=seed)
         for tr, te in fs:
@@ -103,15 +77,6 @@ def probe1_rank(delta, y, genes, pfam_map, k_max=5, seeds=(0, 1, 2, 3, 4)):
                 Xtr, ytr
             )
             decay[0].append(auroc_for_clf(clf, Xte, yte))
-
-            w1 = clf.coef_.ravel()
-            w1 /= np.linalg.norm(w1) + 1e-12
-            s_tr = (Xtr @ w1).reshape(-1, 1)
-            s_te = (Xte @ w1).reshape(-1, 1)
-            clf1 = LogisticRegression(max_iter=2000, C=1.0, random_state=seed).fit(
-                s_tr, ytr
-            )
-            proj1.append(auroc_for_clf(clf1, s_te, yte))
 
             Rtr, Rte = Xtr.copy(), Xte.copy()
             for k in range(1, k_max + 1):
@@ -129,27 +94,33 @@ def probe1_rank(delta, y, genes, pfam_map, k_max=5, seeds=(0, 1, 2, 3, 4)):
 
     def agg(v):
         mean, std, n = mean_std_n(v)
-        return (mean, std if n else 0.0)
+        return {"mean": mean, "std": std, "n": n}
 
     out = {
-        "full_auroc": agg(decay[0]),
-        "proj1_auroc": agg(proj1),
-        "auroc_after_removing_k": {k: agg(decay[k]) for k in decay},
+        "full_linear_auroc": agg(decay[0]),
+        "residual_auroc_after_removing_k": {k: agg(decay[k]) for k in decay},
+        "interpretation_note": (
+            "This is an iterative discriminative-direction ablation. A binary "
+            "linear classifier's own decision score is necessarily one-dimensional, "
+            "so it is not used as evidence that the biological signal is rank one."
+        ),
     }
-    m, s = out["full_auroc"]
-    print(f"  full linear AUROC            = {m:.3f} ± {s:.3f}")
-    m, s = out["proj1_auroc"]
-    print(f"  1-D projection (top dir)    = {m:.3f} ± {s:.3f}")
+    full = out["full_linear_auroc"]
+    print(f"  full linear AUROC = {full['mean']:.3f} ± {full['std']:.3f}")
     for k in range(k_max + 1):
-        m, s = out["auroc_after_removing_k"][k]
-        print(f"  AUROC after removing {k} dir(s) = {m:.3f} ± {s:.3f}")
+        summary = out["residual_auroc_after_removing_k"][k]
+        print(
+            f"  AUROC after removing {k} direction(s) = "
+            f"{summary['mean']:.3f} ± {summary['std']:.3f}"
+        )
     return out
 
-def probe2_universal(delta, y, genes, fam, n_partitions=10, seeds=(0,)):
+
+def probe2_family_transfer(delta, y, genes, fam, n_partitions=10, seeds=(0,)):
     from sklearn.preprocessing import StandardScaler
 
     print("\n" + "=" * 60)
-    print("PROBE 2 — is the pathogenicity direction family-universal?")
+    print("CROSS-FAMILY DIRECTION TRANSFER (exploratory)")
     print("=" * 60)
 
     mask = fam != "NA"
@@ -200,7 +171,7 @@ def probe2_universal(delta, y, genes, fam, n_partitions=10, seeds=(0,)):
 
     def agg(v):
         mean, std, n = mean_std_n(v)
-        return (mean, std if n else 0.0)
+        return {"mean": mean, "std": std, "n": n}
 
     out = {
         "n_partitions": part,
@@ -208,24 +179,47 @@ def probe2_universal(delta, y, genes, fam, n_partitions=10, seeds=(0,)):
         "cosine_null_shuffled": agg(cos_null),
         "transfer_auroc_AtoB": agg(transfer),
     }
-    m, s = out["cosine_observed"]
-    print(f"  cosine(w_A, w_B) observed   = {m:.3f} ± {s:.3f}")
-    m, s = out["cosine_null_shuffled"]
-    print(f"  cosine null (shuffled y)    = {m:.3f} ± {s:.3f}")
-    m, s = out["transfer_auroc_AtoB"]
-    print(f"  transfer AUROC (A's dir->B) = {m:.3f} ± {s:.3f}")
+    observed = out["cosine_observed"]
+    null = out["cosine_null_shuffled"]
+    transfer_summary = out["transfer_auroc_AtoB"]
+    print(
+        f"  cosine(w_A, w_B) observed = {observed['mean']:.3f} ± {observed['std']:.3f}"
+    )
+    print(f"  cosine null (shuffled y) = {null['mean']:.3f} ± {null['std']:.3f}")
+    print(
+        f"  transfer AUROC (A's direction -> B) = "
+        f"{transfer_summary['mean']:.3f} ± {transfer_summary['std']:.3f}"
+    )
     return out
 
 
 def run(n_seeds=N_SEEDS):
     seeds = tuple(range(n_seeds))
-    delta, y, genes, fam = load()
     pfam_map = load_pfam_map(PFAM_JSON)
+    inputs, fam = load(pfam_map)
 
-    r1 = probe1_rank(delta, y, genes, pfam_map, seeds=seeds)
-    r2 = probe2_universal(delta, y, genes, fam, seeds=seeds)
+    ablation = probe1_direction_ablation(
+        inputs.delta.astype(np.float64),
+        inputs.labels,
+        inputs.genes,
+        pfam_map,
+        seeds=seeds,
+    )
+    family_transfer = probe2_family_transfer(
+        inputs.delta.astype(np.float64),
+        inputs.labels,
+        inputs.genes,
+        fam,
+        seeds=seeds,
+    )
 
-    result = {"probe1_rank": r1, "probe2_universal": r2, "n_variants": int(len(y))}
+    result = {
+        "iterative_direction_ablation": ablation,
+        "cross_family_direction_transfer": family_transfer,
+        "n_variants": int(len(inputs.labels)),
+        "analysis_status": "exploratory",
+        "input_provenance": pathogenicity_geometry_provenance(inputs, pfam_map),
+    }
     write_result_json(DIRECTION_GEOMETRY_JSON, result, seeds=list(seeds))
     print(f"\nResults -> {DIRECTION_GEOMETRY_JSON}")
     return result
@@ -238,24 +232,24 @@ def main():
     ap.add_argument("--seeds", type=int, default=N_SEEDS, help="number of seeds (>=1)")
     args = ap.parse_args()
     result = run(n_seeds=args.seeds)
-    r1, r2 = result["probe1_rank"], result["probe2_universal"]
+    ablation = result["iterative_direction_ablation"]
+    family_transfer = result["cross_family_direction_transfer"]
 
     print("\n" + "=" * 60)
     print("READ")
     print("=" * 60)
-    fa = r1["full_auroc"][0]
-    p1 = r1["proj1_auroc"][0]
-    rem1 = r1["auroc_after_removing_k"][1][0]
+    full = ablation["full_linear_auroc"]["mean"]
+    after_one = ablation["residual_auroc_after_removing_k"][1]["mean"]
     print(
-        f"  One direction recovers {p1:.3f} of the full {fa:.3f}; "
-        f"removing 1 direction drops to {rem1:.3f}."
+        f"  Full linear AUROC is {full:.3f}; after removing one fitted "
+        f"direction, residual AUROC is {after_one:.3f}."
     )
-    co = r2["cosine_observed"][0]
-    cn = r2["cosine_null_shuffled"][0]
-    tr = r2["transfer_auroc_AtoB"][0]
+    observed = family_transfer["cosine_observed"]["mean"]
+    null = family_transfer["cosine_null_shuffled"]["mean"]
+    transfer_auroc = family_transfer["transfer_auroc_AtoB"]["mean"]
     print(
-        f"  Cross-family direction cosine = {co:.3f} (null {cn:.3f}); "
-        f"transfer AUROC = {tr:.3f}."
+        f"  Cross-family direction cosine = {observed:.3f} (null {null:.3f}); "
+        f"transfer AUROC = {transfer_auroc:.3f}."
     )
 
 
