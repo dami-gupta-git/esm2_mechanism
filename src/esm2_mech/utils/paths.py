@@ -28,6 +28,8 @@ REPORTS_DIR = PROJECT_ROOT / "reports"
 RUN_REPORTS_DIR = REPORTS_DIR / RUN_NAME
 FIGURES_DIR = RUN_REPORTS_DIR / "figures"
 
+LOGS_DIR = PROJECT_ROOT / "logs" / "biorxiv_18Aug_2026"
+
 
 def results_dir_for_run(run_name: str) -> Path:
     """The results directory of an arbitrary run, not necessarily the live one.
