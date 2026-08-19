@@ -152,6 +152,7 @@ activemq-data/
 .env
 .envrc
 .venv
+.venv_cuml/
 env/
 venv/
 ENV/
@@ -233,6 +234,9 @@ docs/explain.txt
 docs/plans/INTERVIEW.md
 data/
 bak/scripts_bak/
+
+# Results — gitignored for now; already-tracked results/run1 files stay tracked
+results/
 
 # Track reports/ and scripts/ in this repo (override global gitignore)
 !reports
