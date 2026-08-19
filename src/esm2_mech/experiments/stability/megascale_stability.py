@@ -448,18 +448,13 @@ def run_stability_projection_3c(
         inferential_point, difference_ci, 0.01
     )
     return {
-        "across_seed": {
-            "baseline_f1_mean": baseline_f1_mean,
-            "baseline_f1_std": baseline_f1_std,
-            "projected_f1_mean": projected_f1_mean,
-            "projected_f1_std": projected_f1_std,
-            "difference_mean": projected_f1_mean - baseline_f1_mean,
-            "n_seeds": n_seeds,
-        },
-        "seed0_inference": {
-            "point_estimate": inferential_point,
-            "difference_ci": difference_ci,
-        },
+        "baseline_f1_mean": baseline_f1_mean,
+        "baseline_f1_std": baseline_f1_std,
+        "projected_f1_mean": projected_f1_mean,
+        "projected_f1_std": projected_f1_std,
+        "delta_f1": projected_f1_mean - baseline_f1_mean,
+        "inferential_point_estimate": inferential_point,
+        "difference_ci": difference_ci,
         "3C_passes": control_3c_verdict == "affirmed",
         "3C_verdict": control_3c_verdict,
     }
@@ -472,15 +467,9 @@ def apply_decision_rule(control_3a_ci, control_3b_gap_ci, control_3c, control_3d
         None if control_3b_gap_ci is None else control_3b_gap_ci.get("point_diff")
     )
     point_3c = (
-        None
-        if control_3c is None
-        else control_3c.get("seed0_inference", {}).get("point_estimate")
+        None if control_3c is None else control_3c.get("inferential_point_estimate")
     )
-    ci_3c = (
-        None
-        if control_3c is None
-        else control_3c.get("seed0_inference", {}).get("difference_ci")
-    )
+    ci_3c = None if control_3c is None else control_3c.get("difference_ci")
     point_3d = None if control_3d_ci is None else control_3d_ci.get("point")
 
     gates = {
@@ -706,11 +695,15 @@ def main(compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES, n_jobs=1):
         n_jobs=n_jobs,
         compute_ci=compute_ci,
     )
-    descriptive_3c = control_3c_result["across_seed"]
+    inferential_3c = control_3c_result["inferential_point_estimate"]
+    inferential_3c_text = (
+        "unavailable" if inferential_3c is None else f"{inferential_3c:+.3f}"
+    )
     print(
-        f"  3C: baseline F1={descriptive_3c['baseline_f1_mean']:.3f}  "
-        f"projected F1={descriptive_3c['projected_f1_mean']:.3f}  "
-        f"Δ={descriptive_3c['difference_mean']:+.3f}  "
+        f"  3C: five-seed baseline F1={control_3c_result['baseline_f1_mean']:.3f}  "
+        f"projected F1={control_3c_result['projected_f1_mean']:.3f}  "
+        f"mean Δ={control_3c_result['delta_f1']:+.3f}  "
+        f"seed-0 inferential Δ={inferential_3c_text}  "
         f"verdict={control_3c_result['3C_verdict']}"
     )
     write_result_json(
@@ -769,7 +762,8 @@ def main(compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES, n_jobs=1):
     print(f"  per-domain ρ std     : {per_prot_std:.3f}  (3D threshold ≤ 0.10)")
     if control_3c_result:
         print(
-            f"  3C Δ mechanism F1    : {descriptive_3c['difference_mean']:+.3f}  "
+            f"  3C seed-0 Δ mechanism F1: "
+            f"{inferential_3c_text}  "
             f"(passes if ≤ +0.01 — stability projection doesn't help mechanism)"
         )
     for gate_name, gate in adjudication["gates"].items():

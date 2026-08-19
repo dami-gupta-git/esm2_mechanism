@@ -42,13 +42,11 @@ def test_3b_leaky_verdict_requires_ci_to_clear_threshold():
 
 def test_stability_verdict_requires_all_four_intervals_to_clear_thresholds():
     control_3c = {
-        "seed0_inference": {
-            "point_estimate": -0.01,
-            "difference_ci": {
-                "point_diff": -0.01,
-                "ci_low": -0.02,
-                "ci_high": 0.0,
-            },
+        "inferential_point_estimate": -0.01,
+        "difference_ci": {
+            "point_diff": -0.01,
+            "ci_low": -0.02,
+            "ci_high": 0.0,
         },
     }
 
@@ -67,13 +65,11 @@ def test_stability_verdict_requires_all_four_intervals_to_clear_thresholds():
 
 def test_failed_3c_gate_is_not_reported_as_unadjudicated():
     control_3c = {
-        "seed0_inference": {
-            "point_estimate": 0.03,
-            "difference_ci": {
-                "point_diff": 0.03,
-                "ci_low": 0.02,
-                "ci_high": 0.04,
-            },
+        "inferential_point_estimate": 0.03,
+        "difference_ci": {
+            "point_diff": 0.03,
+            "ci_low": 0.02,
+            "ci_high": 0.04,
         },
     }
     adjudication = apply_decision_rule(
@@ -156,7 +152,7 @@ def test_3c_returns_paired_family_bootstrap_ci():
         n_boot=100,
     )
 
-    ci = result["seed0_inference"]["difference_ci"]
+    ci = result["difference_ci"]
     assert ci is not None
     assert ci["n_clusters"] == N_FAMILIES
     assert ci["point_diff"] is not None
@@ -194,7 +190,4 @@ def test_3c_discards_few_resamples_when_every_fold_holds_many_families():
         n_boot=200,
     )
 
-    assert (
-        result["seed0_inference"]["difference_ci"]["discard_frac"]
-        <= BOOTSTRAP_MAX_DISCARD_FRAC
-    )
+    assert result["difference_ci"]["discard_frac"] <= BOOTSTRAP_MAX_DISCARD_FRAC
