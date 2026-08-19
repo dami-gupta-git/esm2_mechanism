@@ -97,11 +97,11 @@ All project paths come from `src/esm2_mech/utils/paths.py`. A single run name se
 
 The current bioRxiv documents divide scientific rules, execution, and deferred work.
 
-1. Read [`PREREGISTRATION_run_biorxiv.md`](PREREGISTRATION_run_biorxiv.md) for the confirmatory claims, statistical rules, and interpretation criteria.
-2. Read [`RUNBOOK_biorxiv.md`](RUNBOOK_biorxiv.md) for the ordered data and experiment pipeline.
+1. Read [`PREREGISTRATION_run_biorxiv.md`](biorxiv/PREREGISTRATION_run_biorxiv.md) for the confirmatory claims, statistical rules, and interpretation criteria.
+2. Read [`RUNBOOK_biorxiv.md`](biorxiv/RUNBOOK_biorxiv.md) for the ordered data and experiment pipeline.
 3. Read the newest progress record in `biorxiv/` for live execution state.
 4. Read [`reports/run_biorxiv/`](../reports/run_biorxiv/) for experiment-level methods, results, interpretation, and provenance.
-5. Read [`FOLLOWUP_biorxiv.md`](FOLLOWUP_biorxiv.md) for work outside the current confirmatory run.
+5. Read [`FOLLOWUP_biorxiv.md`](biorxiv/FOLLOWUP_biorxiv.md) for work outside the current confirmatory run.
 
 The material under `docs/` describes the earlier exploratory phase. It remains useful for historical context, but the bioRxiv preregistration, runbook, current results, and current reports govern the present study.
 
@@ -110,7 +110,7 @@ The material under `docs/` describes the earlier exploratory phase. It remains u
 
 > **Historical and stale.** The text below predates the current `run_biorxiv` analysis and is retained only as a record of earlier project work. Do not use its numbers, verdicts, or conclusions in the bioRxiv manuscript. Manuscript evidence must come from the preregistration, verified files under `results/run_biorxiv/`, and regenerated reports under `reports/run_biorxiv/`.
 
-The following text is reproduced from [`reports/summaries/report_summary.md`](../reports/summaries/report_summary.md). It summarizes results from runs 0, 1, and 6.
+The following text is reproduced from [`reports/summaries/report_summary.md`](reports/summaries/report_summary.md). It summarizes results from runs 0, 1, and 6.
 
 ### Run 0 — Summary of results 1–26
 
