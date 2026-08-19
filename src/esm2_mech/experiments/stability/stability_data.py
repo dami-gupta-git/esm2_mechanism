@@ -40,6 +40,7 @@ StabilityInputs = namedtuple(
         "delta_pos",
         "n_families",
         "n_orphans",
+        "input_fingerprints",
     ],
 )
 
@@ -95,6 +96,63 @@ def embedding_input_fingerprint(variants):
             digest.update(str(variant[key]).encode())
             digest.update(b"\x00")
     return digest.hexdigest()
+
+
+def labeled_stability_fingerprint(variants):
+    """SHA-256 of ordered stability identities and their measured ddG labels."""
+    digest = hashlib.sha256()
+    required_fields = ("protein", "mutation_code", "ddg")
+    for row_index, variant in enumerate(variants):
+        missing = [key for key in required_fields if key not in variant]
+        if missing:
+            raise ValueError(
+                f"Megascale variant row {row_index} lacks analysis fields {missing}"
+            )
+        ddg = float(variant["ddg"])
+        if not np.isfinite(ddg):
+            raise ValueError(f"Megascale variant row {row_index} has non-finite ddG")
+        digest.update(
+            f"{variant['protein']}|{variant['mutation_code']}|{ddg.hex()}".encode()
+        )
+        digest.update(b"\x00")
+    return digest.hexdigest()
+
+
+def stability_family_fingerprint(proteins, family_map):
+    """SHA-256 of every domain's Pfam assignment, including explicit orphans."""
+    digest = hashlib.sha256()
+    for protein in sorted(set(proteins)):
+        family = family_map.get(protein)
+        digest.update(
+            json.dumps([str(protein), family], separators=(",", ":")).encode()
+        )
+        digest.update(b"\x00")
+    return digest.hexdigest()
+
+
+def stability_input_fingerprints(variants, proteins, family_map, metadata):
+    """Fingerprint every scientific input shared by the stability probes."""
+    required_metadata = (
+        "sha256",
+        "embedding_input_fingerprint",
+        "mean_embedding_fingerprint",
+        "position_embedding_fingerprint",
+        "model",
+    )
+    missing = [key for key in required_metadata if metadata.get(key) is None]
+    if missing:
+        raise ValueError(
+            f"Megascale embedding metadata lacks required fingerprints {missing}"
+        )
+    return {
+        "labeled_variants": labeled_stability_fingerprint(variants),
+        "embedding_rows": metadata["sha256"],
+        "embedding_inputs": metadata["embedding_input_fingerprint"],
+        "mean_embedding_content": metadata["mean_embedding_fingerprint"],
+        "position_embedding_content": metadata["position_embedding_fingerprint"],
+        "pfam_assignments": stability_family_fingerprint(proteins, family_map),
+        "model": metadata["model"],
+    }
 
 
 def save_fingerprint(
@@ -249,4 +307,7 @@ def load_stability_inputs(include_pos=False):
         delta_pos=delta_pos,
         n_families=n_families,
         n_orphans=n_orphans,
+        input_fingerprints=stability_input_fingerprints(
+            variants, proteins, family_map, embedding_metadata
+        ),
     )

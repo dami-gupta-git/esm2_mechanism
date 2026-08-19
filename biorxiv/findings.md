@@ -4,20 +4,12 @@ Written 2026-08-19. Nothing is currently running in the background.
 
 ## Current state
 
-Executing `RUNBOOK_biorxiv.md` for `run_biorxiv`. Sections 4 and 5 are done. Section 6 has step
-6.1 done and step 6.2 results on disk but not yet recorded in `PROGRESS.md`. Sections 6.3-6.7
-and all of section 7 are pending. Live status is tracked in `PROGRESS.md`, not in the runbook.
+Executing `RUNBOOK_biorxiv.md` for `run_biorxiv`. Live status is tracked in `PROGRESS.md`, not in the runbook.
 
 **Within-family mechanism (formerly Experiment 3) is dropped from `run_biorxiv` scope.** It was never
 scoped beyond a placeholder, so it has been removed from `RUNBOOK_biorxiv.md` and moved to
 `FOLLOWUP_biorxiv.md`. Do not resurrect it as a next action.
 
-## Next action
-
-Remove em-dashes from `reports/run_biorxiv/report_mechanism.md` (rewrite sentences to flow
-naturally, not a straight find-and-replace). Then mark step 6.2 as done in `PROGRESS.md` and
-continue with steps 6.3-6.7 (GPU pod needed for 6.3-6.6). Write reports for sections 5, 6, and 7
-as each completes.
 
 ## Operational notes for future pod work
 

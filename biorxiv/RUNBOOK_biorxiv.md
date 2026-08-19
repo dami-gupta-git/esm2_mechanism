@@ -146,7 +146,7 @@ This step reads the two files listed in Prerequisites above.
 
 ---
 
-## 2. Fetch variant data (CPU)
+## 2. Fetch variant data (Run these locally)
 
 The merged variant set and its annotations form a shared foundation used by sections 4, 5, 6, and 7 (they are not experiment-specific).
 The ClinVar fetch is the slowest step because it queries NCBI once per gene. Genes whose esearch/esummary calls fail are neither written nor cached, so re-running the same command automatically retries only those genes.
@@ -161,6 +161,7 @@ The ClinVar fetch is the slowest step because it queries NCBI once per gene. Gen
 | 2.6 | `python -m esm2_mech.fetch_data.fetch_alphamissense_mechanism` | Fetch AlphaMissense scores | `variants.json` | `alphamissense_scores_full.json` |
 | 2.7 | `python -m esm2_mech.fetch_data.build_valid_variants` | Build filtered variant list | `variants.json`, `cache/sequences.json` | `valid_variants.json` |
 | 2.8 | `python -m esm2_mech.fetch_data.fetch_pathogenicity_variants --max_per_gene_per_class 20 --fetch_seed 42 --force` | Fetch balanced pathogenic/benign ClinVar variants for section 5 (separate from step 2.2's pathogenic-only fetch) | `variants.json` | `clinvar_pathogenicity_variants.json`, `clinvar_pathogenicity_variants.params.json` |
+| 2.9 | `python -m esm2_mech.fetch_data.fetch_annotations --step enzyme` | Fetch enzyme type labels (kinase/protease/oxidoreductase/non-enzyme) for section 8 | `variants.json` | `data/enzyme_labels.tsv` |
 
 Step 2.8 is network-only, so it runs locally rather than on the pod. The command uses `--force`
 because this repaired run must replace the pre-fix cache. Without `--force`, a current matching
@@ -492,15 +493,11 @@ proteome features should be near chance.
 
 No new data to fetch or embed. This experiment uses:
 
-- `data/enzyme_labels.tsv` — already produced by step 2's annotation fetch (`fetch_annotations --step enzyme`)
+- `data/enzyme_labels.tsv` — produced by step 2.9
 - `data/embeddings/esm2_t33_650M_UR50D/embeddings_wt_mean.npy` — the WT embeddings from section 3
 - `data/proteome_features_aligned.npy` — the gene-level proteome feature matrix
 
-All three must exist before running. If `enzyme_labels.tsv` is missing, run:
-
-```bash
-python -m esm2_mech.fetch_data.fetch_annotations --step enzyme
-```
+All three must exist before running.
 
 ### Run analysis (CPU)
 
@@ -528,4 +525,48 @@ Decision rules (pre-registration §2F–2H):
 
 ## Verification checklist
 
-TBD
+This checklist gates the manuscript, not the pipeline. No number moves into `manuscript/manuscript.md`
+until every row below is checked. Track progress in `PROGRESS.md`, not here — this section only
+defines what "verified" means.
+
+### Global checks (run once, before any per-claim check)
+
+- [ ] At manuscript freeze, `git status` is clean, the final release commit or tag is recorded, and
+      its relationship to the commit recorded in each result file is documented.
+- [ ] Every local and pod environment used to produce cited results is recorded in
+      `ENV_SNAPSHOT.md`, and each result-producing step is assigned to the environment it used.
+- [ ] Every result file under `results/run_biorxiv/` used below carries a fingerprint that matches
+      the current `valid_variants.json` / `embedded_variants.json` / `clinvar_pathogenicity_variants.json`
+      identity (not a stale cache from an earlier run).
+- [ ] `scripts/compare_runs.py` has been run against the previous run and every flagged point-estimate
+      movement has a written explanation (Part 5 of the preregistration).
+- [ ] No report or figure cites a number from `reports/summaries/` or any run other than `run_biorxiv`.
+
+### Per-claim checks
+
+For each claim, confirm: the result file exists and its fingerprint is current, the report's stated
+point estimate and CI match the value actually in that file (not a transcribed or rounded-differently
+number), the seed count matches what the rule requires, and the verdict recorded in the report follows
+from the rule in §1.1 rather than from the point estimate alone.
+
+| Claim | Result file(s) | Report | Checked |
+|---|---|---|---|
+| 2A-1 | `mechanism_oof_cache_seed{0..4}.json`, `family_split_baselines_seed{0..4}.json` | report_mechanism.md | [ ] |
+| 2A-2 | permutation output under `results/run_biorxiv/` (Runbook §4.6) | report_mechanism.md | [ ] |
+| 2B | `leakage_fraction.json`, `family_clustering.json` | report_mechanism.md | [ ] |
+| 2C | `pathogenicity_control_seed{0..4}.json`, `pathogenicity_control.json` | report_pathogenicity_control.md | [ ] |
+| 2D | `magnitude_direction/conservation_axis.json` | report_geometry.md | [ ] |
+| 2E | `magnitude_direction/conservation_axis.json` | report_geometry.md | [ ] |
+| 2F | `enzyme_classification/enzyme_classification_summary.json` | report_enzyme_classification.md | [ ] |
+| 2G | `enzyme_classification/enzyme_classification_summary.json` (paired against §4's mechanism OOF) | report_enzyme_classification.md | [ ] |
+| 2H | `enzyme_classification/enzyme_classification_summary.json` | report_enzyme_classification.md | [ ] |
+| 3A | `megascale_stability/summary.json` | report_stability.md | [ ] pending experiment 7 |
+| 3B | `megascale_stability/summary.json` | report_stability.md | [ ] pending experiment 7 |
+| 3C | `megascale_stability/stability_projection_3c.json` | report_stability.md | [ ] pending experiment 7 |
+| 3D | `megascale_stability/mlp_summary.json`, `mlp_summary_xgb.json` | report_stability.md | [ ] pending experiment 7 |
+
+### Exit condition
+
+The checklist is complete when every row above is checked and Table 2 of the manuscript can be
+filled in entirely from checked rows, with no cell left to a point estimate that hasn't cleared its
+own row here.

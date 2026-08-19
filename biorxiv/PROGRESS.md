@@ -47,6 +47,8 @@ but similarly-drawn sample of genes, rather than reporting a single number as if
 | 2.6 | `python -m esm2_mech.fetch_data.fetch_alphamissense_mechanism` | `alphamissense_scores_full.json` | ✅ 2026-08-19 | matched 17,765/17,840 |
 | 2.7 | `python -m esm2_mech.fetch_data.build_valid_variants` | `valid_variants.json` | ✅ 2026-08-19 | 17,770 valid variants, 1,931 genes; verified schema |
 | 2.8 | `python -m esm2_mech.fetch_data.fetch_pathogenicity_variants --max_per_gene_per_class 20 --fetch_seed 42 --force` | `clinvar_pathogenicity_variants.json`, `clinvar_pathogenicity_variants.params.json` | ✅ 2026-08-19 | 25,740 variants (12,870 path / 12,870 benign), 1,837 genes. Hit one ClinVar substitution (IDS F155L) with conflicting pathogenic/benign labels across records; fixed `_deduplicate_protein_substitutions` to drop conflicting substitutions instead of aborting (was previously unhandled — no dedup existed before today's `c42a75a`). Bumped `_BALANCE_VERSION`/`_FETCH_METADATA_VERSION` to 3 |
+| 2.9 | `python -m esm2_mech.fetch_data.fetch_annotations --step enzyme` | `data/enzyme_labels.tsv` | ✅ 2026-08-19 | Old file (May 30) predated the `enzyme_4class_excluded_flag` column the current script requires; re-ran to regenerate. 1,935/1,935 UniProt entries found, 2,376 rows written. Class distribution: kinase 130, protease 68, oxidoreductase 123, non-enzyme 1,135, excluded_other_enzyme 481, missing 439 |
+| 2.9 | `python -m esm2_mech.fetch_data.fetch_annotations --step enzyme` | `data/enzyme_labels.tsv` | ⬜ | Needed for section 8; was missing from the runbook, now added |
 
 ## 3. Embed variants
 
@@ -66,7 +68,7 @@ but similarly-drawn sample of genes, rather than reporting a single number as if
 | 4.3 | `python -m esm2_mech.experiments.mechanism.family_clustering --seeds 5` | `results/run_biorxiv/family_clustering.json` | ✅ 2026-08-19 | Strong family clustering confirmed (k=5 purity z=+271.6) — homology leakage present in gene-split CV, as expected |
 | 4.4 | `python -m esm2_mech.experiments.mechanism.naive_baseline` | `results/run_biorxiv/naive_baseline.json` | ✅ 2026-08-19 | No errors |
 | 4.7 | `python -m esm2_mech.experiments.mechanism.single_source_mechanism --seeds 5` | `results/run_biorxiv/single_source_gerasimavicius/...` | ✅ 2026-08-19 | No crash; log shows a few bootstrap resamples (2-3%) discarded on some CIs due to small-subset class loss in a fold — self-reported QC flag, to review before citing those specific intervals |
-| 4.6 | `python -m esm2_mech.experiments.mechanism.classify_by_mechanism --seeds 5 --n_permutations 1000` | `results/run_biorxiv/...` | ✅ 2026-08-19 | Timed 1/5/50-permutation re-fits first (~190-224s, parallelism absorbs most of the cost on 208 cores); full run ~2h. `delta_mean` 4/5 seeds p<0.05, `wt_only_mean` 5/5 seeds p<0.05 — both clear the ≥3/5 significance bar (claim 2A not refuted) |
+| 4.6 | `python -m esm2_mech.experiments.mechanism.classify_by_mechanism --seeds 5 --n_permutations 1000` | `results/run_biorxiv/...` | ✅ 2026-08-19 | Timed 1/5/50-permutation re-fits first (~190-224s, parallelism absorbs most of the cost on 208 cores); full run ~2h. `delta_mean` has p<0.05 in 4/5 seeds, meeting the ≥3/5 threshold that overturns 2A-2. `wt_only_mean` has p<0.05 in 5/5 seeds. Claim 2A-1 is separately affirmed by its classification-interval rule. |
 | 4.5 | `python -m esm2_mech.experiments.mechanism.leakage_fraction` | `results/run_biorxiv/leakage_fraction.json` | ✅ 2026-08-19 | `wt_only_mean`/`wt_concat_mut`/`mut_only_mean` leakage fraction ~38-39% (CI excludes 0); `delta_per_residue` CI suppressed (QC flag, resample denominator below threshold); rest undefined at floor (gene≈family≈chance) |
 
 ## 5. Experiment: Pathogenicity positive control
@@ -95,18 +97,27 @@ but similarly-drawn sample of genes, rather than reporting a single number as if
 
 | Step | Command | Outputs | Status |
 |---|---|---|---|
-| 7.1 | `python -m esm2_mech.experiments.stability.build_domain_families` | `data/megascale_domain_families.json` | ⬜ |
-| 7.2 | `python -m esm2_mech.experiments.stability.megascale_stability --n_jobs 4` | `results/run_biorxiv/megascale_stability/per_protein_spearman.json`, `stability_projection_3c.json`, `summary.json` | ⬜ |
-| 7.3 | `python -m esm2_mech.experiments.stability.megascale_mlp` | `results/run_biorxiv/megascale_stability/mlp_summary.json` | ⬜ |
+| 7.1 | `python -m esm2_mech.experiments.stability.build_domain_families` | `data/megascale_domain_families.json` | ✅ 2026-08-19 | Already present and non-empty, skipped per runbook |
+| 7.2 | `python -m esm2_mech.experiments.stability.megascale_stability --n_jobs 4` | `results/run_biorxiv/megascale_stability/per_protein_spearman.json`, `stability_projection_3c.json`, `summary.json` | ✅ 2026-08-19 | First attempt at `--n_jobs 32` run concurrently with 7.3/7.5 crashed both jobs (worker OOM, see note below). Second attempt also failed — pod's `.venv` got recreated externally (new pod, same volume) mid-run without the editable install, hit `ModuleNotFoundError`; user reinstalled, reran alone at `--n_jobs 4`, clean. Verdict LEAKY: 3A affirmed (ρ=0.693≥0.5), 3B failed (drop 0.139>0.10), 3C affirmed (Δmech F1≈0), 3D failed (per-domain ρ std 0.160>0.10) |
+| 7.3 | `python -m esm2_mech.experiments.stability.megascale_mlp` | `results/run_biorxiv/megascale_stability/mlp_summary.json` | ⬜ running (alone, after 7.2/7.5 fix) |
 | 7.4 | `python -m esm2_mech.experiments.stability.megascale_mlp --xgboost` | `results/run_biorxiv/megascale_stability/mlp_summary_xgb.json` | ⬜ |
-| 7.5 | `python -m esm2_mech.experiments.stability.stability_baselines --n_jobs 4` | `results/run_biorxiv/megascale_stability/baselines.json` | ⬜ |
+| 7.5 | `python -m esm2_mech.experiments.stability.stability_baselines --n_jobs 4` | `results/run_biorxiv/megascale_stability/baselines.json` | ✅ 2026-08-19 | Started at `--n_jobs 32` (see 7.2 note on why that was wrong in hindsight), survived the venv reset since already loaded in memory, finished clean. Label-shuffle null collapses to ~0 as expected |
 
 ## 8. Experiment: Enzyme type classification (positive control)
 
 | Step | Command | Outputs | Status |
 |---|---|---|---|
-| 8.1 | `python -m esm2_mech.experiments.proteome_features.enzyme_classification --seeds 5` | `results/run_biorxiv/enzyme_classification/enzyme_classification_summary.json` | ⬜ |
+| 8.1 | `python -m esm2_mech.experiments.proteome_features.enzyme_classification --seeds 5` | `results/run_biorxiv/enzyme_classification/enzyme_classification_summary.json` | ✅ 2026-08-19 | Ran on pod (venv had to be rebuilt for python3.12, see 7.2 note — same pod reset issue). 2F pass (family-split F1=0.788≥0.70), 2G pass (enzyme beats mechanism by +0.508≥0.05), 2H fail/underpowered (MLP−LogReg=-0.074, 95% CI [-0.119, -0.042] overlaps the -0.05 equivalence boundary). Proteome-features negative control near chance (F1≈0.29) as expected |
 
 ## Verification checklist
 
-⬜ Not started.
+### Global checks
+
+- [ ] Final repository state. Pending: the working tree is not clean, and no manuscript-freeze
+      release commit or tag has been recorded. Current HEAD is `04ba891abb1e49be1831d79e4b569e2a50ea92ca`.
+- [ ] Execution environments. The local environment matches its recorded snapshot. The original
+      pod environment and the post-rebuild pod environment are now both recorded in
+      `ENV_SNAPSHOT.md`. Recheck the pod after steps 7.3 and 7.4 finish, then assign those outputs
+      to the environment that produced them.
+
+Remaining global and per-claim checks have not started.

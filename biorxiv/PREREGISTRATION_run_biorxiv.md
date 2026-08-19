@@ -104,11 +104,13 @@ null-claim rules govern each verdict. Enumerating the set in advance (Part 2) is
 
 Enumerated before the run so a result cannot be selected as load-bearing after the fact. Everything
 not listed here is either a stability control (Part 3) or exploratory (Part 4) and asserts nothing
-the paper relies on.
+the paper relies on. The original 2A tests are relabelled as 2A-1 and 2A-2 under the dated
+clarification below; no test was added.
 
 | # | Claim | Instrument | Runbook |
 |---|---|---|---|
-| 2A | The mechanism delta sits at the measured chance floor, family-split | CI upper bound below floor + 0.05; permutation p as a refutation-only test | §4 |
+| 2A-1 | Linear mechanism classification from the delta sits at the measured chance floor, family-split | CI upper bound below floor + 0.05 | §4 |
+| 2A-2 | The linear mechanism delta has no detectable family-robust ranking signal | family-block permutation of macro one-vs-rest AUROC, refutation-only | §4.6 |
 | 2B | The absolute-embedding gene→family gap is non-zero (homology leakage exists) | paired bootstrap on the split gap | §4.5 |
 | 2C | Pathogenicity clears AUROC 0.85, family-split (positive control) | CI excludes 0.85 | §5 |
 | 2D | Conservation alone clears AUROC 0.85 for pathogenicity | family-cluster bootstrap CI | §6.7 |
@@ -117,11 +119,11 @@ the paper relies on.
 | 2G | Enzyme family-split macro-F1 exceeds mechanism family-split macro-F1 by at least 0.05 | paired cluster-bootstrap CI | §8 |
 | 2H | The enzyme signal is linearly separable: MLP does not substantially outperform LogReg under family-split | paired cluster-bootstrap CI | §8 |
 
-Claims 2A and 2C form the load-bearing dissociation, and 2B provides the leakage account. Claims
-2D–2E address characterisation, and 2F–2H address task specificity. If the set must be trimmed,
-retain 2A–2C.
+Claims 2A-1, 2A-2, and 2C form the load-bearing dissociation, and 2B provides the leakage account.
+Claims 2D–2E address characterisation, and 2F–2H address task specificity. If the set must be
+trimmed, retain 2A-1, 2A-2, 2B, and 2C.
 
-### 2A — mechanism null (Runbook §4, permutation §4.6)
+### 2A-1 and 2A-2 — mechanism classification and ranking (Runbook §4, permutation §4.6)
 
 **Two quantities, named separately.** One is the score a no-information predictor achieves. The
 other is the score the run's own strongest mutation-only probe achieves. Only the first is a floor.
@@ -139,11 +141,13 @@ it. `scripts/compare_runs.py` flags its movement between runs.
 The nonlinear delta reference is a measurement that carries signal, and it sits consistently above
 the measured chance floor. It is never described as chance, here or in the reports or the paper.
 
-**Verdict.** A CI straddling the floor is not evidence the score sits at the floor — a wide enough
-interval straddles anything. 2A is affirmed only if the family-split CI's upper bound for the
-linear `delta_mean` probe falls below the measured chance floor under the family split plus 0.05;
-otherwise it is **not adjudicated**, never confirmed. The permutation test runs in one direction
-only: a significant p refutes 2A, a non-significant p does not confirm it.
+**Verdicts.** Claim 2A-1 tests three-class classification. It is **affirmed** only if the
+family-split CI's upper bound for the linear `delta_mean` probe falls below the measured chance
+floor plus 0.05 on at least three of five seeds. Otherwise, 2A-1 is **not adjudicated**. Claim 2A-2
+tests whether any ranking signal is detectable. It is **overturned** if at least three of five
+permutation p-values are below 0.05. Otherwise, 2A-2 is **not adjudicated**, because a
+non-significant permutation result does not confirm a null claim. Neither verdict is recorded as
+confirmed.
 
 The threshold is not derived from a probe. A threshold set by the nonlinear probe's own score would
 rise whenever that probe scored higher, making the claim easier to affirm rather than harder, and
@@ -188,21 +192,23 @@ same gene count, not by assigning one random label per family:
 - Most families are a single gene, so almost all of them shuffle freely.
 
 **Seeds and how they combine.** The test runs on all five seeds and the full distribution of
-p-values is reported. Because the test is refutation-only for 2A, the refutation fires when at
+p-values is reported. Because the test is refutation-only for 2A-2, the refutation fires when at
 least three of the five seeds return a p-value below 0.05; a minority of significant seeds is
 reported as a split result and refutes nothing. A single-seed test is not used: the seeds differ in
 their gene-to-family gap, so one seed can understate the effect and invites the objection that the
 seed was chosen.
 
-**Post-result specification amendment, 2026-08-19.** The original rule did not state how the five
-seed-specific confidence intervals combine. Claim 2A is affirmed when the interval criterion holds
-on at least three of five seeds. The rule is evaluated only when all five intervals are available;
-otherwise the claim is not adjudicated. This amendment was recorded after the initial results were
-inspected.
+**Post-result specification clarification, 2026-08-19.** The original 2A combined a macro-F1
+classification criterion with an AUROC ranking-sensitivity criterion. They are relabelled as 2A-1
+and 2A-2 because they measure different properties. No dataset, statistic, threshold, seed rule, or
+analysis changed. The original rule also did not state how the five seed-specific confidence
+intervals combine; 2A-1 requires the interval criterion on at least three of five seeds. Each claim
+is evaluated only when all five required results are available; otherwise it is not adjudicated.
+This clarification was recorded after the initial results were inspected.
 
 Scope and cost:
 
-- Only the linear probe gets this test — the headline claim is a linear-probe result, and no
+- Only the linear probe gets these tests — both headline claims concern the linear probe, and no
   conclusion depends on the MLP's permutation p-value, so the MLP isn't tested this way.
 - Refit cost: 1,000 per seed. Only the family split is permuted, not both splits.
 
@@ -216,31 +222,34 @@ Resolution limit:
 (`papers/mechanism_2025.pdf`, bioRxiv 2025.03.13.642984) report 43% of multi-phenotype dominant
 genes and 49% of mixed-inheritance genes carry both LOF and non-LOF mechanisms. This project
 assigns one label per gene, so some variants are mislabelled by construction — a citable
-alternative explanation for 2A: the delta sits at the floor because labels are noisy, not because
-the embedding lacks signal. No CI addresses this, since the threat is to what the labels mean, not
+alternative explanation for 2A-1 and 2A-2: the delta may classify at the floor or carry weak
+ranking signal because labels are noisy, not because the embedding lacks signal. No CI addresses
+this, since the threat is to what the labels mean, not
 sample size. Answered by Tasks 2d and 8 in [`FOLLOWUP_biorxiv.md`](FOLLOWUP_biorxiv.md) (does the
 null survive on cleanly-labelled genes; how far does realistic label noise move a working probe),
-which 2A's statement cites rather than asserting the labels are adequate.
+which the 2A-1 and 2A-2 statements cite rather than asserting the labels are adequate.
 
-**Out of scope.** The null is measured under the Pfam family partition only. Whether it holds under
-a coarser partition (Pfam clan) or a sequence-identity clustering is follow-up work; the paper
-claims neither independence from the Pfam family definition nor how leakage varies with partition
-strictness.
+**Out of scope.** Both claims are measured under the Pfam family partition only. Whether they hold
+under a coarser partition (Pfam clan) or a sequence-identity clustering is follow-up work; the
+paper claims neither independence from the Pfam family definition nor how leakage varies with
+partition strictness.
 
-**Would overturn 2A:** family-split CI excludes the measured floor from above **and** the
-permutation p is significant.
-**Would leave 2A not adjudicated:** CI upper bound above floor + 0.05 without a significant p —
-underpowered to tell a real effect of the pre-registered size from none, which is not the same as
-the null holding.
+**Would affirm 2A-1:** the CI upper bound is below the measured floor plus 0.05 on at least three of
+five seeds.
+**Would leave 2A-1 not adjudicated:** the interval criterion does not hold on at least three seeds.
+**Would overturn 2A-2:** the permutation p is below 0.05 on at least three of five seeds.
+**Would leave 2A-2 not adjudicated:** fewer than three permutation p-values are below 0.05.
 
 **Checklist:**
 - [ ] The measured chance floor is read from this run's own majority-class baseline under the
       family split, not carried over from an earlier run and not derived from any probe.
 - [ ] The nonlinear delta reference is reported beside the threshold and is nowhere called a floor
       or called chance.
-- [ ] Verdict recorded is "affirmed" or "not adjudicated" only, never "confirmed" outright.
-- [ ] "Affirmed" is used only if the linear `delta_mean` family-split CI's upper bound is below the
+- [ ] The 2A-1 verdict is "affirmed" or "not adjudicated," never "confirmed."
+- [ ] 2A-1 is affirmed only if the linear `delta_mean` family-split CI's upper bound is below the
       measured chance floor + 0.05 on at least three of the five seeds.
+- [ ] The 2A-2 verdict is "overturned" or "not adjudicated," never "affirmed" or "confirmed."
+- [ ] 2A-2 is overturned when at least three of five permutation p-values are below 0.05.
 - [ ] The interval rule is evaluated only when all five seed-specific intervals are available.
 - [ ] `delta_mean`'s reported p-value states which test variant (refit macro-F1 vs. no-refit AUROC)
       produced it.
@@ -350,18 +359,20 @@ a failed gate makes no positive claim.
 A positive control using a wildtype-sequence property: classifying each gene as kinase, protease,
 oxidoreductase, or non-enzyme from its WT mean-pooled ESM-2 embedding. Enzyme class is strongly
 associated with protein fold, so ESM-2's known Pfam clustering should help — making this a direct
-test of whether the mechanism null (2A) is a property of the task, not a failure of the pipeline.
+test of whether the mechanism classification result in 2A-1 is a property of the task, not a
+failure of the pipeline.
 Governed by the same verdict rule (§1.1) and resampling rule (§1.2) as the other experiments.
 Decision rules from `docs/plans/plan_enzyme_classification.md`:
 
 | # | Criterion | Interpretation if met |
 |---|---|---|
 | 2F | Family-split LogReg macro-F1 at or above 0.70 | Enzyme class is strongly encoded in ESM-2 wildtype embeddings |
-| 2G | Enzyme family-split macro-F1 exceeds mechanism family-split macro-F1 by at least 0.05 | The mechanism null is task-specific, not a probe or data failure |
+| 2G | Enzyme family-split macro-F1 exceeds mechanism family-split macro-F1 by at least 0.05 | The mechanism classification floor is task-specific, not a probe or data failure |
 | 2H | MLP does not substantially outperform LogReg under family-split (\|ΔF1\| below 0.05) | A linear readout is sufficient, paralleling pathogenicity |
 
-2G is the central claim: the same pipeline that shows mechanism at floor achieves strong enzyme
-classification, so the mechanism null reflects what ESM-2 encodes, not a methodological ceiling.
+2G is the central claim: the same pipeline that shows mechanism classification at the floor in
+2A-1 achieves strong enzyme classification, so the mechanism result reflects what ESM-2 encodes,
+not a methodological ceiling.
 2F sets an absolute bar. 2H tests whether the signal is linearly separable (as for
 pathogenicity) or requires nonlinear probes (as for stability).
 
@@ -372,7 +383,7 @@ confidence interval also excludes zero. This amendment was recorded after the in
 inspected.
 
 The mechanism reference F1 in 2G is read from section 4's aggregate result for this run, never
-hardcoded, on the same principle as the measured chance floor in 2A.
+hardcoded, on the same principle as the measured chance floor in 2A-1.
 
 CIs are cluster-bootstrap on seed-0 family-split OOF predictions, resampled by family (§1.2). The
 rare-class caveat (§1.3) applies to protease, the smallest class here. A proteome-features baseline runs

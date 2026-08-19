@@ -24,6 +24,14 @@ dependencies = [
     "biopython",
 ]
 
+[project.optional-dependencies]
+# GPU-only, needs --extra-index-url=https://pypi.nvidia.com and a CUDA 12 host.
+# pip install --extra-index-url=https://pypi.nvidia.com -e ".[gpu]"
+# cuml-cu12==25.8.0 is incompatible with scikit-learn>=1.9 (cuml.accel imports
+# BaseEstimator._get_default_requests, removed in 1.9). Pin scikit-learn<1.9
+# alongside this extra, or wait for a cuml release that supports 1.9.
+gpu = ["cuml-cu12==25.8.*"]
+
 [tool.black]
 line-length = 88
 target-version = ["py310"]

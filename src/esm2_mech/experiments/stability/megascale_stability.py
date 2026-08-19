@@ -34,7 +34,12 @@ from esm2_mech.utils.constants import (
     N_SEEDS,
     N_FOLDS,
 )
-from esm2_mech.utils.data import load_pfam_map
+from esm2_mech.utils.data import (
+    embedding_fingerprint,
+    labeled_variant_fingerprint,
+    load_pfam_map,
+    pfam_fingerprint,
+)
 from esm2_mech.utils.io import write_result_json
 from esm2_mech.utils.metrics import auroc_at_median, fold_macro_f1, mean_std_n, standardize
 from esm2_mech.utils.splits import family_split_cv
@@ -530,6 +535,14 @@ def main(compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES, n_jobs=1):
     delta_mean = inputs.delta_mean
     delta_pos = inputs.delta_pos
     n_families = inputs.n_families
+    stability_fingerprints = inputs.input_fingerprints
+    analysis_parameters = {
+        "n_folds": N_FOLDS,
+        "n_seeds": N_SEEDS,
+        "compute_ci": compute_ci,
+        "n_boot": n_boot,
+        "ridge_alpha": 1.0,
+    }
 
     print(f"Embeddings: delta_mean {delta_mean.shape}, delta_pos {delta_pos.shape}")
 
@@ -618,7 +631,19 @@ def main(compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES, n_jobs=1):
     else:
         print("  Per-protein ρ: no protein yielded a finite ρ — skipped")
 
-    write_result_json(os.path.join(OUT, "per_protein_spearman.json"), per_prot, seeds=None)
+    per_protein_output = {
+        "per_protein": per_prot,
+        "input_fingerprints": stability_fingerprints,
+        "analysis_parameters": {
+            "probe": "leave_one_protein_out_ridge",
+            "ridge_alpha": 1.0,
+        },
+    }
+    write_result_json(
+        os.path.join(OUT, "per_protein_spearman.json"),
+        per_protein_output,
+        seeds=None,
+    )
 
     summary = {}
     all_keys = set()
@@ -680,6 +705,17 @@ def main(compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES, n_jobs=1):
     pfam_map = load_pfam_map(PFAM_JSON)
 
     merged_delta, merged_labels, merged_proteins = load_merged()
+    with open(VALID_VARIANTS_JSON) as handle:
+        mechanism_variants = json.load(handle)
+    mechanism_projection_fingerprints = {
+        "labeled_variants": labeled_variant_fingerprint(
+            mechanism_variants, merged_labels
+        ),
+        "delta_mean_content": embedding_fingerprint(merged_delta),
+        "pfam_assignments": pfam_fingerprint(
+            pfam_map, merged_proteins.tolist()
+        ),
+    }
 
     control_3c_result = run_stability_projection_3c(
         merged_delta,
@@ -708,7 +744,14 @@ def main(compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES, n_jobs=1):
     )
     write_result_json(
         os.path.join(OUT, "stability_projection_3c.json"),
-        control_3c_result,
+        {
+            **control_3c_result,
+            "input_fingerprints": {
+                "stability": stability_fingerprints,
+                "mechanism_projection": mechanism_projection_fingerprints,
+            },
+            "analysis_parameters": analysis_parameters,
+        },
         seeds=list(range(N_SEEDS)),
     )
 
@@ -753,6 +796,11 @@ def main(compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES, n_jobs=1):
     summary["n_families"] = n_families
     summary["n_seeds"] = N_SEEDS
     summary["3C"] = control_3c_result
+    summary["input_fingerprints"] = {
+        "stability": stability_fingerprints,
+        "mechanism_projection": mechanism_projection_fingerprints,
+    }
+    summary["analysis_parameters"] = analysis_parameters
 
     print(f"\n{'='*60}")
     print(f"VERDICT: {verdict}")

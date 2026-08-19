@@ -150,6 +150,12 @@ def main(n_jobs):
     delta_mean = inputs.delta_mean
 
     results = {}
+    results["input_fingerprints"] = inputs.input_fingerprints
+    results["analysis_parameters"] = {
+        "n_seeds": N_SEEDS,
+        "alpha_grid": list(ALPHA_GRID),
+        "pls_components": list(PLS_COMPONENTS),
+    }
 
     print("\n[1/4] delta-norm baseline (||delta_mean||, 1 feature)")
     results["delta_norm"] = delta_norm_baseline(delta_mean, ddg, proteins, family_map, n_jobs)

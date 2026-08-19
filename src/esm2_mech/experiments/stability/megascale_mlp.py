@@ -235,6 +235,7 @@ def main(
     ddg = inputs.ddg
     family_map = inputs.family_map
     X = inputs.delta_mean
+    input_fingerprints = inputs.input_fingerprints
     print(f"Embeddings: {X.shape}")
     print(f"RF backend: {'cuML (GPU)' if _HAS_CUML else 'sklearn (CPU)'}")
 
@@ -406,6 +407,13 @@ def main(
     # default sklearn comparison (mlp_summary.json).
     out_name = "mlp_summary_xgb.json" if use_xgboost else "mlp_summary.json"
     summary["result_version"] = 3
+    summary["input_fingerprints"] = input_fingerprints
+    summary["analysis_parameters"] = {
+        "n_seeds": N_SEEDS,
+        "compute_ci": compute_ci,
+        "n_boot": n_boot,
+        "probe_mode": "xgboost" if use_xgboost else "mlp_and_random_forest",
+    }
     write_result_json(os.path.join(OUT, out_name), summary, seeds=list(range(N_SEEDS)))
     print(f"\nResults written to {os.path.join(OUT, out_name)}")
 

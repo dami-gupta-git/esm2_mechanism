@@ -10,7 +10,7 @@ The governing sources are [`biorxiv/PREREGISTRATION_run_biorxiv.md`](biorxiv/PRE
 
 Earlier runs and `reports/summaries/report_summary.md` are historical context only. Their numbers, verdicts, and conclusions should not enter the title, abstract, main text, figures, tables, or supplement unless the corresponding analysis is part of the current run and the current result has been verified.
 
-Confirmatory and exploratory analyses must remain distinguishable in the article. Claims 2A through 2H are confirmatory. The stability controls 3A through 3D have their own preregistered rules. The remaining geometry, tree-model, family-clustering, and baseline analyses are descriptive or exploratory unless the preregistration says otherwise.
+Confirmatory and exploratory analyses must remain distinguishable in the article. Claims 2A-1, 2A-2, and 2B through 2H are confirmatory. The stability controls 3A through 3D have their own preregistered rules. The remaining geometry, tree-model, family-clustering, and baseline analyses are descriptive or exploratory unless the preregistration says otherwise.
 
 ## Working title
 
@@ -22,7 +22,7 @@ A neutral working title is:
 
 If the completed rerun supports the planned dissociation, a more specific title can state that finding while retaining the scope of the experiment:
 
-**Frozen ESM-2 embeddings recover pathogenicity and protein properties but not family-transferable disease mechanism**
+**Frozen ESM-2 embeddings recover pathogenicity and enzyme type but do not support reliable disease-mechanism classification across protein families**
 
 The title should not say that ESM-2 contains no mechanism information. The study evaluates a frozen ESM-2 650M representation, defined features, specific probes, gene-level labels, and family-aware splits.
 
@@ -40,7 +40,7 @@ The abstract should report the complete argument in six sentences after the reru
 
 1. The first sentence should state that protein language models predict variant effects, but their ability to distinguish disease mechanisms across unrelated protein families is unresolved.
 2. The second sentence should define the test: frozen ESM-2 wildtype, mutant, and mutant-minus-wildtype representations evaluated for gain-of-function, dominant-negative, and loss-of-function classification under gene and Pfam-family splits.
-3. The third sentence should report the mechanism result and its measured chance reference, confidence interval, and permutation evidence.
+3. The third sentence should report both mechanism findings: classification at the measured floor and weak family-robust ranking signal detected by permutation.
 4. The fourth sentence should report the direct family-structure and leakage result.
 5. The fifth sentence should report the pathogenicity, conservation, stability, and enzyme controls using only the measurements needed to establish the cross-task comparison.
 6. The final sentence should give the constrained interpretation, including the gene-level label scope.
@@ -68,13 +68,13 @@ The Results section should follow the dependency of the scientific claims, not t
 
 | Order | Proposed heading | Planned evidence | Claims | Main visual |
 |---|---|---|---|---|
-| 1 | A family-aware benchmark tests mutation-induced disease-mechanism information | Gene and variant construction, class composition, ESM-2 features, gene and family splits, measured majority and stratified baselines, and the resampling units. | Framework for 2A and 2B | Figure 1 |
-| 2 | Mutation-induced ESM-2 representations are tested for family-transferable mechanism classification | Linear feature comparison, nonlinear delta probes, per-class results, five-seed intervals, all-seed permutation tests, and the Gerasimavicius-only replication. | 2A | Figure 2 |
+| 1 | A family-aware benchmark tests mutation-induced disease-mechanism information | Gene and variant construction, class composition, ESM-2 features, gene and family splits, measured majority and stratified baselines, and the resampling units. | Framework for 2A-1, 2A-2, and 2B | Figure 1 |
+| 2 | Mutation-induced ESM-2 representations are tested for family-transferable mechanism classification | Linear feature comparison, nonlinear delta probes, per-class results, five-seed descriptive estimates, seed-0 intervals, all-seed permutation tests, and the Gerasimavicius-only replication. | 2A-1 and 2A-2 | Figure 2 |
 | 3 | Protein-family structure accounts for the absolute-embedding split gap | Wildtype and mutant family clustering, nearest-neighbour purity, within-to-between distance, family-probe performance, mechanism-family agreement, paired gene-to-family gaps, and leakage fractions. | 2B | Figure 3 |
 | 4 | The same mutation representations are tested on pathogenicity | Balanced pathogenic-versus-benign ClinVar set, wildtype and delta probes, gene and family splits, family-cluster intervals, variant accounting, and the preregistered pathogenicity gate. | 2C | Figure 4A and 4B |
 | 5 | Geometry and conservation characterize the pathogenicity-associated representation | Delta magnitude versus direction, direction removal, family-half alignment and transfer, substitution chemistry, masked-LM conservation, conservation alone, and conservation plus delta. | 2D and 2E; other probes exploratory | Figure 4C through 4F |
 | 6 | Stability tests transfer against a physical measurement | Tsuboyama data, random, domain, and family splits, Ridge and MLP results, per-domain spread, stability-direction removal from mechanism features, and the planned controls. | 3A through 3D | Figure 5 |
-| 7 | Enzyme classification tests signal in the wildtype representation | Four-class enzyme labels, ESM-2 and proteome-feature probes, gene and family splits, linear and nonlinear comparison, and comparison with the measured mechanism floor. | 2F through 2H | Figure 6 |
+| 7 | Enzyme classification tests signal in the wildtype representation | Four-class enzyme labels, ESM-2 and proteome-feature probes, gene and family splits, linear and nonlinear comparison, and the paired comparison with the current run's mechanism score on the shared family subset. | 2F through 2H | Figure 6 |
 | 8 | Family transfer differs across biological tasks | A synthesis of the verified mechanism, pathogenicity, stability, and enzyme measurements. This section should introduce no new test. | Synthesis only | Figure 6 summary panel |
 
 ### Benchmark and data description
@@ -91,7 +91,7 @@ The primary mechanism section should lead with the family-split result and then 
 
 The main table should include the linear feature comparison under both splits, with macro-F1, its confidence interval, and per-class AUROC. A second panel should show the nonlinear delta models. The prose should distinguish the linear confirmatory test from exploratory nonlinear probes. The permutation evidence must report all five seeds and apply the preregistered combination rule. The single-source analysis should appear as a compact robustness panel rather than a separate narrative branch.
 
-The mechanism conclusion must follow the claim 2A decision rule. A point estimate near the measured floor is not sufficient by itself. The interval and refutation-only permutation test determine what can be stated.
+The mechanism conclusion must apply the two rules separately. Claim 2A-1 evaluates whether three-class classification sits at the measured floor. Claim 2A-2 tests whether any family-robust ranking signal is detectable by permutation. A floor-level classification result does not imply that ranking signal is absent.
 
 ### Homology and leakage
 
@@ -115,7 +115,7 @@ The geometry section should explain what supports pathogenicity prediction after
 
 Separate confirmatory and exploratory evidence. The conservation-alone and conservation-plus-delta comparisons are confirmatory under 2D and 2E. Magnitude versus direction, repeated direction removal, alignment between family halves, cross-half transfer, full-delta transfer, and substitution chemistry are exploratory characterizations.
 
-The main text should emphasize transfer performance rather than raw vector alignment when redundant coordinates make cosine similarity difficult to interpret. Chemistry correlations should be described as associations with a held-out axis, not as causal explanations.
+The main text should report transfer performance alongside raw vector alignment and should not interpret either measurement as evidence that the biological signal is a single axis. Chemistry correlations should be described as associations with a held-out axis, not as causal explanations.
 
 ### Stability control
 
@@ -129,7 +129,7 @@ The scope should remain small natural domains represented in the Tsuboyama data.
 
 The enzyme section should test information in the wildtype representation rather than another mutation effect.
 
-Compare ESM-2 wildtype embeddings with the proteome-feature baseline under gene and family splits. Apply the 2F threshold to the family-split linear probe, compare enzyme performance with the measured mechanism floor for 2G, and compare MLP with logistic regression for 2H. The mechanism reference must be read from the same current run.
+Compare ESM-2 wildtype embeddings with the proteome-feature baseline under gene and family splits. Apply the 2F threshold to the family-split linear probe, compare enzyme performance with the current run's mechanism score on the shared family subset for 2G, and compare MLP with logistic regression using the preregistered equivalence band for 2H. The mechanism reference must be read from the same current run.
 
 This control addresses task specificity. It should not be used to claim that enzyme type and mechanism have equivalent label structure or difficulty.
 
@@ -167,7 +167,7 @@ The Methods section should follow the data and analysis dependency chain.
 12. Pathogenicity geometry and conservation should define axis fitting inside training folds and held-out-family scoring.
 13. Tsuboyama stability analyses should define variant parsing, domain and Pfam assignments, regression probes, and stability-direction removal.
 14. Enzyme classification should define the four labels, ESM-2 and proteome inputs, and its paired comparison with mechanism.
-15. Reproducibility should report software versions, machines, commit identity, dirty-tree state, seeds, result fingerprints, and output locations.
+15. Reproducibility should report software versions, machines, the final clean release commit or tag, seeds, result fingerprints, and output locations.
 
 The main Methods should contain enough detail to reproduce the confirmatory analyses. Long feature lists, complete hyperparameter grids, per-file schemas, and operational RunPod instructions belong in supplementary methods or the repository runbook.
 
@@ -201,7 +201,7 @@ Per-seed values, per-class details, full model sweeps, and input-accounting tabl
 
 The supplement should provide the detail needed to audit the main claims without widening the manuscript's central scope.
 
-Include complete cohort flow tables, exclusions, fingerprints, class counts, Pfam coverage, per-seed and per-fold metrics, per-class intervals, bootstrap discard counts, permutation distributions, single-source results, complete family-clustering diagnostics, all nonlinear probes, all geometry probes, stability tree models and controls, enzyme proteome baselines, and run-to-run provenance comparisons.
+Include complete cohort flow tables, exclusions, fingerprints, class counts, Pfam coverage, per-seed and per-fold metrics, per-class intervals, bootstrap discard counts, permutation distributions, single-source results, complete family-clustering diagnostics, all nonlinear probes, all geometry probes, stability tree models and controls, and enzyme proteome baselines.
 
 Deferred experiments from `FOLLOWUP_biorxiv.md` should not be added to the supplement merely because code or historical outputs exist. An analysis belongs only if it uses the current data contracts, current evaluation rules, verified outputs, and a defined role in the manuscript.
 

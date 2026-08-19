@@ -15,6 +15,9 @@ F1 score(0.0 to 1.0) measures how well a binary classifier is working. It balanc
 **Macro-F1**  
 F1 for multiple classes. Treats every class equally (without respect to size), hence is more fair.
 
+**Spearman rho**   
+Measures how well two things agree on ranking, not on exact values. If you rank all the mutations by their predicted stability score, and separately rank them by their actual lab-measured stability, Spearman rho tells you how similar those two rankings are — 1 means perfect agreement, 0 means no relationship, -1 means perfectly backwards. It's used here instead of a plain correlation because it doesn't require the predicted and actual values to be on the same scale, just to move in the same order.
+
 **Leakage diagnostic**  
 A test that checks whether a model’s apparent performance is real signal or just data leakage (the model cheating by seeing information it shouldn’t have at test time).
 
