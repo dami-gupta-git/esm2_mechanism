@@ -294,12 +294,13 @@ def probe_phase(variants, n_seeds, n_jobs=-1, compute_ci=True, n_boot=BOOTSTRAP_
             res, oof = probes[pname](
                 features[fname], y, splits, seed=seed, genes=genes, return_oof=True
             )
-            # CI from seed 0's OOF only: each seed reshuffles the CV fold
-            # assignment, so a single seed's predictions are the coherent unit to
-            # resample — pooling OOF across seeds would bootstrap over predictions
-            # built under different, incompatible fold assignments. The aggregation
-            # step below only ever keeps seed 0's CI, so computing it for every seed
-            # would be pure waste, since seeds 1..n-1's bootstrap runs are discarded.
+            # CI from seed 0's OOF only, per the pre-registered §2C seed-0 convention:
+            # each seed reshuffles the CV fold assignment, so a single seed's
+            # predictions are the coherent unit to resample — pooling OOF across
+            # seeds would bootstrap over predictions built under different,
+            # incompatible fold assignments. The aggregation step below only ever
+            # keeps seed 0's CI, so computing it for every seed would be pure waste,
+            # since seeds 1..n-1's bootstrap runs are discarded.
             if compute_ci and oof is not None and seed == 0:
                 clusters = family_or_gene_clusters(
                     oof["genes"], pfam_map, is_family_split=(split_name == "family")
@@ -374,12 +375,10 @@ def probe_phase(variants, n_seeds, n_jobs=-1, compute_ci=True, n_boot=BOOTSTRAP_
                     "auroc_std": std,
                     "per_seed": per_cell[key],
                 }
-                # Cluster-bootstrap CI from seed 0's OOF only: each seed reshuffles
-                # the CV fold assignment, so a single seed's predictions are the
-                # coherent unit to resample rather than merging OOF across seeds'
-                # differing folds. This is an implementation choice, not a
-                # pre-registered convention — the preregistration's §2C does not
-                # specify a seed for the CI.
+                # Cluster-bootstrap CI from seed 0's OOF only, per the pre-registered
+                # §2C seed-0 convention: each seed reshuffles the CV fold assignment,
+                # so a single seed's predictions are the coherent unit to resample
+                # rather than merging OOF across seeds' differing folds.
                 if compute_ci and key in seed0_ci:
                     cell["ci"] = seed0_ci[key]
                 results["by_feature"][fname][f"{pname}_{split_name}"] = cell

@@ -282,12 +282,15 @@ does not become one.
 
 CI must exclude 0.85. Resampled by family, not gene — this experiment's classes are balanced by
 construction, but genes still cluster into families, so the resampling unit rule (§1.2) still
-applies; the calibration caveat (§1.4) still governs how the result is described. **Would overturn
-2C:** the CI includes 0.85 — the positive control would no longer license the dissociation, and the
-whole paper weakens.
+applies; the calibration caveat (§1.4) still governs how the result is described. The CI is
+cluster-bootstrap on seed-0 family-split OOF predictions, the same seed-0 convention as §2F–2H —
+each seed reshuffles the CV fold assignment, so a single seed's predictions are the coherent unit
+to resample. **Would overturn 2C:** the CI includes 0.85 — the positive control would no longer
+license the dissociation, and the whole paper weakens.
 
 **Checklist:**
 - [ ] CI is resampled by family, not gene.
+- [ ] CI is computed from seed-0 OOF predictions.
 - [ ] Report states the probe measures discrimination only, not a calibrated risk estimate (§1.4).
 - [ ] Verdict recorded as overturned only if the CI includes 0.85.
 
