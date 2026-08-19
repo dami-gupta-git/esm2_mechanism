@@ -133,11 +133,14 @@ def inspect_variant_embedding_checkpoint(
     ckpt_paths: list,
     expected_variants: list[dict],
     embedded_variants_path: Path,
+    identity_fingerprint=None,
 ):
     """Inspect an embedding checkpoint and verify its row-identity sidecar.
 
     A complete or resumable array checkpoint without a matching sidecar cannot be
     associated with the current variants. Such arrays are removed and rebuilt.
+    `identity_fingerprint` supports variant schemas other than the default
+    gene/UniProt/substitution fields while retaining the same fail-closed behavior.
     """
     status, payload = inspect_four_array_checkpoint(ckpt_paths, len(expected_variants))
     if status == "reextract":
@@ -145,9 +148,25 @@ def inspect_variant_embedding_checkpoint(
 
     n_on_disk = len(expected_variants) if status == "complete" else payload[0]
     try:
-        validate_embedding_variant_identity(
-            expected_variants[:n_on_disk], embedded_variants_path
-        )
+        expected_prefix = expected_variants[:n_on_disk]
+        if identity_fingerprint is None:
+            validate_embedding_variant_identity(
+                expected_prefix, embedded_variants_path
+            )
+        else:
+            if not embedded_variants_path.exists():
+                raise FileNotFoundError(
+                    f"embedding row-identity sidecar missing: {embedded_variants_path}"
+                )
+            with open(embedded_variants_path) as handle:
+                embedded_variants = json.load(handle)
+            if identity_fingerprint(expected_prefix) != identity_fingerprint(
+                embedded_variants
+            ):
+                raise ValueError(
+                    f"{embedded_variants_path} does not match the current embedding "
+                    "inputs and row order"
+                )
     except (FileNotFoundError, ValueError, json.JSONDecodeError) as exc:
         print(f"WARNING: {exc} — re-extracting embedding checkpoint", flush=True)
         for path in ckpt_paths:

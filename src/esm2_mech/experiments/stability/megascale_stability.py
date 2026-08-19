@@ -152,6 +152,123 @@ def spearman_cluster_bootstrap_ci(oof, n_resamples=BOOTSTRAP_N_RESAMPLES, seed=0
     )
 
 
+def paired_spearman_gap_ci(
+    oof_a,
+    oof_b,
+    proteins,
+    family_map,
+    n_resamples=BOOTSTRAP_N_RESAMPLES,
+    seed=0,
+):
+    """Paired family-bootstrap CI on a fold-aware Spearman difference."""
+    indices_a = np.asarray(oof_a["indices"])
+    indices_b = np.asarray(oof_b["indices"])
+    shared = np.intersect1d(indices_a, indices_b)
+    positions_a = {int(index): position for position, index in enumerate(indices_a)}
+    positions_b = {int(index): position for position, index in enumerate(indices_b)}
+    selected_a = np.array([positions_a[int(index)] for index in shared])
+    selected_b = np.array([positions_b[int(index)] for index in shared])
+
+    y_true_a = np.asarray(oof_a["y_true"])[selected_a]
+    y_true_b = np.asarray(oof_b["y_true"])[selected_b]
+    if not np.array_equal(y_true_a, y_true_b):
+        raise ValueError("paired Spearman arms have different labels on shared rows")
+
+    predictions_a = np.asarray(oof_a["pred"])[selected_a]
+    predictions_b = np.asarray(oof_b["pred"])[selected_b]
+    folds_a = np.asarray(oof_a["folds"])[selected_a]
+    folds_b = np.asarray(oof_b["folds"])[selected_b]
+    arms_a = folds_to_arms(predictions_a, folds_a)
+    arms_b = folds_to_arms(predictions_b, folds_b)
+
+    def _fold_rho(block, arm_predictions):
+        if len(np.unique(y_true_a[block])) < 2:
+            return None
+        rho, _ = spearmanr(y_true_a[block], arm_predictions[block])
+        return float(rho) if np.isfinite(rho) else None
+
+    def _rho_a(rows):
+        return score_within_folds(rows, arms_a, _fold_rho)
+
+    def _rho_b(rows):
+        return score_within_folds(rows, arms_b, _fold_rho)
+
+    shared_proteins = np.array(
+        [proteins[int(index)] for index in shared],
+        dtype=object,
+    )
+    shared_families = np.array(
+        [family_map[protein] for protein in shared_proteins],
+        dtype=object,
+    )
+    result = paired_cluster_bootstrap_diff_cross_partition(
+        resample_clusters=shared_families,
+        metric_fn_a=_rho_a,
+        metric_fn_b=_rho_b,
+        sensitivity_clusters=shared_proteins,
+        n_resamples=n_resamples,
+        seed=seed,
+        discard_reason=(
+            "at least one arm had a fold with undefined or non-finite rank "
+            "correlation on the shared family resample"
+        ),
+    )
+    result["domain_resampled_sensitivity"] = result.pop(
+        "gene_resampled_sensitivity"
+    )
+    return result
+
+
+def per_protein_std_bootstrap_ci(
+    per_protein_results,
+    n_resamples=BOOTSTRAP_N_RESAMPLES,
+    seed=0,
+):
+    """Protein-bootstrap CI on the spread of leave-one-protein-out Spearman rho."""
+    finite = [
+        (protein, result["spearman"])
+        for protein, result in per_protein_results.items()
+        if np.isfinite(result["spearman"])
+    ]
+    if not finite:
+        return None
+    proteins = np.array([protein for protein, _ in finite], dtype=object)
+    correlations = np.array([rho for _, rho in finite], dtype=float)
+
+    def _std(rows):
+        return float(np.std(correlations[rows]))
+
+    return cluster_bootstrap_ci(
+        proteins,
+        _std,
+        n_resamples=n_resamples,
+        seed=seed,
+        metric_name="per_protein_spearman_std",
+    )
+
+
+def _adjudicate_lower_bound(point, ci, threshold):
+    """Adjudicate a gate whose point estimate must be at least threshold."""
+    if point is None or not np.isfinite(point):
+        return "not adjudicated (point estimate unavailable)"
+    if ci is None or ci.get("ci_low") is None or ci.get("ci_high") is None:
+        return "not adjudicated (CI unavailable)"
+    if point >= threshold:
+        return "affirmed" if ci["ci_low"] > threshold else "not distinguishable"
+    return "underpowered" if ci["ci_high"] >= threshold else "failed"
+
+
+def _adjudicate_upper_bound(point, ci, threshold):
+    """Adjudicate a gate whose point estimate must be at most threshold."""
+    if point is None or not np.isfinite(point):
+        return "not adjudicated (point estimate unavailable)"
+    if ci is None or ci.get("ci_low") is None or ci.get("ci_high") is None:
+        return "not adjudicated (CI unavailable)"
+    if point <= threshold:
+        return "affirmed" if ci["ci_high"] < threshold else "not distinguishable"
+    return "underpowered" if ci["ci_low"] <= threshold else "failed"
+
+
 
 def _fit_one_protein(prot, X, y, proteins):
     """Fit Ridge leaving out one protein; return (prot, result) or None."""
@@ -203,6 +320,7 @@ def run_stability_projection_3c(
     n_seeds=5,
     n_boot=BOOTSTRAP_N_RESAMPLES,
     n_jobs=1,
+    compute_ci=True,
 ):
     """Project stability out of mechanism delta_mean; compare family-split F1."""
     from sklearn.linear_model import LogisticRegression
@@ -277,7 +395,9 @@ def run_stability_projection_3c(
                 }
         return seed_baseline_f1, seed_projected_f1, seed_oof
 
-    seed0_bl, seed0_pr, seed0_oof = _run_3c_seed(0, collect_oof=True)
+    seed0_bl, seed0_pr, seed0_oof = _run_3c_seed(
+        0, collect_oof=compute_ci
+    )
     with parallel_config(backend="loky", n_jobs=n_jobs, inner_max_num_threads=1):
         rest = Parallel()(
             delayed(_run_3c_seed)(seed, False) for seed in range(1, n_seeds)
@@ -288,7 +408,7 @@ def run_stability_projection_3c(
     baseline_f1_mean, baseline_f1_std, _ = mean_std_n(baseline_f1s)
     projected_f1_mean, projected_f1_std, _ = mean_std_n(projected_f1s)
     difference_ci = None
-    if "baseline" in seed0_oof and "projected" in seed0_oof:
+    if compute_ci and "baseline" in seed0_oof and "projected" in seed0_oof:
         baseline_oof = seed0_oof["baseline"]
         projected_oof = seed0_oof["projected"]
         if not np.array_equal(baseline_oof["genes"], projected_oof["genes"]):
@@ -321,46 +441,83 @@ def run_stability_projection_3c(
                 "resample"
             ),
         )
-    if difference_ci is None or difference_ci.get("ci_high") is None:
-        control_3c_verdict = "not adjudicated (paired family-bootstrap CI unavailable)"
-    elif difference_ci["ci_high"] <= 0.01:
-        control_3c_verdict = "pass — established"
-    elif difference_ci["ci_low"] > 0.01:
-        control_3c_verdict = "fail — established"
-    else:
-        control_3c_verdict = "underpowered — CI overlaps +0.01 threshold"
+    inferential_point = (
+        None if difference_ci is None else difference_ci.get("point_diff")
+    )
+    control_3c_verdict = _adjudicate_upper_bound(
+        inferential_point, difference_ci, 0.01
+    )
     return {
         "baseline_f1_mean": baseline_f1_mean,
         "baseline_f1_std": baseline_f1_std,
         "projected_f1_mean": projected_f1_mean,
         "projected_f1_std": projected_f1_std,
         "delta_f1": projected_f1_mean - baseline_f1_mean,
+        "inferential_point_estimate": inferential_point,
         "difference_ci": difference_ci,
-        "3C_passes": control_3c_verdict == "pass — established",
+        "3C_passes": control_3c_verdict == "affirmed",
         "3C_verdict": control_3c_verdict,
     }
 
 
+def apply_decision_rule(control_3a_ci, control_3b_gap_ci, control_3c, control_3d_ci):
+    """Adjudicate controls 3A-3D from their registered point/CI pairs."""
+    point_3a = None if control_3a_ci is None else control_3a_ci.get("point")
+    point_3b = (
+        None if control_3b_gap_ci is None else control_3b_gap_ci.get("point_diff")
+    )
+    point_3c = (
+        None if control_3c is None else control_3c.get("inferential_point_estimate")
+    )
+    ci_3c = None if control_3c is None else control_3c.get("difference_ci")
+    point_3d = None if control_3d_ci is None else control_3d_ci.get("point")
 
-def apply_decision_rule(random_rho, protein_rho, per_prot_std, control_3b_gap_ci=None):
-    """Apply pre-registered decision rule, ordered by informativeness."""
-    delta = random_rho - protein_rho
-    # Check in order of informativeness
-    if random_rho >= 0.5 and delta >= 0.10:
-        if control_3b_gap_ci is None or control_3b_gap_ci.get("ci_low") is None:
-            return "NOT ADJUDICATED (3B paired CI unavailable)"
-        if control_3b_gap_ci["ci_low"] >= 0.10:
-            return "LEAKY"
-        return "UNDERPOWERED (3B point estimate is LEAKY; CI overlaps 0.10)"
-    if random_rho >= 0.5 and delta <= 0.05 and per_prot_std >= 0.15:
-        return "HETEROGENEOUS"
-    if random_rho >= 0.5 and delta <= 0.05 and per_prot_std <= 0.10:
-        return "ROBUST"
-    if 0.3 <= random_rho < 0.5:
-        return "WEAK"
-    if random_rho < 0.3:
-        return "NULL"
-    return f"INTERMEDIATE (rho={random_rho:.3f}, delta={delta:.3f}, std={per_prot_std:.3f})"
+    gates = {
+        "3A": {
+            "criterion": "random_split_spearman_at_least_0.5",
+            "threshold": 0.5,
+            "point_estimate": point_3a,
+            "ci": control_3a_ci,
+            "verdict": _adjudicate_lower_bound(point_3a, control_3a_ci, 0.5),
+        },
+        "3B": {
+            "criterion": "random_minus_family_spearman_at_most_0.10",
+            "threshold": 0.10,
+            "point_estimate": point_3b,
+            "ci": control_3b_gap_ci,
+            "verdict": _adjudicate_upper_bound(
+                point_3b, control_3b_gap_ci, 0.10
+            ),
+        },
+        "3C": {
+            "criterion": "projected_minus_baseline_mechanism_f1_at_most_0.01",
+            "threshold": 0.01,
+            "point_estimate": point_3c,
+            "ci": ci_3c,
+            "verdict": _adjudicate_upper_bound(point_3c, ci_3c, 0.01),
+        },
+        "3D": {
+            "criterion": "per_protein_spearman_std_at_most_0.10",
+            "threshold": 0.10,
+            "point_estimate": point_3d,
+            "ci": control_3d_ci,
+            "verdict": _adjudicate_upper_bound(point_3d, control_3d_ci, 0.10),
+        },
+    }
+
+    if gates["3A"]["verdict"] == "failed":
+        overall = "3A FAILED"
+    elif gates["3B"]["verdict"] == "failed":
+        overall = "LEAKY"
+    elif gates["3C"]["verdict"] == "failed":
+        overall = "3C FAILED"
+    elif gates["3D"]["verdict"] == "failed":
+        overall = "HETEROGENEOUS"
+    elif all(gate["verdict"] == "affirmed" for gate in gates.values()):
+        overall = "ROBUST"
+    else:
+        overall = "NOT FULLY ADJUDICATED"
+    return {"overall": overall, "gates": gates}
 
 
 
@@ -390,15 +547,25 @@ def main(compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES, n_jobs=1):
         for feat_name, X in [("delta_mean", delta_mean), ("delta_pos", delta_pos)]:
             for split_name, splits in splits_by_name.items():
                 key = f"{feat_name}_{split_name}"
-                ci_clusters = (
-                    np.array([family_map.get(p, f"__orphan__{p}") for p in proteins])
-                    if split_name == "family"
-                    else proteins
-                )
-                res, oof = run_ridge_with_auroc(
-                    X, ddg, splits, clusters=ci_clusters, return_oof=True,
-                    median=global_median,
-                )
+                if compute_ci:
+                    ci_clusters = (
+                        np.array([family_map.get(p) for p in proteins], dtype=object)
+                        if split_name == "family"
+                        else proteins
+                    )
+                    res, oof = run_ridge_with_auroc(
+                        X,
+                        ddg,
+                        splits,
+                        clusters=ci_clusters,
+                        return_oof=True,
+                        median=global_median,
+                    )
+                else:
+                    res = run_ridge_with_auroc(
+                        X, ddg, splits, median=global_median
+                    )
+                    oof = None
                 if compute_ci and oof is not None:
                     res["ci"] = spearman_cluster_bootstrap_ci(
                         oof, n_resamples=n_boot, seed=0
@@ -489,6 +656,12 @@ def main(compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES, n_jobs=1):
         "n_proteins": len(prot_rhos),
         "n_proteins_finite": n_finite_prot,
     }
+    control_3d_ci = None
+    if compute_ci:
+        control_3d_ci = per_protein_std_bootstrap_ci(
+            per_prot, n_resamples=n_boot, seed=0
+        )
+        summary["per_protein"]["spearman_std_ci"] = control_3d_ci
 
     control_3c_result = None
     if all(
@@ -512,12 +685,13 @@ def main(compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES, n_jobs=1):
             n_seeds=N_SEEDS,
             n_boot=n_boot,
             n_jobs=n_jobs,
+            compute_ci=compute_ci,
         )
         print(
             f"  3C: baseline F1={control_3c_result['baseline_f1_mean']:.3f}  "
             f"projected F1={control_3c_result['projected_f1_mean']:.3f}  "
             f"Δ={control_3c_result['delta_f1']:+.3f}  "
-            f"passes={'YES' if control_3c_result['3C_passes'] else 'NO (stability direction is informative)'}"
+            f"verdict={control_3c_result['3C_verdict']}"
         )
         write_result_json(
             os.path.join(OUT, "stability_projection_3c.json"), control_3c_result,
@@ -531,40 +705,13 @@ def main(compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES, n_jobs=1):
     oof_family = seed0_oofs.get("delta_mean_family")
     if compute_ci and oof_random is not None and oof_family is not None:
         print("\nComputing paired CI on random-to-family Spearman gap (3B)...")
-        idx_r = oof_random["indices"]
-        idx_f = oof_family["indices"]
-        shared = np.intersect1d(idx_r, idx_f)
-        pos_r = {int(idx): i for i, idx in enumerate(idx_r)}
-        pos_f = {int(idx): i for i, idx in enumerate(idx_f)}
-        sel_r = np.array([pos_r[int(s)] for s in shared])
-        sel_f = np.array([pos_f[int(s)] for s in shared])
-
-        shared_y = oof_random["y_true"][sel_r]
-        shared_pred_random = oof_random["pred"][sel_r]
-        shared_pred_family = oof_family["pred"][sel_f]
-        shared_families = np.array(
-            [family_map.get(proteins[int(s)], f"__orphan__{proteins[int(s)]}")
-             for s in shared]
-        )
-
-        def _rho_random(rows):
-            rho, _ = spearmanr(shared_y[rows], shared_pred_random[rows])
-            return float(rho) if np.isfinite(rho) else None
-
-        def _rho_family(rows):
-            rho, _ = spearmanr(shared_y[rows], shared_pred_family[rows])
-            return float(rho) if np.isfinite(rho) else None
-
-        control_3b_gap_ci = paired_cluster_bootstrap_diff_cross_partition(
-            resample_clusters=shared_families,
-            metric_fn_a=_rho_random,
-            metric_fn_b=_rho_family,
+        control_3b_gap_ci = paired_spearman_gap_ci(
+            oof_random,
+            oof_family,
+            proteins,
+            family_map,
             n_resamples=n_boot,
             seed=0,
-            discard_reason=(
-                "at least one arm's resampled values had undefined or non-finite "
-                "rank correlation"
-            ),
         )
         print(
             f"  3B gap: {control_3b_gap_ci['point_diff']:.3f} "
@@ -574,8 +721,17 @@ def main(compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES, n_jobs=1):
     dm_random = summary.get("delta_mean_random", {}).get("spearman_mean", float("nan"))
     dm_family = summary.get("delta_mean_family", {}).get("spearman_mean", float("nan"))
 
-    verdict = apply_decision_rule(dm_random, dm_family, per_prot_std, control_3b_gap_ci)
+    control_3a_ci = summary.get("delta_mean_random", {}).get("ci")
+    adjudication = apply_decision_rule(
+        control_3a_ci,
+        control_3b_gap_ci,
+        control_3c_result,
+        control_3d_ci,
+    )
+    verdict = adjudication["overall"]
+    summary["result_version"] = 2
     summary["verdict"] = verdict
+    summary["gates"] = adjudication["gates"]
     if control_3b_gap_ci is not None:
         summary["3B_gap_ci"] = control_3b_gap_ci
     summary["n_variants"] = len(variants)
@@ -585,18 +741,18 @@ def main(compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES, n_jobs=1):
     summary["3C"] = control_3c_result
 
     print(f"\n{'='*60}")
-    print(
-        f"VERDICT: {verdict}  (ordered by informativeness: LEAKY > HETEROGENEOUS > ROBUST > WEAK > NULL)"
-    )
+    print(f"VERDICT: {verdict}")
     print(f"  delta_mean random ρ  : {dm_random:.3f}  (3A threshold ≥ 0.5)")
     print(f"  delta_mean family ρ  : {dm_family:.3f}")
     print(f"  Δ (random − family)  : {dm_random - dm_family:.3f}  (LEAKY if Δ ≥ 0.10)")
-    print(f"  per-domain ρ std     : {per_prot_std:.3f}  (HETEROGENEOUS if ≥ 0.15)")
+    print(f"  per-domain ρ std     : {per_prot_std:.3f}  (3D threshold ≤ 0.10)")
     if control_3c_result:
         print(
             f"  3C Δ mechanism F1    : {control_3c_result['delta_f1']:+.3f}  "
             f"(passes if ≤ +0.01 — stability projection doesn't help mechanism)"
         )
+    for gate_name, gate in adjudication["gates"].items():
+        print(f"  {gate_name} verdict          : {gate['verdict']}")
     print(f"{'='*60}")
 
     write_result_json(os.path.join(OUT, "summary.json"), summary, seeds=list(range(N_SEEDS)))

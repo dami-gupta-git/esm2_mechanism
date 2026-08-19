@@ -339,6 +339,8 @@ def run_biophysical_direction(seeds, stability_dataset=DEFAULT_STABILITY_DATASET
 
     c1_rho = float(spearmanr(mag, np.abs(ddg)).correlation)
 
+    # Tsuboyama ddG_ML is mutant minus WT folding stability. Positive values
+    # therefore indicate stabilisation, while negative values indicate destabilisation.
     y_sign = (ddg > 0).astype(int)
     c2 = {}
     for fname in ("full", "dir"):
@@ -356,7 +358,8 @@ def run_biophysical_direction(seeds, stability_dataset=DEFAULT_STABILITY_DATASET
     return {
         "n_variants": int(n),
         "n_proteins": int(len(set(proteins.tolist()))),
-        "frac_destabilising": float(y_sign.mean()),
+        "frac_stabilising": float(y_sign.mean()),
+        "ddg_sign_convention": "positive ddG_ML indicates stabilisation",
         "spearman_magnitude_vs_abs_ddg": c1_rho,
         "sign_ddg_auroc": c2,
         "input_provenance": {

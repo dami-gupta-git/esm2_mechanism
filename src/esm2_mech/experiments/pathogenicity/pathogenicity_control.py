@@ -59,7 +59,7 @@ print = functools.partial(print, flush=True)
 ESM2_MODEL_650M = "esm2_t33_650M_UR50D"
 CLAIM_2C_THRESHOLD = 0.85
 _EMBEDDING_METADATA_VERSION = 2
-_PROBE_RESULT_VERSION = 3
+_PROBE_RESULT_VERSION = 4
 _BINARY_METRICS = ("auroc", "auprc", "prevalence", "ppv", "npv")
 
 
@@ -97,7 +97,10 @@ def _source_files_fingerprint() -> str:
 
 def load_fetched_variants():
     """Load the fetched variant set and validate its complete metadata contract."""
-    return load_validated_pathogenicity_cache()
+    return load_validated_pathogenicity_cache(
+        max_per_gene_per_class=20,
+        seed=42,
+    )
 
 
 def _build_valid_pairs_indexed(variants, seq_cache):

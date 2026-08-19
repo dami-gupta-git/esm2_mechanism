@@ -180,7 +180,11 @@ def _probe_one_family(
         oof_out[view] = {}
         for probe_name in probes:
             seed_avg_oof = average_oof_over_seeds(oof_by_view_probe[view][probe_name])
-            stacked_oof = stack_oof_over_seeds(oof_by_view_probe[view][probe_name])
+            stacked_oof = (
+                stack_oof_over_seeds(oof_by_view_probe[view][probe_name])
+                if compute_ci
+                else None
+            )
             oof_out[view][probe_name] = seed_avg_oof
             entry = {
                 "macro_f1": summarize(per_seed_f1[view][probe_name]),

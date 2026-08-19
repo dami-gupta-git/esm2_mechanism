@@ -1725,6 +1725,10 @@ class TestAdjudicateDiff:
         ci = {"ci_low": -0.02, "ci_high": 0.04}
         assert "underpowered" in adjudicate_diff(False, ci, 0.03)
 
+    def test_fail_with_ci_ending_at_threshold_is_underpowered(self):
+        ci = {"ci_low": -0.02, "ci_high": 0.03}
+        assert "underpowered" in adjudicate_diff(False, ci, 0.03)
+
     def test_fail_with_ci_below_threshold_is_established(self):
         ci = {"ci_low": -0.02, "ci_high": 0.01}
         assert adjudicate_diff(False, ci, 0.03) == (

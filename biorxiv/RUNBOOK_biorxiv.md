@@ -111,6 +111,14 @@ for p in ['numpy','scipy','scikit-learn','pandas','torch','fair-esm','xgboost','
 
 **0.9 — Working tree clean.** `git status` clean at the branch point.
 
+**0.10 — Megascale embedding provenance.** Run
+`python -m esm2_mech.embeddings.embed_megascale --model esm2_t33_650M_UR50D` on the GPU host before
+sections 6 and 7. A complete checkpoint is reused only when its `embedded_variants.json` sidecar
+matches the current ordered Tsuboyama inputs. Otherwise the extraction resumes or restarts. Copy
+the four `megascale_{wt,mut}_{mean,pos}.npy` arrays and `megascale_fingerprint.json` back to the
+local embedding directory. The fingerprint records the exact sequence inputs, model, and array
+content.
+
 ---
 
 ## 1. Build gene list
@@ -370,7 +378,9 @@ run_biorxiv adds family-cluster confidence intervals to each pathogenicity AUROC
 (resampled over Pfam families, not genes or individual variants), and a paired cluster-bootstrap confidence
 interval on the 2E gap (conservation-alone AUROC vs. conservation-plus-
 embedding-delta AUROC). The descriptive correlations with the pathogenicity axis fit that axis
-within each training-family fold and score the association only in the held-out families.
+within each training-family fold and score the association only in the held-out families. Claims
+2D and 2E use seed-0 held-out-fold point estimates and seed-0 family-bootstrap intervals. The five
+seed fold means are saved and reported separately as descriptive results.
 
 ---
 
@@ -383,10 +393,10 @@ from a direct physical measurement rather than expert curation, it rules out the
 section 5's pathogenicity signal is really the embeddings picking up on curation patterns rather
 than biology.
 
-The embedding step is skipped: `megascale_{wt,mut}_{mean,pos}.npy` already exist locally, extracted
-in an earlier run, and are unaffected by this run's ClinVar refresh since this experiment has no
-ClinVar dependency. Step 7.2's 3C test does read `valid_variants.json` and the section 4
-embeddings, so run step 7.2 after step 4.1 has produced a current `valid_variants.json`.
+The Megascale arrays are unchanged by the ClinVar refresh, but they are used only after precondition
+0.10 has verified their extraction-time row identity and content. Step 7.2's 3C test also reads
+`valid_variants.json` and the section 4 embeddings, so run step 7.2 after step 4.1 has produced a
+current `valid_variants.json`.
 
 ### Assign Pfam families (CPU)
 
@@ -399,10 +409,10 @@ is already present and non-empty (it is, as of this writing).
 |---|---|---|---|---|
 | 7.1 | `python -m esm2_mech.experiments.stability.build_domain_families` | 🟢 Light. Assign each Tsuboyama domain to a Pfam family | `megascale_tsuboyama_variants.json`, `downloads/megascale/Pfam-A.hmm` | `data/megascale_domain_families.json` |
 
-### Embed variants (GPU) — skipped
+### Validate or rebuild embeddings (GPU)
 
-Not run in run_biorxiv. `megascale_{wt,mut}_{mean,pos}.npy` under
-`data/embeddings/esm2_t33_650M_UR50D/` are reused from an earlier run.
+Precondition 0.10 writes extraction metadata for a checkpoint whose row-identity sidecar matches,
+or rebuilds the arrays when that identity cannot be established.
 
 ### Linear probe (CPU)
 

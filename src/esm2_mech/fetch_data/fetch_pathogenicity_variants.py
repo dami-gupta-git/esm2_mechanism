@@ -358,8 +358,8 @@ def validate_cached_pathogenicity_variants(variants, metadata, current_selection
     return realised
 
 
-def load_validated_pathogenicity_cache():
-    """Load the fetched set only when both files match the current contract."""
+def load_validated_pathogenicity_cache(max_per_gene_per_class, seed):
+    """Load the fetched set only when both files match the caller's contract."""
     if not CLINVAR_PATHOGENICITY_VARIANTS_JSON.exists():
         raise FileNotFoundError(
             f"{CLINVAR_PATHOGENICITY_VARIANTS_JSON} not found; run "
@@ -380,24 +380,11 @@ def load_validated_pathogenicity_cache():
             "ClinVar pathogenicity cache JSON is corrupt; rerun the fetch with --force"
         ) from exc
 
-    cached_selection = metadata.get("selection")
-    if not isinstance(cached_selection, dict):
-        raise StalePathogenicityCacheError(
-            "ClinVar pathogenicity cache has no selection metadata; rerun the fetch "
-            "with --force"
-        )
-    for key in ("max_per_gene_per_class", "seed"):
-        if key not in cached_selection:
-            raise StalePathogenicityCacheError(
-                f"ClinVar pathogenicity selection metadata is missing {key!r}; "
-                "rerun the fetch with --force"
-            )
-
     mechanism_variants = load_variants(VARIANTS_JSON)
     current_selection = _selection_params(
         mechanism_variants,
-        cached_selection["max_per_gene_per_class"],
-        cached_selection["seed"],
+        max_per_gene_per_class,
+        seed,
     )
     validate_cached_pathogenicity_variants(
         variants, metadata, current_selection

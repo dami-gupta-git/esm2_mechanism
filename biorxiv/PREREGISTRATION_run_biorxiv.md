@@ -14,13 +14,14 @@ numbers below refer to that document).
 
 ### 1.1 How a gate's verdict is decided
 
-Every gate is evaluated against a paired cluster-bootstrap 95% CI on its difference, never a point
-estimate alone.
+Every difference gate is evaluated against a paired cluster-bootstrap 95% CI. A level gate uses a
+cluster-bootstrap interval on that level. Neither type is evaluated from a point estimate alone.
 
-> **Affirmed** — point estimate clears the threshold **and** the paired 95% CI excludes zero.
+> **Affirmed** — the point estimate clears the threshold and the relevant 95% CI excludes the
+> boundary: zero for a difference gate, or the stated threshold for a level gate.
 >
-> **Not distinguishable** — point estimate clears the threshold but the CI spans zero. Neither a
-> pass nor a refutation.
+> **Not distinguishable** — the point estimate clears the threshold but the CI includes the
+> relevant boundary. Neither a pass nor a refutation.
 >
 > **Failed** — point estimate does not clear the threshold, regardless of the CI.
 >
@@ -110,8 +111,8 @@ the paper relies on.
 | 2A | The mechanism delta sits at the measured chance floor, family-split | CI upper bound below floor + 0.05; permutation p as a refutation-only test | §4 |
 | 2B | The absolute-embedding gene→family gap is non-zero (homology leakage exists) | paired bootstrap on the split gap | §4.5 |
 | 2C | Pathogenicity clears AUROC 0.85, family-split (positive control) | CI excludes 0.85 | §5 |
-| 2D | Conservation alone clears AUROC 0.85 for pathogenicity | paired bootstrap | §6.7 |
-| 2E | Adding the embedding delta to conservation improves AUROC by more than 0.02 | paired bootstrap | §6.7 |
+| 2D | Conservation alone clears AUROC 0.85 for pathogenicity | family-cluster bootstrap CI | §6.7 |
+| 2E | Adding the embedding delta to conservation improves AUROC by at least 0.02 | paired bootstrap | §6.7 |
 | 2F | Enzyme type classification clears family-split LogReg macro-F1 0.70 | cluster-bootstrap CI | §8 |
 | 2G | Enzyme family-split F1 substantially exceeds the mechanism family-split floor | paired cluster-bootstrap CI | §8 |
 | 2H | The enzyme signal is linearly separable: MLP does not substantially outperform LogReg under family-split | paired cluster-bootstrap CI | §8 |
@@ -308,12 +309,18 @@ dissociation, and the whole paper weakens.
 
 ### 2D–2E — conservation vs. embedding delta (Runbook §6.7)
 
-Paired bootstrap on claims 2D and 2E:
+**Post-result specification amendment, 2026-08-19.** The earlier Section 6 result was inspected
+before the inferential seed was stated. The repaired run uses seed 0 for inference: the seed-0
+held-out-fold AUROC supplies the point estimate and the family-cluster bootstrap interval. The
+five-seed mean and each seed's fold mean are saved as descriptive results. Claim 2D uses a
+single-arm family-cluster interval. Claim 2E uses a paired family-cluster interval with the same
+fold assignment and resample applied to both arms. This amendment records the omitted seed rule; it
+does not change either threshold.
 
 | Gate | Criterion |
 |---|---|
-| 2D | Conservation alone reaches AUROC above 0.85 |
-| 2E | Conservation plus the embedding delta improves on conservation alone by more than 0.02 |
+| 2D | Conservation alone reaches AUROC of at least 0.85 |
+| 2E | Conservation plus the embedding delta improves on conservation alone by at least 0.02 |
 | Descriptive | Conservation plus the delta compared against the delta alone, reported without a threshold |
 
 Margins are stated against the threshold, never against the bare chance floor. Measured against the
@@ -324,9 +331,12 @@ a failed gate makes no positive claim.
 **Checklist:**
 - [ ] Margins reported are stated against the threshold (e.g. 0.85, 0.02), never against the bare
       chance floor.
+- [ ] Seed-0 point estimates and seed-0 intervals are reported together; the five-seed means are
+      labelled descriptive and the individual seed fold means are retained in the result file.
 - [ ] 2E's CI, however it lands, is reported under the underpowered clause (§1.1) — not relabeled
       as a confirmatory pass.
-- [ ] The 2D/2E gap CI is computed as a paired bootstrap (§1.2), same-fold pairing.
+- [ ] The 2D interval is a one-arm family-cluster bootstrap. The 2E gap interval is a paired
+      family-cluster bootstrap with same-fold pairing (§1.2).
 
 ### 2F–2H — enzyme type classification (Runbook §8)
 

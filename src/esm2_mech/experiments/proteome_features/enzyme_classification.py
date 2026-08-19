@@ -11,9 +11,8 @@ from collections import Counter
 from pathlib import Path
 
 import numpy as np
-from sklearn.metrics import f1_score, roc_auc_score
-from sklearn.neural_network import MLPClassifier
-from sklearn.preprocessing import LabelEncoder, StandardScaler
+from sklearn.metrics import f1_score
+from sklearn.preprocessing import LabelEncoder
 
 from esm2_mech.utils.constants import (
     BOOTSTRAP_CI_LEVEL,
@@ -23,8 +22,9 @@ from esm2_mech.utils.constants import (
 )
 from esm2_mech.utils.metrics import fold_macro_f1, majority_baseline_f1
 from esm2_mech.utils.splits import gene_split_cv, family_split_cv
-from esm2_mech.utils.data import build_gene_to_row, load_pfam_map
+from esm2_mech.utils.data import build_gene_to_row, load_pfam_map, observed_rows_mask
 from esm2_mech.utils.io import write_result_json
+from esm2_mech.utils.probes import run_logreg_cv, run_mlp_cv
 from esm2_mech.utils.bootstrap import (
     attach_mechanism_ci,
     folds_to_arms,
@@ -148,126 +148,6 @@ def load_proteome_features() -> tuple:
     return X, genes
 
 
-def _run_cv(
-    clf_factory,
-    scale: bool,
-    X: np.ndarray,
-    y: np.ndarray,
-    splits: list[tuple],
-    classes: list[str],
-    genes: np.ndarray | None = None,
-    seed: int = 42,
-) -> tuple[dict, dict | None]:
-    """Run CV, collecting OOF predictions for bootstrap CIs."""
-    n_cls = len(classes)
-    fold_f1s = []
-    fold_aurocs = {c: [] for c in classes}
-    oof_y, oof_proba, oof_genes, oof_rows, oof_folds = [], [], [], [], []
-
-    for fold_i, (tr, te) in enumerate(splits):
-        tr_clean = tr
-        te_clean = te
-        if np.isnan(X[tr]).any() or np.isnan(X[te]).any():
-            tr_mask = ~np.isnan(X[tr]).any(axis=1)
-            te_mask = ~np.isnan(X[te]).any(axis=1)
-            tr_clean = tr[tr_mask]
-            te_clean = te[te_mask]
-            if len(tr_clean) == 0 or len(te_clean) == 0:
-                continue
-
-        if len(set(y[tr_clean])) < 2:
-            continue
-        if scale:
-            sc = StandardScaler().fit(X[tr_clean])
-            X_tr, X_te = sc.transform(X[tr_clean]), sc.transform(X[te_clean])
-        else:
-            X_tr, X_te = X[tr_clean], X[te_clean]
-        clf = clf_factory(seed)
-        clf.fit(X_tr, y[tr_clean])
-        proba_raw = clf.predict_proba(X_te)
-
-        proba = np.zeros((len(te_clean), n_cls), dtype=np.float32)
-        for ci, c in enumerate(clf.classes_):
-            if 0 <= c < n_cls:
-                proba[:, c] = proba_raw[:, ci]
-
-        pred = proba.argmax(axis=1)
-        fold_f1s.append(float(f1_score(y[te_clean], pred, average="macro", zero_division=0)))
-
-        for i, cls in enumerate(classes):
-            y_bin = (y[te_clean] == i).astype(int)
-            if y_bin.sum() > 0 and y_bin.sum() < len(y_bin):
-                fold_aurocs[cls].append(float(roc_auc_score(y_bin, proba[:, i])))
-
-        if genes is not None:
-            oof_y.append(y[te_clean])
-            oof_proba.append(proba)
-            oof_genes.append(genes[te_clean])
-            oof_rows.append(np.asarray(te_clean))
-            oof_folds.append(np.full(len(te_clean), fold_i, dtype=int))
-
-    result = {
-        "macro_f1_mean": float(np.nanmean(fold_f1s)) if fold_f1s else None,
-        "macro_f1_std": float(np.nanstd(fold_f1s)) if fold_f1s else None,
-        "per_class_auroc_mean": {
-            c: float(np.nanmean(v)) if v else None for c, v in fold_aurocs.items()
-        },
-        "per_class_auroc_std": {
-            c: float(np.nanstd(v)) if v else None for c, v in fold_aurocs.items()
-        },
-        "n_folds": len(fold_f1s),
-    }
-
-    oof = None
-    if oof_y:
-        oof = {
-            "y_true": np.concatenate(oof_y),
-            "proba": np.concatenate(oof_proba),
-            "genes": np.concatenate(oof_genes),
-            "row_ids": np.concatenate(oof_rows),
-            "folds": np.concatenate(oof_folds),
-        }
-    return result, oof
-
-
-def run_logreg(X, y, splits, classes, genes=None, seed: int = 42):
-    from sklearn.linear_model import LogisticRegression
-
-    return _run_cv(
-        lambda s: LogisticRegression(
-            max_iter=2000, class_weight="balanced", random_state=s
-        ),
-        True, X, y, splits, classes, genes=genes, seed=seed,
-    )
-
-
-def run_mlp(X, y, splits, classes, genes=None, seed: int = 42):
-    return _run_cv(
-        lambda s: MLPClassifier(
-            hidden_layer_sizes=(256, 64),
-            activation="relu",
-            alpha=1e-3,
-            max_iter=300,
-            random_state=s,
-            early_stopping=True,
-            validation_fraction=0.1,
-            n_iter_no_change=15,
-        ),
-        True, X, y, splits, classes, genes=genes, seed=seed,
-    )
-
-
-def run_histgb(X, y, splits, classes, genes=None, seed: int = 42):
-    from sklearn.ensemble import HistGradientBoostingClassifier
-
-    return _run_cv(
-        lambda s: HistGradientBoostingClassifier(
-            max_iter=200, class_weight="balanced", random_state=s
-        ),
-        False, X, y, splits, classes, genes=genes, seed=seed,
-    )
-
-
 def run_multiseed(
     X: np.ndarray,
     y: np.ndarray,
@@ -281,10 +161,16 @@ def run_multiseed(
     n_permutations: int = 0,
     mechanism_family_oof: dict | None = None,
 ) -> dict:
-    """Run linear and nonlinear probes across seeds with optional cluster-bootstrap CIs."""
-    linear_probe = run_logreg
-    nonlinear_probe = run_mlp
+    """Run shared linear and nonlinear probes across seeds.
+
+    `y` contains the string class names listed by `le.classes_`.
+    """
     classes = list(le.classes_)
+    unknown_labels = sorted(set(y.tolist()) - set(classes), key=str)
+    if unknown_labels:
+        raise ValueError(
+            f"run_multiseed received labels outside the enzyme classes: {unknown_labels}"
+        )
     genes_arr = np.array(genes)
     print(f"\nClasses: {classes}")
     print(f"Class distribution: {dict(Counter(y.tolist()))}")
@@ -301,26 +187,46 @@ def run_multiseed(
         print(f"\n  Seed {seed}:")
 
         gs_splits = gene_split_cv(genes_arr, n_folds=n_folds, seed=seed)
-        gs, _ = linear_probe(X, y, gs_splits, classes, genes=genes_arr, seed=seed)
+        gs, _ = run_logreg_cv(
+            X,
+            y,
+            gs_splits,
+            classes=classes,
+            genes=genes_arr,
+            seed=seed,
+            label="enzyme logreg gene",
+            min_train_classes=2,
+            return_oof=True,
+        )
         gs_f1s.append(gs["macro_f1_mean"])
         for c in classes:
-            v = gs["per_class_auroc_mean"].get(c)
+            v = gs.get(f"auroc_{c}_mean")
             if v is not None:
                 gs_aurocs[c].append(v)
         print(f"    LogReg gene-split  F1={gs['macro_f1_mean']:.3f}")
 
         fs_splits = family_split_cv(genes_arr, pfam_map, n_folds=n_folds, seed=seed)
-        fs, fs_oof = linear_probe(X, y, fs_splits, classes, genes=genes_arr, seed=seed)
+        fs, fs_oof = run_logreg_cv(
+            X,
+            y,
+            fs_splits,
+            classes=classes,
+            genes=genes_arr,
+            seed=seed,
+            label="enzyme logreg family",
+            min_train_classes=2,
+            return_oof=True,
+        )
         fs_f1s.append(fs["macro_f1_mean"])
         for c in classes:
-            v = fs["per_class_auroc_mean"].get(c)
+            v = fs.get(f"auroc_{c}_mean")
             if v is not None:
                 fs_aurocs[c].append(v)
         print(
             f"    LogReg family-split F1={fs['macro_f1_mean']:.3f}  "
             f"AUROC: "
             + " ".join(
-                f"{c}={fs['per_class_auroc_mean'].get(c, float('nan')):.3f}"
+                f"{c}={fs.get(f'auroc_{c}_mean', float('nan')):.3f}"
                 for c in classes
             )
         )
@@ -328,10 +234,26 @@ def run_multiseed(
         if seed == seeds[0]:
             seed0_fs_oof = fs_oof
 
-        mlp, mlp_oof = nonlinear_probe(X, y, fs_splits, classes, genes=genes_arr, seed=seed)
+        mlp, mlp_oof = run_mlp_cv(
+            X,
+            y,
+            fs_splits,
+            hidden=(256, 64),
+            classes=classes,
+            genes=genes_arr,
+            seed=seed,
+            label="enzyme mlp family",
+            return_oof=True,
+            max_iter=300,
+            activation="relu",
+            alpha=1e-3,
+            validation_fraction=0.1,
+            n_iter_no_change=15,
+            oversample=False,
+        )
         mlp_f1s.append(mlp["macro_f1_mean"])
         for c in classes:
-            v = mlp["per_class_auroc_mean"].get(c)
+            v = mlp.get(f"auroc_{c}_mean")
             if v is not None:
                 mlp_aurocs[c].append(v)
         print(f"    MLP    family-split F1={mlp['macro_f1_mean']:.3f}")
@@ -374,7 +296,7 @@ def run_multiseed(
 
     def _oof_macro_f1(oof):
         """Seed-0 out-of-fold macro-F1, scored per fold and averaged."""
-        y_str = np.array([classes[i] for i in oof["y_true"]])
+        y_str = np.asarray(oof["y_true"])
         pred = np.array([classes[col] for col in oof["proba"].argmax(axis=1)])
         arms = folds_to_arms(pred, oof["folds"])
 
@@ -584,7 +506,7 @@ def main():
     y_str = [enzyme_labels[g] for g in gene_list]
     le = LabelEncoder()
     le.fit(ENZYME_CLASSES)
-    y = le.transform(y_str)
+    y = np.asarray(y_str)
 
     print(f"\nLabeled genes: {len(gene_list)}")
     print(f"Class distribution: {dict(Counter(y_str))}")
@@ -614,13 +536,10 @@ def main():
     prot_aligned_y = y[np.array([gene_to_emb_idx[g] for g in prot_aligned_genes])]
     X_prot_aligned = X_prot[prot_aligned_idxs]
 
-    n_nan = int(np.isnan(X_prot_aligned).sum())
-    if n_nan:
-        n_rows = int(np.isnan(X_prot_aligned).any(axis=1).sum())
-        print(
-            f"  {n_nan} missing cells across {n_rows}/{len(X_prot_aligned)} genes "
-            f"— NaN rows dropped per fold, not imputed"
-        )
+    observed = observed_rows_mask(X_prot_aligned, label="enzyme proteome features")
+    X_prot_aligned = X_prot_aligned[observed]
+    prot_aligned_y = prot_aligned_y[observed]
+    prot_aligned_genes = list(np.asarray(prot_aligned_genes)[observed])
 
     print(f"Proteome-aligned genes: {len(prot_aligned_genes)}")
     proteome_results = run_multiseed(

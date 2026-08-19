@@ -6,10 +6,12 @@ import numpy as np
 import pytest
 
 from esm2_mech.experiments.geometry import data as geometry_data
-from esm2_mech.utils.data import variants_fingerprint
+from esm2_mech.utils.data import embedding_fingerprint, variants_fingerprint
 
 
-def _write_inputs(tmp_path, monkeypatch, fingerprint=None):
+def _write_inputs(
+    tmp_path, monkeypatch, fingerprint=None, stored_embedding_fingerprint=None
+):
     variants = [
         {
             "gene": "G1",
@@ -33,8 +35,10 @@ def _write_inputs(tmp_path, monkeypatch, fingerprint=None):
     mut_path = tmp_path / "mut.npy"
     meta_path = tmp_path / "meta.json"
     variants_path.write_text(json.dumps(variants))
-    np.save(wt_path, np.zeros((2, 3), dtype=np.float32))
-    np.save(mut_path, np.ones((2, 3), dtype=np.float32))
+    wt = np.zeros((2, 3), dtype=np.float32)
+    mut = np.ones((2, 3), dtype=np.float32)
+    np.save(wt_path, wt)
+    np.save(mut_path, mut)
     meta_path.write_text(
         json.dumps(
             {
@@ -45,6 +49,11 @@ def _write_inputs(tmp_path, monkeypatch, fingerprint=None):
                 ),
                 "n_valid": 2,
                 "model": geometry_data.ESM2_MODEL_650M,
+                "embedding_fingerprint": (
+                    embedding_fingerprint(wt, mut)
+                    if stored_embedding_fingerprint is None
+                    else stored_embedding_fingerprint
+                ),
             }
         )
     )
@@ -70,6 +79,17 @@ def test_validated_loader_rejects_stale_embedding_metadata(tmp_path, monkeypatch
     _write_inputs(tmp_path, monkeypatch, fingerprint="stale")
 
     with pytest.raises(ValueError, match="do not match the embedding metadata"):
+        geometry_data.load_pathogenicity_geometry_inputs()
+
+
+def test_validated_loader_rejects_embedding_content_mismatch(tmp_path, monkeypatch):
+    _write_inputs(
+        tmp_path,
+        monkeypatch,
+        stored_embedding_fingerprint="not-the-array-fingerprint",
+    )
+
+    with pytest.raises(ValueError, match="content fingerprint"):
         geometry_data.load_pathogenicity_geometry_inputs()
 
 

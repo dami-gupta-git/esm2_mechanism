@@ -10,6 +10,7 @@ from esm2_mech.fetch_data.fetch_pathogenicity_variants import (
     _deduplicate_protein_substitutions,
     _selection_params,
     fetch_phase,
+    load_validated_pathogenicity_cache,
 )
 from esm2_mech.utils.data import (
     validate_balanced_pathogenicity_variants,
@@ -49,10 +50,12 @@ def _balanced_variants():
     ]
 
 
-def _current_metadata(mechanism, variants):
+def _current_metadata(mechanism, variants, max_per_gene_per_class=20, seed=42):
     return {
         "metadata_version": fetch_module._FETCH_METADATA_VERSION,
-        "selection": _selection_params(mechanism, 20, 42),
+        "selection": _selection_params(
+            mechanism, max_per_gene_per_class, seed
+        ),
         "clinvar_source": {
             "url": fetch_module.CLINVAR_URL,
             "assembly": fetch_module.CLINVAR_ASSEMBLY,
@@ -120,6 +123,35 @@ class TestFetchPhaseCacheValidation:
 
         with pytest.raises(StalePathogenicityCacheError, match="only one"):
             fetch_phase(max_per_gene_per_class=20, seed=42)
+
+    def test_probe_loader_rejects_valid_cache_with_wrong_selection_parameters(
+        self, tmp_path, monkeypatch
+    ):
+        mechanism = _make_mechanism_variants([("BRAF", "P15056")])
+        variants = _balanced_variants()
+        variant_path, metadata_path = _point_cache_at_tmp(
+            monkeypatch, tmp_path, mechanism
+        )
+        variant_path.write_text(json.dumps(variants))
+        metadata_path.write_text(
+            json.dumps(
+                _current_metadata(
+                    mechanism,
+                    variants,
+                    max_per_gene_per_class=10,
+                    seed=7,
+                )
+            )
+        )
+
+        with pytest.raises(
+            StalePathogenicityCacheError,
+            match="selection differs from the current contract",
+        ):
+            load_validated_pathogenicity_cache(
+                max_per_gene_per_class=20,
+                seed=42,
+            )
 
 
 class TestProteinSubstitutionDeduplication:

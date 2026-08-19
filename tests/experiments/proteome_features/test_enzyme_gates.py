@@ -2,6 +2,8 @@
 Tests for enzyme gate evaluation in enzyme_classification.run_multiseed.
 
 Invariants:
+- The enzyme module has no private CV loop; LogReg and MLP delegate to the shared
+  probe runners.
 - The gate point estimates (fs_f1, mlp_f1) come from the seed-0 out-of-fold
   predictions, scored within each fold and averaged — the same basis the
   bootstrap CI uses, so the point estimate matches what the CI is attached to.
@@ -16,6 +18,7 @@ import numpy as np
 import pytest
 from sklearn.preprocessing import LabelEncoder
 
+from esm2_mech.experiments.proteome_features import enzyme_classification
 from esm2_mech.experiments.proteome_features.enzyme_classification import (
     ENZYME_CLASSES,
     run_multiseed,
@@ -35,12 +38,18 @@ def _synthetic_data(n_genes=200, dim=32, seed=42):
 
     le = LabelEncoder()
     le.fit(ENZYME_CLASSES)
-    y = le.transform(labels)
+    y = np.asarray(labels)
 
     genes = [f"GENE{i}" for i in range(n_genes)]
     pfam_map = {f"GENE{i}": f"PF{i % 40:04d}" for i in range(n_genes)}
 
     return X, y, genes, pfam_map, le
+
+
+def test_enzyme_cv_uses_shared_probe_runners():
+    assert not hasattr(enzyme_classification, "_run_cv")
+    assert hasattr(enzyme_classification, "run_logreg_cv")
+    assert hasattr(enzyme_classification, "run_mlp_cv")
 
 
 class TestOofMacroF1Consistency:

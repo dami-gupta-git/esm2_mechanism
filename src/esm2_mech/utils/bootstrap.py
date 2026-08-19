@@ -1095,7 +1095,7 @@ def adjudicate_diff(passed: bool | None, diff_ci: dict | None, threshold: float)
         if ci_low > 0:
             return "pass, established (CI excludes zero)"
         return "pass on point estimate, not distinguishable (CI spans zero)"
-    if ci_high > threshold:
+    if ci_high >= threshold:
         return "fail, underpowered (CI spans the pre-registered threshold)"
     return "fail, established (CI excludes the pre-registered threshold)"
 

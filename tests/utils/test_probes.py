@@ -31,6 +31,7 @@ import numpy as np
 import pytest
 
 from sklearn.linear_model import LogisticRegression
+import sklearn.neural_network as neural_network
 
 from esm2_mech.utils.probes import (
     run_logreg_cv,
@@ -187,6 +188,54 @@ class TestRunMlpBinaryCv:
                 [(train_idx, test_idx)],
                 validation_groups=validation_groups,
             )
+
+    def test_early_stopping_resets_patience_on_meaningful_improvement(
+        self, monkeypatch
+    ):
+        instances = []
+
+        class RecordingMlp:
+            def __init__(self, **_kwargs):
+                self.max_iter = 20
+                self.n_iter_no_change = 2
+                self.tol = 0.001
+                self.partial_fit_calls = 0
+                self.coefs_ = []
+                self.intercepts_ = []
+                self.classes_ = np.array([0, 1])
+                instances.append(self)
+
+            def partial_fit(self, _X, _y, classes=None):
+                self.partial_fit_calls += 1
+                if classes is not None:
+                    self.classes_ = np.asarray(classes)
+                marker = float(self.partial_fit_calls)
+                self.coefs_ = [np.array([[marker]])]
+                self.intercepts_ = [np.array([marker])]
+                return self
+
+            def score(self, _X, _y):
+                scores = (0.5, 0.6, 0.7, 0.7, 0.7, 0.7)
+                return scores[min(self.partial_fit_calls - 1, len(scores) - 1)]
+
+            def predict_proba(self, X):
+                return np.full((len(X), 2), 0.5)
+
+        monkeypatch.setattr(neural_network, "MLPClassifier", RecordingMlp)
+        X = np.zeros((80, 4))
+        y = np.tile(np.array([0, 1]), 40)
+        train_idx = np.arange(60)
+        test_idx = np.arange(60, 80)
+
+        run_mlp_binary_cv(
+            X,
+            y,
+            [(train_idx, test_idx)],
+            validation_groups=np.array([f"G{i}" for i in range(len(X))]),
+        )
+
+        assert instances[0].partial_fit_calls == 6
+        assert instances[0].coefs_[0][0, 0] == 3.0
 
 
 # ---------------------------------------------------------------------------

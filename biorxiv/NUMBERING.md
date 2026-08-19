@@ -23,7 +23,7 @@ from earlier drafts to that schema. New writing and generated outputs use only t
 | C2 | 2B | The absolute-embedding gene-to-family gap is non-zero |
 | C3 | 2C | Pathogenicity clears family-split AUROC 0.85 |
 | K1, C4 | 2D | Conservation alone clears family-split AUROC 0.85 |
-| K2 | 2E | Adding the embedding delta to conservation improves AUROC by more than 0.02 |
+| K2 | 2E | Adding the embedding delta to conservation improves AUROC by at least 0.02 |
 | 2E.1 | 2F | Enzyme classification clears family-split LogReg macro-F1 0.70 |
 | 2E.2 | 2G | Enzyme family-split F1 substantially exceeds the mechanism floor |
 | 2E.3 | 2H | MLP does not substantially outperform LogReg for enzyme classification |

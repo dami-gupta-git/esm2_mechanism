@@ -27,8 +27,12 @@ from esm2_mech.experiments.stability.stability_data import (
     load_stability_inputs,
     stability_splits,
 )
-from esm2_mech.experiments.stability.megascale_stability import run_regression_cv, OUT
-from esm2_mech.utils.constants import N_SEEDS
+from esm2_mech.experiments.stability.megascale_stability import (
+    OUT,
+    run_regression_cv,
+    spearman_cluster_bootstrap_ci,
+)
+from esm2_mech.utils.constants import BOOTSTRAP_N_RESAMPLES, N_SEEDS
 from esm2_mech.utils.io import write_result_json
 from esm2_mech.utils.metrics import auroc_at_median, mean_std_n, standardize
 
@@ -40,20 +44,34 @@ def run_mlp_regression(
     X,
     y,
     splits,
+    validation_groups,
+    median,
     seed=42,
     hidden=(256, 64),
     lr=1e-3,
     max_epochs=60,
     patience=15,
     batch_size=2048,
-    median=None,
+    clusters=None,
+    return_oof=False,
 ):
     import torch
     import torch.nn as nn
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+    if validation_groups is not None:
+        validation_groups = np.asarray(validation_groups)
+        if len(validation_groups) != len(X):
+            raise ValueError(
+                f"validation_groups has {len(validation_groups)} rows for "
+                f"{len(X)} samples"
+            )
+    if return_oof and clusters is None:
+        raise ValueError("clusters are required when return_oof=True")
+
     rhos, rs, aurocs = [], [], []
+    oof_y, oof_pred, oof_clusters, oof_indices, oof_folds = [], [], [], [], []
 
     for fold_i, (tr, te) in enumerate(splits):
         X_tr = X[tr].astype(np.float32)
@@ -61,12 +79,56 @@ def run_mlp_regression(
         y_tr = y[tr].astype(np.float32)
         y_te = y[te].astype(np.float32)
 
-        # hold out 15% of train for early stopping
+        # Hold out 15% of rows for the random split, or 15% of whole dependency
+        # groups for domain/family splits.
         rng = np.random.RandomState(seed + fold_i)
-        idx = np.arange(len(X_tr))
-        rng.shuffle(idx)
-        n_val = max(1, int(0.15 * len(idx)))
-        val_idx, fit_idx = idx[:n_val], idx[n_val:]
+        if validation_groups is None:
+            shuffled_rows = np.arange(len(X_tr))
+            rng.shuffle(shuffled_rows)
+            n_validation = max(1, int(0.15 * len(shuffled_rows)))
+            val_idx = shuffled_rows[:n_validation]
+            fit_idx = shuffled_rows[n_validation:]
+        else:
+            training_groups = validation_groups[tr]
+            testing_groups = validation_groups[te]
+            if any(group is None for group in training_groups) or any(
+                group is None for group in testing_groups
+            ):
+                raise ValueError(
+                    "group-disjoint early stopping requires a group for every "
+                    "outer-CV row"
+                )
+            outer_overlap = set(training_groups.tolist()) & set(
+                testing_groups.tolist()
+            )
+            if outer_overlap:
+                examples = sorted(outer_overlap, key=str)[:5]
+                raise ValueError(
+                    "validation group spans the outer CV train/test boundary; "
+                    f"examples: {examples}"
+                )
+            unique_groups = np.array(
+                sorted(set(training_groups.tolist()), key=str), dtype=object
+            )
+            if len(unique_groups) < 2:
+                raise ValueError(
+                    "group-disjoint early stopping requires at least two "
+                    "training groups"
+                )
+            rng.shuffle(unique_groups)
+            n_validation_groups = max(1, int(0.15 * len(unique_groups)))
+            n_validation_groups = min(
+                n_validation_groups, len(unique_groups) - 1
+            )
+            validation_group_set = set(unique_groups[:n_validation_groups])
+            validation_mask = np.array(
+                [group in validation_group_set for group in training_groups]
+            )
+            val_idx = np.where(validation_mask)[0]
+            fit_idx = np.where(~validation_mask)[0]
+
+        if len(fit_idx) == 0 or len(val_idx) == 0:
+            raise ValueError("early-stopping split produced an empty fit or validation set")
 
         X_fit, X_val, X_te_n = standardize(X_tr[fit_idx], X_tr[val_idx], X_te)
 
@@ -125,25 +187,48 @@ def run_mlp_regression(
         rhos.append(float(rho))
         rs.append(float(r))
         aurocs.append(auroc_at_median(y_te, pred, median=median))
+        if return_oof:
+            oof_y.append(y_te)
+            oof_pred.append(pred)
+            oof_clusters.append(np.asarray(clusters)[te])
+            oof_indices.append(np.asarray(te))
+            oof_folds.append(np.full(len(te), fold_i, dtype=int))
 
     if not rhos:
-        return {}
-    rho_mean, rho_std, n_rho = mean_std_n(rhos)
-    r_mean, r_std, _ = mean_std_n(rs)
-    au_mean, au_std, _ = mean_std_n(aurocs)
-    return {
-        "spearman_mean": rho_mean,
-        "spearman_std": rho_std,
-        "pearson_mean": r_mean,
-        "pearson_std": r_std,
-        "auroc_mean": au_mean,
-        "auroc_std": au_std,
-        "n_folds": n_rho,
-    }
+        result = {}
+    else:
+        rho_mean, rho_std, n_rho = mean_std_n(rhos)
+        r_mean, r_std, _ = mean_std_n(rs)
+        au_mean, au_std, _ = mean_std_n(aurocs)
+        result = {
+            "spearman_mean": rho_mean,
+            "spearman_std": rho_std,
+            "pearson_mean": r_mean,
+            "pearson_std": r_std,
+            "auroc_mean": au_mean,
+            "auroc_std": au_std,
+            "n_folds": n_rho,
+        }
+    if not return_oof:
+        return result
+    oof = None
+    if oof_y:
+        oof = {
+            "y_true": np.concatenate(oof_y),
+            "pred": np.concatenate(oof_pred),
+            "clusters": np.concatenate(oof_clusters),
+            "indices": np.concatenate(oof_indices),
+            "folds": np.concatenate(oof_folds),
+        }
+    return result, oof
 
 
 
-def main(use_xgboost=False):
+def main(
+    use_xgboost=False,
+    compute_ci=True,
+    n_boot=BOOTSTRAP_N_RESAMPLES,
+):
     inputs = load_stability_inputs()
     variants = inputs.variants
     proteins = inputs.proteins
@@ -159,6 +244,22 @@ def main(use_xgboost=False):
     build_splits = lambda name, seed: stability_splits(
         seed, len(variants), proteins, family_map
     )[name]
+    family_groups = np.array(
+        [family_map.get(protein) for protein in proteins],
+        dtype=object,
+    )
+
+    def _validation_groups(split_name):
+        if split_name == "random":
+            return None
+        if split_name == "domain":
+            return proteins
+        if split_name == "family":
+            return family_groups
+        raise ValueError(f"unknown stability split {split_name!r}")
+
+    def _ci_clusters(split_name):
+        return family_groups if split_name == "family" else proteins
 
     def _rf(seed):
         if _HAS_CUML:
@@ -187,12 +288,34 @@ def main(use_xgboost=False):
             )
 
         probe_runners = [
-            ("xgb", lambda X, y, splits, seed: run_regression_cv(X, y, splits, lambda: _xgb(seed), with_pearson=False, median=global_median, label=f"xgb/seed{seed}")),
+            (
+                "xgb",
+                lambda X, y, splits, seed: run_regression_cv(
+                    X,
+                    y,
+                    splits,
+                    lambda: _xgb(seed),
+                    with_pearson=False,
+                    median=global_median,
+                    label=f"xgb/seed{seed}",
+                ),
+            ),
         ]
     else:
         probe_runners = [
-            ("mlp", lambda X, y, splits, seed: run_mlp_regression(X, y, splits, seed=seed, median=global_median)),
-            ("rf", lambda X, y, splits, seed: run_regression_cv(X, y, splits, lambda: _rf(seed), with_pearson=False, median=global_median, label=f"rf/seed{seed}")),
+            ("mlp", None),
+            (
+                "rf",
+                lambda X, y, splits, seed: run_regression_cv(
+                    X,
+                    y,
+                    splits,
+                    lambda: _rf(seed),
+                    with_pearson=False,
+                    median=global_median,
+                    label=f"rf/seed{seed}",
+                ),
+            ),
         ]
 
     summary = {}
@@ -200,8 +323,31 @@ def main(use_xgboost=False):
         print(f"\n── {probe_name.upper()} ──")
         for split_name in split_names:
             rhos, aurocs = [], []
+            seed0_ci = None
             for seed in range(N_SEEDS):
-                res = run_probe(X, ddg, build_splits(split_name, seed), seed)
+                splits = build_splits(split_name, seed)
+                if probe_name == "mlp":
+                    collect_oof = compute_ci and seed == 0
+                    mlp_result = run_mlp_regression(
+                        X,
+                        ddg,
+                        splits,
+                        seed=seed,
+                        median=global_median,
+                        validation_groups=_validation_groups(split_name),
+                        clusters=_ci_clusters(split_name),
+                        return_oof=collect_oof,
+                    )
+                    if collect_oof:
+                        res, oof = mlp_result
+                        if oof is not None:
+                            seed0_ci = spearman_cluster_bootstrap_ci(
+                                oof, n_resamples=n_boot, seed=0
+                            )
+                    else:
+                        res = mlp_result
+                else:
+                    res = run_probe(X, ddg, splits, seed)
                 if res:
                     rhos.append(res["spearman_mean"])
                     aurocs.append(res["auroc_mean"])
@@ -218,6 +364,8 @@ def main(use_xgboost=False):
                 "auroc_std": au_std,
                 "n_seeds": n_seeds_used,
             }
+            if seed0_ci is not None:
+                summary[key]["ci"] = seed0_ci
             print(
                 f"  {split_name:8s}: ρ={summary[key]['spearman_mean']:.3f}±{summary[key]['spearman_std']:.3f}  "
                 f"AUROC={summary[key]['auroc_mean']:.3f}±{summary[key]['auroc_std']:.3f}"
@@ -244,6 +392,7 @@ def main(use_xgboost=False):
     # Separate output file for the xgboost variant so it never overwrites the
     # default sklearn comparison (mlp_summary.json).
     out_name = "mlp_summary_xgb.json" if use_xgboost else "mlp_summary.json"
+    summary["result_version"] = 2
     write_result_json(os.path.join(OUT, out_name), summary, seeds=list(range(N_SEEDS)))
     print(f"\nResults written to {os.path.join(OUT, out_name)}")
 
@@ -258,5 +407,15 @@ if __name__ == "__main__":
         help="Use GPU XGBoost (probe 'xgb') instead of sklearn RF/GBM. Faster on "
         "large high-dim data; writes mlp_summary_xgb.json. Requires xgboost installed.",
     )
+    parser.add_argument(
+        "--no_ci",
+        action="store_true",
+        help="Skip seed-0 dependency-aware CIs for the pre-registered MLP.",
+    )
+    parser.add_argument("--n_boot", type=int, default=BOOTSTRAP_N_RESAMPLES)
     args = parser.parse_args()
-    main(use_xgboost=args.xgboost)
+    main(
+        use_xgboost=args.xgboost,
+        compute_ci=not args.no_ci,
+        n_boot=args.n_boot,
+    )

@@ -51,6 +51,10 @@ def load_pathogenicity_geometry_inputs() -> PathogenicityGeometryInputs:
             f"geometry input row mismatch: {n_variants} canonical variants, "
             f"{len(wt)} WT embedding rows, and {len(mut)} mutant embedding rows"
         )
+    if wt.shape != mut.shape:
+        raise ValueError(
+            f"geometry WT/mutant embedding shapes differ: {wt.shape} vs {mut.shape}"
+        )
 
     current_variant_fingerprint = variants_fingerprint(variants)
     if metadata.get("fingerprint") != current_variant_fingerprint:
@@ -68,6 +72,12 @@ def load_pathogenicity_geometry_inputs() -> PathogenicityGeometryInputs:
             f"geometry expects model {ESM2_MODEL_650M!r}, but embedding metadata "
             f"records {metadata.get('model')!r}"
         )
+    current_embedding_fingerprint = embedding_fingerprint(wt, mut)
+    if metadata.get("embedding_fingerprint") != current_embedding_fingerprint:
+        raise ValueError(
+            "pathogenicity embedding arrays do not match the content fingerprint "
+            "stored at extraction time; regenerate the embedding cache"
+        )
 
     labels = np.array([pathogenicity_label(variant["label"]) for variant in variants])
     genes = np.array([variant["gene"] for variant in variants])
@@ -79,7 +89,7 @@ def load_pathogenicity_geometry_inputs() -> PathogenicityGeometryInputs:
         genes=genes,
         labels=labels,
         variant_fingerprint=current_variant_fingerprint,
-        embedding_fingerprint=embedding_fingerprint(wt, mut),
+        embedding_fingerprint=current_embedding_fingerprint,
         model=metadata["model"],
     )
 

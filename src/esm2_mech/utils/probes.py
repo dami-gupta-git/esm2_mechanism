@@ -500,6 +500,11 @@ def run_mlp_cv(
     label: str = "",
     return_oof: bool = False,
     max_iter: int = 500,
+    activation: str = "relu",
+    alpha: float = 0.0001,
+    validation_fraction: float = 0.15,
+    n_iter_no_change: int = 10,
+    oversample: bool = True,
 ):
     """Sklearn MLP CV: scale → oversample → fit → aggregate metrics.
 
@@ -510,6 +515,9 @@ def run_mlp_cv(
         {"y_true", "proba" (aligned to `classes`), "genes", "row_ids", "folds"} for dependency-aware
         inference, or None if no fold was scorable. `genes` must be provided.
         Default False keeps the bare-`agg` return for existing callers.
+    oversample : balance the training fold by duplicating minority-class rows.
+        Set False for experiments whose registered estimator was fit on the
+        original class distribution.
     """
     from sklearn.neural_network import MLPClassifier
 
@@ -538,26 +546,31 @@ def run_mlp_cv(
         X_tr_s = sc.transform(X_tr)
         X_te_s = sc.transform(X_te)
 
-        counts = {cls: int((y_tr == cls).sum()) for cls in classes}
-        max_c = max(counts.values())
-        rng = np.random.RandomState(seed)
-        os_idx = []
-        for cls in classes:
-            ci = np.where(y_tr == cls)[0]
-            if len(ci) == 0:
-                continue
-            os_idx.append(np.tile(ci, max_c // len(ci)))
-            rem = max_c % len(ci)
-            if rem:
-                os_idx.append(rng.choice(ci, rem, replace=False))
-        os_idx = np.concatenate(os_idx)
-        rng.shuffle(os_idx)
+        fit_idx = np.arange(len(y_tr))
+        if oversample:
+            counts = {cls: int((y_tr == cls).sum()) for cls in classes}
+            max_c = max(counts.values())
+            rng = np.random.RandomState(seed)
+            sampled_idx = []
+            for cls in classes:
+                class_idx = np.where(y_tr == cls)[0]
+                if len(class_idx) == 0:
+                    continue
+                sampled_idx.append(np.tile(class_idx, max_c // len(class_idx)))
+                remainder = max_c % len(class_idx)
+                if remainder:
+                    sampled_idx.append(rng.choice(class_idx, remainder, replace=False))
+            fit_idx = np.concatenate(sampled_idx)
+            rng.shuffle(fit_idx)
 
         clf = MLPClassifier(
             hidden_layer_sizes=hidden,
+            activation=activation,
+            alpha=alpha,
             max_iter=max_iter,
             early_stopping=True,
-            validation_fraction=0.15,
+            validation_fraction=validation_fraction,
+            n_iter_no_change=n_iter_no_change,
             random_state=seed,
         )
         # Fit on integer-encoded labels: sklearn's early_stopping scores an
@@ -565,7 +578,7 @@ def run_mlp_cv(
         # arrays. clf.classes_ are then mapped back to strings for align_proba so
         # column ordering stays explicit (never positionally assumed).
         y_tr_enc = np.array([cls_to_idx[lab] for lab in y_tr])
-        clf.fit(X_tr_s[os_idx], y_tr_enc[os_idx])
+        clf.fit(X_tr_s[fit_idx], y_tr_enc[fit_idx])
 
         clf_str_classes = np.array([classes[idx] for idx in clf.classes_])
         proba = align_proba(clf.predict_proba(X_te_s), clf_str_classes, classes)
@@ -657,16 +670,19 @@ def run_mlp_binary_cv(
             else:
                 classifier.partial_fit(X_fit, y_fit)
             validation_score = float(classifier.score(X_validation, y_validation))
+            # Patience is measured against the best score from an earlier epoch.
+            # Updating the best score first makes every epoch fall short of
+            # best + tol, including a genuinely improving epoch.
+            if validation_score < best_validation_score + classifier.tol:
+                no_improvement_count += 1
+            else:
+                no_improvement_count = 0
             if validation_score > best_validation_score:
                 best_validation_score = validation_score
                 best_parameters = (
                     [weights.copy() for weights in classifier.coefs_],
                     [bias.copy() for bias in classifier.intercepts_],
                 )
-            if validation_score < best_validation_score + classifier.tol:
-                no_improvement_count += 1
-            else:
-                no_improvement_count = 0
             if no_improvement_count > classifier.n_iter_no_change:
                 break
 

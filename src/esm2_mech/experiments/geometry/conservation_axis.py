@@ -11,7 +11,11 @@ import numpy as np
 import functools
 from joblib import Parallel, delayed
 
-from esm2_mech.utils.data import load_pfam_map, variants_fingerprint
+from esm2_mech.utils.data import (
+    embedding_fingerprint,
+    load_pfam_map,
+    variants_fingerprint,
+)
 from esm2_mech.utils.io import (
     atomic_write_json,
     load_npy_or_discard,
@@ -33,12 +37,12 @@ from esm2_mech.utils.embed import load_esm2_model, masked_aa_log_probs
 from esm2_mech.utils.bootstrap import (
     adjudicate_diff,
     adjudicate_level,
-    stack_oof_over_seeds,
     binary_auroc_cluster_bootstrap_ci,
     family_or_gene_clusters,
     paired_oof_diff,
 )
 from esm2_mech.utils.constants import AA_ORDER
+from esm2_mech.utils.metrics import mean_std_n
 from esm2_mech.utils.probes import run_logreg_binary_cv
 from esm2_mech.utils.sequences import window_sequence
 from esm2_mech.utils.splits import family_split_cv
@@ -66,7 +70,7 @@ CLAIM_2E_DELTA_ADD_MIN = 0.02
 
 PATHOGENIC = 1
 LOGREG_MAX_ITER = 2000
-CONSERVATION_CACHE_VERSION = 2
+CONSERVATION_CACHE_VERSION = 3
 
 
 def _sequence_fingerprint(variants, seqs):
@@ -104,6 +108,7 @@ def _save_conservation_cache(values, identity):
     save_npy(CONS_CACHE, values)
     metadata = dict(identity)
     metadata["coverage"] = int(np.isfinite(values).all(axis=1).sum())
+    metadata["conservation_array_fingerprint"] = embedding_fingerprint(values)
     atomic_write_json(CONS_META, metadata)
 
 
@@ -131,6 +136,18 @@ def load_validated_conservation_cache(variants, seqs):
         raise ValueError(
             f"conservation cache has shape {values.shape}; expected {expected_shape}"
         )
+    current_array_fingerprint = embedding_fingerprint(values)
+    if metadata.get("conservation_array_fingerprint") != current_array_fingerprint:
+        raise ValueError(
+            "conservation array does not match the content fingerprint stored when "
+            "the cache was written; re-run --extract"
+        )
+    current_coverage = int(np.isfinite(values).all(axis=1).sum())
+    if metadata.get("coverage") != current_coverage:
+        raise ValueError(
+            f"conservation metadata records coverage {metadata.get('coverage')}, "
+            f"but the array contains {current_coverage} complete rows; re-run --extract"
+        )
     return values, metadata
 
 
@@ -157,6 +174,10 @@ def extract_conservation(variants, seqs, batch_size=64, ckpt_every=2000):
             cached is not None
             and cached.shape == (N, 3)
             and meta.get("fingerprint") == identity["fingerprint"]
+            and meta.get("conservation_array_fingerprint")
+            == embedding_fingerprint(cached)
+            and meta.get("coverage")
+            == int(np.isfinite(cached).all(axis=1).sum())
         ):
             out = cached
             done = int(np.isfinite(out).all(axis=1).sum())
@@ -223,7 +244,7 @@ def extract_conservation(variants, seqs, batch_size=64, ckpt_every=2000):
 def _oof_one_seed(X, y, genes, pfam, seed):
     """Family-split out-of-fold positive-class probabilities for one seed."""
     splits = list(family_split_cv(genes, pfam, seed=seed))
-    _, oof = run_logreg_binary_cv(
+    aggregate, oof = run_logreg_binary_cv(
         X,
         y,
         splits,
@@ -233,20 +254,47 @@ def _oof_one_seed(X, y, genes, pfam, seed):
         return_oof=True,
         max_iter=LOGREG_MAX_ITER,
     )
-    return oof
+    return {
+        "seed": int(seed),
+        "fold_mean": aggregate.get("auroc_mean"),
+        "oof": oof,
+    }
 
 
 def auroc_family_split(X, y, genes, pfam, seeds=range(5), n_jobs=-1):
-    """Family-split AUROC from seed-averaged OOF, with family-cluster CI."""
-    per_seed = Parallel(n_jobs=n_jobs)(
+    """Seed-0 family-split inference plus a five-seed descriptive summary."""
+    seeds = tuple(seeds)
+    seed_runs = Parallel(n_jobs=n_jobs)(
         delayed(_oof_one_seed)(X, y, genes, pfam, seed) for seed in seeds
     )
-    oof = stack_oof_over_seeds(per_seed)
-    if oof is None:
-        return float("nan"), None, None
-    clusters = family_or_gene_clusters(oof["genes"], pfam, is_family_split=True)
-    ci = binary_auroc_cluster_bootstrap_ci(oof, clusters=clusters, seed=0)
-    return ci["point"], ci, oof
+    seed0_run = next((run for run in seed_runs if run["seed"] == 0), None)
+    if seed0_run is None or seed0_run["oof"] is None:
+        raise RuntimeError("conservation inference requires seed-0 OOF predictions")
+
+    seed0_oof = seed0_run["oof"]
+    clusters = family_or_gene_clusters(
+        seed0_oof["genes"], pfam, is_family_split=True
+    )
+    ci = binary_auroc_cluster_bootstrap_ci(seed0_oof, clusters=clusters, seed=0)
+    point = ci["point"]
+    fold_mean = seed0_run["fold_mean"]
+    if point is None or fold_mean is None or not np.isclose(point, fold_mean):
+        raise RuntimeError(
+            "seed-0 conservation AUROC point and bootstrap estimand disagree"
+        )
+
+    per_seed_values = [run["fold_mean"] for run in seed_runs]
+    mean, std, count = mean_std_n(per_seed_values)
+    descriptive = {
+        "across_seed_mean": mean,
+        "across_seed_std": std,
+        "n_seeds": count,
+        "per_seed": [
+            {"seed": run["seed"], "fold_mean": run["fold_mean"]}
+            for run in seed_runs
+        ],
+    }
+    return point, ci, seed0_oof, descriptive
 
 
 def analyse():
@@ -288,11 +336,13 @@ def analyse():
     }
     auroc = {}
     auroc_ci = {}
+    auroc_descriptive = {}
     oof_by_feature = {}
     for name, feat in feature_sets.items():
-        value, ci, oof = auroc_family_split(feat, y, genes, pfam)
+        value, ci, oof, descriptive = auroc_family_split(feat, y, genes, pfam)
         auroc[name] = value
         auroc_ci[name] = ci
+        auroc_descriptive[name] = descriptive
         oof_by_feature[name] = oof
         if ci is None or ci.get("ci_low") is None:
             print(f"  {name:26s} AUROC = {value:.3f}  (CI suppressed)", flush=True)
@@ -356,6 +406,7 @@ def analyse():
     )
     claims = {
         "2D_conservation_clears_0.85": {
+            "seed": 0,
             "value": cons_a,
             "threshold": CLAIM_2D_CONSERVATION_MIN,
             "ci": auroc_ci["conservation"],
@@ -365,6 +416,7 @@ def analyse():
             ),
         },
         "2E_delta_beyond_conservation": {
+            "seed": 0,
             "value": claim_2e_diff["point_diff"] if claim_2e_diff else None,
             "threshold": CLAIM_2E_DELTA_ADD_MIN,
             "conservation": cons_a,
@@ -396,6 +448,9 @@ def analyse():
     provenance.update(
         {
             "conservation_cache_fingerprint": conservation_meta["fingerprint"],
+            "conservation_array_fingerprint": conservation_meta[
+                "conservation_array_fingerprint"
+            ],
             "conservation_sequence_fingerprint": conservation_meta[
                 "sequence_fingerprint"
             ],
@@ -408,6 +463,7 @@ def analyse():
         ],
         "auroc_family_split": auroc,
         "auroc_family_split_ci": auroc_ci,
+        "auroc_family_split_five_seed_descriptive": auroc_descriptive,
         "claims": claims,
         "thresholds": {"2D": CLAIM_2D_CONSERVATION_MIN, "2E": CLAIM_2E_DELTA_ADD_MIN},
         "input_provenance": provenance,
@@ -415,6 +471,12 @@ def analyse():
             "The probes are uncalibrated and measure discrimination only; the "
             "reported AUROCs are not risk estimates (pre-registration §1.4)."
         ),
+        "inference": {
+            "seed": 0,
+            "estimate_basis": "mean of seed-0 held-out-fold AUROCs",
+            "resampling_unit": "pfam_family",
+            "five_seed_role": "descriptive",
+        },
     }
     write_result_json(CONSERVATION_AXIS_JSON, result, seeds=list(range(5)))
 
@@ -424,7 +486,7 @@ def analyse():
     print("  Family-held-out axis correlations:")
     for name, summary in axis_associations["correlations"].items():
         print(f"    {name:20s} rho = {format_axis_summary(summary)}")
-    print("\n  AUROC (family-split, seed-averaged OOF):")
+    print("\n  AUROC (family-split, seed-0 inference):")
     for name, value in auroc.items():
         ci = auroc_ci.get(name)
         interval = (

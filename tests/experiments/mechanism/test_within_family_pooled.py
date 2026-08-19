@@ -21,12 +21,9 @@ Invariants:
 - _probe_one_family (slow, real probes): returns (results, oof); attaches CIs;
   seed-averaged OOF has one row per variant; compute_ci=False omits CI
 
-Two tests here are marked as expected failures. The script under test is deferred
-out of scope in TODO.md and still calls the shared bootstrap and permutation
-helpers without a fold index, which they now refuse rather than ranking pooled
-probabilities. The marks are strict, so if the script is ever fixed those tests
-pass unexpectedly and the suite fails until the marks are removed, which is what
-brings the coverage back rather than leaving it silently disabled.
+The permutation test remains an expected failure because that deferred path still
+calls the shared permutation helper without a fold index. The CI path retains the
+per-seed folds and is covered by the real-probe test below.
 """
 
 import numpy as np
@@ -253,16 +250,6 @@ class TestPooledPermutation:
 
 @pytest.mark.slow
 class TestProbeOneFamilyRealProbes:
-    @pytest.mark.xfail(
-        raises=TypeError,
-        strict=True,
-        reason=(
-            "mechanism_within_family.py is deferred out of scope (see TODO.md): it still "
-            "calls the shared helpers without a fold index, which now refuse rather than "
-            "silently ranking pooled probabilities. Strict, so that fixing the script turns "
-            "this into an unexpected pass and forces the marker off."
-        ),
-    )
     def test_returns_results_oof_and_ci(self):
         rng = np.random.RandomState(0)
         inp = _family_input("F", 12, rng=rng)

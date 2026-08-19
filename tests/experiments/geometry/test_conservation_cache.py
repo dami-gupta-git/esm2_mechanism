@@ -19,6 +19,7 @@ import numpy as np
 import pytest
 
 from esm2_mech.experiments.geometry import conservation_axis
+from esm2_mech.utils.data import embedding_fingerprint
 
 
 def _write_cache(tmp_path, n_rows, metadata=None):
@@ -29,7 +30,12 @@ def _write_cache(tmp_path, n_rows, metadata=None):
     arr = np.full((n_rows, 3), 1.0, dtype=np.float32)
     np.save(npy_path, arr)
 
-    meta = {"n": n_rows} if metadata is None else metadata
+    if metadata is None:
+        meta = {"n": n_rows}
+    else:
+        meta = dict(metadata)
+        meta.setdefault("coverage", n_rows)
+        meta.setdefault("conservation_array_fingerprint", embedding_fingerprint(arr))
     with open(meta_path, "w") as fh:
         json.dump(meta, fh)
 
@@ -153,3 +159,29 @@ class TestFullCacheProvenance:
         )
         assert values.shape == (4, 3)
         assert loaded_metadata["fingerprint"] == metadata["fingerprint"]
+
+    def test_changed_array_content_rejects_cache(self, tmp_path, monkeypatch):
+        variants = _make_variants(4)
+        seqs = _make_sequences(4)
+        metadata = conservation_axis.conservation_cache_identity(variants, seqs)
+        npy_path, meta_path = _write_cache(tmp_path, 4, metadata=metadata)
+        changed = np.load(npy_path)
+        changed[0, 0] = 2.0
+        np.save(npy_path, changed)
+        monkeypatch.setattr(conservation_axis, "CONS_CACHE", npy_path)
+        monkeypatch.setattr(conservation_axis, "CONS_META", meta_path)
+
+        with pytest.raises(ValueError, match="content fingerprint"):
+            conservation_axis.load_validated_conservation_cache(variants, seqs)
+
+    def test_coverage_mismatch_rejects_cache(self, tmp_path, monkeypatch):
+        variants = _make_variants(4)
+        seqs = _make_sequences(4)
+        metadata = conservation_axis.conservation_cache_identity(variants, seqs)
+        metadata["coverage"] = 3
+        npy_path, meta_path = _write_cache(tmp_path, 4, metadata=metadata)
+        monkeypatch.setattr(conservation_axis, "CONS_CACHE", npy_path)
+        monkeypatch.setattr(conservation_axis, "CONS_META", meta_path)
+
+        with pytest.raises(ValueError, match="records coverage"):
+            conservation_axis.load_validated_conservation_cache(variants, seqs)

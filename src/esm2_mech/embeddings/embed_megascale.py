@@ -10,17 +10,21 @@ import argparse
 import functools
 import os
 import shutil
+from pathlib import Path
 
 import numpy as np
 
 print = functools.partial(print, flush=True)
 
 from esm2_mech.experiments.stability.tsuboyama_loader import load_tsuboyama_variants
-from esm2_mech.experiments.stability.stability_data import save_fingerprint
+from esm2_mech.experiments.stability.stability_data import (
+    embedding_input_fingerprint,
+    save_fingerprint,
+)
 from esm2_mech.utils.embed import (
     EMB_ARRAY_NAMES,
     get_esm2_embeddings_for_pairs,
-    inspect_four_array_checkpoint,
+    inspect_variant_embedding_checkpoint,
 )
 from esm2_mech.utils.constants import (
     ESM2_MODEL as ESM2_MODEL_650M,
@@ -33,6 +37,7 @@ from esm2_mech.utils.paths import (
     MEGASCALE_EMB_MUT_MEAN,
     MEGASCALE_EMB_WT_POS,
     MEGASCALE_EMB_MUT_POS,
+    MEGASCALE_EMB_FINGERPRINT,
 )
 
 _CKPT_TO_TARGET_FILENAME = dict(zip(
@@ -76,6 +81,20 @@ def _promote_checkpoint(ckpt_dir, n_expected, target_dir):
     print(f"Promoted 4 arrays ({n_expected} rows) to {target_dir}")
 
 
+def _write_embedding_metadata(variants, model, target_dir):
+    target_paths = [
+        Path(target_dir) / target_filename
+        for target_filename in _CKPT_TO_TARGET_FILENAME.values()
+    ]
+    arrays = [np.load(path, mmap_mode="r") for path in target_paths]
+    save_fingerprint(
+        variants,
+        *arrays,
+        model=model,
+        path=Path(target_dir) / MEGASCALE_EMB_FINGERPRINT.name,
+    )
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -101,11 +120,16 @@ def main():
 
     ckpt_paths = [os.path.join(ckpt_dir, name) for name in _CKPT_TO_TARGET_FILENAME]
     resume_arrays, resume_start = None, 0
-    status, payload = inspect_four_array_checkpoint(ckpt_paths, len(wt_seqs))
+    status, payload = inspect_variant_embedding_checkpoint(
+        ckpt_paths,
+        variants,
+        Path(ckpt_dir) / "embedded_variants.json",
+        identity_fingerprint=embedding_input_fingerprint,
+    )
     if status == "complete":
         print("Embeddings already complete — promoting checkpoint.")
         _promote_checkpoint(ckpt_dir, len(wt_seqs), target_dir)
-        save_fingerprint(variants)
+        _write_embedding_metadata(variants, args.model, target_dir)
         return
     if status == "resume":
         resume_start, resume_arrays = payload
@@ -126,7 +150,7 @@ def main():
     )
 
     _promote_checkpoint(ckpt_dir, len(wt_seqs), target_dir)
-    save_fingerprint(variants)
+    _write_embedding_metadata(variants, args.model, target_dir)
     print("Done.")
 
 

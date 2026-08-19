@@ -284,3 +284,22 @@ class TestInspectVariantEmbeddingCheckpoint:
         assert payload is None
         assert not sidecar.exists()
         assert all(not path.exists() for path in paths)
+
+    def test_custom_identity_fingerprint_supports_another_variant_schema(
+        self, tmp_path
+    ):
+        variants = [{"row_identity": f"R{i}"} for i in range(4)]
+        paths = self._write_arrays(tmp_path, len(variants))
+        sidecar = _write_json(tmp_path / "embedded_variants.json", variants)
+
+        status, payload = inspect_variant_embedding_checkpoint(
+            paths,
+            variants,
+            sidecar,
+            identity_fingerprint=lambda rows: tuple(
+                row["row_identity"] for row in rows
+            ),
+        )
+
+        assert status == "complete"
+        assert payload is None

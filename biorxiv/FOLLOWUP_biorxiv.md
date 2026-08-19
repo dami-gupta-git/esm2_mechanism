@@ -122,7 +122,7 @@ made on the *minimum* per-class gene count and its family spread, not on the sub
   0.1's underpowered-null language, and do **not** let it gate the run.
 
 Either way the count itself is reported, so the reader can see what the subset could and could not
-resolve. This is exploratory (it is not in the 2A–2D confirmatory set) but it is the direct answer
+resolve. This is exploratory (it is not in the 2A–2H confirmatory set) but it is the direct answer
 to a confirmatory claim's main threat, so it belongs in the same report as 2A.
 
 ★ **Consequence for sequencing: Task 8 likely carries this argument, not Task 2d** — it has no
