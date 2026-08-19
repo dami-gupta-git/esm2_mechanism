@@ -1,13 +1,16 @@
 """
-Tests for parse_ec_and_keywords and assign_4class in fetch_enzyme_labels.py.
-fetch_uniprot_entry makes network calls and is not tested here.
+Tests for enzyme annotation parsing, classification, and fetch failure handling.
 """
 
+import json
+
 import pytest
+from esm2_mech.fetch_data import fetch_annotations
 from esm2_mech.fetch_data.fetch_annotations import (
     parse_ec_and_keywords,
     assign_4class,
 )
+from esm2_mech.fetch_data.uniprot_fetch import TransientFetchError
 
 # ---------------------------------------------------------------------------
 # parse_ec_and_keywords
@@ -165,3 +168,29 @@ class TestAssign4Class:
     def test_ec_27_not_kinase_without_27_prefix(self):
         # EC 2.6 is a transferase but not a kinase
         assert assign_4class(["2.6.1.1"], []) is None
+
+
+def test_transient_fetch_failure_does_not_replace_enzyme_labels(tmp_path, monkeypatch):
+    variants_path = tmp_path / "variants.json"
+    genes_path = tmp_path / "gene_list.tsv"
+    output_path = tmp_path / "enzyme_labels.tsv"
+    cache_dir = tmp_path / "enzyme_cache"
+    variants_path.write_text(json.dumps([{"gene": "GENE1", "uniprot_id": "P00001"}]))
+    genes_path.write_text("gene\nGENE1\n")
+    output_path.write_text("existing artifact\n")
+
+    monkeypatch.setattr(fetch_annotations, "MERGED_VARIANTS", variants_path)
+    monkeypatch.setattr(fetch_annotations, "MERGED_GENE_LIST", genes_path)
+    monkeypatch.setattr(fetch_annotations, "ENZYME_OUT", output_path)
+    monkeypatch.setattr(fetch_annotations, "ENZYME_CACHE_DIR", cache_dir)
+    monkeypatch.setattr(fetch_annotations.time, "sleep", lambda _: None)
+
+    def fail_fetch(_accession):
+        raise TransientFetchError("temporary failure")
+
+    monkeypatch.setattr(fetch_annotations, "_fetch_uniprot_entry", fail_fetch)
+
+    with pytest.raises(RuntimeError, match="was not written"):
+        fetch_annotations.main_enzyme()
+
+    assert output_path.read_text() == "existing artifact\n"

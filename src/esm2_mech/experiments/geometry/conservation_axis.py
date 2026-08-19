@@ -6,6 +6,8 @@ Phase 2 (CPU): compare conservation features to a family-held-out pathogenicity 
 """
 
 import argparse
+import hashlib
+import inspect
 import json
 import numpy as np
 import functools
@@ -70,13 +72,11 @@ CLAIM_2E_DELTA_ADD_MIN = 0.02
 
 PATHOGENIC = 1
 LOGREG_MAX_ITER = 2000
-CONSERVATION_CACHE_VERSION = 3
+CONSERVATION_CACHE_VERSION = 4
 
 
 def _sequence_fingerprint(variants, seqs):
     """Hash every sequence entry used by the ordered canonical variant set."""
-    import hashlib
-
     digest = hashlib.sha256()
     for uniprot_id in sorted({variant["uniprot_id"] for variant in variants}):
         sequence = seqs.get(uniprot_id)
@@ -86,15 +86,25 @@ def _sequence_fingerprint(variants, seqs):
     return digest.hexdigest()
 
 
+def _windowing_fingerprint():
+    """Hash the windowing implementation and its bound configuration."""
+    payload = {
+        "source": inspect.getsource(window_sequence),
+        "defaults": window_sequence.__defaults__,
+        "keyword_defaults": window_sequence.__kwdefaults__,
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(encoded.encode()).hexdigest()
+
+
 def conservation_cache_identity(variants, seqs):
     """Describe all mutable inputs that determine the conservation array."""
-    import hashlib
-
     identity = {
         "version": CONSERVATION_CACHE_VERSION,
         "n": len(variants),
         "variant_fingerprint": variants_fingerprint(variants),
         "sequence_fingerprint": _sequence_fingerprint(variants, seqs),
+        "windowing_fingerprint": _windowing_fingerprint(),
         "model": ESM2_MODEL_650M,
         "aa_order": AA_ORDER,
         "features": ["logP_wt", "logP_mut", "entropy"],

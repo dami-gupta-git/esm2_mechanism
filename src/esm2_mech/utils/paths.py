@@ -101,6 +101,12 @@ SINGLE_SOURCE_NAIVE_BASELINE_JSON = SINGLE_SOURCE_DIR / "naive_baseline.json"
 WT_IDENTITY_SENSITIVITY_DIR = RESULTS_DIR / "wt_identity_short_proteins"
 WT_IDENTITY_SENSITIVITY_AGGREGATE_JSON = WT_IDENTITY_SENSITIVITY_DIR / "aggregate.json"
 
+# ── WT window-average sensitivity (same rows, variant-independent WT) ────
+WT_WINDOW_AVERAGE_DIR = RESULTS_DIR / "wt_identity_window_average"
+WT_WINDOW_AVERAGE_ORIGINAL_DIR = WT_WINDOW_AVERAGE_DIR / "variant_centered"
+WT_WINDOW_AVERAGE_CANONICAL_DIR = WT_WINDOW_AVERAGE_DIR / "protein_window_average"
+WT_WINDOW_AVERAGE_AGGREGATE_JSON = WT_WINDOW_AVERAGE_DIR / "aggregate.json"
+
 # ── Geometry experiments (magnitude/direction, result_23) ────────────────────
 GEOMETRY_RESULTS_DIR = RESULTS_DIR / "magnitude_direction"
 MAGNITUDE_DIRECTION_JSON = GEOMETRY_RESULTS_DIR / "probe_results.json"

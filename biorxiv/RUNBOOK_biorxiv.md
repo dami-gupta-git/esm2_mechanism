@@ -437,15 +437,16 @@ count (`-1`) can exhaust RAM. Start at `--n_jobs 4`, watch peak RAM, and raise o
 ### Nonlinear probe (GPU)
 
 Repeats step 7.2's three-way split comparison with a small neural network (MLP), plus
-exploratory tree-based models, to check whether a
+an exploratory random forest, to check whether a
 nonlinear model finds more signal than the linear probe, and whether any such gain survives the
-family-split. Only the Ridge and MLP results are pre-registered; the random forest and
-gradient-boosted-tree numbers are exploratory. The default command runs the MLP, random forest, and
-scikit-learn gradient boosting. The separate `--xgboost` command runs only XGBoost and needs a GPU.
+family-split. Only the Ridge and MLP results are pre-registered; the random forest and XGBoost
+numbers are exploratory. The default command runs the MLP and random forest. The random forest uses
+cuML on a GPU when available and otherwise uses scikit-learn on the CPU. The separate `--xgboost`
+command runs only XGBoost and needs a GPU.
 
 | Step | Command | Description | Inputs | Outputs |
 |---|---|---|---|---|
-| 7.3 | `python -m esm2_mech.experiments.stability.megascale_mlp` | 🔴 GPU for MLP when CUDA is available; tree probes are CPU. Run MLP, random forest, and scikit-learn gradient boosting on the three splits | `megascale_tsuboyama_variants.json`, `megascale_domain_families.json`, `data/embeddings/esm2_t33_650M_UR50D/megascale_{wt,mut}_mean.npy` | `results/<run>/megascale_stability/mlp_summary.json` |
+| 7.3 | `python -m esm2_mech.experiments.stability.megascale_mlp` | 🔴 GPU when available. Run the MLP and exploratory random forest on the three splits; the random forest falls back to scikit-learn on the CPU when cuML is unavailable | `megascale_tsuboyama_variants.json`, `megascale_domain_families.json`, `data/embeddings/esm2_t33_650M_UR50D/megascale_{wt,mut}_mean.npy` | `results/<run>/megascale_stability/mlp_summary.json` |
 | 7.4 | `python -m esm2_mech.experiments.stability.megascale_mlp --xgboost` | 🔴 GPU. Run the exploratory XGBoost probe on the three splits | Same as step 7.3 | `results/<run>/megascale_stability/mlp_summary_xgb.json` |
 
 ### Controls (CPU)

@@ -358,17 +358,22 @@ def main(
                 print(f"  {split_name:8s}: no valid folds across {N_SEEDS} seeds — skipped")
                 continue
             summary[key] = {
-                "spearman_mean": rho_mean,
-                "spearman_std": rho_std,
-                "auroc_mean": au_mean,
-                "auroc_std": au_std,
-                "n_seeds": n_seeds_used,
+                "across_seed": {
+                    "spearman_mean": rho_mean,
+                    "spearman_std": rho_std,
+                    "auroc_mean": au_mean,
+                    "auroc_std": au_std,
+                    "n_seeds": n_seeds_used,
+                },
             }
             if seed0_ci is not None:
-                summary[key]["ci"] = seed0_ci
+                summary[key]["seed0_inference"] = {
+                    "point_estimate": seed0_ci.get("point"),
+                    "ci": seed0_ci,
+                }
             print(
-                f"  {split_name:8s}: ρ={summary[key]['spearman_mean']:.3f}±{summary[key]['spearman_std']:.3f}  "
-                f"AUROC={summary[key]['auroc_mean']:.3f}±{summary[key]['auroc_std']:.3f}"
+                f"  {split_name:8s}: ρ={rho_mean:.3f}±{rho_std:.3f}  "
+                f"AUROC={au_mean:.3f}±{au_std:.3f}"
             )
 
     # Final comparison table
@@ -379,10 +384,18 @@ def main(
     )
     for probe_name, _ in probe_runners:
         probe = probe_name
-        rnd = summary.get(f"{probe}_random", {}).get("spearman_mean", float("nan"))
-        dom = summary.get(f"{probe}_domain", {}).get("spearman_mean", float("nan"))
-        fam = summary.get(f"{probe}_family", {}).get("spearman_mean", float("nan"))
-        fau = summary.get(f"{probe}_family", {}).get("auroc_mean", float("nan"))
+        rnd = summary.get(f"{probe}_random", {}).get("across_seed", {}).get(
+            "spearman_mean", float("nan")
+        )
+        dom = summary.get(f"{probe}_domain", {}).get("across_seed", {}).get(
+            "spearman_mean", float("nan")
+        )
+        fam = summary.get(f"{probe}_family", {}).get("across_seed", {}).get(
+            "spearman_mean", float("nan")
+        )
+        fau = summary.get(f"{probe}_family", {}).get("across_seed", {}).get(
+            "auroc_mean", float("nan")
+        )
         print(
             f"  {probe.upper():6s}  {rnd:>9.3f}  {dom:>9.3f}  {fam:>9.3f}  "
             f"{rnd-fam:>10.3f}  {fau:>13.3f}"
@@ -392,7 +405,7 @@ def main(
     # Separate output file for the xgboost variant so it never overwrites the
     # default sklearn comparison (mlp_summary.json).
     out_name = "mlp_summary_xgb.json" if use_xgboost else "mlp_summary.json"
-    summary["result_version"] = 2
+    summary["result_version"] = 3
     write_result_json(os.path.join(OUT, out_name), summary, seeds=list(range(N_SEEDS)))
     print(f"\nResults written to {os.path.join(OUT, out_name)}")
 

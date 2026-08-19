@@ -666,6 +666,79 @@ def paired_cluster_bootstrap_diff(
     )
 
 
+def paired_cluster_bootstrap_diff_shared_clusters(
+    clusters_a: np.ndarray,
+    clusters_b: np.ndarray,
+    metric_fn_a: Callable[[np.ndarray], float | None],
+    metric_fn_b: Callable[[np.ndarray], float | None],
+    n_resamples: int = BOOTSTRAP_N_RESAMPLES,
+    ci_level: float = BOOTSTRAP_CI_LEVEL,
+    min_valid_frac: float = BOOTSTRAP_MIN_VALID_FRAC,
+    seed: int = 0,
+) -> dict:
+    """Paired CI for two row spaces sharing a cluster population.
+
+    The point estimates and every resample are restricted to clusters present in
+    both arms. One draw of those shared cluster identifiers selects each arm's own
+    rows, preserving pairing without requiring the two tasks to have aligned rows.
+    """
+    unique_a, cluster_rows_a = _cluster_to_rows(np.asarray(clusters_a))
+    unique_b, cluster_rows_b = _cluster_to_rows(np.asarray(clusters_b))
+    rows_by_cluster_a = dict(zip(unique_a.tolist(), cluster_rows_a))
+    rows_by_cluster_b = dict(zip(unique_b.tolist(), cluster_rows_b))
+    shared_clusters = [
+        cluster for cluster in unique_a.tolist() if cluster in rows_by_cluster_b
+    ]
+    if not shared_clusters:
+        raise ValueError("paired cluster bootstrap has no clusters shared by both arms")
+
+    shared_rows_a = [rows_by_cluster_a[cluster] for cluster in shared_clusters]
+    shared_rows_b = [rows_by_cluster_b[cluster] for cluster in shared_clusters]
+    all_rows_a = np.concatenate(shared_rows_a)
+    all_rows_b = np.concatenate(shared_rows_b)
+    point_a = _clean_scalar(metric_fn_a(all_rows_a))
+    point_b = _clean_scalar(metric_fn_b(all_rows_b))
+    point_diff = point_a - point_b if point_a is not None and point_b is not None else None
+
+    seed_sequences = np.random.SeedSequence(seed).spawn(n_resamples)
+    differences = []
+    for seed_sequence in seed_sequences:
+        rng = np.random.RandomState(int(seed_sequence.generate_state(1)[0]))
+        drawn = rng.randint(0, len(shared_clusters), size=len(shared_clusters))
+        rows_a = np.concatenate([shared_rows_a[index] for index in drawn])
+        rows_b = np.concatenate([shared_rows_b[index] for index in drawn])
+        value_a = _clean_scalar(metric_fn_a(rows_a))
+        value_b = _clean_scalar(metric_fn_b(rows_b))
+        if value_a is not None and value_b is not None:
+            differences.append(value_a - value_b)
+
+    valid_frac = len(differences) / n_resamples if n_resamples else 0.0
+    result = {
+        "point_a": point_a,
+        "point_b": point_b,
+        "point_diff": point_diff,
+        "n_resamples": len(differences),
+        "n_resamples_total": int(n_resamples),
+        "n_discarded": int(n_resamples) - len(differences),
+        "discard_frac": float(1.0 - valid_frac),
+        "valid_frac": float(valid_frac),
+        "n_clusters_a_total": len(unique_a),
+        "n_clusters_b_total": len(unique_b),
+        "n_clusters_shared": len(shared_clusters),
+        "n_rows_a_shared": len(all_rows_a),
+        "n_rows_b_shared": len(all_rows_b),
+    }
+    if not differences or valid_frac < min_valid_frac:
+        return {**result, "ci_low": None, "ci_high": None, "ci_suppressed": True}
+    tail = (1.0 - ci_level) / 2.0 * 100.0
+    return {
+        **result,
+        "ci_low": float(np.percentile(differences, tail)),
+        "ci_high": float(np.percentile(differences, 100.0 - tail)),
+        "ci_suppressed": False,
+    }
+
+
 def independent_cluster_bootstrap_diff(
     clusters_a: np.ndarray,
     clusters_b: np.ndarray,

@@ -394,7 +394,7 @@ def main_enzyme() -> None:
     acc_to_data: dict[str, Optional[dict]] = {}
     fetched = 0
     loaded_from_cache = 0
-    fetch_errors = 0
+    transient_failures: list[str] = []
 
     for i, acc in enumerate(unique_accs):
         cache_file = ENZYME_CACHE_DIR / f"{acc}.json"
@@ -416,24 +416,26 @@ def main_enzyme() -> None:
         try:
             entry = _fetch_uniprot_entry(acc)
         except _TransientFetchError:
-            fetch_errors += 1
+            transient_failures.append(acc)
             time.sleep(0.35)
-            continue  # not cached — will be retried next run
+            continue
         _atomic_write_json(cache_file, entry)
         acc_to_data[acc] = entry
         fetched += 1
         time.sleep(0.35)
 
+    if transient_failures:
+        examples = sorted(transient_failures)[:5]
+        raise RuntimeError(
+            f"UniProt annotation fetch had {len(transient_failures)} transient "
+            f"failure(s); {ENZYME_OUT} was not written. Re-run to retry. "
+            f"Examples: {examples}"
+        )
+
     n_found = sum(1 for v in acc_to_data.values() if v is not None)
     print(
         f"Done: {n_found}/{len(unique_accs)} entries found "
-        f"({fetched} fetched from network, {loaded_from_cache} from cache"
-        + (
-            f", {fetch_errors} transient errors — will retry next run"
-            if fetch_errors
-            else ""
-        )
-        + ")"
+        f"({fetched} fetched from network, {loaded_from_cache} from cache)"
     )
 
     rows = []

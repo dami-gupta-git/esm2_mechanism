@@ -6,6 +6,7 @@ Invariants:
 - A cache with matching row count but no fingerprint is rejected (ValueError),
   not silently loaded — a row-count match alone cannot verify variant ordering.
 - A sequence change invalidates a same-length cache.
+- A windowing implementation change invalidates an otherwise matching cache.
 
 These test the validation logic by calling extract_conservation with mocked
 GPU imports, so the tests run on CPU without the ESM model.
@@ -133,6 +134,24 @@ class TestLegacyCacheRejection:
 
 
 class TestFullCacheProvenance:
+    def test_changed_windowing_rejects_cache(self, tmp_path, monkeypatch):
+        variants = _make_variants(4)
+        seqs = _make_sequences(4)
+        metadata = conservation_axis.conservation_cache_identity(variants, seqs)
+        npy_path, meta_path = _write_cache(tmp_path, 4, metadata=metadata)
+        monkeypatch.setattr(conservation_axis, "CONS_CACHE", npy_path)
+        monkeypatch.setattr(conservation_axis, "CONS_META", meta_path)
+
+        def changed_window_sequence(sequence, aa_pos, window_half=500, max_len=1000):
+            return sequence, aa_pos, 0
+
+        monkeypatch.setattr(
+            conservation_axis, "window_sequence", changed_window_sequence
+        )
+
+        with pytest.raises(ValueError, match="provenance does not match"):
+            conservation_axis.load_validated_conservation_cache(variants, seqs)
+
     def test_changed_sequence_rejects_cache(self, tmp_path, monkeypatch):
         variants = _make_variants(4)
         seqs = _make_sequences(4)

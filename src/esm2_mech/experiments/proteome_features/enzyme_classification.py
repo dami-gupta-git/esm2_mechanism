@@ -39,8 +39,8 @@ from esm2_mech.utils.bootstrap import (
     adjudicate_equivalence,
     adjudicate_level,
     family_or_gene_clusters,
-    independent_cluster_bootstrap_diff,
     oof_permutation_pvalue,
+    paired_cluster_bootstrap_diff_shared_clusters,
     paired_oof_diff,
 )
 from esm2_mech.utils.paths import (
@@ -382,7 +382,7 @@ def run_multiseed(
     oof_fs_f1 = None
     oof_mlp_f1 = None
     paired_mlp_vs_logreg = None
-    independent_logreg_vs_mechanism = None
+    paired_logreg_vs_mechanism = None
 
     def _oof_macro_f1(oof):
         """Seed-0 out-of-fold macro-F1, scored per fold and averaged."""
@@ -449,7 +449,7 @@ def run_multiseed(
                     print(f"    MLP-LogReg diff: {pt:+.3f} [{lo:+.3f}, {hi:+.3f}]")
 
         if mechanism_family_oof is not None:
-            print("\n  Computing independent CI: enzyme LogReg minus mechanism...")
+            print("\n  Computing paired CI: enzyme LogReg minus mechanism...")
             enzyme_pred = np.array([classes[col] for col in seed0_fs_oof["proba"].argmax(axis=1)])
             mechanism_y = np.asarray(mechanism_family_oof["y_true"])
             mechanism_pred = np.asarray(mechanism_family_oof["pred"])
@@ -482,7 +482,7 @@ def run_multiseed(
                     ),
                 )
 
-            independent_logreg_vs_mechanism = independent_cluster_bootstrap_diff(
+            paired_logreg_vs_mechanism = paired_cluster_bootstrap_diff_shared_clusters(
                 enzyme_clusters,
                 mechanism_clusters,
                 _enzyme_f1,
@@ -490,9 +490,9 @@ def run_multiseed(
                 n_resamples=n_boot,
                 seed=0,
             )
-            lo = independent_logreg_vs_mechanism.get("ci_low")
-            hi = independent_logreg_vs_mechanism.get("ci_high")
-            point = independent_logreg_vs_mechanism.get("point_diff")
+            lo = paired_logreg_vs_mechanism.get("ci_low")
+            hi = paired_logreg_vs_mechanism.get("ci_high")
+            point = paired_logreg_vs_mechanism.get("point_diff")
             if lo is not None and hi is not None and point is not None:
                 print(f"    enzyme-mechanism diff: {point:+.3f} [{lo:+.3f}, {hi:+.3f}]")
 
@@ -556,8 +556,8 @@ def run_multiseed(
         result["bootstrap_ci"] = ci_result
     if paired_mlp_vs_logreg is not None:
         result["paired_ci_mlp_minus_logreg"] = paired_mlp_vs_logreg
-    if independent_logreg_vs_mechanism is not None:
-        result["independent_ci_logreg_minus_mechanism"] = independent_logreg_vs_mechanism
+    if paired_logreg_vs_mechanism is not None:
+        result["paired_ci_logreg_minus_mechanism"] = paired_logreg_vs_mechanism
     if permutation_result is not None:
         result["permutation_test"] = permutation_result
 
@@ -666,21 +666,27 @@ def main():
     gs_f1 = emb_results["logreg_gene_split"]["macro_f1_mean"]
     fs_ci = (emb_results.get("bootstrap_ci") or {}).get("macro_f1")
     paired_ci = emb_results.get("paired_ci_mlp_minus_logreg")
-    independent_ci = emb_results.get("independent_ci_logreg_minus_mechanism")
+    paired_mechanism_ci = emb_results.get("paired_ci_logreg_minus_mechanism")
 
     gate_2f = fs_f1 is not None and fs_f1 >= 0.70
-    mechanism_point = independent_ci.get("point_b") if independent_ci is not None else None
+    mechanism_point = (
+        paired_mechanism_ci.get("point_b")
+        if paired_mechanism_ci is not None
+        else None
+    )
     enzyme_mechanism_diff = (
-        independent_ci.get("point_diff") if independent_ci is not None else None
+        paired_mechanism_ci.get("point_diff")
+        if paired_mechanism_ci is not None
+        else None
     )
     gate_2g = None
     gate_2h = mlp_f1 is not None and fs_f1 is not None and abs(mlp_f1 - fs_f1) < 0.05
 
     verdict_2f = adjudicate_level(fs_f1, fs_ci, 0.70)
-    if independent_ci is not None:
+    if paired_mechanism_ci is not None:
         verdict_2g = "not adjudicated (2G has no numeric pre-registered margin)"
     else:
-        verdict_2g = "not adjudicated (independent difference CI unavailable)"
+        verdict_2g = "not adjudicated (paired difference CI unavailable)"
     verdict_2h = adjudicate_equivalence(gate_2h, paired_ci, 0.05)
 
     print(f"\n2F — family-split F1 >= 0.70:  {verdict_2f}  (F1={fs_f1:.3f})")

@@ -448,13 +448,18 @@ def run_stability_projection_3c(
         inferential_point, difference_ci, 0.01
     )
     return {
-        "baseline_f1_mean": baseline_f1_mean,
-        "baseline_f1_std": baseline_f1_std,
-        "projected_f1_mean": projected_f1_mean,
-        "projected_f1_std": projected_f1_std,
-        "delta_f1": projected_f1_mean - baseline_f1_mean,
-        "inferential_point_estimate": inferential_point,
-        "difference_ci": difference_ci,
+        "across_seed": {
+            "baseline_f1_mean": baseline_f1_mean,
+            "baseline_f1_std": baseline_f1_std,
+            "projected_f1_mean": projected_f1_mean,
+            "projected_f1_std": projected_f1_std,
+            "difference_mean": projected_f1_mean - baseline_f1_mean,
+            "n_seeds": n_seeds,
+        },
+        "seed0_inference": {
+            "point_estimate": inferential_point,
+            "difference_ci": difference_ci,
+        },
         "3C_passes": control_3c_verdict == "affirmed",
         "3C_verdict": control_3c_verdict,
     }
@@ -467,9 +472,15 @@ def apply_decision_rule(control_3a_ci, control_3b_gap_ci, control_3c, control_3d
         None if control_3b_gap_ci is None else control_3b_gap_ci.get("point_diff")
     )
     point_3c = (
-        None if control_3c is None else control_3c.get("inferential_point_estimate")
+        None
+        if control_3c is None
+        else control_3c.get("seed0_inference", {}).get("point_estimate")
     )
-    ci_3c = None if control_3c is None else control_3c.get("difference_ci")
+    ci_3c = (
+        None
+        if control_3c is None
+        else control_3c.get("seed0_inference", {}).get("difference_ci")
+    )
     point_3d = None if control_3d_ci is None else control_3d_ci.get("point")
 
     gates = {
@@ -639,16 +650,20 @@ def main(compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES, n_jobs=1):
         rho_mean, rho_std, n_seeds_used = mean_std_n(vals_rho)
         au_mean, au_std, _ = mean_std_n(vals_auroc)
         summary[key] = {
-            "spearman_mean": rho_mean,
-            "spearman_std": rho_std,
-            "auroc_mean": au_mean,
-            "auroc_std": au_std,
-            "n_seeds": n_seeds_used,
+            "across_seed": {
+                "spearman_mean": rho_mean,
+                "spearman_std": rho_std,
+                "auroc_mean": au_mean,
+                "auroc_std": au_std,
+                "n_seeds": n_seeds_used,
+            },
         }
-        # Seed 0's cluster-bootstrap CI carries through to the summary.
         seed0_ci = results_by_seed[0].get(key, {}).get("ci") if results_by_seed else None
         if seed0_ci is not None:
-            summary[key]["ci"] = seed0_ci
+            summary[key]["seed0_inference"] = {
+                "point_estimate": seed0_ci.get("point"),
+                "ci": seed0_ci,
+            }
 
     summary["per_protein"] = {
         "spearman_mean": per_prot_mean,
@@ -663,42 +678,46 @@ def main(compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES, n_jobs=1):
         )
         summary["per_protein"]["spearman_std_ci"] = control_3d_ci
 
-    control_3c_result = None
-    if all(
-        os.path.exists(path)
-        for path in [VALID_VARIANTS_JSON, EMB_WT_MEAN, EMB_MUT_MEAN, PFAM_JSON]
-    ):
-        print("\nRunning 3C stability projection test...")
-        pfam_map = load_pfam_map(PFAM_JSON)
+    required_3c_paths = [VALID_VARIANTS_JSON, EMB_WT_MEAN, EMB_MUT_MEAN, PFAM_JSON]
+    missing_3c_paths = [
+        str(path) for path in required_3c_paths if not os.path.exists(path)
+    ]
+    if missing_3c_paths:
+        raise FileNotFoundError(
+            "registered control 3C requires missing input files: "
+            + ", ".join(missing_3c_paths)
+        )
+    print("\nRunning 3C stability projection test...")
+    pfam_map = load_pfam_map(PFAM_JSON)
 
-        merged_delta, merged_labels, merged_proteins = load_merged()
+    merged_delta, merged_labels, merged_proteins = load_merged()
 
-        control_3c_result = run_stability_projection_3c(
-            merged_delta,
-            merged_labels,
-            merged_proteins,
-            pfam_map,
-            variants,
-            delta_mean,
-            ddg,
-            n_folds=N_FOLDS,
-            n_seeds=N_SEEDS,
-            n_boot=n_boot,
-            n_jobs=n_jobs,
-            compute_ci=compute_ci,
-        )
-        print(
-            f"  3C: baseline F1={control_3c_result['baseline_f1_mean']:.3f}  "
-            f"projected F1={control_3c_result['projected_f1_mean']:.3f}  "
-            f"Δ={control_3c_result['delta_f1']:+.3f}  "
-            f"verdict={control_3c_result['3C_verdict']}"
-        )
-        write_result_json(
-            os.path.join(OUT, "stability_projection_3c.json"), control_3c_result,
-            seeds=list(range(N_SEEDS)),
-        )
-    else:
-        print("\nSkipping 3C (merged embeddings not found — run on pod with full data)")
+    control_3c_result = run_stability_projection_3c(
+        merged_delta,
+        merged_labels,
+        merged_proteins,
+        pfam_map,
+        variants,
+        delta_mean,
+        ddg,
+        n_folds=N_FOLDS,
+        n_seeds=N_SEEDS,
+        n_boot=n_boot,
+        n_jobs=n_jobs,
+        compute_ci=compute_ci,
+    )
+    descriptive_3c = control_3c_result["across_seed"]
+    print(
+        f"  3C: baseline F1={descriptive_3c['baseline_f1_mean']:.3f}  "
+        f"projected F1={descriptive_3c['projected_f1_mean']:.3f}  "
+        f"Δ={descriptive_3c['difference_mean']:+.3f}  "
+        f"verdict={control_3c_result['3C_verdict']}"
+    )
+    write_result_json(
+        os.path.join(OUT, "stability_projection_3c.json"),
+        control_3c_result,
+        seeds=list(range(N_SEEDS)),
+    )
 
     control_3b_gap_ci = None
     oof_random = seed0_oofs.get("delta_mean_random")
@@ -718,10 +737,12 @@ def main(compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES, n_jobs=1):
             f"[{control_3b_gap_ci.get('ci_low', '?')}, {control_3b_gap_ci.get('ci_high', '?')}]"
         )
 
-    dm_random = summary.get("delta_mean_random", {}).get("spearman_mean", float("nan"))
-    dm_family = summary.get("delta_mean_family", {}).get("spearman_mean", float("nan"))
+    dm_random = summary["delta_mean_random"]["across_seed"]["spearman_mean"]
+    dm_family = summary["delta_mean_family"]["across_seed"]["spearman_mean"]
 
-    control_3a_ci = summary.get("delta_mean_random", {}).get("ci")
+    control_3a_ci = summary.get("delta_mean_random", {}).get(
+        "seed0_inference", {}
+    ).get("ci")
     adjudication = apply_decision_rule(
         control_3a_ci,
         control_3b_gap_ci,
@@ -729,7 +750,7 @@ def main(compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES, n_jobs=1):
         control_3d_ci,
     )
     verdict = adjudication["overall"]
-    summary["result_version"] = 2
+    summary["result_version"] = 3
     summary["verdict"] = verdict
     summary["gates"] = adjudication["gates"]
     if control_3b_gap_ci is not None:
@@ -748,7 +769,7 @@ def main(compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES, n_jobs=1):
     print(f"  per-domain ρ std     : {per_prot_std:.3f}  (3D threshold ≤ 0.10)")
     if control_3c_result:
         print(
-            f"  3C Δ mechanism F1    : {control_3c_result['delta_f1']:+.3f}  "
+            f"  3C Δ mechanism F1    : {descriptive_3c['difference_mean']:+.3f}  "
             f"(passes if ≤ +0.01 — stability projection doesn't help mechanism)"
         )
     for gate_name, gate in adjudication["gates"].items():

@@ -19,6 +19,8 @@ Invariants:
 - paired_cluster_bootstrap_diff: no true difference -> CI spans zero
 - paired_cluster_bootstrap_diff: an arm undefined on a resample drops that
   replicate; too many undefined -> ci_suppressed
+- paired_cluster_bootstrap_diff_shared_clusters: one shared cluster draw selects
+  each task's own rows when the row spaces differ
 - paired_cluster_bootstrap_diff_cross_partition: resamples the given (coarser)
   unit, not the two arms' own fold structure
 - paired_cluster_bootstrap_diff_cross_partition: still shares one resample across
@@ -68,6 +70,7 @@ from esm2_mech.utils.bootstrap import (
     macro_ovr_auroc,
     oof_permutation_pvalue,
     paired_cluster_bootstrap_diff,
+    paired_cluster_bootstrap_diff_shared_clusters,
     paired_cluster_bootstrap_diff_cross_partition,
     paired_oof_diff,
     stack_oof_over_seeds,
@@ -1855,6 +1858,43 @@ class TestIndependentClusterBootstrapDiff:
             **kwargs,
         )
         assert first == second
+
+
+class TestPairedClusterBootstrapDiffSharedClusters:
+    def test_pairs_shared_clusters_across_different_row_spaces(self):
+        clusters_a = np.array(["F1", "F2", "F2", "F3", "F3"])
+        clusters_b = np.array(["F2", "F3", "F4"])
+        family_value = {"F1": 1.0, "F2": 2.0, "F3": 3.0, "F4": 4.0}
+        values_a = np.array([family_value[family] + 1.0 for family in clusters_a])
+        values_b = np.array([family_value[family] for family in clusters_b])
+
+        out = paired_cluster_bootstrap_diff_shared_clusters(
+            clusters_a,
+            clusters_b,
+            lambda rows: float(values_a[rows].mean()),
+            lambda rows: float(values_b[rows].mean()),
+            n_resamples=100,
+            seed=7,
+        )
+
+        assert out["n_clusters_a_total"] == 3
+        assert out["n_clusters_b_total"] == 3
+        assert out["n_clusters_shared"] == 2
+        assert out["n_rows_a_shared"] == 4
+        assert out["n_rows_b_shared"] == 2
+        assert out["point_diff"] == pytest.approx(1.0)
+        assert out["ci_low"] == pytest.approx(1.0)
+        assert out["ci_high"] == pytest.approx(1.0)
+
+    def test_rejects_disjoint_cluster_populations(self):
+        with pytest.raises(ValueError, match="no clusters shared"):
+            paired_cluster_bootstrap_diff_shared_clusters(
+                np.array(["F1"]),
+                np.array(["F2"]),
+                lambda rows: 1.0,
+                lambda rows: 0.0,
+                n_resamples=10,
+            )
 
 
 # ---------------------------------------------------------------------------
