@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import argparse
 import functools
+import hashlib
 import json
 from collections import Counter
 from pathlib import Path
@@ -27,8 +28,10 @@ from esm2_mech.utils.metrics import fold_macro_f1, majority_baseline_f1
 from esm2_mech.utils.splits import gene_split_cv, family_split_cv
 from esm2_mech.utils.data import (
     build_gene_to_row,
+    embedding_fingerprint,
     load_pfam_map,
     observed_rows_mask,
+    pfam_fingerprint,
     validate_embedding_variant_identity,
 )
 from esm2_mech.utils.io import write_result_json
@@ -63,6 +66,14 @@ from esm2_mech.utils.paths import (
 print = functools.partial(print, flush=True)
 
 ENZYME_CLASSES = ["kinase", "protease", "oxidoreductase", "non-enzyme"]
+
+
+def _canonical_fingerprint(value) -> str:
+    """Hash a JSON-compatible scientific input with deterministic ordering."""
+    content = json.dumps(
+        value, sort_keys=True, separators=(",", ":"), allow_nan=False
+    )
+    return hashlib.sha256(content.encode()).hexdigest()
 
 
 def _load_mechanism_reference_f1() -> float | None:
@@ -145,6 +156,69 @@ def _load_mechanism_family_oof() -> dict | None:
     if len(set(int(row) for row in oof["row_ids"])) != lengths["row_ids"]:
         raise ValueError(f"{cache_path} has duplicate mechanism OOF row ids")
     return oof
+
+
+def _mechanism_reference_fingerprints() -> dict:
+    """Fingerprint the validated mechanism result and OOF values used by 2G."""
+    aggregate_path = MECHANISM_AGGREGATE_JSON
+    result_path = RESULTS_DIR / seed_result_filename(0)
+    cache_path = RESULTS_DIR / mechanism_oof_cache_filename(0)
+    missing = [
+        str(path)
+        for path in (aggregate_path, result_path, cache_path)
+        if not path.exists()
+    ]
+    if missing:
+        raise FileNotFoundError(
+            "enzyme claim 2G requires missing mechanism reference files: "
+            + ", ".join(missing)
+        )
+    with open(aggregate_path) as handle:
+        aggregate = json.load(handle)
+    with open(result_path) as handle:
+        result = json.load(handle)
+    with open(cache_path) as handle:
+        cache = json.load(handle)
+    for key in ("input_fingerprints", "analysis_parameters"):
+        if result.get(key) is None or aggregate.get(key) != result.get(key):
+            raise ValueError(
+                f"{aggregate_path}: {key} does not match {result_path}"
+            )
+    expected_cache = {
+        "cache_schema_version": MECHANISM_OOF_CACHE_SCHEMA_VERSION,
+        "seed": 0,
+        "analysis_run_id": result.get("analysis_run_id"),
+        "input_fingerprints": result.get("input_fingerprints"),
+        "analysis_parameters": result.get("analysis_parameters"),
+    }
+    for key, expected_value in expected_cache.items():
+        if expected_value is None or cache.get(key) != expected_value:
+            raise ValueError(
+                f"{cache_path}: cache {key} does not match {result_path}"
+            )
+    reference = {
+        "analysis_run_id": result.get("analysis_run_id"),
+        "input_fingerprints": result.get("input_fingerprints"),
+        "analysis_parameters": result.get("analysis_parameters"),
+        "aggregate_family_delta_mean": aggregate.get("across_seed", {})
+        .get("family_split", {})
+        .get("delta_mean"),
+        "seed0_family_delta_mean_oof": cache.get("features", {})
+        .get("delta_mean", {})
+        .get("family_split"),
+    }
+    missing_values = [key for key, value in reference.items() if value is None]
+    if missing_values:
+        raise ValueError(
+            "mechanism reference lacks required scientific values "
+            f"{missing_values}"
+        )
+    return {
+        "content": _canonical_fingerprint(reference),
+        "analysis_run_id": reference["analysis_run_id"],
+        "input_fingerprints": reference["input_fingerprints"],
+        "analysis_parameters": reference["analysis_parameters"],
+    }
 
 
 def load_gene_embeddings() -> tuple:
@@ -236,7 +310,54 @@ def load_proteome_features() -> tuple:
             f"{GENE_UNIVERSE} lists {len(genes)} genes — not row-aligned."
         )
     print(f"Proteome features: {X.shape}, {len(genes)} genes")
-    return X, genes
+    return X, genes, cols
+
+
+def enzyme_input_fingerprints(
+    X_emb,
+    genes,
+    uniprot_ids,
+    labels,
+    pfam_map,
+    X_proteome,
+    proteome_genes,
+    proteome_labels,
+    proteome_columns,
+    mechanism_reference,
+) -> dict:
+    """Fingerprint every scientific input used by the enzyme controls."""
+    lengths = {
+        "embedding rows": len(X_emb),
+        "genes": len(genes),
+        "UniProt ids": len(uniprot_ids),
+        "labels": len(labels),
+    }
+    if len(set(lengths.values())) != 1:
+        raise ValueError(f"enzyme embedding inputs are misaligned: {lengths}")
+    proteome_lengths = {
+        "feature rows": len(X_proteome),
+        "genes": len(proteome_genes),
+        "labels": len(proteome_labels),
+    }
+    if len(set(proteome_lengths.values())) != 1:
+        raise ValueError(f"enzyme proteome inputs are misaligned: {proteome_lengths}")
+    labeled_genes = [
+        [gene, uniprot_id, str(label)]
+        for gene, uniprot_id, label in zip(genes, uniprot_ids, labels)
+    ]
+    proteome_cohort = [
+        [gene, str(label)]
+        for gene, label in zip(proteome_genes, proteome_labels)
+    ]
+    return {
+        "enzyme_labeled_genes": _canonical_fingerprint(labeled_genes),
+        "wt_embedding_content": embedding_fingerprint(X_emb),
+        "pfam_assignments": pfam_fingerprint(pfam_map, genes),
+        "proteome_labeled_genes": _canonical_fingerprint(proteome_cohort),
+        "proteome_feature_content": embedding_fingerprint(X_proteome),
+        "proteome_feature_columns": _canonical_fingerprint(proteome_columns),
+        "mechanism_reference": mechanism_reference,
+    }
 
 
 def run_multiseed(
@@ -592,7 +713,7 @@ def main():
     mechanism_ref_f1 = _load_mechanism_reference_f1()
     mechanism_family_oof = _load_mechanism_family_oof()
 
-    X_emb, gene_list, _ = load_gene_embeddings()
+    X_emb, gene_list, gene_uniprot_ids = load_gene_embeddings()
     enzyme_labels = load_enzyme_labels()
     pfam_map = load_pfam_map(PFAM_JSON)
 
@@ -605,6 +726,7 @@ def main():
 
     labeled_mask = np.array([g in enzyme_labels for g in gene_list])
     X_emb = X_emb[labeled_mask]
+    gene_uniprot_ids = list(np.asarray(gene_uniprot_ids)[labeled_mask])
     gene_list = [g for g in gene_list if g in enzyme_labels]
 
     y_str = [enzyme_labels[g] for g in gene_list]
@@ -631,7 +753,7 @@ def main():
     print("PART 2: Proteome features (37-dim) — baseline comparison")
     print("=" * 60)
 
-    X_prot, prot_genes = load_proteome_features()
+    X_prot, prot_genes, proteome_columns = load_proteome_features()
     prot_gene_to_idx = {g: i for i, g in enumerate(prot_genes)}
 
     gene_to_emb_idx = {g: i for i, g in enumerate(gene_list)}
@@ -657,6 +779,19 @@ def main():
         compute_ci=compute_ci,
         n_boot=args.n_boot,
         n_permutations=args.n_permutations,
+    )
+
+    input_fingerprints = enzyme_input_fingerprints(
+        X_emb=X_emb,
+        genes=gene_list,
+        uniprot_ids=gene_uniprot_ids,
+        labels=y,
+        pfam_map=pfam_map,
+        X_proteome=X_prot_aligned,
+        proteome_genes=prot_aligned_genes,
+        proteome_labels=prot_aligned_y,
+        proteome_columns=proteome_columns,
+        mechanism_reference=_mechanism_reference_fingerprints(),
     )
 
     print("\n" + "=" * 60)
@@ -727,6 +862,14 @@ def main():
         "n_genes": len(gene_list),
         "class_distribution": dict(Counter(y_str)),
         "classes": list(le.classes_),
+        "input_fingerprints": input_fingerprints,
+        "analysis_parameters": {
+            "seeds": seeds,
+            "n_folds": args.n_folds,
+            "compute_ci": compute_ci,
+            "n_boot": args.n_boot if compute_ci else None,
+            "n_permutations": args.n_permutations,
+        },
         "esm2_wt_embedding": emb_results,
         "proteome_features": proteome_results,
         "gate_evaluation": {

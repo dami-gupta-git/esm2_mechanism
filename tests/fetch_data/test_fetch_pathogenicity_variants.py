@@ -182,7 +182,7 @@ class TestProteinSubstitutionDeduplication:
         assert accounting["n_duplicate_substitution_keys"] == 1
         assert accounting["n_duplicate_rows_removed"] == 1
 
-    def test_conflicting_labels_abort(self):
+    def test_conflicting_labels_drop_the_substitution(self):
         variants = [
             {
                 "gene": "BRAF",
@@ -195,8 +195,12 @@ class TestProteinSubstitutionDeduplication:
             for index, label in enumerate(("pathogenic", "benign"))
         ]
 
-        with pytest.raises(RuntimeError, match="conflicting labels"):
-            _deduplicate_protein_substitutions(variants)
+        deduplicated, accounting = _deduplicate_protein_substitutions(variants)
+
+        assert deduplicated == []
+        assert accounting["n_duplicate_substitution_keys"] == 1
+        assert accounting["n_duplicate_rows_removed"] == 1
+        assert accounting["n_conflicting_substitutions_dropped"] == 1
 
     def test_unknown_label_aborts(self):
         variants = [

@@ -23,6 +23,7 @@ from sklearn.preprocessing import LabelEncoder
 from esm2_mech.experiments.proteome_features import enzyme_classification
 from esm2_mech.experiments.proteome_features.enzyme_classification import (
     ENZYME_CLASSES,
+    enzyme_input_fingerprints,
     run_multiseed,
 )
 from esm2_mech.utils.constants import MECHANISM_OOF_CACHE_SCHEMA_VERSION
@@ -98,6 +99,74 @@ def test_enzyme_reader_rejects_cache_from_another_execution(tmp_path, monkeypatc
 
     with pytest.raises(ValueError, match="analysis_run_id"):
         enzyme_classification._load_mechanism_family_oof()
+
+
+def _fingerprint_inputs():
+    return {
+        "X_emb": np.arange(12, dtype=np.float32).reshape(3, 4),
+        "genes": ["G1", "G2", "G3"],
+        "uniprot_ids": ["P1", "P2", "P3"],
+        "labels": np.array(["kinase", "protease", "non-enzyme"]),
+        "pfam_map": {"G1": "PF1", "G2": "PF2", "G3": None},
+        "X_proteome": np.arange(6, dtype=np.float32).reshape(3, 2),
+        "proteome_genes": ["G1", "G2", "G3"],
+        "proteome_labels": np.array(["kinase", "protease", "non-enzyme"]),
+        "proteome_columns": ["feature_a", "feature_b"],
+        "mechanism_reference": {
+            "content": "mechanism-content-1",
+            "analysis_run_id": "run-1",
+            "input_fingerprints": {"labeled_variants": "variants-1"},
+            "analysis_parameters": {"n_folds": 5},
+        },
+    }
+
+
+def test_enzyme_input_fingerprints_cover_every_scientific_input():
+    inputs = _fingerprint_inputs()
+    baseline = enzyme_input_fingerprints(**inputs)
+
+    changed_labels = _fingerprint_inputs()
+    changed_labels["labels"][0] = "oxidoreductase"
+    assert enzyme_input_fingerprints(**changed_labels)["enzyme_labeled_genes"] != baseline[
+        "enzyme_labeled_genes"
+    ]
+
+    changed_embedding = _fingerprint_inputs()
+    changed_embedding["X_emb"][0, 0] += 1
+    assert enzyme_input_fingerprints(**changed_embedding)["wt_embedding_content"] != baseline[
+        "wt_embedding_content"
+    ]
+
+    changed_pfam = _fingerprint_inputs()
+    changed_pfam["pfam_map"]["G1"] = "PF9"
+    assert enzyme_input_fingerprints(**changed_pfam)["pfam_assignments"] != baseline[
+        "pfam_assignments"
+    ]
+
+    changed_proteome = _fingerprint_inputs()
+    changed_proteome["X_proteome"][0, 0] += 1
+    assert enzyme_input_fingerprints(**changed_proteome)[
+        "proteome_feature_content"
+    ] != baseline["proteome_feature_content"]
+
+    changed_columns = _fingerprint_inputs()
+    changed_columns["proteome_columns"][0] = "different_feature"
+    assert enzyme_input_fingerprints(**changed_columns)[
+        "proteome_feature_columns"
+    ] != baseline["proteome_feature_columns"]
+
+    changed_mechanism = _fingerprint_inputs()
+    changed_mechanism["mechanism_reference"]["content"] = "mechanism-content-2"
+    assert enzyme_input_fingerprints(**changed_mechanism)[
+        "mechanism_reference"
+    ] != baseline["mechanism_reference"]
+
+
+def test_enzyme_input_fingerprints_reject_misaligned_rows():
+    inputs = _fingerprint_inputs()
+    inputs["uniprot_ids"] = ["P1", "P2"]
+    with pytest.raises(ValueError, match="embedding inputs are misaligned"):
+        enzyme_input_fingerprints(**inputs)
 
 
 class TestOofMacroF1Consistency:
