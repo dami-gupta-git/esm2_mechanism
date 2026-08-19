@@ -2,13 +2,9 @@
 Tests for esm2_mech.experiments.mechanism.leakage_fraction.
 
 Invariants for leakage_fraction_per_feature:
-- a seed whose macro_f1_mean is None is filtered out, not crashed on (np.mean
-  over a list containing None would raise / poison the average).
-- leakage_fraction is None ("undefined") when the gene-split score is not
-  meaningfully above chance, and when no seed is scorable.
-- on clean above-chance inputs, leakage_fraction is the across-seed-mean ratio.
-- the basis is macro_f1_mean (the per-fold average) — the same basis every other
-  metric in this run uses. There is no pooled alternative to prefer.
+- OOF caches are mandatory; the function never falls back to scores on different rows.
+- both arms are rescored within folds on their shared rows.
+- leakage_fraction is undefined when the aligned gene score is at the aligned floor.
 
 Invariants for leakage_fraction_ci:
 - computed on the same basis as the headline: every seed the headline averages
@@ -31,58 +27,24 @@ from esm2_mech.experiments.mechanism.leakage_fraction import (
 )
 
 
-def _seed(gene_f1, family_f1, feature="delta_mean"):
-    return {
-        "gene_split": {feature: {"macro_f1_mean": gene_f1}},
-        "family_split": {feature: {"macro_f1_mean": family_f1}},
-    }
-
-
 class TestLeakageFractionPerFeature:
 
-    def test_none_seed_is_filtered_not_crashed(self):
-        # One seed has no scorable gene-split fold (None) — it must be dropped,
-        # and the result computed from the remaining seeds without raising.
-        seeds = [
-            _seed(0.60, 0.40),
-            _seed(None, None),
-            _seed(0.62, 0.42),
-        ]
-        result = leakage_fraction_per_feature(seeds, "delta_mean", chance=0.36)
-        assert result["leakage_fraction"] is not None
-        # gene mean over the two finite seeds = 0.61, family = 0.41
-        assert result["gene_macro_f1_mean"] == pytest.approx(0.61)
-        assert result["family_macro_f1_mean"] == pytest.approx(0.41)
+    def test_missing_cache_is_an_error(self):
+        with pytest.raises(ValueError, match="OOF caches are required"):
+            leakage_fraction_per_feature(
+                "delta_mean", chance=0.30
+            )
 
-    def test_no_scorable_seed_yields_undefined(self):
-        seeds = [_seed(None, None), _seed(None, None)]
-        result = leakage_fraction_per_feature(seeds, "delta_mean", chance=0.36)
-        assert result["leakage_fraction"] is None
-
-    def test_at_chance_yields_undefined(self):
-        # Gene-split barely above chance (< MIN_ABOVE_CHANCE) → LF undefined.
-        chance = 0.36
-        gene = chance + MIN_ABOVE_CHANCE / 2
-        seeds = [_seed(gene, gene)]
-        result = leakage_fraction_per_feature(seeds, "delta_mean", chance=chance)
-        assert result["leakage_fraction"] is None
-
-    def test_above_chance_ratio(self):
-        # gene=0.60, family=0.40, chance=0.30 → (0.60-0.40)/(0.60-0.30) = 0.6667
-        seeds = [_seed(0.60, 0.40)]
-        result = leakage_fraction_per_feature(seeds, "delta_mean", chance=0.30)
-        assert result["leakage_fraction"] == pytest.approx(0.20 / 0.30)
-
-    def test_basis_is_macro_f1_mean_only(self):
-        # A pooled figure present alongside macro_f1_mean must not be picked up —
-        # there is one basis, the fold mean, used everywhere in this run.
-        seeds = [{
-            "gene_split": {"delta_mean": {"macro_f1_mean": 0.50, "macro_f1_pooled": 0.99}},
-            "family_split": {"delta_mean": {"macro_f1_mean": 0.40, "macro_f1_pooled": 0.01}},
-        }]
-        result = leakage_fraction_per_feature(seeds, "delta_mean", chance=0.30)
-        assert result["gene_macro_f1_mean"] == pytest.approx(0.50)
-        assert result["family_macro_f1_mean"] == pytest.approx(0.40)
+    def test_headline_is_rescored_from_aligned_oof_rows(self):
+        entry = TestLeakageFractionCi._make_oof_cache_entry(seed=4)
+        result = leakage_fraction_per_feature(
+            "delta_mean",
+            chance=0.20,
+            oof_cache_entries=[entry],
+        )
+        assert result["gene_macro_f1_mean"] != pytest.approx(0.99)
+        assert result["family_macro_f1_mean"] != pytest.approx(0.01)
+        assert result["chance_macro_f1"] == pytest.approx(0.20)
 
 
 class TestLeakageFractionCi:

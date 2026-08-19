@@ -244,6 +244,18 @@ class TestRunMlpBinaryCv:
 
 class TestRunMlpCv:
 
+    def test_balancing_modes_are_mutually_exclusive(self):
+        X, y, splits, _ = _multiclass_data()
+        with pytest.raises(ValueError, match="cannot combine"):
+            run_mlp_cv(
+                X,
+                y,
+                splits,
+                hidden=(16,),
+                oversample=True,
+                balanced_sample_weight=True,
+            )
+
     def test_returns_macro_f1_mean(self):
         X, y, splits, _ = _multiclass_data()
         r = run_mlp_cv(X, y, splits, hidden=(16,))

@@ -205,10 +205,11 @@ for faster iteration only), `--n_boot N` (number of bootstrap resamples, default
 
 ### Run analysis (CPU)
 
-Steps 4.1–4.4 each read the embeddings and write their own result file, and don't depend on each
+Steps 4.1–4.4 each read the embeddings and write their own result file, and do not depend on each
 other, so they can run in any order or in parallel. Step 4.5 (`leakage_fraction`) does not look at
 the embeddings at all — it just reads the result files the earlier steps already wrote and combines
-their numbers. So it has to run last, after the others have finished.
+their numbers. Run step 4.6 before step 4.5 because step 4.6 regenerates the seed results and their
+bound OOF caches. Step 4.5 is the final Section 4 aggregation.
 
 Each script's confidence-interval computation already uses all available CPU cores (`n_jobs=-1`
 in `utils/bootstrap.py`), so running them in parallel on one machine means they split those
@@ -217,11 +218,11 @@ CPU instance) helps more than trying to parallelize them on a small machine:
 
 | Step | Command | Description | Inputs | Outputs |
 |---|---|---|---|---|
-| 4.1 | `python -m esm2_mech.experiments.mechanism.classify_by_mechanism --seeds 5` | 🟡 CPU — more cores help. Gene-split vs family-split baseline comparison | `variants.json`, `cache/sequences.json`, `pfam_families.json`, `embeddings_*.npy`, `alphamissense_scores_full.json` | `results/<run>/family_split_baselines_seed{0..4}.json` |
+| 4.1 | `python -m esm2_mech.experiments.mechanism.classify_by_mechanism --seeds 5` | 🟡 CPU — more cores help. Gene-split vs family-split baseline comparison | `variants.json`, `cache/sequences.json`, `pfam_families.json`, `embeddings_*.npy`, `alphamissense_scores_full.json` | `results/<run>/family_split_baselines_seed{0..4}.json`, `results/<run>/mechanism_oof_cache_seed{0..4}.json` |
 | 4.2 | `python -m esm2_mech.experiments.mechanism.mlp --seeds 5` | 🟡 CPU — more cores help. Nonlinear classifiers (MLP, GBM, RF, kNN) on delta embeddings | `valid_variants.json`, `pfam_families.json`, `embeddings_*.npy` | `results/<run>/nonlinear_results_seed{0..4}.json` |
 | 4.3 | `python -m esm2_mech.experiments.mechanism.family_clustering --seeds 5` | 🟡 CPU — more cores help. Diagnostic: do ESM-2 embeddings cluster by Pfam family? (kNN purity, within/between distance, family probe, mechanism–family overlap) — explains the homology leakage in the WT-only baseline | `valid_variants.json`, `pfam_families.json`, `embeddings_wt_mean.npy`, `embeddings_mut_mean.npy` | `results/<run>/family_clustering.json` |
 | 4.4 | `python -m esm2_mech.experiments.mechanism.naive_baseline` | 🟢 Light. Measured majority-class / stratified macro-F1 + AUROC floor (DummyClassifier, 5 seeds, same CV) — the chance reference for the other tables | `valid_variants.json`, `pfam_families.json` | `results/<run>/naive_baseline.json` |
-| 4.5 | `python -m esm2_mech.experiments.mechanism.leakage_fraction` | 🟢 Light. Derived diagnostic: leakage fraction per feature = (gene − family macro-F1) / (gene − chance), the share of each feature's above-chance gene-split score attributable to family recognition | `family_split_baselines_seed{0..4}.json`, `naive_baseline.json`, `family_clustering.json` | `results/<run>/leakage_fraction.json` |
+| 4.5 | `python -m esm2_mech.experiments.mechanism.leakage_fraction` | 🟢 Light. Derived diagnostic: leakage fraction per feature = (gene − family macro-F1) / (gene − chance), the share of each feature's above-chance gene-split score attributable to family recognition | `family_split_baselines_seed{0..4}.json`, `mechanism_oof_cache_seed{0..4}.json`, `naive_baseline.json`, `family_clustering.json` | `results/<run>/leakage_fraction.json` |
 
 All outputs write to `results/<run>/`. Each of `classify_by_mechanism`, `single_source_mechanism`,
 and `mechanism_delta_family_split` accepts `--no_ci` (skip the confidence-interval computation, for

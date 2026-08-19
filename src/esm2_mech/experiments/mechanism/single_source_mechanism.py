@@ -37,11 +37,15 @@ from collections import Counter
 import numpy as np
 
 from esm2_mech.experiments.mechanism.classify_by_mechanism import load_data
-from esm2_mech.experiments.mechanism.mechanism_delta_family_split import run as run_family_split
+from esm2_mech.experiments.mechanism.mechanism_delta_family_split import (
+    mechanism_input_fingerprints,
+    run as run_family_split,
+)
 from esm2_mech.experiments.mechanism.naive_baseline import evaluate as eval_naive
 from esm2_mech.utils.constants import (
     BOOTSTRAP_N_RESAMPLES,
     N_SEEDS,
+    MECHANISM_OOF_CACHE_GLOB,
     SEED_RESULT_GLOB,
     SOURCE_GERASIMAVICIUS,
 )
@@ -110,7 +114,9 @@ def main() -> None:
         parser.error("--seeds must be >= 1")
 
     SINGLE_SOURCE_DIR.mkdir(parents=True, exist_ok=True)
-    stale = glob.glob(os.path.join(str(SINGLE_SOURCE_DIR), SEED_RESULT_GLOB))
+    stale = []
+    for output_glob in (SEED_RESULT_GLOB, MECHANISM_OOF_CACHE_GLOB):
+        stale.extend(glob.glob(os.path.join(str(SINGLE_SOURCE_DIR), output_glob)))
     for path in stale:
         os.remove(path)
     if stale:
@@ -128,11 +134,17 @@ def main() -> None:
         raise ValueError(f"Subset has only {int(mask.sum())} variants — too few to run.")
 
     subset = subset_data(data, mask)
+    pfam_map = load_pfam_map(PFAM_JSON)
+    input_fingerprints = mechanism_input_fingerprints(subset, pfam_map)
 
     print("\n=== Subset majority-class floor ===")
     floor = compute_subset_floor(
         subset["labels_3class"], subset["genes_arr"], n_seeds=args.seeds, n_folds=args.n_folds
     )
+    floor["input_fingerprints"] = {
+        "labeled_variants": input_fingerprints["labeled_variants"],
+        "pfam_assignments": input_fingerprints["pfam_assignments"],
+    }
     write_result_json(SINGLE_SOURCE_NAIVE_BASELINE_JSON, floor, seeds=list(range(args.seeds)))
     print(f"Wrote {SINGLE_SOURCE_NAIVE_BASELINE_JSON}")
 
@@ -143,6 +155,7 @@ def main() -> None:
             data=subset, out_dir=str(SINGLE_SOURCE_DIR), seed=seed, n_folds=args.n_folds,
             compute_ci=not args.no_ci, n_boot=args.n_boot,
             n_permutations=args.n_permutations,
+            input_fingerprints=input_fingerprints,
         )
 
     print("\n=== Aggregating across seeds ===")
@@ -156,6 +169,7 @@ def main() -> None:
             "source": SOURCE_GERASIMAVICIUS,
             "n_seeds": len(seed_results),
             "seed_files": [filename for _seed, filename, _result in seed_results],
+            "input_fingerprints": input_fingerprints,
             "subset_floor": floor,
             "across_seed": aggregated,
         },

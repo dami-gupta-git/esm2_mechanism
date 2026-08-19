@@ -26,8 +26,11 @@ from esm2_mech.utils.bootstrap import (
 )
 from esm2_mech.utils.constants import BOOTSTRAP_N_RESAMPLES, N_SEEDS
 from esm2_mech.utils.data import (
+    embedding_fingerprint,
+    labeled_variant_fingerprint,
     load_pfam_map,
     load_variants,
+    pfam_fingerprint,
     validate_embedding_variant_identity,
 )
 from esm2_mech.utils.io import write_result_json
@@ -318,6 +321,10 @@ def main():
 
     emb_wt = np.load(EMB_WT_MEAN)
     emb_mut = np.load(EMB_MUT_MEAN)
+    if emb_wt.shape != emb_mut.shape:
+        raise ValueError(
+            f"WT/mutant embedding shape mismatch: {emb_wt.shape} vs {emb_mut.shape}"
+        )
     emb_delta = emb_mut - emb_wt
     print(f"Variants: {len(valid_variants)}  Embedding dim: {emb_wt.shape[1]}")
     if len(valid_variants) != emb_wt.shape[0]:
@@ -331,6 +338,12 @@ def main():
 
     # Pfam map
     pfam_map = load_pfam_map(PFAM_JSON)
+    input_fingerprints = {
+        "labeled_variants": labeled_variant_fingerprint(valid_variants, labels_arr),
+        "wt_mean_embedding": embedding_fingerprint(emb_wt),
+        "mut_mean_embedding": embedding_fingerprint(emb_mut),
+        "pfam_assignments": pfam_fingerprint(pfam_map, genes_arr.tolist()),
+    }
 
     # Gene-level views (one row per gene). gene_names defines the canonical
     # per-gene ordering used by every per-view embedding below.
@@ -357,6 +370,12 @@ def main():
     print(f"Singleton families: {sum(1 for f, c in fam_counts.items() if c == 1)}")
 
     results = {
+        "input_fingerprints": input_fingerprints,
+        "analysis_parameters": {
+            "n_seeds": args.seeds,
+            "n_bootstrap_resamples": args.n_boot if compute_ci else None,
+            "ci_enabled": compute_ci,
+        },
         "n_variants": len(valid_variants),
         "n_genes": int(len(gene_names)),
         "n_annotated_genes": int(annotated_mask.sum()),

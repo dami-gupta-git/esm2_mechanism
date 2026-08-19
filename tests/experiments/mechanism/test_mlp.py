@@ -50,7 +50,14 @@ def test_run_seed_passes_family_groups_to_family_split_mlp(tmp_path, monkeypatch
         patience=1,
     )
     mlp.run_seed(
-        0, args, labels, genes, delta_mean, delta_pos, {"G1": "PF1"}
+        0,
+        args,
+        labels,
+        genes,
+        delta_mean,
+        delta_pos,
+        {"G1": "PF1"},
+        {"test": "fingerprint"},
     )
 
     assert len(observed_validation_groups) == 4

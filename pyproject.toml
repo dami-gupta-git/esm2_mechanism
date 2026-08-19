@@ -29,7 +29,7 @@ dependencies = [
     "wandb",
     "tqdm",
     "fair-esm",
-    "scikit-learn",
+    "scikit-learn>=1.7",
     "scipy",
     "xgboost",
     "biopython",

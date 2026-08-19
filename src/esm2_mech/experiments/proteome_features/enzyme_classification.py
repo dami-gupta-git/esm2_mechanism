@@ -11,18 +11,23 @@ from collections import Counter
 from pathlib import Path
 
 import numpy as np
-from sklearn.metrics import f1_score
 from sklearn.preprocessing import LabelEncoder
 
 from esm2_mech.utils.constants import (
     BOOTSTRAP_CI_LEVEL,
     BOOTSTRAP_N_RESAMPLES,
     N_SEEDS,
+    MECHANISM_CLASSES,
     mechanism_oof_cache_filename,
 )
 from esm2_mech.utils.metrics import fold_macro_f1, majority_baseline_f1
 from esm2_mech.utils.splits import gene_split_cv, family_split_cv
-from esm2_mech.utils.data import build_gene_to_row, load_pfam_map, observed_rows_mask
+from esm2_mech.utils.data import (
+    build_gene_to_row,
+    load_pfam_map,
+    observed_rows_mask,
+    validate_embedding_variant_identity,
+)
 from esm2_mech.utils.io import write_result_json
 from esm2_mech.utils.probes import run_logreg_cv, run_mlp_cv
 from esm2_mech.utils.bootstrap import (
@@ -38,6 +43,7 @@ from esm2_mech.utils.bootstrap import (
 )
 from esm2_mech.utils.paths import (
     EMB_WT_MEAN,
+    EMB_VALID_VARIANTS_JSON,
     ENZYME_CLASSIFICATION_JSON,
     ENZYME_LABELS_TSV,
     ENZYME_RESULTS_DIR,
@@ -82,7 +88,7 @@ def _load_mechanism_family_oof() -> dict | None:
     with open(path) as handle:
         cache = json.load(handle)
     oof = cache.get("delta_mean", {}).get("family_split")
-    required = {"y_true", "pred", "genes"}
+    required = {"y_true", "pred", "genes", "folds"}
     if oof is None or not required.issubset(oof):
         raise ValueError(f"{path} lacks delta_mean family-split OOF fields {sorted(required)}")
     lengths = {key: len(oof[key]) for key in required}
@@ -96,6 +102,7 @@ def load_gene_embeddings() -> tuple:
     with open(VALID_VARIANTS_JSON) as fh:
         variants = json.load(fh)
 
+    validate_embedding_variant_identity(variants, EMB_VALID_VARIANTS_JSON)
     wt_mean = np.load(EMB_WT_MEAN)
     if len(variants) != wt_mean.shape[0]:
         raise ValueError(
@@ -125,11 +132,45 @@ def load_enzyme_labels() -> dict:
     import csv
 
     labels: dict[str, str] = {}
-    with open(ENZYME_LABELS_TSV) as fh:
+    excluded = 0
+    with open(ENZYME_LABELS_TSV, newline="") as fh:
         reader = csv.DictReader(fh, delimiter="\t")
+        required = {
+            "gene",
+            "enzyme_4class",
+            "uniprot_missing_flag",
+            "enzyme_4class_excluded_flag",
+        }
+        missing_columns = required - set(reader.fieldnames or [])
+        if missing_columns:
+            raise ValueError(
+                f"{ENZYME_LABELS_TSV} lacks columns {sorted(missing_columns)}; "
+                "rerun the enzyme annotation fetch"
+            )
         for row in reader:
-            labels[row["gene"]] = row["enzyme_4class"]
-    print(f"Loaded enzyme labels for {len(labels)} genes")
+            gene = row["gene"]
+            enzyme_class = row["enzyme_4class"]
+            if enzyme_class:
+                if enzyme_class not in ENZYME_CLASSES:
+                    raise ValueError(
+                        f"{ENZYME_LABELS_TSV} has unsupported enzyme class "
+                        f"{enzyme_class!r} for {gene}"
+                    )
+                if gene in labels:
+                    raise ValueError(f"{ENZYME_LABELS_TSV} contains duplicate gene {gene}")
+                labels[gene] = enzyme_class
+                continue
+            if (
+                row["uniprot_missing_flag"] == "1"
+                or row["enzyme_4class_excluded_flag"] == "1"
+            ):
+                excluded += 1
+                continue
+            raise ValueError(
+                f"{ENZYME_LABELS_TSV} has a blank enzyme class for {gene} "
+                "without a missing or exclusion flag"
+            )
+    print(f"Loaded enzyme labels for {len(labels)} genes; excluded {excluded} unlabeled genes")
     return labels
 
 
@@ -250,6 +291,7 @@ def run_multiseed(
             validation_fraction=0.1,
             n_iter_no_change=15,
             oversample=False,
+            balanced_sample_weight=True,
         )
         mlp_f1s.append(mlp["macro_f1_mean"])
         for c in classes:
@@ -363,6 +405,10 @@ def run_multiseed(
             enzyme_pred = np.array([classes[col] for col in seed0_fs_oof["proba"].argmax(axis=1)])
             mechanism_y = np.asarray(mechanism_family_oof["y_true"])
             mechanism_pred = np.asarray(mechanism_family_oof["pred"])
+            enzyme_arms = folds_to_arms(enzyme_pred, seed0_fs_oof["folds"])
+            mechanism_arms = folds_to_arms(
+                mechanism_pred, mechanism_family_oof["folds"]
+            )
             enzyme_clusters = family_or_gene_clusters(
                 seed0_fs_oof["genes"], pfam_map, is_family_split=True
             )
@@ -371,13 +417,21 @@ def run_multiseed(
             )
 
             def _enzyme_f1(rows):
-                return float(f1_score(oof_y_str[rows], enzyme_pred[rows], average="macro", zero_division=0))
+                return score_within_folds(
+                    rows,
+                    enzyme_arms,
+                    lambda block, arm_pred: fold_macro_f1(
+                        oof_y_str, block, arm_pred, classes
+                    ),
+                )
 
             def _mechanism_f1(rows):
-                return float(
-                    f1_score(
-                        mechanism_y[rows], mechanism_pred[rows], average="macro", zero_division=0
-                    )
+                return score_within_folds(
+                    rows,
+                    mechanism_arms,
+                    lambda block, arm_pred: fold_macro_f1(
+                        mechanism_y, block, arm_pred, MECHANISM_CLASSES
+                    ),
                 )
 
             independent_logreg_vs_mechanism = independent_cluster_bootstrap_diff(
@@ -495,7 +549,7 @@ def main():
     missing = [g for g in gene_list if g not in enzyme_labels]
     if missing:
         print(
-            f"  Excluding {len(missing)} genes with no enzyme label: "
+            f"  Excluding {len(missing)} genes outside the four-class cohort: "
             f"{missing[:5]}{'...' if len(missing) > 5 else ''}"
         )
 
@@ -571,12 +625,12 @@ def main():
     enzyme_mechanism_diff = (
         independent_ci.get("point_diff") if independent_ci is not None else None
     )
-    gate_2g = enzyme_mechanism_diff is not None and enzyme_mechanism_diff > 0.10
+    gate_2g = None
     gate_2h = mlp_f1 is not None and fs_f1 is not None and abs(mlp_f1 - fs_f1) < 0.05
 
     verdict_2f = adjudicate_level(fs_f1, fs_ci, 0.70)
     if independent_ci is not None:
-        verdict_2g = adjudicate_level(enzyme_mechanism_diff, independent_ci, 0.10)
+        verdict_2g = "not adjudicated (2G has no numeric pre-registered margin)"
     else:
         verdict_2g = "not adjudicated (independent difference CI unavailable)"
     verdict_2h = adjudicate_equivalence(gate_2h, paired_ci, 0.05)
@@ -584,11 +638,11 @@ def main():
     print(f"\n2F — family-split F1 >= 0.70:  {verdict_2f}  (F1={fs_f1:.3f})")
     if mechanism_point is not None:
         print(
-            f"2G — enzyme >> mechanism floor:  {verdict_2g}  "
+            f"2G — enzyme > mechanism floor:  {verdict_2g}  "
             f"(delta={enzyme_mechanism_diff:+.3f})"
         )
     else:
-        print("2G — enzyme >> mechanism floor:  SKIPPED (mechanism reference unavailable)")
+        print("2G — enzyme > mechanism floor:  SKIPPED (mechanism reference unavailable)")
     if mlp_f1 is not None and fs_f1 is not None:
         print(
             f"2H — MLP approx LogReg family-split:  {verdict_2h}  "
@@ -616,7 +670,7 @@ def main():
         "gate_evaluation": {
             "2F_family_split_f1_ge_0.70": bool(gate_2f),
             "2F_verdict": verdict_2f,
-            "2G_enzyme_beats_mechanism_by_0.10": bool(gate_2g),
+            "2G_enzyme_beats_mechanism": gate_2g,
             "2G_verdict": verdict_2g,
             "2H_mlp_approx_logreg": bool(gate_2h),
             "2H_verdict": verdict_2h,
@@ -626,7 +680,7 @@ def main():
             "mechanism_reference_f1": mechanism_ref_f1,
             "mechanism_seed0_oof_f1": mechanism_point,
             "enzyme_minus_mechanism_f1": enzyme_mechanism_diff,
-            "note": "fs_f1 and mlp_f1 are pooled-OOF macro F1 (matching the bootstrap CI)",
+            "note": "Gate point estimates and bootstrap CIs use fold-aware macro-F1",
         },
     }
 

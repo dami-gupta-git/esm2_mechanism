@@ -23,6 +23,13 @@ N_SEEDS = 5
 # hardcode 5 inline.
 N_FOLDS = 5
 
+# Claim 2B is supported only when the paired split-gap interval excludes zero
+# in at least three of the five preregistered seeds.
+SPLIT_GAP_MIN_SUPPORTING_SEEDS = 3
+
+# Claim 2A's equivalence margin above the measured family-split chance floor.
+MECHANISM_NULL_FLOOR_MARGIN = 0.05
+
 # ── Numerical floors ──────────────────────────────────────────────────────────
 # Divide-by-zero / norm floor for ratios and projections. Single source of truth —
 # never inline 1e-10. (Distinct from STD_EPS below and from the tighter 1e-12 used
@@ -79,13 +86,12 @@ def seed_result_filename(seed: int) -> str:
     return f"{SEED_RESULT_PREFIX}{seed}{SEED_RESULT_EXT}"
 
 
-# Seed-0 gene-split/family-split OOF cache (row_ids, y_true, pred, genes) for the
-# PERMUTATION_FEATURES headline features, written by mechanism_delta_family_split.run
-# alongside its seed-result file (same out_dir) so leakage_fraction.py can bootstrap
-# the leakage-fraction RATIO jointly (shared resample across both arms) instead of
-# combining two separately-computed CIs.
+# Per-seed gene-split/family-split OOF cache for every scored feature. The cache
+# is bound to its exact seed result and lets leakage_fraction.py align both arms
+# to one row space before computing the headline or its interval.
 MECHANISM_OOF_CACHE_PREFIX = "mechanism_oof_cache_seed"
 MECHANISM_OOF_CACHE_EXT = ".json"
+MECHANISM_OOF_CACHE_GLOB = f"{MECHANISM_OOF_CACHE_PREFIX}*{MECHANISM_OOF_CACHE_EXT}"
 
 
 def mechanism_oof_cache_filename(seed: int) -> str:

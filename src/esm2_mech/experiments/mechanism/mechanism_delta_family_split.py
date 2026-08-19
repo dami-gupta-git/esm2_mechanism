@@ -3,13 +3,17 @@
 import argparse
 import json
 import os
+import uuid
 from collections import Counter
 
 import numpy as np
 
 from esm2_mech.utils.data import (
+    embedding_fingerprint,
     embedding_variant_fingerprint,
+    labeled_variant_fingerprint,
     load_pfam_map,
+    pfam_fingerprint,
     validate_embedding_variant_identity,
 )
 from esm2_mech.utils.paths import (
@@ -49,10 +53,36 @@ print = functools.partial(print, flush=True)
 
 
 PERMUTATION_FEATURES = ("delta_mean", "wt_only_mean")
+MECHANISM_OOF_CACHE_SCHEMA_VERSION = 2
 
 # wt_only_mean: refit permutation (macro-F1). delta_mean: OOF permutation (AUROC).
 REFIT_PERMUTATION_FEATURES = ("wt_only_mean",)
 OOF_PERMUTATION_FEATURES = ("delta_mean",)
+
+
+def mechanism_input_fingerprints(data: dict, pfam_map: dict) -> dict:
+    """Fingerprint every scientific input that changes a Section 4 probe."""
+    return {
+        "labeled_variants": labeled_variant_fingerprint(
+            data["valid_variants"], data["labels_3class"]
+        ),
+        "embedding_rows": embedding_variant_fingerprint(data["valid_variants"]),
+        "embedding_content": embedding_fingerprint(
+            data["emb_wt_mean"],
+            data["emb_mut_mean"],
+            data["emb_wt_pos"],
+            data["emb_mut_pos"],
+        ),
+        "wt_mean_embedding": embedding_fingerprint(data["emb_wt_mean"]),
+        "mut_mean_embedding": embedding_fingerprint(data["emb_mut_mean"]),
+        "wt_pos_embedding": embedding_fingerprint(data["emb_wt_pos"]),
+        "mut_pos_embedding": embedding_fingerprint(data["emb_mut_pos"]),
+        "pfam_assignments": pfam_fingerprint(pfam_map, data["genes_arr"].tolist()),
+        "foldx_content": embedding_fingerprint(np.asarray(data["foldx_ddg"])),
+        "alphamissense_content": embedding_fingerprint(
+            np.asarray(data["alphamissense_scores"])
+        ),
+    }
 
 
 def run(
@@ -63,6 +93,8 @@ def run(
     compute_ci: bool = True,
     n_boot: int = BOOTSTRAP_N_RESAMPLES,
     n_permutations: int = 0,
+    feature_names: tuple[str, ...] | None = None,
+    input_fingerprints: dict | None = None,
 ) -> dict:
     data = unpack_run_data(data)
     valid_variants = data["valid_variants"]
@@ -109,10 +141,19 @@ def run(
     else:
         print(f"  [skip alphamissense: only {am_mask.sum()} observed values]")
 
+    if feature_names is not None:
+        unknown = sorted(set(feature_names) - set(features))
+        if unknown:
+            raise ValueError(f"unknown mechanism feature name(s): {unknown}")
+        features = {name: features[name] for name in feature_names}
+
     print("\n=== Building CV splits ===")
     if not PFAM_JSON.exists():
         raise FileNotFoundError(f"{PFAM_JSON} not found — run fetch_data/fetch_annotations --step pfam first")
     pfam_map = load_pfam_map(PFAM_JSON)
+    if input_fingerprints is None:
+        input_fingerprints = mechanism_input_fingerprints(data, pfam_map)
+    analysis_run_id = uuid.uuid4().hex
     gene_splits = gene_split_cv(genes_arr, n_folds=n_folds, seed=seed)
     family_splits = family_split_cv(
         genes_arr, pfam_map, n_folds=n_folds, seed=seed
@@ -125,11 +166,23 @@ def run(
     print(f"Unique Pfam families: {n_families}")
 
     results = {
+        "seed": seed,
+        "analysis_run_id": analysis_run_id,
+        "cache_schema_version": MECHANISM_OOF_CACHE_SCHEMA_VERSION,
+        "input_fingerprints": input_fingerprints,
+        "analysis_parameters": {
+            "n_folds": n_folds,
+            "n_bootstrap_resamples": n_boot if compute_ci else None,
+            "ci_enabled": compute_ci,
+            "n_permutations": n_permutations,
+            "pca_components": PCA_COMPONENTS,
+        },
         "n_variants": len(valid_variants),
         "embedding_variant_fingerprint": embedding_variant_fingerprint(valid_variants),
         "n_genes": int(len(set(genes_arr))),
         "n_families": n_families,
         "class_distribution": dict(Counter(labels_3class)),
+        "features_requested": list(feature_names) if feature_names is not None else None,
         "gene_split": {},
         "family_split": {},
     }
@@ -266,12 +319,11 @@ def run(
             # macro-F1 from this cache (restricted to the rows both arms scored) for
             # every feature it reports, and an interval (or headline) built from a
             # subset of seeds or features is a different quantity from the number
-            # it is printed beside. Tuple-entry features (foldx_ddg, alphamissense)
-            # are excluded because their row_ids index a feature-local observed
-            # subset, not the row space every other feature's row_ids share.
+            # it is printed beside. Feature-local row ids are valid here because
+            # leakage is aligned independently within each feature.
             if (
                 compute_ci
-                and not isinstance(entry, tuple) and gs_oof is not None and fs_oof is not None
+                and gs_oof is not None and fs_oof is not None
             ):
                 def _cache_arm(oof):
                     pred = [MECHANISM_CLASSES[col] for col in oof["proba"].argmax(axis=1)]
@@ -334,14 +386,31 @@ def run(
                                 f"{sensitivity['ci_high']:+.4f}]"
                             )
 
+    oof_cache_path = os.path.join(out_dir, mechanism_oof_cache_filename(seed))
+    if oof_cache:
+        atomic_write_json(
+            oof_cache_path,
+            {
+                "cache_schema_version": MECHANISM_OOF_CACHE_SCHEMA_VERSION,
+                "seed": seed,
+                "analysis_run_id": analysis_run_id,
+                "input_fingerprints": input_fingerprints,
+                "analysis_parameters": results["analysis_parameters"],
+                "features": oof_cache,
+            },
+            indent=2,
+        )
+        print(f"OOF cache written to {oof_cache_path}")
+    elif os.path.exists(oof_cache_path):
+        os.remove(oof_cache_path)
+        print(f"Removed stale OOF cache {oof_cache_path}")
+
+    # The result is the completion marker. Writing it after the cache means an
+    # interrupted run leaves either an old result with a mismatched run id or no
+    # new result, never a fresh result that appears to have a matching stale cache.
     out_path = os.path.join(out_dir, seed_result_filename(seed))
     write_result_json(out_path, results, seeds=[seed], indent=2)
     print(f"\nResults written to {out_path}")
-
-    if oof_cache:
-        oof_cache_path = os.path.join(out_dir, mechanism_oof_cache_filename(seed))
-        atomic_write_json(oof_cache_path, oof_cache)
-        print(f"OOF cache written to {oof_cache_path}")
 
     return results
 

@@ -46,9 +46,8 @@ from esm2_mech.utils.constants import (
     N_FOLDS,
     N_SEEDS,
 )
-from esm2_mech.utils.data import load_pfam_map
+from esm2_mech.utils.data import labeled_variant_fingerprint, load_pfam_map, pfam_fingerprint
 from esm2_mech.utils.io import write_result_json
-from esm2_mech.utils.metrics import majority_baseline_f1
 from esm2_mech.utils.paths import NAIVE_BASELINE_JSON, PFAM_JSON, VALID_VARIANTS_JSON
 from esm2_mech.utils.splits import family_split_cv, gene_split_cv
 
@@ -72,13 +71,23 @@ def _eval_dummy_one_seed(strategy, labels, splits, seed):
         y_train, y_test = labels[train_idx], labels[test_idx]
         if len(set(y_train)) < 2:
             continue
+        if set(y_test.tolist()) != set(MECHANISM_CLASSES):
+            continue
         clf = DummyClassifier(strategy=strategy, random_state=seed)
         clf.fit(placeholder_x[train_idx], y_train)
         pred = clf.predict(placeholder_x[test_idx])
         proba = clf.predict_proba(placeholder_x[test_idx])
 
         macro_f1_folds.append(
-            float(f1_score(y_test, pred, average="macro", zero_division=0))
+            float(
+                f1_score(
+                    y_test,
+                    pred,
+                    labels=list(MECHANISM_CLASSES),
+                    average="macro",
+                    zero_division=0,
+                )
+            )
         )
         for class_idx, cls in enumerate(clf.classes_):
             y_bin = (y_test == cls).astype(int)
@@ -137,23 +146,47 @@ def floor_macro_f1_ci(labels, genes, pfam_map, seed=0, n_boot=BOOTSTRAP_N_RESAMP
     resamples whole genes; the family CI resamples whole Pfam families (unannotated
     genes excluded, matching family-split CV). Returns {"gene": ci, "family": ci}.
     """
-    _, majority = majority_baseline_f1(labels, labels)
-    pred = np.full(len(labels), majority)
+    classes = list(MECHANISM_CLASSES)
 
-    def _macro_f1(rows):
-        return float(f1_score(labels[rows], pred[rows], average="macro", zero_division=0))
+    def _macro_f1(base_rows, local_rows):
+        rows = base_rows[local_rows]
+        resampled_labels = labels[rows]
+        if set(resampled_labels.tolist()) != set(classes):
+            return None
+        observed_classes, counts = np.unique(resampled_labels, return_counts=True)
+        majority = observed_classes[int(np.argmax(counts))]
+        pred = np.full(len(rows), majority)
+        return float(
+            f1_score(
+                resampled_labels,
+                pred,
+                labels=classes,
+                average="macro",
+                zero_division=0,
+            )
+        )
 
     families = np.array([pfam_map.get(g) for g in genes], dtype=object)
     fam_mask = np.array([f is not None for f in families])
 
-    gene_ci = cluster_bootstrap_ci(genes, _macro_f1, n_resamples=n_boot, seed=seed)
+    all_rows = np.arange(len(labels))
+    gene_ci = cluster_bootstrap_ci(
+        genes,
+        lambda local_rows: _macro_f1(all_rows, local_rows),
+        n_resamples=n_boot,
+        seed=seed,
+        discard_reason="the resampled rows lost a mechanism class",
+        metric_name="gene_majority_floor_macro_f1",
+    )
 
     fam_rows = np.where(fam_mask)[0]
     fam_ci = cluster_bootstrap_ci(
         families[fam_mask],
-        lambda local_rows: _macro_f1(fam_rows[local_rows]),
+        lambda local_rows: _macro_f1(fam_rows, local_rows),
         n_resamples=n_boot,
         seed=seed,
+        discard_reason="the resampled rows lost a mechanism class",
+        metric_name="family_majority_floor_macro_f1",
     )
     return {"gene": gene_ci, "family": fam_ci}
 
@@ -171,6 +204,15 @@ def main() -> None:
     print(f"Averaging over {N_SEEDS} seeds, {N_FOLDS}-fold CV\n")
 
     results = {
+        "input_fingerprints": {
+            "labeled_variants": labeled_variant_fingerprint(variants, labels),
+            "pfam_assignments": pfam_fingerprint(pfam_map, genes.tolist()),
+        },
+        "analysis_parameters": {
+            "n_seeds": N_SEEDS,
+            "n_folds": N_FOLDS,
+            "n_bootstrap_resamples": BOOTSTRAP_N_RESAMPLES,
+        },
         "n_variants": int(len(labels)),
         "class_distribution": {k: int(v) for k, v in class_distribution.items()},
         "n_seeds": N_SEEDS,

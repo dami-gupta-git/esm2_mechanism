@@ -143,6 +143,25 @@ def embedding_variant_fingerprint(variants: list[dict]) -> str:
     return digest.hexdigest()
 
 
+def labeled_variant_fingerprint(
+    variants: list[dict], labels: list | np.ndarray
+) -> str:
+    """Hash embedding-row identities together with their analysis labels."""
+    if len(variants) != len(labels):
+        raise ValueError(
+            f"cannot fingerprint {len(variants)} variants with {len(labels)} labels"
+        )
+    digest = hashlib.sha256()
+    digest.update(embedding_variant_fingerprint(variants).encode())
+    digest.update(b"\x00")
+    for row_index, label in enumerate(labels):
+        if label is None:
+            raise ValueError(f"variant row {row_index} has no analysis label")
+        digest.update(str(label).encode())
+        digest.update(b"\x00")
+    return digest.hexdigest()
+
+
 def validate_embedding_variant_identity(
     variants: list[dict],
     embedded_variants_path: Path,

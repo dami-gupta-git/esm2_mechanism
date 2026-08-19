@@ -505,8 +505,9 @@ def run_mlp_cv(
     validation_fraction: float = 0.15,
     n_iter_no_change: int = 10,
     oversample: bool = True,
+    balanced_sample_weight: bool = False,
 ):
-    """Sklearn MLP CV: scale → oversample → fit → aggregate metrics.
+    """Sklearn MLP CV: scale → optional class balancing → fit → metrics.
 
     splits : pre-computed list of (train_idx, test_idx)
     genes  : if provided, also computes per_gene_f1 per fold
@@ -518,10 +519,16 @@ def run_mlp_cv(
     oversample : balance the training fold by duplicating minority-class rows.
         Set False for experiments whose registered estimator was fit on the
         original class distribution.
+    balanced_sample_weight : give each class equal total training weight without
+        duplicating rows. Requires scikit-learn 1.7 or newer and cannot be used
+        together with oversample.
     """
     from sklearn.neural_network import MLPClassifier
+    from sklearn.utils.class_weight import compute_sample_weight
 
     require_no_nan(X, "run_mlp_cv")
+    if oversample and balanced_sample_weight:
+        raise ValueError("run_mlp_cv cannot combine oversampling and balanced sample weights")
     n_classes = len(classes)
     cls_to_idx = {cls: idx for idx, cls in enumerate(classes)}
     fold_results, pg_f1s = [], []
@@ -578,7 +585,17 @@ def run_mlp_cv(
         # arrays. clf.classes_ are then mapped back to strings for align_proba so
         # column ordering stays explicit (never positionally assumed).
         y_tr_enc = np.array([cls_to_idx[lab] for lab in y_tr])
-        clf.fit(X_tr_s[fit_idx], y_tr_enc[fit_idx])
+        if balanced_sample_weight:
+            sample_weight = compute_sample_weight(
+                class_weight="balanced", y=y_tr_enc[fit_idx]
+            )
+            clf.fit(
+                X_tr_s[fit_idx],
+                y_tr_enc[fit_idx],
+                sample_weight=sample_weight,
+            )
+        else:
+            clf.fit(X_tr_s[fit_idx], y_tr_enc[fit_idx])
 
         clf_str_classes = np.array([classes[idx] for idx in clf.classes_])
         proba = align_proba(clf.predict_proba(X_te_s), clf_str_classes, classes)

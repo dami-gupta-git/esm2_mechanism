@@ -97,6 +97,10 @@ SINGLE_SOURCE_DIR = RESULTS_DIR / "single_source_gerasimavicius"
 SINGLE_SOURCE_AGGREGATE_JSON = SINGLE_SOURCE_DIR / "aggregate.json"
 SINGLE_SOURCE_NAIVE_BASELINE_JSON = SINGLE_SOURCE_DIR / "naive_baseline.json"
 
+# ── WT identity sensitivity (proteins that do not require windowing) ────────
+WT_IDENTITY_SENSITIVITY_DIR = RESULTS_DIR / "wt_identity_short_proteins"
+WT_IDENTITY_SENSITIVITY_AGGREGATE_JSON = WT_IDENTITY_SENSITIVITY_DIR / "aggregate.json"
+
 # ── Geometry experiments (magnitude/direction, result_23) ────────────────────
 GEOMETRY_RESULTS_DIR = RESULTS_DIR / "magnitude_direction"
 MAGNITUDE_DIRECTION_JSON = GEOMETRY_RESULTS_DIR / "probe_results.json"

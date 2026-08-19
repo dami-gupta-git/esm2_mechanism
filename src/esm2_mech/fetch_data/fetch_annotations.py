@@ -332,14 +332,17 @@ def parse_ec_and_keywords(entry: dict) -> tuple:
     return ec_numbers, keyword_ids
 
 
-def assign_4class(ec_numbers: list[str], keyword_ids: list[str]) -> str:
+def assign_4class(ec_numbers: list[str], keyword_ids: list[str]) -> str | None:
     """Assign one of: kinase, protease, oxidoreductase, non-enzyme.
 
     Priority order (most specific first):
       1. kinase        — KW-0418 OR EC 2.7.x.x
       2. protease      — EC 3.4.x.x
       3. oxidoreductase— EC 1.x.x.x
-      4. non-enzyme
+      4. non-enzyme    — no EC annotation
+
+    EC-annotated enzymes outside the three selected subclasses return None and
+    are excluded from the simplified four-class experiment.
     """
     if "KW-0418" in keyword_ids:
         return "kinase"
@@ -353,6 +356,8 @@ def assign_4class(ec_numbers: list[str], keyword_ids: list[str]) -> str:
         parts = ec.split(".")
         if len(parts) >= 2 and parts[0] == "1" and parts[1]:
             return "oxidoreductase"
+    if ec_numbers:
+        return None
     return "non-enzyme"
 
 
@@ -444,9 +449,10 @@ def main_enzyme() -> None:
                     "uniprot_id": "",
                     "ec_numbers": "",
                     "keyword_ids": "",
-                    "enzyme_4class": None,
-                    "multi_class_flag": None,
+                    "enzyme_4class": "",
+                    "multi_class_flag": "",
                     "uniprot_missing_flag": "1",
+                    "enzyme_4class_excluded_flag": "0",
                 }
             )
             class_counts["missing"] += 1
@@ -460,9 +466,10 @@ def main_enzyme() -> None:
                     "uniprot_id": acc,
                     "ec_numbers": "",
                     "keyword_ids": "",
-                    "enzyme_4class": None,
-                    "multi_class_flag": None,
+                    "enzyme_4class": "",
+                    "multi_class_flag": "",
                     "uniprot_missing_flag": "1",
+                    "enzyme_4class_excluded_flag": "0",
                 }
             )
             class_counts["missing"] += 1
@@ -474,7 +481,7 @@ def main_enzyme() -> None:
         # Check each class independently using the same evidence rules as assign_4class,
         # but without priority resolution. A gene with kinase + protease evidence is
         # flagged multi even though enzyme_4class resolves to "kinase".
-        def _ec_class(ec: str) -> str:
+        def _ec_class(ec: str) -> str | None:
             parts = ec.split(".")
             if len(parts) >= 2 and parts[1]:
                 if parts[0] == "2" and ec.startswith("2.7."):
@@ -483,14 +490,14 @@ def main_enzyme() -> None:
                     return "protease"
                 if parts[0] == "1":
                     return "oxidoreductase"
-            return "non-enzyme"
+            return None
 
         mapped_classes = set()
         if "KW-0418" in keyword_ids:
             mapped_classes.add("kinase")
         for ec in ec_numbers:
             c = _ec_class(ec)
-            if c != "non-enzyme":
+            if c is not None:
                 mapped_classes.add(c)
         is_multi = len(mapped_classes) > 1
         if is_multi:
@@ -502,12 +509,16 @@ def main_enzyme() -> None:
                 "uniprot_id": acc,
                 "ec_numbers": ";".join(ec_numbers),
                 "keyword_ids": ";".join(keyword_ids),
-                "enzyme_4class": enzyme_class,
+                "enzyme_4class": "" if enzyme_class is None else enzyme_class,
                 "multi_class_flag": "1" if is_multi else "0",
                 "uniprot_missing_flag": "0",
+                "enzyme_4class_excluded_flag": "1" if enzyme_class is None else "0",
             }
         )
-        class_counts[enzyme_class] += 1
+        if enzyme_class is None:
+            class_counts["excluded_other_enzyme"] += 1
+        else:
+            class_counts[enzyme_class] += 1
 
     fieldnames = [
         "gene",
@@ -517,6 +528,7 @@ def main_enzyme() -> None:
         "enzyme_4class",
         "multi_class_flag",
         "uniprot_missing_flag",
+        "enzyme_4class_excluded_flag",
     ]
     with open(ENZYME_OUT, "w", newline="") as f:
         writer = csv.DictWriter(
@@ -524,11 +536,21 @@ def main_enzyme() -> None:
         )
         writer.writeheader()
         for row in rows:
-            writer.writerow({k: ("" if v is None else v) for k, v in row.items()})
+            none_fields = [key for key, value in row.items() if value is None]
+            if none_fields:
+                raise ValueError(f"enzyme label row for {row['gene']} has None fields: {none_fields}")
+            writer.writerow(row)
 
     print(f"\nWrote {len(rows)} rows to {ENZYME_OUT}")
     print("\nClass distribution:")
-    for cls in ["kinase", "protease", "oxidoreductase", "non-enzyme", "missing"]:
+    for cls in [
+        "kinase",
+        "protease",
+        "oxidoreductase",
+        "non-enzyme",
+        "excluded_other_enzyme",
+        "missing",
+    ]:
         n = class_counts[cls]
         print(f"  {cls:20s}: {n:4d}  ({100*n/len(rows):.1f}%)")
     print(f"  Multi-class genes (flagged): {multi_class_count}")

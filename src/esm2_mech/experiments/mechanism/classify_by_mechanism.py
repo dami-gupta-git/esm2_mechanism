@@ -2,6 +2,7 @@
 
 import argparse
 import functools
+import json
 import os
 
 import numpy as np
@@ -20,10 +21,12 @@ from esm2_mech.utils.seed_aggregation import (
 )
 from esm2_mech.utils.constants import (
     BOOTSTRAP_N_RESAMPLES,
+    MECHANISM_NULL_FLOOR_MARGIN,
     N_SEEDS,
     PERMUTATION_MIN_SIGNIFICANT_SEEDS,
     PERMUTATION_SIGNIFICANCE_THRESHOLD,
     SEED_RESULT_GLOB,
+    SPLIT_GAP_MIN_SUPPORTING_SEEDS,
 )
 from esm2_mech.utils.paths import (
     EMB_WT_MEAN,
@@ -32,6 +35,7 @@ from esm2_mech.utils.paths import (
     EMB_MUT_POS,
     EMB_VALID_VARIANTS_JSON,
     MECHANISM_AGGREGATE_JSON,
+    NAIVE_BASELINE_JSON,
     RESULTS_DIR,
     VALID_VARIANTS_JSON,
 )
@@ -39,6 +43,102 @@ from esm2_mech.utils.paths import (
 print = functools.partial(print, flush=True)
 
 OUT_DIR = RESULTS_DIR
+
+
+def summarize_split_gap(
+    seed_results: list[tuple[int, str, dict]], feature: str = "wt_only_mean"
+) -> dict:
+    """Apply claim 2B's positive-gap interval rule across all five seeds."""
+    per_seed = []
+    supporting_seeds = []
+    contradictory_seeds = []
+    invalid_ci_seeds = []
+    for seed, filename, result in seed_results:
+        gap = result.get("family_split", {}).get(feature, {}).get("split_gap_paired")
+        if gap is None or gap.get("ci_low") is None or gap.get("ci_high") is None:
+            invalid_ci_seeds.append(seed)
+            per_seed.append({"seed": seed, "source_file": filename, "split_gap_paired": gap})
+            continue
+        supports_positive_gap = gap["ci_low"] > 0
+        contradicts_positive_gap = gap["ci_high"] < 0
+        if supports_positive_gap:
+            supporting_seeds.append(seed)
+        if contradicts_positive_gap:
+            contradictory_seeds.append(seed)
+        per_seed.append({
+            "seed": seed,
+            "source_file": filename,
+            "point_diff": gap.get("point_diff"),
+            "ci_low": gap["ci_low"],
+            "ci_high": gap["ci_high"],
+            "n_clusters": gap.get("n_clusters"),
+            "supports_positive_gene_minus_family_gap": supports_positive_gap,
+            "contradicts_positive_gene_minus_family_gap": contradicts_positive_gap,
+        })
+
+    evaluable = len(seed_results) == N_SEEDS and not invalid_ci_seeds
+    return {
+        "feature": feature,
+        "per_seed": per_seed,
+        "supporting_seeds": supporting_seeds,
+        "n_supporting_seeds": len(supporting_seeds),
+        "contradictory_seeds": contradictory_seeds,
+        "invalid_ci_seeds": invalid_ci_seeds,
+        "required_seed_count": N_SEEDS,
+        "required_supporting_seed_count": SPLIT_GAP_MIN_SUPPORTING_SEEDS,
+        "preregistered_rule_evaluable": evaluable,
+        "meets_claim_2b_interval_rule": (
+            len(supporting_seeds) >= SPLIT_GAP_MIN_SUPPORTING_SEEDS
+            if evaluable else None
+        ),
+    }
+
+
+def summarize_mechanism_null_ci(
+    seed_results: list[tuple[int, str, dict]], family_chance_floor: float
+) -> dict:
+    """Record claim 2A's CI criterion for each seed without inventing a seed rule."""
+    threshold = family_chance_floor + MECHANISM_NULL_FLOOR_MARGIN
+    per_seed = []
+    invalid_ci_seeds = []
+    affirming_ci_seeds = []
+    for seed, filename, result in seed_results:
+        ci = (
+            result.get("family_split", {})
+            .get("delta_mean", {})
+            .get("ci", {})
+            .get("macro_f1")
+        )
+        if ci is None or ci.get("ci_low") is None or ci.get("ci_high") is None:
+            invalid_ci_seeds.append(seed)
+            per_seed.append({"seed": seed, "source_file": filename, "ci": ci})
+            continue
+        criterion_met = ci["ci_high"] < threshold
+        if criterion_met:
+            affirming_ci_seeds.append(seed)
+        per_seed.append({
+            "seed": seed,
+            "source_file": filename,
+            "point": ci.get("point"),
+            "ci_low": ci["ci_low"],
+            "ci_high": ci["ci_high"],
+            "n_clusters": ci.get("n_clusters"),
+            "ci_upper_below_floor_plus_margin": criterion_met,
+        })
+    return {
+        "feature": "delta_mean",
+        "family_chance_floor": family_chance_floor,
+        "floor_margin": MECHANISM_NULL_FLOOR_MARGIN,
+        "threshold": threshold,
+        "per_seed": per_seed,
+        "affirming_ci_seeds": affirming_ci_seeds,
+        "invalid_ci_seeds": invalid_ci_seeds,
+        "overall_verdict": None,
+        "overall_verdict_missing_reason": (
+            "the preregistration specifies the CI criterion but not how the five "
+            "seed-specific CIs combine into one claim 2A CI verdict"
+        ),
+    }
 
 
 def aggregate_permutation_results(
@@ -236,7 +336,20 @@ def main():
     for _seed, filename, _result in seed_results:
         print(f"  {filename}")
 
+    input_fingerprints = seed_results[0][2].get("input_fingerprints")
+    analysis_parameters = seed_results[0][2].get("analysis_parameters")
+    if input_fingerprints is None:
+        raise ValueError("seed results lack Section 4 input fingerprints")
+    if analysis_parameters is None:
+        raise ValueError("seed results lack Section 4 analysis parameters")
+    for seed, filename, result in seed_results:
+        if result.get("input_fingerprints") != input_fingerprints:
+            raise ValueError(f"{filename}: seed {seed} was produced from different inputs")
+        if result.get("analysis_parameters") != analysis_parameters:
+            raise ValueError(f"{filename}: seed {seed} used different analysis parameters")
+
     aggregated = aggregate_across_seeds(seed_results)
+    split_gap_summary = summarize_split_gap(seed_results)
     permutation_summary = (
         aggregate_permutation_results(seed_results)
         if args.n_permutations > 0 else None
@@ -244,8 +357,30 @@ def main():
     aggregate_payload = {
         "n_seeds": len(seed_results),
         "seed_files": [filename for _seed, filename, _result in seed_results],
+        "input_fingerprints": input_fingerprints,
+        "analysis_parameters": analysis_parameters,
         "across_seed": aggregated,
+        "claim_2b_split_gap_summary": split_gap_summary,
     }
+    if NAIVE_BASELINE_JSON.exists():
+        with open(NAIVE_BASELINE_JSON) as handle:
+            naive_result = json.load(handle)
+        naive_fingerprints = naive_result.get("input_fingerprints")
+        for key in ("labeled_variants", "pfam_assignments"):
+            if naive_fingerprints is None or naive_fingerprints.get(key) != input_fingerprints.get(key):
+                raise ValueError(
+                    f"{NAIVE_BASELINE_JSON}: {key} does not match the probe inputs"
+                )
+        family_floor = float(
+            naive_result["by_strategy"]["most_frequent"]["family"]["macro_f1_mean"]
+        )
+        aggregate_payload["claim_2a_ci_summary"] = summarize_mechanism_null_ci(
+            seed_results, family_floor
+        )
+        aggregate_payload["claim_2a_ci_summary_missing"] = False
+    else:
+        aggregate_payload["claim_2a_ci_summary"] = None
+        aggregate_payload["claim_2a_ci_summary_missing"] = True
     if permutation_summary is not None:
         aggregate_payload["permutation_summary"] = permutation_summary
     write_result_json(

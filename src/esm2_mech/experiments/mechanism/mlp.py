@@ -24,7 +24,12 @@ from esm2_mech.utils.paths import (
     PFAM_JSON, RESULTS_DIR, VALID_VARIANTS_JSON,
 )
 from esm2_mech.utils.bootstrap import attach_mechanism_ci, family_or_gene_clusters
-from esm2_mech.utils.data import load_pfam_map
+from esm2_mech.utils.data import (
+    embedding_fingerprint,
+    labeled_variant_fingerprint,
+    load_pfam_map,
+    pfam_fingerprint,
+)
 from esm2_mech.utils.io import load_variants_and_delta, write_result_json
 from esm2_mech.utils.probes import run_mlp_probe_cv, run_sklearn_probe_pca, run_sklearn_probe
 from esm2_mech.utils.splits import gene_split_cv, family_split_cv
@@ -35,17 +40,26 @@ OUT_DIR = RESULTS_DIR
 
 
 def load_data():
-    _variants, labels, genes, delta_mean, delta_pos = load_variants_and_delta(
+    variants, labels, genes, delta_mean, delta_pos = load_variants_and_delta(
         VALID_VARIANTS_JSON, EMB_VALID_VARIANTS_JSON,
         EMB_WT_MEAN, EMB_MUT_MEAN, EMB_WT_POS, EMB_MUT_POS
     )
 
     pfam_map = load_pfam_map(PFAM_JSON)
 
-    return labels, genes, delta_mean, delta_pos, pfam_map
+    input_fingerprints = {
+        "labeled_variants": labeled_variant_fingerprint(variants, labels),
+        "delta_mean_embedding": embedding_fingerprint(delta_mean),
+        "delta_pos_embedding": embedding_fingerprint(delta_pos),
+        "pfam_assignments": pfam_fingerprint(pfam_map, genes.tolist()),
+    }
+
+    return labels, genes, delta_mean, delta_pos, pfam_map, input_fingerprints
 
 
-def run_seed(seed, args, labels, genes, delta_mean, delta_pos, pfam_map):
+def run_seed(
+    seed, args, labels, genes, delta_mean, delta_pos, pfam_map, input_fingerprints
+):
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     np.random.seed(seed)
@@ -117,6 +131,10 @@ def run_seed(seed, args, labels, genes, delta_mean, delta_pos, pfam_map):
     if args.only_new_family_arms:
         with open(out_path) as f:
             existing = json.load(f)
+        if existing.get("input_fingerprints") != input_fingerprints:
+            raise ValueError(
+                f"{out_path} was not produced from the current nonlinear-probe inputs"
+            )
         new_arms = {}
         for feat_name, X in feature_arrays:
             run_tree_knn(feat_name, X, SPLIT_FAMILY, family_splits, new_arms)
@@ -124,6 +142,11 @@ def run_seed(seed, args, labels, genes, delta_mean, delta_pos, pfam_map):
         if overwritten:
             print(f"\nOverwriting existing keys with fresh values: {overwritten}")
         existing.update(new_arms)
+        existing["partial_update"] = {
+            "updated_arms": sorted(new_arms),
+            "n_bootstrap_resamples": n_boot if compute_ci else None,
+            "ci_enabled": compute_ci,
+        }
         write_result_json(out_path, existing, seeds=[seed])
         print(f"\nMerged {len(new_arms)} family-split arms into {out_path}")
         for key, res in new_arms.items():
@@ -154,6 +177,14 @@ def run_seed(seed, args, labels, genes, delta_mean, delta_pos, pfam_map):
         auroc_gof = res.get("auroc_GOF_mean", float("nan"))
         print(f"  {feat}: macro_f1={mf1:.3f}  auroc_GOF={auroc_gof:.3f}")
 
+    results["seed"] = seed
+    results["input_fingerprints"] = input_fingerprints
+    results["analysis_parameters"] = {
+        "max_epochs": args.max_epochs,
+        "patience": args.patience,
+        "n_bootstrap_resamples": n_boot if compute_ci else None,
+        "ci_enabled": compute_ci,
+    }
     write_result_json(out_path, results, seeds=[seed])
     print(f"\nResults written to {out_path}")
 
@@ -176,13 +207,22 @@ def main():
     if args.seeds < 1:
         parser.error("--seeds must be >= 1")
 
-    labels, genes, delta_mean, delta_pos, pfam_map = load_data()
+    labels, genes, delta_mean, delta_pos, pfam_map, input_fingerprints = load_data()
 
     for seed in range(args.seeds):
         print("\n\n" + "#" * 60)
         print(f"# SEED {seed}")
         print("#" * 60)
-        run_seed(seed, args, labels, genes, delta_mean, delta_pos, pfam_map)
+        run_seed(
+            seed,
+            args,
+            labels,
+            genes,
+            delta_mean,
+            delta_pos,
+            pfam_map,
+            input_fingerprints,
+        )
 
 
 if __name__ == "__main__":

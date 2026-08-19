@@ -140,20 +140,20 @@ class TestAssign4Class:
         assert assign_4class(["3.4.21.4"], []) == "protease"
 
     def test_protease_not_triggered_by_other_ec3(self):
-        # EC 3.x but not 3.4 — should not be protease
-        assert assign_4class(["3.1.1.1"], []) == "non-enzyme"
+        # EC 3.x but not 3.4 is outside the simplified four-class cohort.
+        assert assign_4class(["3.1.1.1"], []) is None
 
     def test_oxidoreductase_by_ec(self):
         assert assign_4class(["1.1.1.1"], []) == "oxidoreductase"
 
     def test_oxidoreductase_not_triggered_by_non_ec1(self):
-        assert assign_4class(["2.1.1.1"], []) == "non-enzyme"
+        assert assign_4class(["2.1.1.1"], []) is None
 
     def test_non_enzyme_empty(self):
         assert assign_4class([], []) == "non-enzyme"
 
     def test_non_enzyme_unrecognised_ec(self):
-        assert assign_4class(["4.2.1.1"], []) == "non-enzyme"
+        assert assign_4class(["4.2.1.1"], []) is None
 
     def test_kinase_beats_protease_priority(self):
         # Both kinase and protease EC present — kinase wins
@@ -164,4 +164,4 @@ class TestAssign4Class:
 
     def test_ec_27_not_kinase_without_27_prefix(self):
         # EC 2.6 is a transferase but not a kinase
-        assert assign_4class(["2.6.1.1"], []) == "non-enzyme"
+        assert assign_4class(["2.6.1.1"], []) is None
