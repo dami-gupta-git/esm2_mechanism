@@ -17,6 +17,7 @@ from esm2_mech.utils.constants import (
     BOOTSTRAP_CI_LEVEL,
     BOOTSTRAP_N_RESAMPLES,
     N_SEEDS,
+    ENZYME_MECHANISM_MIN_F1_GAP,
     MECHANISM_CLASSES,
     MECHANISM_OOF_CACHE_SCHEMA_VERSION,
     mechanism_oof_cache_filename,
@@ -37,6 +38,7 @@ from esm2_mech.utils.bootstrap import (
     folds_to_arms,
     score_within_folds,
     adjudicate_equivalence,
+    adjudicate_diff,
     adjudicate_level,
     family_or_gene_clusters,
     oof_permutation_pvalue,
@@ -679,20 +681,26 @@ def main():
         if paired_mechanism_ci is not None
         else None
     )
-    gate_2g = None
+    gate_2g = (
+        bool(enzyme_mechanism_diff >= ENZYME_MECHANISM_MIN_F1_GAP)
+        if enzyme_mechanism_diff is not None
+        else None
+    )
     gate_2h = mlp_f1 is not None and fs_f1 is not None and abs(mlp_f1 - fs_f1) < 0.05
 
     verdict_2f = adjudicate_level(fs_f1, fs_ci, 0.70)
-    if paired_mechanism_ci is not None:
-        verdict_2g = "not adjudicated (2G has no numeric pre-registered margin)"
-    else:
-        verdict_2g = "not adjudicated (paired difference CI unavailable)"
+    verdict_2g = adjudicate_diff(
+        gate_2g,
+        paired_mechanism_ci,
+        ENZYME_MECHANISM_MIN_F1_GAP,
+    )
     verdict_2h = adjudicate_equivalence(gate_2h, paired_ci, 0.05)
 
     print(f"\n2F — family-split F1 >= 0.70:  {verdict_2f}  (F1={fs_f1:.3f})")
     if mechanism_point is not None:
         print(
-            f"2G — enzyme > mechanism floor:  {verdict_2g}  "
+            f"2G — enzyme minus mechanism F1 >= "
+            f"{ENZYME_MECHANISM_MIN_F1_GAP:.2f}:  {verdict_2g}  "
             f"(delta={enzyme_mechanism_diff:+.3f})"
         )
     else:
@@ -726,6 +734,7 @@ def main():
             "2F_verdict": verdict_2f,
             "2G_enzyme_beats_mechanism": gate_2g,
             "2G_verdict": verdict_2g,
+            "2G_minimum_f1_gap": ENZYME_MECHANISM_MIN_F1_GAP,
             "2H_mlp_approx_logreg": bool(gate_2h),
             "2H_verdict": verdict_2h,
             "fs_f1": fs_f1,

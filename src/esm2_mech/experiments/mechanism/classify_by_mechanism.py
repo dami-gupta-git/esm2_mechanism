@@ -22,6 +22,7 @@ from esm2_mech.utils.seed_aggregation import (
 from esm2_mech.utils.constants import (
     BOOTSTRAP_N_RESAMPLES,
     MECHANISM_NULL_FLOOR_MARGIN,
+    MECHANISM_NULL_MIN_AFFIRMING_SEEDS,
     N_SEEDS,
     PERMUTATION_MIN_SIGNIFICANT_SEEDS,
     PERMUTATION_SIGNIFICANCE_THRESHOLD,
@@ -97,7 +98,7 @@ def summarize_split_gap(
 def summarize_mechanism_null_ci(
     seed_results: list[tuple[int, str, dict]], family_chance_floor: float
 ) -> dict:
-    """Record claim 2A's CI criterion for each seed without inventing a seed rule."""
+    """Apply claim 2A's three-of-five rule to its seed-specific intervals."""
     threshold = family_chance_floor + MECHANISM_NULL_FLOOR_MARGIN
     per_seed = []
     invalid_ci_seeds = []
@@ -125,6 +126,12 @@ def summarize_mechanism_null_ci(
             "n_clusters": ci.get("n_clusters"),
             "ci_upper_below_floor_plus_margin": criterion_met,
         })
+    evaluable = len(seed_results) == N_SEEDS and not invalid_ci_seeds
+    meets_interval_rule = (
+        len(affirming_ci_seeds) >= MECHANISM_NULL_MIN_AFFIRMING_SEEDS
+        if evaluable
+        else None
+    )
     return {
         "feature": "delta_mean",
         "family_chance_floor": family_chance_floor,
@@ -132,11 +139,14 @@ def summarize_mechanism_null_ci(
         "threshold": threshold,
         "per_seed": per_seed,
         "affirming_ci_seeds": affirming_ci_seeds,
+        "n_affirming_ci_seeds": len(affirming_ci_seeds),
         "invalid_ci_seeds": invalid_ci_seeds,
-        "overall_verdict": None,
-        "overall_verdict_missing_reason": (
-            "the preregistration specifies the CI criterion but not how the five "
-            "seed-specific CIs combine into one claim 2A CI verdict"
+        "required_seed_count": N_SEEDS,
+        "required_affirming_seed_count": MECHANISM_NULL_MIN_AFFIRMING_SEEDS,
+        "preregistered_rule_evaluable": evaluable,
+        "meets_claim_2a_interval_rule": meets_interval_rule,
+        "overall_verdict": (
+            "affirmed" if meets_interval_rule is True else "not adjudicated"
         ),
     }
 

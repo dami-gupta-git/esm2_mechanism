@@ -1,6 +1,6 @@
 # Findings
 
-Written 2026-08-17. Nothing is currently running in the background.
+Written 2026-08-19. Nothing is currently running in the background.
 
 ## Current state
 
@@ -32,6 +32,17 @@ as each completes.
   double-count it. Prefix backups with `backup_...` instead.
 - Any cache-freshness check must compare everything that determines the cached content, not just
   the CLI args passed to that run — see `BUG_PATTERNS.md`, which already records this pattern.
+
+## Section 4 WT windowing checks
+
+Two internal sensitivity analyses found that variant-centered WT windows do not account for the
+Section 4 gene-to-family gap. The short-protein subset retained 12,499 variants and supported a
+positive gap in four of five seeds; on the full dataset, replacing variant-centered WT embeddings
+with one observed-window average per UniProt protein left the Claim 2B decision unchanged at four
+of five seeds, and every paired interval for the gene score, family score, and gap spanned zero.
+These checks are retained under `results/run_biorxiv/wt_identity_short_proteins/` and
+`results/run_biorxiv/wt_identity_window_average/` for reviewer questions and are not needed in the
+main paper or as changes to the canonical Section 4 results.
 
 ## PROGRESS.md / RUNBOOK_biorxiv.md conventions (corrected on this session, don't relearn them)
 

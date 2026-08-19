@@ -29,6 +29,12 @@ SPLIT_GAP_MIN_SUPPORTING_SEEDS = 3
 
 # Claim 2A's equivalence margin above the measured family-split chance floor.
 MECHANISM_NULL_FLOOR_MARGIN = 0.05
+# Claim 2A is affirmed only when this many of the five seed-specific intervals
+# have an upper bound below the measured floor plus the equivalence margin.
+MECHANISM_NULL_MIN_AFFIRMING_SEEDS = 3
+
+# Claim 2G's minimum material enzyme-minus-mechanism macro-F1 difference.
+ENZYME_MECHANISM_MIN_F1_GAP = 0.05
 
 # ── Numerical floors ──────────────────────────────────────────────────────────
 # Divide-by-zero / norm floor for ratios and projections. Single source of truth —

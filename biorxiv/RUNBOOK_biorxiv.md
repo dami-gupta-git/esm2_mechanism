@@ -517,9 +517,10 @@ Decision rules (pre-registration §2F–2H):
 
 - **2F** — family-split LogReg macro-F1 ≥ 0.70. Enzyme class is strongly encoded in ESM-2 WT
   embeddings and family-split CV is a meaningful discriminator.
-- **2G** — enzyme family-split F1 substantially exceeds the mechanism family-split floor (read
-  from section 4's aggregate, not hardcoded). The mechanism null is task-specific, not a probe or
-  data failure.
+- **2G** — enzyme family-split macro-F1 exceeds mechanism family-split macro-F1 by at least 0.05.
+  Both seed-0 point estimates are restricted to the shared family subset, and the paired family
+  bootstrap interval must exclude zero. The mechanism reference is read from section 4's outputs,
+  not hardcoded.
 - **2H** — MLP does not substantially outperform LogReg under family-split (|delta F1| < 0.05).
   Linear readout is sufficient, paralleling pathogenicity and contrasting with stability.
 

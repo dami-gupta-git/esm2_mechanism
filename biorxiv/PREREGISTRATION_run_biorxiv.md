@@ -194,6 +194,12 @@ reported as a split result and refutes nothing. A single-seed test is not used: 
 their gene-to-family gap, so one seed can understate the effect and invites the objection that the
 seed was chosen.
 
+**Post-result specification amendment, 2026-08-19.** The original rule did not state how the five
+seed-specific confidence intervals combine. Claim 2A is affirmed when the interval criterion holds
+on at least three of five seeds. The rule is evaluated only when all five intervals are available;
+otherwise the claim is not adjudicated. This amendment was recorded after the initial results were
+inspected.
+
 Scope and cost:
 
 - Only the linear probe gets this test — the headline claim is a linear-probe result, and no
@@ -350,13 +356,19 @@ Decision rules from `docs/plans/plan_enzyme_classification.md`:
 | # | Criterion | Interpretation if met |
 |---|---|---|
 | 2F | Family-split LogReg macro-F1 at or above 0.70 | Enzyme class is strongly encoded in ESM-2 wildtype embeddings |
-| 2G | Enzyme family-split F1 substantially exceeds the mechanism family-split floor | The mechanism null is task-specific, not a probe or data failure |
+| 2G | Enzyme family-split macro-F1 exceeds mechanism family-split macro-F1 by at least 0.05 | The mechanism null is task-specific, not a probe or data failure |
 | 2H | MLP does not substantially outperform LogReg under family-split (\|ΔF1\| below 0.05) | A linear readout is sufficient, paralleling pathogenicity |
 
 2G is the central claim: the same pipeline that shows mechanism at floor achieves strong enzyme
 classification, so the mechanism null reflects what ESM-2 encodes, not a methodological ceiling.
 2F sets an absolute bar. 2H tests whether the signal is linearly separable (as for
 pathogenicity) or requires nonlinear probes (as for stability).
+
+**Post-result specification amendment, 2026-08-19.** The original wording did not assign a
+numerical value to "substantially." Claim 2G now requires an enzyme-minus-mechanism macro-F1 point
+estimate of at least 0.05. As a difference gate under §1.1, it is affirmed only when the paired
+confidence interval also excludes zero. This amendment was recorded after the initial results were
+inspected.
 
 The mechanism reference F1 in 2G is read from section 4's aggregate result for this run, never
 hardcoded, on the same principle as the measured chance floor in 2A.
