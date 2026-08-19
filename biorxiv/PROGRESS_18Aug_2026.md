@@ -104,11 +104,11 @@ learning something about the mechanism.
 
 | Step | Command | Outputs | Status |
 |---|---|---|---|
-| 4.1 | `python -m esm2_mech.experiments.mechanism.classify_by_mechanism --seeds 5` | `results/run_biorxiv/family_split_baselines_seed{0..4}.json`, `aggregate.json` | ⬜ | |
-| 4.2 | `python -m esm2_mech.experiments.mechanism.mlp --seeds 5` | `results/run_biorxiv/nonlinear_results_seed{0..4}.json` | ⬜ | |
-| 4.3 | `python -m esm2_mech.experiments.mechanism.family_clustering --seeds 5` | `results/run_biorxiv/family_clustering.json` | ⬜ | |
-| 4.4 | `python -m esm2_mech.experiments.mechanism.naive_baseline` | `results/run_biorxiv/naive_baseline.json` | ⬜ | |
-| 4.5 | `python -m esm2_mech.experiments.mechanism.leakage_fraction` | `results/run_biorxiv/leakage_fraction.json` | ⬜ | |
+| 4.1 | `python -m esm2_mech.experiments.mechanism.classify_by_mechanism --seeds 5` | `results/run_biorxiv/family_split_baselines_seed{0..4}.json`, `aggregate.json` | ✅ 2026-08-18 | Ran on pod (GPU box, CPU-bound step). Log: `logs/biorxiv_18Aug_2026/step_4_1.log` |
+| 4.2 | `python -m esm2_mech.experiments.mechanism.mlp --seeds 5` | `results/run_biorxiv/nonlinear_results_seed{0..4}.json` | ✅ 2026-08-18 | Ran on pod. Log: `logs/biorxiv_18Aug_2026/step_4_2.log` |
+| 4.3 | `python -m esm2_mech.experiments.mechanism.family_clustering --seeds 5` | `results/run_biorxiv/family_clustering.json` | ✅ 2026-08-18 | Ran on pod. Log: `logs/biorxiv_18Aug_2026/step_4_3.log` |
+| 4.4 | `python -m esm2_mech.experiments.mechanism.naive_baseline` | `results/run_biorxiv/naive_baseline.json` | ✅ 2026-08-18 | Ran on pod. Log: `logs/biorxiv_18Aug_2026/step_4_4.log` |
+| 4.5 | `python -m esm2_mech.experiments.mechanism.leakage_fraction` | `results/run_biorxiv/leakage_fraction.json` | ⚠️ 2026-08-18 | Ran on pod. Log: `logs/biorxiv_18Aug_2026/step_4_5.log`. Leakage-fraction CIs for `wt_only_mean`, `mut_only_mean`, `wt_concat_mut` discard 99.4% of bootstrap resamples (994/1000) — far above the <1% tolerance `exp4_fixes.md` set as a fault threshold. Needs investigation before these CIs are used. |
 | 4.6 | `python -m esm2_mech.experiments.mechanism.classify_by_mechanism --seeds 5 --n_permutations 1000` | `results/run_biorxiv/...` | ⬜ | Five seeds, not one — the previous run used seed 0 only |
 | 4.7 | `python -m esm2_mech.experiments.mechanism.single_source_mechanism --seeds 5` | `results/run_biorxiv/single_source_gerasimavicius/...` | ⬜ | |
 | 4.8 | Recompute the 2A threshold from the fixed nonlinear delta score | *(recorded in the preregistration amendment)* | ⬜ | Must precede any adjudication of 2A |
@@ -120,11 +120,11 @@ they carry usable signal at all.
 
 | Step | Command | Outputs | Status |
 |---|---|---|---|
-| 5.1 | `scp clinvar_pathogenicity_variants.json` to pod | | ✅ reused | |
-| 5.2 | `scp pfam_families.json` to pod | | ✅ reused | |
-| 5.3 | `python -m esm2_mech.experiments.pathogenicity.pathogenicity_control --phase embed --model esm2_t33_650M_UR50D` | `pathogenicity_{wt,mut}_mean.npy`, `pathogenicity_meta.json` | ✅ reused | |
-| 5.4 | Copy embeddings back to local | | ✅ reused | |
-| 5.5 | `python -m esm2_mech.experiments.pathogenicity.pathogenicity_control --phase probe` | `results/run_biorxiv/pathogenicity_control.json` | ⬜ | |
+| 5.1 | `scp clinvar_pathogenicity_variants.json` to pod | | ✅ 2026-08-18 | Refetched — cached copy predated the per-gene balancing fix (`balance_version=1`); 25,858 variants, 1,837 genes, balanced 12,929/12,929 |
+| 5.2 | `scp pfam_families.json` to pod | | ✅ 2026-08-18 | |
+| 5.3 | `python -m esm2_mech.experiments.pathogenicity.pathogenicity_control --phase embed --model esm2_t33_650M_UR50D` | `pathogenicity_{wt,mut}_mean.npy`, `pathogenicity_meta.json` | ✅ 2026-08-18 | Re-embedded on pod against the refetched variant set; 24,516 variant pairs |
+| 5.4 | Copy embeddings back to local | | ✅ 2026-08-18 | |
+| 5.5 | `python -m esm2_mech.experiments.pathogenicity.pathogenicity_control --phase probe` | `results/run_biorxiv/pathogenicity_control.json` | ✅ 2026-08-18 | delta_mean MLP AUROC 0.885 (family-split), 0.885 (gene-split) — passes ≥0.85 gate; wt_only ~0.52 (chance) |
 
 ## 6. Experiment: Geometry of the pathogenicity direction
 
@@ -132,9 +132,9 @@ Asks what the pathogenicity direction in embedding space actually corresponds to
 
 | Step | Command | Outputs | Status |
 |---|---|---|---|
-| 6.1 | `python -m esm2_mech.experiments.geometry.build_canonical_pathogenicity` | `data/pathogenicity_valid_variants_canonical.json` | ✅ reused | |
+| 6.1 | `python -m esm2_mech.experiments.geometry.build_canonical_pathogenicity` | `data/pathogenicity_valid_variants_canonical.json` | ✅ 2026-08-18 | Rebuilt — section 5's refetch/re-embed changed the row set; 24,516 variants, matches embedding row count |
 | 6.2 | `python -m esm2_mech.experiments.geometry.run_geometry --seeds 5 --stability-dataset tsuboyama` | `results/run_biorxiv/magnitude_direction/{probe_results,geometry_results,transfer_contrast,probe4_axis_identity}.json` | ⬜ | |
-| 6.5 | `python -m esm2_mech.experiments.geometry.conservation_axis --extract` | `data/conservation_pathogenicity.npy`, `data/conservation_pathogenicity_meta.json` | ✅ reused | |
+| 6.5 | `python -m esm2_mech.experiments.geometry.conservation_axis --extract` | `data/conservation_pathogenicity.npy`, `data/conservation_pathogenicity_meta.json` | ⬜ stale | Previous run predates the 6.1 rebuild — needs re-extraction on the pod (GPU) against the new canonical variant list |
 | 6.7 | `python -m esm2_mech.experiments.geometry.conservation_axis` | `results/run_biorxiv/magnitude_direction/conservation_axis.json` | ⬜ | Previous output also used obsolete K1/K2/C4 identifiers; confirm the numbering correction is in before running |
 
 ## 7. Experiment: Megascale stability positive control

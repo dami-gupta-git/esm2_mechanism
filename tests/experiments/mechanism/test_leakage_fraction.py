@@ -17,6 +17,8 @@ Invariants for leakage_fraction_ci:
   _measured_chance, which is a fixed lookup from naive_baseline.json.
 - a seed missing from the cache list means the interval cannot match the headline
   and the CI is not computed (returns None), rather than silently using a subset.
+- an at-floor point estimate returns None before resampling, rather than turning
+  an undefined ratio into a misleading high-discard bootstrap warning.
 """
 
 import numpy as np
@@ -127,6 +129,47 @@ class TestLeakageFractionCi:
         assert ci is not None
         assert "point" in ci
 
+    def test_at_floor_point_does_not_start_bootstrap(self, monkeypatch):
+        """An undefined leakage fraction is not a failed bootstrap interval."""
+        from esm2_mech.experiments.mechanism import leakage_fraction as module
+        from esm2_mech.utils.constants import LOF, MECHANISM_CLASSES
+
+        n_folds = 3
+        rows_per_fold = 6
+        n_rows = n_folds * rows_per_fold
+        y_true = np.tile(MECHANISM_CLASSES, n_rows // len(MECHANISM_CLASSES))
+        predictions = np.full(n_rows, LOF, dtype=object)
+        folds = np.repeat(np.arange(n_folds), rows_per_fold)
+        row_ids = list(range(n_rows))
+        genes = [f"gene_{row}" for row in row_ids]
+        arm = {
+            "row_ids": row_ids,
+            "y_true": y_true.tolist(),
+            "pred": predictions.tolist(),
+            "genes": genes,
+            "folds": folds.tolist(),
+        }
+        entries = [{"gene_split": arm, "family_split": arm}]
+        pfam_map = {gene: f"PF_{gene}" for gene in genes}
+
+        def unexpected_bootstrap(*args, **kwargs):
+            raise AssertionError(
+                "an at-floor leakage fraction must return before bootstrap resampling"
+            )
+
+        monkeypatch.setattr(module, "cluster_bootstrap_ci", unexpected_bootstrap)
+
+        # In each balanced fold, always predicting LOF gives macro-F1 = 1/6.
+        ci = module.leakage_fraction_ci(
+            entries,
+            pfam_map,
+            chance=1.0 / 6.0,
+            n_resamples=1000,
+            seed=0,
+        )
+
+        assert ci is None
+
     def test_missing_seed_variants_are_excluded_from_the_shared_row_space(self):
         # Seed 1's cache only scored a subset of the rows seed 0 and seed 2 scored.
         # The CI must restrict to the rows every seed scored, not error or silently
@@ -195,3 +238,54 @@ class TestLeakageFractionCi:
 
         assert ci is not None
         assert ci["point"] == pytest.approx(ci_hand["point"], abs=1e-9)
+
+    def test_discard_reason_counts_survive_multiprocess_workers(self, monkeypatch):
+        """discard_reason_counts is a dict closed over by `_ratio` and mutated inside
+        it. joblib's default backend runs each resample's `_ratio` call in a worker
+        *process*, so with more than one job every worker gets its own pickled copy
+        of that dict — a mutation there never reaches the parent's copy. If this
+        regresses, discard_reason_counts (and the denominator-collapse suppression
+        gate that reads it) silently reports zero discards on real multi-core runs,
+        which use the n_jobs=-1 default.
+
+        Forces n_jobs=2 so the bug is exercised even on a machine that would
+        otherwise run everything in one process.
+        """
+        import functools
+        from esm2_mech.experiments.mechanism import leakage_fraction as module
+        from esm2_mech.utils import bootstrap as bootstrap_module
+        from esm2_mech.utils.constants import GOF, DN, LOF
+
+        monkeypatch.setattr(
+            module,
+            "cluster_bootstrap_ci",
+            functools.partial(bootstrap_module.cluster_bootstrap_ci, n_jobs=2),
+        )
+
+        # Two genes, each supplying all three classes to its own fold. Resampling
+        # the 2 gene-clusters with replacement empties one fold on exactly the
+        # "AA" and "BB" draws (half the time), which discards for "fold_lost_class".
+        y_true = [GOF, DN, LOF, GOF, DN, LOF]
+        genes = ["gene_A", "gene_A", "gene_A", "gene_B", "gene_B", "gene_B"]
+        folds = [0, 0, 0, 1, 1, 1]
+        row_ids = list(range(6))
+        gene_arm = {
+            "row_ids": row_ids, "y_true": y_true, "pred": y_true,
+            "genes": genes, "folds": folds,
+        }
+        family_arm = {
+            "row_ids": row_ids, "y_true": y_true,
+            "pred": [DN, LOF, GOF, DN, LOF, GOF],  # wrong but still all 3 classes
+            "genes": genes, "folds": folds,
+        }
+        entries = [{"gene_split": gene_arm, "family_split": family_arm}]
+        pfam_map = {}  # both genes fall back to their own orphan cluster
+
+        ci = module.leakage_fraction_ci(
+            entries, pfam_map, chance=0.1, n_resamples=400, seed=0,
+        )
+
+        assert ci is not None
+        n_discarded = ci["n_resamples_total"] - ci["n_resamples"]
+        assert n_discarded > 0  # the AA/BB draws must actually happen
+        assert sum(ci["discard_reason_counts"].values()) == n_discarded

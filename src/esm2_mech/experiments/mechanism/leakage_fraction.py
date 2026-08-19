@@ -11,8 +11,14 @@ import os
 
 import numpy as np
 
-from esm2_mech.utils.bootstrap import cluster_bootstrap_ci, folds_to_arms, score_within_folds
+from esm2_mech.utils.bootstrap import (
+    BootstrapMetricResult,
+    cluster_bootstrap_ci,
+    folds_to_arms,
+    score_within_folds,
+)
 from esm2_mech.utils.constants import (
+    BOOTSTRAP_MAX_DISCARD_FRAC,
     BOOTSTRAP_N_RESAMPLES,
     MECHANISM_CLASSES,
     SEED_RESULT_GLOB,
@@ -170,7 +176,14 @@ def _align_seed_arms(oof_cache_entries: list[dict]) -> tuple[list[dict], np.ndar
     return aligned, gene_names
 
 
-def leakage_fraction_ci(oof_cache_entries, pfam_map, chance, n_resamples, seed=0):
+def leakage_fraction_ci(
+    oof_cache_entries,
+    pfam_map,
+    chance,
+    n_resamples,
+    seed=0,
+    metric_name="leakage_fraction",
+):
     """Cluster-bootstrap CI on the leakage fraction, matching the headline exactly.
 
     The headline averages the per-fold macro-F1 of both arms over every seed and
@@ -183,9 +196,12 @@ def leakage_fraction_ci(oof_cache_entries, pfam_map, chance, n_resamples, seed=0
     aligned = _align_seed_arms(oof_cache_entries)
     if aligned is None:
         return None
+    if n_resamples <= 0:
+        raise ValueError("n_resamples must be positive")
     per_seed, gene_names = aligned
     # Cluster on Pfam family; orphan genes become singleton clusters.
     clusters = np.array([pfam_map.get(g) or f"__orphan__{g}" for g in gene_names])
+    all_rows = np.arange(len(gene_names))
 
     def _ratio(rows):
         gene_values, family_values = [], []
@@ -193,17 +209,56 @@ def leakage_fraction_ci(oof_cache_entries, pfam_map, chance, n_resamples, seed=0
             gene_f1 = _arm_macro_f1(arms["gene"], rows)
             family_f1 = _arm_macro_f1(arms["family"], rows)
             if gene_f1 is None or family_f1 is None:
-                return None
+                return BootstrapMetricResult(None, "fold_lost_class")
             gene_values.append(gene_f1)
             family_values.append(family_f1)
         gene_mean = float(np.mean(gene_values))
         family_mean = float(np.mean(family_values))
         denom = gene_mean - chance
         if denom <= MIN_ABOVE_CHANCE:
-            return None
-        return (gene_mean - family_mean) / denom
+            return BootstrapMetricResult(None, "denominator_below_threshold")
+        return BootstrapMetricResult((gene_mean - family_mean) / denom)
 
-    return cluster_bootstrap_ci(clusters, _ratio, n_resamples=n_resamples, seed=seed)
+    # The headline ratio (full data, no resampling) is undefined for a feature
+    # at the chance floor. Bootstrapping it anyway produces a near-100% discard
+    # rate that the shared warning then blames on class loss, when the real
+    # cause is that almost every resample's own denominator is undefined too —
+    # a fault report about a quantity that was never going to exist.
+    point = _ratio(all_rows)
+    if point.discard_reason == "denominator_below_threshold":
+        return None
+    if point.value is None:
+        raise RuntimeError(
+            "the full leakage-fraction dataset cannot score every mechanism class "
+            "in every seed/fold"
+        )
+
+    ci = cluster_bootstrap_ci(
+        clusters,
+        _ratio,
+        n_resamples=n_resamples,
+        seed=seed,
+        metric_name=metric_name,
+    )
+
+    # A denominator-driven discard is not exchangeable noise: it removes exactly
+    # the resamples whose gene-split score dipped near the floor, so the draws
+    # that survive are a biased-upward subset and any interval built only from
+    # them misstates its own uncertainty. A fold-losing-a-class discard has no
+    # such direction (exp4_fixes.md's own rare-class-rule analysis), so it alone
+    # does not force suppression.
+    reason_counts = ci.get("discard_reason_counts") or {}
+    denom_discard_frac = reason_counts.get("denominator_below_threshold", 0) / n_resamples
+    if denom_discard_frac > BOOTSTRAP_MAX_DISCARD_FRAC and not ci["ci_suppressed"]:
+        ci["ci_low"] = None
+        ci["ci_high"] = None
+        ci["ci_suppressed"] = True
+        ci["ci_suppressed_reason"] = (
+            f"{denom_discard_frac:.1%} of resamples were discarded for a "
+            "collapsed denominator, which biases the surviving draws rather than "
+            "just narrowing them"
+        )
+    return ci
 
 
 def main(compute_ci: bool = True, n_boot: int = BOOTSTRAP_N_RESAMPLES) -> None:
@@ -267,7 +322,14 @@ def main(compute_ci: bool = True, n_boot: int = BOOTSTRAP_N_RESAMPLES) -> None:
             feature_caches = [cache[feature] for cache in oof_caches]
         cell = leakage_fraction_per_feature(seeds, feature, chance, feature_caches)
         if compute_ci and feature_caches is not None:
-            ci = leakage_fraction_ci(feature_caches, pfam_map, chance, n_boot, seed=0)
+            ci = leakage_fraction_ci(
+                feature_caches,
+                pfam_map,
+                chance,
+                n_boot,
+                seed=0,
+                metric_name=f"{feature}_leakage_fraction",
+            )
             if ci is not None:
                 cell["ci"] = ci
         results["by_feature"][feature] = cell

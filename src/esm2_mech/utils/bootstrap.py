@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import functools
+from collections import Counter
+from dataclasses import dataclass
 from typing import Callable
 
 import numpy as np
 from joblib import Parallel, delayed
-from sklearn.metrics import average_precision_score, f1_score, roc_auc_score
+from sklearn.metrics import average_precision_score, roc_auc_score
 
 from esm2_mech.utils.metrics import binary_class_target, fold_macro_f1
 from esm2_mech.utils.constants import (
@@ -23,6 +25,20 @@ print = functools.partial(print, flush=True)
 
 # Cannot collide with a real Pfam accession ("PF" + digits).
 UNANNOTATED_CLUSTER_PREFIX = "__no_pfam__:"
+
+
+@dataclass(frozen=True)
+class BootstrapMetricResult:
+    """One bootstrap metric value plus the reason an undefined draw was rejected.
+
+    Plain floats and ``None`` remain valid metric-function returns. Use this result
+    when a caller has more than one possible failure mode and the parent process
+    needs the per-draw reason. The object is returned from each joblib worker, so
+    reason accounting does not depend on mutating worker-local closure state.
+    """
+
+    value: float | None
+    discard_reason: str | None = None
 
 
 def average_oof_over_seeds(oof_list: list[dict | None]) -> dict | None:
@@ -213,15 +229,31 @@ def _clean_scalar(value) -> float | None:
     return float(value)
 
 
+def _clean_metric_result(
+    result: float | None | BootstrapMetricResult,
+) -> tuple[float | None, str | None]:
+    """Normalize one metric result without losing its worker-side failure reason."""
+    if isinstance(result, BootstrapMetricResult):
+        value = _clean_scalar(result.value)
+        if value is not None and result.discard_reason is not None:
+            raise ValueError("a finite bootstrap metric cannot carry a discard reason")
+        return value, result.discard_reason if value is None else None
+    return _clean_scalar(result), None
+
+
 def _evaluate_metric_fns(
     metric_fns: list[Callable[[np.ndarray], dict]], rows: np.ndarray
-) -> dict:
-    """Run every metric fn on one row-index array and flatten to {name: value}."""
-    out: dict = {}
+) -> tuple[dict, dict]:
+    """Return flattened metric values and per-metric rejection reasons."""
+    values: dict = {}
+    reasons: dict = {}
     for metric_fn in metric_fns:
-        for name, value in metric_fn(rows).items():
-            out[name] = _clean_scalar(value)
-    return out
+        for name, result in metric_fn(rows).items():
+            value, reason = _clean_metric_result(result)
+            values[name] = value
+            if reason is not None:
+                reasons[name] = reason
+    return values, reasons
 
 
 def _multi_bootstrap_resample_values(
@@ -229,8 +261,8 @@ def _multi_bootstrap_resample_values(
     cluster_rows: list[np.ndarray],
     n_clusters: int,
     child_seed: int,
-) -> dict:
-    """Draw one cluster resample and score every metric on the same drawn rows."""
+) -> tuple[dict, dict]:
+    """Draw once and return metric values plus worker-side rejection reasons."""
     rng = np.random.RandomState(child_seed)
     drawn = rng.randint(0, n_clusters, size=n_clusters)
     rows = np.concatenate([cluster_rows[i] for i in drawn])
@@ -268,25 +300,55 @@ def _summarize_bootstrap(
     }
 
 
-def _warn_on_discards(summaries: dict) -> None:
+_DEFAULT_DISCARD_REASON = (
+    "the metric could not be scored on that many draws (cause not identified by "
+    "the caller)"
+)
+
+
+def _warn_on_discards(
+    summaries: dict, discard_reasons: dict[str, str | Callable[[], str]] | None = None
+) -> None:
     """Print a fault warning for any metric that lost more than the tolerated share.
 
-    A discarded resample is one where some fold lost a class entirely. With every
-    fold carrying every class several families over in the real splits, that needs an
-    improbable draw and should stay far below the tolerance. A rate above it points
-    at the resampling unit or the fold construction rather than at sampling noise,
-    and is not something to absorb into a wider interval.
+    With every fold carrying every class several families over in the real splits,
+    a fold losing a class entirely needs an improbable draw and should stay far
+    below the tolerance — but that is only one of several reasons a metric_fn can
+    return None (a ratio's denominator collapsing, or too few surviving rows, are
+    others). This function only sees discard counts, not causes, so it never
+    asserts one: callers that know their own failure mode pass it via
+    `discard_reasons`; callers that do not get an honest placeholder rather than
+    a guessed explanation. Per-draw reasons returned by workers take precedence
+    over a caller's static description. A rate above tolerance points at the
+    resampling unit or the fold/metric construction rather than at sampling noise,
+    and is not something to absorb into a wider interval either way.
     """
+    discard_reasons = discard_reasons or {}
     for name, summary in summaries.items():
         discard_frac = summary.get("discard_frac")
         if discard_frac is None or discard_frac <= BOOTSTRAP_MAX_DISCARD_FRAC:
             continue
+        reason_counts = summary.get("discard_reason_counts") or {}
+        if reason_counts:
+            parts = [
+                f"{count} draw(s): {reason.replace('_', ' ')}"
+                for reason, count in sorted(reason_counts.items())
+            ]
+            unidentified = summary["n_discarded"] - sum(reason_counts.values())
+            if unidentified:
+                parts.append(f"{unidentified} draw(s): cause not identified")
+            reason = "; ".join(parts)
+        else:
+            reason = discard_reasons.get(name)
+            if callable(reason):
+                reason = reason()
+            reason = reason or _DEFAULT_DISCARD_REASON
         print(
             f"  [bootstrap] {name}: {summary['n_discarded']}/"
             f"{summary['n_resamples_total']} resamples discarded "
-            f"({discard_frac:.1%}, tolerance {BOOTSTRAP_MAX_DISCARD_FRAC:.0%}) — a "
-            "fold lost a class on that many draws. Investigate the resampling unit "
-            "and the fold construction before using this interval."
+            f"({discard_frac:.1%}, tolerance {BOOTSTRAP_MAX_DISCARD_FRAC:.0%}) — "
+            f"{reason}. Investigate the resampling unit and the metric construction "
+            "before using this interval."
         )
 
 
@@ -298,12 +360,20 @@ def cluster_bootstrap_ci_multi(
     min_valid_frac: float = BOOTSTRAP_MIN_VALID_FRAC,
     seed: int = 0,
     n_jobs: int = -1,
+    discard_reasons: dict[str, str | Callable[[], str]] | None = None,
 ) -> dict:
-    """Cluster-bootstrap CIs for several metrics over one shared set of resamples."""
+    """Cluster-bootstrap CIs for several metrics over one shared set of resamples.
+
+    `discard_reasons` lets a caller name, per metric, why its metric_fn returns
+    None on a resample. Different metric_fns fail for different reasons (a fold
+    losing a class is only one of them — a ratio's denominator collapsing, or too
+    few rows surviving, are others) and the discard warning must not assert a
+    cause it cannot verify.
+    """
     unique, cluster_rows = _cluster_to_rows(np.asarray(clusters))
     n_clusters = len(unique)
     all_rows = np.arange(len(clusters))
-    points = _evaluate_metric_fns(metric_fns, all_rows)
+    points, point_reasons = _evaluate_metric_fns(metric_fns, all_rows)
 
     child_seqs = np.random.SeedSequence(seed).spawn(n_resamples)
     child_seeds = [int(s.generate_state(1)[0]) for s in child_seqs]
@@ -315,18 +385,27 @@ def cluster_bootstrap_ci_multi(
         for child_seed in child_seeds
     )
 
-    out = {
-        name: _summarize_bootstrap(
-            points[name],
-            [rep[name] for rep in replicates if rep.get(name) is not None],
-            n_resamples,
-            n_clusters,
-            ci_level,
-            min_valid_frac,
+    out = {}
+    for name in points:
+        stats = [
+            values[name]
+            for values, _reasons in replicates
+            if values.get(name) is not None
+        ]
+        summary = _summarize_bootstrap(
+            points[name], stats, n_resamples, n_clusters, ci_level, min_valid_frac
         )
-        for name in points
-    }
-    _warn_on_discards(out)
+        reason_counts = Counter(
+            reasons[name]
+            for values, reasons in replicates
+            if values.get(name) is None and reasons.get(name) is not None
+        )
+        if reason_counts:
+            summary["discard_reason_counts"] = dict(reason_counts)
+        if point_reasons.get(name) is not None:
+            summary["point_invalid_reason"] = point_reasons[name]
+        out[name] = summary
+    _warn_on_discards(out, discard_reasons)
     return out
 
 
@@ -338,6 +417,7 @@ def within_stratum_bootstrap_ci(
     min_valid_frac: float = BOOTSTRAP_MIN_VALID_FRAC,
     seed: int = 0,
     n_jobs: int = -1,
+    discard_reason: str | Callable[[], str] | None = None,
 ) -> dict:
     """Bootstrap that resamples rows with replacement inside each stratum.
 
@@ -363,7 +443,7 @@ def within_stratum_bootstrap_ci(
     summary = _summarize_bootstrap(
         point, stats, n_resamples, len(unique), ci_level, min_valid_frac
     )
-    _warn_on_discards({"within_stratum": summary})
+    _warn_on_discards({"within_stratum": summary}, {"within_stratum": discard_reason})
     return summary
 
 
@@ -383,15 +463,24 @@ def _within_stratum_resample_value(
 
 def cluster_bootstrap_ci(
     clusters: np.ndarray,
-    metric_fn: Callable[[np.ndarray], float | None],
+    metric_fn: Callable[
+        [np.ndarray], float | None | BootstrapMetricResult
+    ],
     n_resamples: int = BOOTSTRAP_N_RESAMPLES,
     ci_level: float = BOOTSTRAP_CI_LEVEL,
     min_valid_frac: float = BOOTSTRAP_MIN_VALID_FRAC,
     seed: int = 0,
     n_jobs: int = -1,
+    discard_reason: str | Callable[[], str] | None = None,
+    metric_name: str = "metric",
 ) -> dict:
-    """Single-metric front end to cluster_bootstrap_ci_multi."""
-    key = "metric"
+    """Single-metric front end to cluster_bootstrap_ci_multi.
+
+    `discard_reason` names why an untagged `metric_fn` return is None. A
+    `BootstrapMetricResult` supplies the reason for its own draw instead.
+    `metric_name` identifies the result in warnings. See cluster_bootstrap_ci_multi.
+    """
+    key = metric_name
     out = cluster_bootstrap_ci_multi(
         clusters,
         [lambda rows: {key: metric_fn(rows)}],
@@ -400,6 +489,7 @@ def cluster_bootstrap_ci(
         min_valid_frac=min_valid_frac,
         seed=seed,
         n_jobs=n_jobs,
+        discard_reasons={key: discard_reason} if discard_reason else None,
     )
     return out[key]
 
@@ -497,6 +587,7 @@ def _paired_cluster_bootstrap_diff_ci(
     min_valid_frac: float,
     seed: int,
     n_jobs: int,
+    discard_reason: str | Callable[[], str] | None,
 ) -> dict:
     """Shared resampling machinery for both pairing modes."""
     unique, cluster_rows = _cluster_to_rows(np.asarray(resample_clusters))
@@ -535,7 +626,9 @@ def _paired_cluster_bootstrap_diff_ci(
         "valid_frac": float(valid_frac),
         "n_clusters": int(n_clusters),
     }
-    _warn_on_discards({"paired_diff": base})
+    _warn_on_discards(
+        {"paired_diff": base}, {"paired_diff": discard_reason}
+    )
     if not diffs or valid_frac < min_valid_frac:
         return {**base, "ci_low": None, "ci_high": None, "ci_suppressed": True}
     lo_pct = (1.0 - ci_level) / 2.0 * 100.0
@@ -557,6 +650,7 @@ def paired_cluster_bootstrap_diff(
     min_valid_frac: float = BOOTSTRAP_MIN_VALID_FRAC,
     seed: int = 0,
     n_jobs: int = -1,
+    discard_reason: str | Callable[[], str] | None = None,
 ) -> dict:
     """Paired CI on metric_a minus metric_b under one shared fold assignment."""
     return _paired_cluster_bootstrap_diff_ci(
@@ -568,6 +662,7 @@ def paired_cluster_bootstrap_diff(
         min_valid_frac=min_valid_frac,
         seed=seed,
         n_jobs=n_jobs,
+        discard_reason=discard_reason,
     )
 
 
@@ -638,6 +733,7 @@ def paired_cluster_bootstrap_diff_cross_partition(
     min_valid_frac: float = BOOTSTRAP_MIN_VALID_FRAC,
     seed: int = 0,
     n_jobs: int = -1,
+    discard_reason: str | Callable[[], str] | None = None,
 ) -> dict:
     """Paired CI on a difference between arms scored under different CV partitions.
 
@@ -653,6 +749,7 @@ def paired_cluster_bootstrap_diff_cross_partition(
         min_valid_frac=min_valid_frac,
         seed=seed,
         n_jobs=n_jobs,
+        discard_reason=discard_reason,
     )
     if sensitivity_clusters is not None:
         primary["gene_resampled_sensitivity"] = _paired_cluster_bootstrap_diff_ci(
@@ -664,6 +761,7 @@ def paired_cluster_bootstrap_diff_cross_partition(
             min_valid_frac=min_valid_frac,
             seed=seed,
             n_jobs=n_jobs,
+            discard_reason=discard_reason,
         )
     return primary
 
@@ -751,8 +849,24 @@ def bootstrap_mechanism_metrics_from_oof(
         functools.partial(_class_metrics, _col=col_idx, _cls=cls)
         for col_idx, cls in enumerate(classes)
     ]
+    class_metric_reason = (
+        "a fold's resampled rows lost the one-vs-rest positive or negative class"
+    )
+    discard_reasons = {"macro_f1": "a fold's resampled rows lost a mechanism class"}
+    for cls in classes:
+        discard_reasons.update({
+            f"auroc_{cls}": class_metric_reason,
+            f"auprc_{cls}": class_metric_reason,
+            f"prevalence_{cls}": class_metric_reason,
+            f"auprc_lift_{cls}": class_metric_reason,
+        })
     out = cluster_bootstrap_ci_multi(
-        clusters, metric_fns, n_resamples=n_resamples, ci_level=ci_level, seed=seed
+        clusters,
+        metric_fns,
+        n_resamples=n_resamples,
+        ci_level=ci_level,
+        seed=seed,
+        discard_reasons=discard_reasons,
     )
 
     for metric_name, ci in out.items():
@@ -872,12 +986,8 @@ def paired_oof_diff(
                 for pred, (_, folds, fold_ids) in zip(preds, arms)
             ]
 
-            def _fold_f1(block: np.ndarray, arm_pred: np.ndarray) -> float:
-                return float(
-                    f1_score(
-                        y_true[block], arm_pred[block], average="macro", zero_division=0
-                    )
-                )
+            def _fold_f1(block: np.ndarray, arm_pred: np.ndarray) -> float | None:
+                return fold_macro_f1(y_true, block, arm_pred, classes)
 
             def _macro_f1(rows: np.ndarray) -> float | None:
                 return score_within_folds(rows, f1_arms, _fold_f1)
@@ -905,6 +1015,15 @@ def paired_oof_diff(
 
     shared_genes = np.asarray(oof_a["genes"], dtype=object)[idx_a]
     fn_a, fn_b = _metric_fn(oof_a, idx_a), _metric_fn(oof_b, idx_b)
+    if metric == "macro_f1":
+        discard_reason = (
+            "at least one arm's fold lost a mechanism class on the shared resample"
+        )
+    else:
+        discard_reason = (
+            "at least one arm's fold lost the one-vs-rest positive or negative "
+            "class on the shared resample"
+        )
     if cross_partition:
         out = paired_cluster_bootstrap_diff_cross_partition(
             family_or_gene_clusters(shared_genes, pfam_map, is_family_split=True),
@@ -913,6 +1032,7 @@ def paired_oof_diff(
             sensitivity_clusters=shared_genes,
             n_resamples=n_resamples,
             seed=seed,
+            discard_reason=discard_reason,
         )
     else:
         out = paired_cluster_bootstrap_diff(
@@ -921,6 +1041,7 @@ def paired_oof_diff(
             fn_b,
             n_resamples=n_resamples,
             seed=seed,
+            discard_reason=discard_reason,
         )
     out["n_shared"] = len(idx_a)
     return out
@@ -1010,7 +1131,13 @@ def binary_auroc_cluster_bootstrap_ci(
 
     resample_unit = oof["genes"] if clusters is None else clusters
     return cluster_bootstrap_ci(
-        resample_unit, _auroc, n_resamples=n_resamples, ci_level=ci_level, seed=seed
+        resample_unit,
+        _auroc,
+        n_resamples=n_resamples,
+        ci_level=ci_level,
+        seed=seed,
+        discard_reason="a fold's resampled rows lost the positive or the negative class",
+        metric_name="binary_auroc",
     )
 
 

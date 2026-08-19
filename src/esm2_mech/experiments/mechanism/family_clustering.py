@@ -275,9 +275,17 @@ def _family_probe_bootstrap_ci(oof, n_resamples, seed):
         [f"{family}::{fold}" for family, fold in zip(oof["families"], oof["folds"])],
         dtype=object,
     )
+    reasons = {
+        "accuracy": None,  # accuracy never returns None; a discard here can't happen
+        "macro_f1": (
+            "a (family, fold) stratum's resampled rows lost a class — the target "
+            "is the family itself, so this is a genuine class-loss discard"
+        ),
+    }
     return {
         name: within_stratum_bootstrap_ci(
-            family_fold_strata, _scored(fold_fn), n_resamples=n_resamples, seed=seed
+            family_fold_strata, _scored(fold_fn), n_resamples=n_resamples, seed=seed,
+            discard_reason=reasons[name],
         )
         for name, fold_fn in (("accuracy", _fold_accuracy), ("macro_f1", _fold_macro_f1))
     }

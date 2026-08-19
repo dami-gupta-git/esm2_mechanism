@@ -141,7 +141,15 @@ def spearman_cluster_bootstrap_ci(oof, n_resamples=BOOTSTRAP_N_RESAMPLES, seed=0
     def _rho(rows):
         return score_within_folds(rows, arms, _fold_rho)
 
-    return cluster_bootstrap_ci(oof["clusters"], _rho, n_resamples=n_resamples, seed=seed)
+    return cluster_bootstrap_ci(
+        oof["clusters"], _rho, n_resamples=n_resamples, seed=seed,
+        discard_reason=(
+            "a fold's resampled rows had fewer than 2 distinct values, so its "
+            "rank correlation is undefined (no class to lose — this is a "
+            "regression task)"
+        ),
+        metric_name="spearman",
+    )
 
 
 
@@ -308,6 +316,10 @@ def run_stability_projection_3c(
             _baseline_f1,
             n_resamples=n_boot,
             seed=0,
+            discard_reason=(
+                "at least one arm's fold lost a mechanism class on the shared "
+                "resample"
+            ),
         )
     if difference_ci is None or difference_ci.get("ci_high") is None:
         control_3c_verdict = "not adjudicated (paired family-bootstrap CI unavailable)"
@@ -549,6 +561,10 @@ def main(compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES, n_jobs=1):
             metric_fn_b=_rho_family,
             n_resamples=n_boot,
             seed=0,
+            discard_reason=(
+                "at least one arm's resampled values had undefined or non-finite "
+                "rank correlation"
+            ),
         )
         print(
             f"  3B gap: {control_3b_gap_ci['point_diff']:.3f} "

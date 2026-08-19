@@ -59,6 +59,7 @@ from esm2_mech.utils.bootstrap import (
     binary_auroc_cluster_bootstrap_ci,
     bootstrap_mechanism_metrics,
     cluster_bootstrap_ci,
+    cluster_bootstrap_ci_multi,
     cluster_subsample_ci,
     independent_cluster_bootstrap_diff,
     label_permutation_pvalue,
@@ -71,6 +72,7 @@ from esm2_mech.utils.bootstrap import (
     within_stratum_bootstrap_ci,
     _permute_labels,
     _permute_labels_by_cluster,
+    _DEFAULT_DISCARD_REASON,
 )
 from esm2_mech.utils.constants import MECHANISM_CLASSES, GOF, DN, LOF
 
@@ -270,6 +272,120 @@ class TestClusterBootstrapCI:
         a = cluster_bootstrap_ci(clusters, fn, n_resamples=100, seed=3)
         b = cluster_bootstrap_ci(clusters, fn, n_resamples=100, seed=3)
         assert a == b
+
+
+# ---------------------------------------------------------------------------
+# discard_reason plumbing — the discard-tolerance warning must name a cause
+# only the caller can know (or fall back to an honest placeholder), never
+# assert "a fold lost a class" for a metric_fn that fails for another reason.
+# ---------------------------------------------------------------------------
+
+
+def _high_discard_clusters_and_metric():
+    # Same construction as test_ci_suppressed_when_too_many_undefined: a single
+    # sentinel gene drives ~36% of resamples undefined, comfortably above the
+    # 1% BOOTSTRAP_MAX_DISCARD_FRAC tolerance so the warning always fires.
+    clusters = np.array([f"G{i}" for i in range(30) for _ in range(4)])
+    sentinel_rows = set(np.where(clusters == "G0")[0].tolist())
+
+    def metric(rows):
+        return 0.7 if set(rows.tolist()) & sentinel_rows else None
+
+    return clusters, metric
+
+
+class TestDiscardReasonWarning:
+    def test_custom_reason_is_printed(self, capsys):
+        clusters, metric = _high_discard_clusters_and_metric()
+        cluster_bootstrap_ci(
+            clusters,
+            metric,
+            n_resamples=200,
+            seed=0,
+            discard_reason="a widget lost its gizmo",
+        )
+        out = capsys.readouterr().out
+        assert "a widget lost its gizmo" in out
+
+    def test_missing_reason_falls_back_to_default_placeholder(self, capsys):
+        clusters, metric = _high_discard_clusters_and_metric()
+        cluster_bootstrap_ci(clusters, metric, n_resamples=200, seed=0)
+        out = capsys.readouterr().out
+        assert _DEFAULT_DISCARD_REASON in out
+        # The placeholder must not claim a specific cause it cannot verify.
+        assert "lost a class" not in out
+
+    def test_callable_reason_is_invoked_after_resampling(self, capsys):
+        clusters, metric = _high_discard_clusters_and_metric()
+        calls = []
+
+        def reason():
+            calls.append(1)
+            return "computed after the fact"
+
+        cluster_bootstrap_ci(clusters, metric, n_resamples=200, seed=0, discard_reason=reason)
+        out = capsys.readouterr().out
+        assert "computed after the fact" in out
+        # Called exactly once, for the warning — not once per resample.
+        assert calls == [1]
+
+    def test_no_warning_below_tolerance(self, capsys):
+        clusters = np.array([f"G{i % 5}" for i in range(50)])
+        values = np.arange(50, dtype=float)
+        cluster_bootstrap_ci(
+            clusters,
+            lambda rows: float(values[rows].mean()),
+            n_resamples=200,
+            seed=0,
+            discard_reason="should never be printed",
+        )
+        assert "should never be printed" not in capsys.readouterr().out
+
+    def test_within_stratum_reason_is_printed(self, capsys):
+        # Within-stratum resampling draws only from each stratum's own rows, so
+        # every stratum is present in every draw — a sentinel *stratum* can never
+        # be absent the way a sentinel *cluster* can be in the cluster bootstrap.
+        # Make one row within a stratum rare instead: S0 has 4 rows, row 0 is the
+        # only one of a kind, and each draw resamples S0's 4 rows with replacement
+        # from S0's own pool, so missing row 0 in all 4 draws is plausible
+        # ((3/4)^4 ≈ 32%), comfortably above the 1% tolerance.
+        strata = np.array([f"S{i}" for i in range(30) for _ in range(4)])
+        rare_row = 0
+
+        def metric(rows):
+            return 0.7 if rare_row in rows else None
+
+        within_stratum_bootstrap_ci(
+            strata,
+            metric,
+            n_resamples=200,
+            seed=0,
+            discard_reason="a stratum-specific cause",
+        )
+        assert "a stratum-specific cause" in capsys.readouterr().out
+
+    def test_multi_reasons_are_per_metric(self, capsys):
+        clusters, failing_metric = _high_discard_clusters_and_metric()
+
+        def metric_fns_a(rows):
+            return {"a": failing_metric(rows)}
+
+        def metric_fns_b(rows):
+            return {"b": failing_metric(rows)}
+
+        cluster_bootstrap_ci_multi(
+            clusters,
+            [metric_fns_a, metric_fns_b],
+            n_resamples=200,
+            seed=0,
+            discard_reasons={"a": "reason for a only"},
+        )
+        out = capsys.readouterr().out
+        assert "reason for a only" in out
+        # Metric "b" got no reason and must not borrow "a"'s.
+        b_line = next(line for line in out.splitlines() if "] b:" in line)
+        assert "reason for a only" not in b_line
+        assert _DEFAULT_DISCARD_REASON in b_line
 
 
 # ---------------------------------------------------------------------------
