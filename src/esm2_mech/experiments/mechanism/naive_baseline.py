@@ -69,7 +69,7 @@ def _eval_dummy_one_seed(strategy, labels, splits, seed):
 
     for train_idx, test_idx in splits:
         y_train, y_test = labels[train_idx], labels[test_idx]
-        if len(set(y_train)) < 2:
+        if set(y_train.tolist()) != set(MECHANISM_CLASSES):
             continue
         if set(y_test.tolist()) != set(MECHANISM_CLASSES):
             continue
@@ -141,54 +141,73 @@ def evaluate(strategy, split_name, labels, genes, pfam_map, n_seeds=N_SEEDS, n_f
 def floor_macro_f1_ci(labels, genes, pfam_map, seed=0, n_boot=BOOTSTRAP_N_RESAMPLES):
     """Cluster-bootstrap CIs for the most_frequent floor macro-F1.
 
-    The most_frequent floor predicts the global majority class for every variant, so
-    its macro-F1 varies across resamples only through class balance. The gene CI
+    The majority class is refitted inside each fold and bootstrap draw. The gene CI
     resamples whole genes; the family CI resamples whole Pfam families (unannotated
-    genes excluded, matching family-split CV). Returns {"gene": ci, "family": ci}.
+    genes excluded, matching family-split CV). Both metrics are scored within fold
+    and discard a draw when a fold loses a mechanism class.
     """
     classes = list(MECHANISM_CLASSES)
 
-    def _macro_f1(base_rows, local_rows):
-        rows = base_rows[local_rows]
-        resampled_labels = labels[rows]
-        if set(resampled_labels.tolist()) != set(classes):
-            return None
-        observed_classes, counts = np.unique(resampled_labels, return_counts=True)
-        majority = observed_classes[int(np.argmax(counts))]
-        pred = np.full(len(rows), majority)
-        return float(
-            f1_score(
-                resampled_labels,
-                pred,
-                labels=classes,
-                average="macro",
-                zero_division=0,
+    def _one_split(split_name):
+        splits = (
+            gene_split_cv(genes, n_folds=N_FOLDS, seed=seed)
+            if split_name == "gene"
+            else family_split_cv(genes, pfam_map, n_folds=N_FOLDS, seed=seed)
+        )
+        if len(splits) != N_FOLDS:
+            raise ValueError(
+                f"{split_name} majority-floor CI has {len(splits)} folds, expected {N_FOLDS}"
             )
+        row_ids = np.concatenate([test_idx for _train_idx, test_idx in splits])
+        oof_labels = labels[row_ids]
+        oof_genes = genes[row_ids]
+        oof_folds = np.concatenate([
+            np.full(len(test_idx), fold_index, dtype=int)
+            for fold_index, (_train_idx, test_idx) in enumerate(splits)
+        ])
+        clusters = (
+            oof_genes
+            if split_name == "gene"
+            else np.array([pfam_map[gene] for gene in oof_genes], dtype=object)
         )
 
-    families = np.array([pfam_map.get(g) for g in genes], dtype=object)
-    fam_mask = np.array([f is not None for f in families])
+        def _fold_mean_floor(resampled_rows):
+            resampled_rows = np.asarray(resampled_rows, dtype=int)
+            sampled_folds = oof_folds[resampled_rows]
+            values = []
+            for fold_index in range(N_FOLDS):
+                test_rows = resampled_rows[sampled_folds == fold_index]
+                train_rows = resampled_rows[sampled_folds != fold_index]
+                if len(test_rows) == 0 or len(train_rows) == 0:
+                    return None
+                y_test = oof_labels[test_rows]
+                if set(y_test.tolist()) != set(classes):
+                    return None
+                y_train = oof_labels[train_rows]
+                train_classes, counts = np.unique(y_train, return_counts=True)
+                if set(train_classes.tolist()) != set(classes):
+                    return None
+                majority = train_classes[int(np.argmax(counts))]
+                pred = np.full(len(test_rows), majority)
+                values.append(float(f1_score(
+                    y_test,
+                    pred,
+                    labels=classes,
+                    average="macro",
+                    zero_division=0,
+                )))
+            return float(np.mean(values))
 
-    all_rows = np.arange(len(labels))
-    gene_ci = cluster_bootstrap_ci(
-        genes,
-        lambda local_rows: _macro_f1(all_rows, local_rows),
-        n_resamples=n_boot,
-        seed=seed,
-        discard_reason="the resampled rows lost a mechanism class",
-        metric_name="gene_majority_floor_macro_f1",
-    )
+        return cluster_bootstrap_ci(
+            clusters,
+            _fold_mean_floor,
+            n_resamples=n_boot,
+            seed=seed,
+            discard_reason="a fold's resampled rows lost a mechanism class",
+            metric_name=f"{split_name}_majority_floor_macro_f1",
+        )
 
-    fam_rows = np.where(fam_mask)[0]
-    fam_ci = cluster_bootstrap_ci(
-        families[fam_mask],
-        lambda local_rows: _macro_f1(fam_rows, local_rows),
-        n_resamples=n_boot,
-        seed=seed,
-        discard_reason="the resampled rows lost a mechanism class",
-        metric_name="family_majority_floor_macro_f1",
-    )
-    return {"gene": gene_ci, "family": fam_ci}
+    return {"gene": _one_split("gene"), "family": _one_split("family")}
 
 
 def main() -> None:

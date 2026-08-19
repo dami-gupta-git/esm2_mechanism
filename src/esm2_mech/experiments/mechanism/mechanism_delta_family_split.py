@@ -27,6 +27,7 @@ from esm2_mech.utils.sequences import window_sequence, apply_missense, build_wt_
 from esm2_mech.utils.constants import (
     seed_result_filename,
     mechanism_oof_cache_filename,
+    MECHANISM_OOF_CACHE_SCHEMA_VERSION,
     MECHANISM_CLASSES,
     BOOTSTRAP_N_RESAMPLES,
 )
@@ -53,7 +54,6 @@ print = functools.partial(print, flush=True)
 
 
 PERMUTATION_FEATURES = ("delta_mean", "wt_only_mean")
-MECHANISM_OOF_CACHE_SCHEMA_VERSION = 2
 
 # wt_only_mean: refit permutation (macro-F1). delta_mean: OOF permutation (AUROC).
 REFIT_PERMUTATION_FEATURES = ("wt_only_mean",)
@@ -176,6 +176,9 @@ def run(
             "ci_enabled": compute_ci,
             "n_permutations": n_permutations,
             "pca_components": PCA_COMPONENTS,
+            "features_requested": (
+                list(feature_names) if feature_names is not None else sorted(features)
+            ),
         },
         "n_variants": len(valid_variants),
         "embedding_variant_fingerprint": embedding_variant_fingerprint(valid_variants),

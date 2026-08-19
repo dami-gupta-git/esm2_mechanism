@@ -366,21 +366,32 @@ def main():
         with open(NAIVE_BASELINE_JSON) as handle:
             naive_result = json.load(handle)
         naive_fingerprints = naive_result.get("input_fingerprints")
-        for key in ("labeled_variants", "pfam_assignments"):
-            if naive_fingerprints is None or naive_fingerprints.get(key) != input_fingerprints.get(key):
-                raise ValueError(
-                    f"{NAIVE_BASELINE_JSON}: {key} does not match the probe inputs"
-                )
-        family_floor = float(
-            naive_result["by_strategy"]["most_frequent"]["family"]["macro_f1_mean"]
+        matching_floor = naive_fingerprints is not None and all(
+            naive_fingerprints.get(key) == input_fingerprints.get(key)
+            for key in ("labeled_variants", "pfam_assignments")
         )
-        aggregate_payload["claim_2a_ci_summary"] = summarize_mechanism_null_ci(
-            seed_results, family_floor
-        )
-        aggregate_payload["claim_2a_ci_summary_missing"] = False
+        if matching_floor:
+            family_floor = float(
+                naive_result["by_strategy"]["most_frequent"]["family"]["macro_f1_mean"]
+            )
+            aggregate_payload["claim_2a_ci_summary"] = summarize_mechanism_null_ci(
+                seed_results, family_floor
+            )
+            aggregate_payload["claim_2a_ci_summary_missing"] = False
+            aggregate_payload["claim_2a_ci_summary_missing_reason"] = None
+        else:
+            aggregate_payload["claim_2a_ci_summary"] = None
+            aggregate_payload["claim_2a_ci_summary_missing"] = True
+            aggregate_payload["claim_2a_ci_summary_missing_reason"] = (
+                "the available naive baseline was produced from different or "
+                "unfingerprinted inputs"
+            )
     else:
         aggregate_payload["claim_2a_ci_summary"] = None
         aggregate_payload["claim_2a_ci_summary_missing"] = True
+        aggregate_payload["claim_2a_ci_summary_missing_reason"] = (
+            "the naive baseline result does not exist"
+        )
     if permutation_summary is not None:
         aggregate_payload["permutation_summary"] = permutation_summary
     write_result_json(

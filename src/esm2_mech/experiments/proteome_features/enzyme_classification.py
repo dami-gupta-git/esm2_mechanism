@@ -18,7 +18,9 @@ from esm2_mech.utils.constants import (
     BOOTSTRAP_N_RESAMPLES,
     N_SEEDS,
     MECHANISM_CLASSES,
+    MECHANISM_OOF_CACHE_SCHEMA_VERSION,
     mechanism_oof_cache_filename,
+    seed_result_filename,
 )
 from esm2_mech.utils.metrics import fold_macro_f1, majority_baseline_f1
 from esm2_mech.utils.splits import gene_split_cv, family_split_cv
@@ -66,8 +68,20 @@ def _load_mechanism_reference_f1() -> float | None:
     if not MECHANISM_AGGREGATE_JSON.exists():
         print(f"  WARNING: {MECHANISM_AGGREGATE_JSON} not found — mechanism reference unavailable")
         return None
+    result_path = RESULTS_DIR / seed_result_filename(0)
+    if not result_path.exists():
+        raise FileNotFoundError(
+            f"{result_path} is missing; the mechanism aggregate cannot be validated"
+        )
     with open(MECHANISM_AGGREGATE_JSON) as fh:
         agg = json.load(fh)
+    with open(result_path) as fh:
+        result = json.load(fh)
+    for key in ("input_fingerprints", "analysis_parameters"):
+        if result.get(key) is None or agg.get(key) != result.get(key):
+            raise ValueError(
+                f"{MECHANISM_AGGREGATE_JSON}: {key} does not match {result_path}"
+            )
     val = (
         agg.get("across_seed", {})
         .get("family_split", {})
@@ -80,20 +94,54 @@ def _load_mechanism_reference_f1() -> float | None:
 
 
 def _load_mechanism_family_oof() -> dict | None:
-    """Load seed-0 mechanism family-split OOF labels for an independent CI."""
-    path = RESULTS_DIR / mechanism_oof_cache_filename(0)
-    if not path.exists():
-        print(f"  WARNING: {path} not found — enzyme/mechanism difference CI unavailable")
+    """Load the OOF cache bound to the exact completed seed-0 mechanism run."""
+    cache_path = RESULTS_DIR / mechanism_oof_cache_filename(0)
+    result_path = RESULTS_DIR / seed_result_filename(0)
+    if not cache_path.exists() and not result_path.exists():
+        print(
+            "  WARNING: seed-0 mechanism result and OOF cache not found — "
+            "enzyme/mechanism difference CI unavailable"
+        )
         return None
-    with open(path) as handle:
+    if not cache_path.exists() or not result_path.exists():
+        missing = cache_path if not cache_path.exists() else result_path
+        raise FileNotFoundError(
+            f"{missing} is missing; the seed-0 result and OOF cache must be "
+            "regenerated together"
+        )
+
+    with open(cache_path) as handle:
         cache = json.load(handle)
-    oof = cache.get("delta_mean", {}).get("family_split")
-    required = {"y_true", "pred", "genes", "folds"}
+    with open(result_path) as handle:
+        result = json.load(handle)
+
+    expected = {
+        "cache_schema_version": MECHANISM_OOF_CACHE_SCHEMA_VERSION,
+        "seed": 0,
+        "analysis_run_id": result.get("analysis_run_id"),
+        "input_fingerprints": result.get("input_fingerprints"),
+        "analysis_parameters": result.get("analysis_parameters"),
+    }
+    for key, expected_value in expected.items():
+        if expected_value is None or cache.get(key) != expected_value:
+            raise ValueError(
+                f"{cache_path}: cache {key} does not match {result_path}"
+            )
+
+    oof = cache.get("features", {}).get("delta_mean", {}).get("family_split")
+    required = {"row_ids", "y_true", "pred", "genes", "folds"}
     if oof is None or not required.issubset(oof):
-        raise ValueError(f"{path} lacks delta_mean family-split OOF fields {sorted(required)}")
+        raise ValueError(
+            f"{cache_path} lacks delta_mean family-split OOF fields "
+            f"{sorted(required)}"
+        )
     lengths = {key: len(oof[key]) for key in required}
     if len(set(lengths.values())) != 1:
-        raise ValueError(f"{path} has misaligned mechanism OOF fields: {lengths}")
+        raise ValueError(
+            f"{cache_path} has misaligned mechanism OOF fields: {lengths}"
+        )
+    if len(set(int(row) for row in oof["row_ids"])) != lengths["row_ids"]:
+        raise ValueError(f"{cache_path} has duplicate mechanism OOF row ids")
     return oof
 
 

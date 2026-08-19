@@ -21,12 +21,10 @@ from esm2_mech.utils.constants import (
     BOOTSTRAP_MAX_DISCARD_FRAC,
     BOOTSTRAP_N_RESAMPLES,
     MECHANISM_CLASSES,
+    MECHANISM_OOF_CACHE_SCHEMA_VERSION,
     N_SEEDS,
     SEED_RESULT_GLOB,
     mechanism_oof_cache_filename,
-)
-from esm2_mech.experiments.mechanism.mechanism_delta_family_split import (
-    MECHANISM_OOF_CACHE_SCHEMA_VERSION,
 )
 from esm2_mech.utils.data import load_pfam_map
 from esm2_mech.utils.io import write_result_json
@@ -119,9 +117,9 @@ def aligned_majority_chance(oof_cache_entries: list[dict]) -> float:
             test_mask = folds == fold
             train_labels = y_true[~test_mask]
             classes, counts = np.unique(train_labels, return_counts=True)
-            if len(classes) < 2:
+            if set(classes.tolist()) != set(MECHANISM_CLASSES):
                 raise RuntimeError(
-                    "aligned majority floor has fewer than two training classes"
+                    "aligned majority floor training rows lost a mechanism class"
                 )
             predictions[test_mask] = classes[int(np.argmax(counts))]
         floor_arm = {"y_true": y_true, "pred": predictions, "folds": folds}
@@ -184,8 +182,21 @@ def _align_seed_arms(oof_cache_entries: list[dict]) -> tuple[list[dict], np.ndar
     names used for clustering have to come from that same space.
     """
     per_seed = []
-    for entry in oof_cache_entries:
+    for seed_index, entry in enumerate(oof_cache_entries):
         gene_arm, family_arm = entry["gene_split"], entry["family_split"]
+        for arm_name, arm in (("gene", gene_arm), ("family", family_arm)):
+            lengths = {
+                key: len(arm[key])
+                for key in ("row_ids", "y_true", "pred", "genes", "folds")
+            }
+            if len(set(lengths.values())) != 1:
+                raise ValueError(
+                    f"seed cache {seed_index} {arm_name} arm has misaligned fields {lengths}"
+                )
+            if len(set(int(row) for row in arm["row_ids"])) != lengths["row_ids"]:
+                raise ValueError(
+                    f"seed cache {seed_index} {arm_name} arm has duplicate row ids"
+                )
         per_seed.append((
             {int(row): pos for pos, row in enumerate(gene_arm["row_ids"])},
             {int(row): pos for pos, row in enumerate(family_arm["row_ids"])},
@@ -199,20 +210,35 @@ def _align_seed_arms(oof_cache_entries: list[dict]) -> tuple[list[dict], np.ndar
         return None
 
     aligned = []
-    for gene_pos, family_pos, gene_arm, family_arm in per_seed:
+    reference_labels = None
+    reference_genes = None
+    for seed_index, (gene_pos, family_pos, gene_arm, family_arm) in enumerate(per_seed):
         gene_idx = np.array([gene_pos[row] for row in shared], dtype=int)
         family_idx = np.array([family_pos[row] for row in shared], dtype=int)
+        gene_labels = np.asarray(gene_arm["y_true"])[gene_idx]
+        family_labels = np.asarray(family_arm["y_true"])[family_idx]
+        gene_names = np.asarray(gene_arm["genes"])[gene_idx]
+        family_genes = np.asarray(family_arm["genes"])[family_idx]
+        if not np.array_equal(gene_labels, family_labels):
+            raise ValueError(f"seed cache {seed_index} arms disagree on shared labels")
+        if not np.array_equal(gene_names, family_genes):
+            raise ValueError(f"seed cache {seed_index} arms disagree on shared genes")
+        if reference_labels is None:
+            reference_labels = gene_labels
+            reference_genes = gene_names
+        elif not np.array_equal(reference_labels, gene_labels) or not np.array_equal(
+            reference_genes, gene_names
+        ):
+            raise ValueError(
+                f"seed cache {seed_index} does not describe the same shared variants"
+            )
         aligned.append({
             "gene": {key: np.asarray(gene_arm[key])[gene_idx] for key in
                      ("y_true", "pred", "folds")},
             "family": {key: np.asarray(family_arm[key])[family_idx] for key in
                        ("y_true", "pred", "folds")},
         })
-    first_gene_pos, _, first_gene_arm, _ = per_seed[0]
-    gene_names = np.asarray(first_gene_arm["genes"])[
-        np.array([first_gene_pos[row] for row in shared], dtype=int)
-    ]
-    return aligned, gene_names
+    return aligned, reference_genes
 
 
 def leakage_fraction_ci(

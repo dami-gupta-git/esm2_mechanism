@@ -92,6 +92,9 @@ def seed_result_filename(seed: int) -> str:
 MECHANISM_OOF_CACHE_PREFIX = "mechanism_oof_cache_seed"
 MECHANISM_OOF_CACHE_EXT = ".json"
 MECHANISM_OOF_CACHE_GLOB = f"{MECHANISM_OOF_CACHE_PREFIX}*{MECHANISM_OOF_CACHE_EXT}"
+# Increment whenever the cache envelope or feature-arm schema changes. Every
+# reader must require this exact version before using cached scientific data.
+MECHANISM_OOF_CACHE_SCHEMA_VERSION = 2
 
 
 def mechanism_oof_cache_filename(seed: int) -> str:

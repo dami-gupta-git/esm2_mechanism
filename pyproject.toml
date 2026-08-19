@@ -9,25 +9,14 @@ requires-python = ">=3.10"
 dependencies = [
     # LLM APIs
     "anthropic",
-    "aider-chat",
-    "backoff",
-    "openai",
-    "google-generativeai",
     # Viz
     "matplotlib",
-    "pypdf",
-    "pymupdf4llm",
     # Common
     "torch",
     "numpy",
     "pandas",
     "requests",
     "openpyxl",
-    "transformers",
-    "datasets",
-    "tiktoken",
-    "wandb",
-    "tqdm",
     "fair-esm",
     "scikit-learn>=1.7",
     "scipy",

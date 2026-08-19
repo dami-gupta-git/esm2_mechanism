@@ -14,6 +14,8 @@ Invariants:
   mlp_family_split result dicts, under oof_macro_f1.
 """
 
+import json
+
 import numpy as np
 import pytest
 from sklearn.preprocessing import LabelEncoder
@@ -23,6 +25,7 @@ from esm2_mech.experiments.proteome_features.enzyme_classification import (
     ENZYME_CLASSES,
     run_multiseed,
 )
+from esm2_mech.utils.constants import MECHANISM_OOF_CACHE_SCHEMA_VERSION
 
 
 def _synthetic_data(n_genes=200, dim=32, seed=42):
@@ -50,6 +53,51 @@ def test_enzyme_cv_uses_shared_probe_runners():
     assert not hasattr(enzyme_classification, "_run_cv")
     assert hasattr(enzyme_classification, "run_logreg_cv")
     assert hasattr(enzyme_classification, "run_mlp_cv")
+
+
+def _write_mechanism_seed_and_cache(tmp_path, cache_run_id="run-1"):
+    result = {
+        "analysis_run_id": "run-1",
+        "input_fingerprints": {"labeled_variants": "variants-1"},
+        "analysis_parameters": {"n_folds": 5},
+    }
+    cache = {
+        "cache_schema_version": MECHANISM_OOF_CACHE_SCHEMA_VERSION,
+        "seed": 0,
+        "analysis_run_id": cache_run_id,
+        "input_fingerprints": result["input_fingerprints"],
+        "analysis_parameters": result["analysis_parameters"],
+        "features": {
+            "delta_mean": {
+                "family_split": {
+                    "row_ids": [0, 1, 2],
+                    "y_true": ["GOF", "DN", "LOF"],
+                    "pred": ["GOF", "DN", "LOF"],
+                    "genes": ["G1", "G2", "G3"],
+                    "folds": [0, 1, 2],
+                }
+            }
+        },
+    }
+    (tmp_path / "family_split_baselines_seed0.json").write_text(json.dumps(result))
+    (tmp_path / "mechanism_oof_cache_seed0.json").write_text(json.dumps(cache))
+
+
+def test_enzyme_reader_accepts_cache_bound_to_seed_result(tmp_path, monkeypatch):
+    _write_mechanism_seed_and_cache(tmp_path)
+    monkeypatch.setattr(enzyme_classification, "RESULTS_DIR", tmp_path)
+
+    oof = enzyme_classification._load_mechanism_family_oof()
+
+    assert oof["row_ids"] == [0, 1, 2]
+
+
+def test_enzyme_reader_rejects_cache_from_another_execution(tmp_path, monkeypatch):
+    _write_mechanism_seed_and_cache(tmp_path, cache_run_id="run-2")
+    monkeypatch.setattr(enzyme_classification, "RESULTS_DIR", tmp_path)
+
+    with pytest.raises(ValueError, match="analysis_run_id"):
+        enzyme_classification._load_mechanism_family_oof()
 
 
 class TestOofMacroF1Consistency:

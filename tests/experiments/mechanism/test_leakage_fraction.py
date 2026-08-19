@@ -9,10 +9,7 @@ Invariants for leakage_fraction_per_feature:
 Invariants for leakage_fraction_ci:
 - computed on the same basis as the headline: every seed the headline averages
   (not one seed alone), fold-averaged macro-F1 (not pooled), and the chance floor
-  held fixed at the value passed in (not recomputed per resample) — matching
-  _measured_chance, which is a fixed lookup from naive_baseline.json.
-- a seed missing from the cache list means the interval cannot match the headline
-  and the CI is not computed (returns None), rather than silently using a subset.
+  recomputed on the aligned feature rows and then held fixed across resamples.
 - an at-floor point estimate returns None before resampling, rather than turning
   an undefined ratio into a misleading high-discard bootstrap warning.
 """
@@ -57,10 +54,14 @@ class TestLeakageFractionCi:
         from esm2_mech.utils.constants import MECHANISM_CLASSES
         rng = np.random.RandomState(seed)
         classes = MECHANISM_CLASSES
-        y_true = rng.choice(classes, size=n)
+        if n % n_folds != 0:
+            raise ValueError("test fixture requires equal fold sizes")
+        rows_per_fold = n // n_folds
+        fold_labels = np.resize(classes, rows_per_fold)
+        y_true = np.tile(fold_labels, n_folds)
         row_ids = list(range(n))
         genes = [f"gene_{i % 6}" for i in range(n)]
-        folds = [i % n_folds for i in range(n)]
+        folds = np.repeat(np.arange(n_folds), rows_per_fold).tolist()
 
         gene_pred = y_true.copy()
         gene_pred[n // 2:] = rng.choice(classes, size=n - n // 2)
