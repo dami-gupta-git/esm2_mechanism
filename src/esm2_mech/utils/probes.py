@@ -384,13 +384,20 @@ def auroc_for_clf(clf, X: np.ndarray, y: np.ndarray, pos_label=1) -> float:
 
 
 def _run_binary_cv(
-    clf_fn, X: np.ndarray, y: np.ndarray, splits: list[tuple], seed: int, pos_label,
+    fold_predict_fn,
+    X: np.ndarray,
+    y: np.ndarray,
+    splits: list[tuple],
+    seed: int,
+    pos_label,
     genes: np.ndarray | None = None, return_oof: bool = False,
 ):
-    """Binary CV body: per-fold scale → fit clf_fn(seed) → AUROC, returning mean ± std.
+    """Binary CV body: obtain per-fold probabilities, then aggregate metrics.
 
-    Shared by run_logreg_binary_cv and run_mlp_binary_cv, which differ only in the
-    classifier. Returns {} when no fold had both classes in train and test.
+    `fold_predict_fn` owns fold-local preprocessing and fitting. It receives the
+    full arrays plus one fold's indices and returns positive-class probabilities,
+    or None when the fold cannot be fitted. Returns {} when no fold had both
+    classes in train and test.
     return_oof : if True, return (agg, oof) with out-of-fold test predictions
         {"y_true", "proba" (positive-class probability, 1-D), "genes", "row_ids",
         "folds"}
@@ -407,14 +414,11 @@ def _run_binary_cv(
     }
     oof_y, oof_proba, oof_genes, oof_rows, oof_folds = [], [], [], [], []
     for fold_i, (tr, te) in enumerate(splits):
-        sc = StandardScaler()
-        X_tr = sc.fit_transform(X[tr])
-        X_te = sc.transform(X[te])
         if len(set(y[tr])) < 2 or len(set(y[te])) < 2:
             continue
-        clf = clf_fn(seed)
-        clf.fit(X_tr, y[tr])
-        proba = clf.predict_proba(X_te)[:, _pos_class_col(clf.classes_, pos_label)]
+        proba = fold_predict_fn(X, y, tr, te, seed, fold_i, pos_label)
+        if proba is None:
+            continue
         aurocs.append(float(roc_auc_score(y[te], proba)))
         imbalance = imbalance_metrics((y[te] == pos_label).astype(int), proba)
         if imbalance is not None:
@@ -466,8 +470,21 @@ def run_logreg_binary_cv(
     1280-d embedding delta) need more iterations to converge than the default;
     raising it here rather than for every caller keeps other probes unchanged.
     """
+    def _predict_fold(
+        X_all, y_all, train_idx, test_idx, fold_seed, _fold_i, positive_label
+    ):
+        scaler = StandardScaler()
+        X_train = scaler.fit_transform(X_all[train_idx])
+        X_test = scaler.transform(X_all[test_idx])
+        classifier = LogisticRegression(
+            max_iter=max_iter, C=1.0, random_state=fold_seed
+        )
+        classifier.fit(X_train, y_all[train_idx])
+        positive_col = _pos_class_col(classifier.classes_, positive_label)
+        return classifier.predict_proba(X_test)[:, positive_col]
+
     return _run_binary_cv(
-        lambda s: LogisticRegression(max_iter=max_iter, C=1.0, random_state=s),
+        _predict_fold,
         X, y, splits, seed, pos_label, genes=genes, return_oof=return_oof,
     )
 
@@ -572,20 +589,95 @@ def run_mlp_cv(
 
 
 def run_mlp_binary_cv(
-    X: np.ndarray, y: np.ndarray, splits: list[tuple], seed: int = 42, pos_label=1,
+    X: np.ndarray, y: np.ndarray, splits: list[tuple], validation_groups: np.ndarray,
+    seed: int = 42, pos_label=1,
     genes: np.ndarray | None = None, return_oof: bool = False,
 ):
-    """Binary sklearn MLP CV returning AUROC mean ± std."""
+    """Binary sklearn MLP CV with group-disjoint early stopping.
+
+    `validation_groups` is the dependency unit for the internal 10% validation
+    holdout. Pass genes for gene-split CV and Pfam-family IDs for family-split
+    CV. A group that crosses an outer train/test boundary is rejected.
+    """
     from sklearn.neural_network import MLPClassifier
 
-    return _run_binary_cv(
-        lambda s: MLPClassifier(
+    validation_groups = np.asarray(validation_groups)
+    if len(validation_groups) != len(X):
+        raise ValueError(
+            f"validation_groups has {len(validation_groups)} rows for {len(X)} samples"
+        )
+
+    def _predict_fold(
+        X_all, y_all, train_idx, test_idx, fold_seed, fold_i, positive_label
+    ):
+        training_groups = validation_groups[train_idx]
+        test_groups = set(validation_groups[test_idx].tolist())
+        outer_overlap = set(training_groups.tolist()) & test_groups
+        if outer_overlap:
+            examples = sorted(outer_overlap, key=str)[:5]
+            raise ValueError(
+                "validation group spans the outer CV train/test boundary; "
+                f"examples: {examples}"
+            )
+
+        validation_mask = _validation_group_mask(
+            training_groups, fold_seed + fold_i, validation_fraction=0.1
+        )
+        if validation_mask is None:
+            return None
+        fit_mask = ~validation_mask
+        X_fit = X_all[train_idx][fit_mask]
+        X_validation = X_all[train_idx][validation_mask]
+        y_fit = y_all[train_idx][fit_mask]
+        y_validation = y_all[train_idx][validation_mask]
+        if len(X_fit) < 10 or len(X_validation) < 5:
+            return None
+        if len(set(y_fit.tolist())) < 2:
+            raise ValueError(
+                "group-disjoint early-stopping split left fewer than two classes "
+                "in the MLP fitting subset"
+            )
+
+        X_fit, X_validation, X_test = standardize(
+            X_fit, X_validation, X_all[test_idx]
+        )
+        classifier = MLPClassifier(
             hidden_layer_sizes=(256,),
             max_iter=300,
-            random_state=s,
-            early_stopping=True,
-            validation_fraction=0.1,
-        ),
+            random_state=fold_seed,
+            early_stopping=False,
+        )
+        training_classes = np.unique(y_all[train_idx])
+        best_validation_score = float("-inf")
+        best_parameters = None
+        no_improvement_count = 0
+        for epoch in range(classifier.max_iter):
+            if epoch == 0:
+                classifier.partial_fit(X_fit, y_fit, classes=training_classes)
+            else:
+                classifier.partial_fit(X_fit, y_fit)
+            validation_score = float(classifier.score(X_validation, y_validation))
+            if validation_score > best_validation_score:
+                best_validation_score = validation_score
+                best_parameters = (
+                    [weights.copy() for weights in classifier.coefs_],
+                    [bias.copy() for bias in classifier.intercepts_],
+                )
+            if validation_score < best_validation_score + classifier.tol:
+                no_improvement_count += 1
+            else:
+                no_improvement_count = 0
+            if no_improvement_count > classifier.n_iter_no_change:
+                break
+
+        if best_parameters is None:
+            raise RuntimeError("MLP early stopping produced no fitted checkpoint")
+        classifier.coefs_, classifier.intercepts_ = best_parameters
+        positive_col = _pos_class_col(classifier.classes_, positive_label)
+        return classifier.predict_proba(X_test)[:, positive_col]
+
+    return _run_binary_cv(
+        _predict_fold,
         X, y, splits, seed, pos_label, genes=genes, return_oof=return_oof,
     )
 
@@ -885,4 +977,3 @@ def run_mlp_probe_cv(
     if return_oof:
         return agg, oof.finalize()
     return agg
-

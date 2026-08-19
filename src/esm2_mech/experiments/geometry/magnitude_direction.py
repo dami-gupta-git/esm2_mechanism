@@ -14,7 +14,7 @@ from joblib import Parallel, delayed
 
 from esm2_mech.utils.bootstrap import (
     binary_auroc_cluster_bootstrap_ci,
-    bootstrap_mechanism_metrics_from_oof,
+    attach_mechanism_ci,
     stack_oof_over_seeds,
     family_or_gene_clusters,
 )
@@ -110,6 +110,9 @@ def _pathogenicity_one_seed(seed, feats, y, genes, pfam_map):
     print(f"  [pathogenicity] seed {seed} started", flush=True)
     gs = gene_split_cv(genes, seed=seed)
     fs = family_split_cv(genes, pfam_map, seed=seed)
+    family_validation_groups = family_or_gene_clusters(
+        genes, pfam_map, is_family_split=True
+    )
     res = {}
     for fname, X in feats.items():
         for split_name, splits in [("gene_split", gs), ("family_split", fs)]:
@@ -119,7 +122,15 @@ def _pathogenicity_one_seed(seed, feats, y, genes, pfam_map):
             lr = lr_agg.get("auroc_mean")
             res[(fname, split_name, "logreg")] = (lr, lr_oof)
             mlp_agg, mlp_oof = run_mlp_binary_cv(
-                X, y, splits, seed=seed, genes=genes, return_oof=True
+                X,
+                y,
+                splits,
+                validation_groups=(
+                    family_validation_groups if split_name == "family_split" else genes
+                ),
+                seed=seed,
+                genes=genes,
+                return_oof=True,
             )
             mlp = mlp_agg.get("auroc_mean")
             res[(fname, split_name, "mlp")] = (mlp, mlp_oof)
@@ -288,9 +299,11 @@ def run_mechanism(
                             pfam_map,
                             is_family_split=(split_name == "family_split"),
                         )
-                        cell[out_key]["ci"] = bootstrap_mechanism_metrics_from_oof(
+                        attach_mechanism_ci(
+                            cell[out_key],
                             combined,
                             clusters,
+                            compute_ci=True,
                             n_resamples=n_boot,
                             seed=0,
                         )

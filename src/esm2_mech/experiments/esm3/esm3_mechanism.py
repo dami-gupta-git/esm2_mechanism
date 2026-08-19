@@ -34,10 +34,10 @@ from esm2_mech.utils.constants import (
 from esm2_mech.fetch_data.uniprot_fetch import TransientFetchError, fetch_with_retries
 from esm2_mech.utils.bootstrap import (
     adjudicate_diff,
-    average_oof_over_seeds,
-    bootstrap_mechanism_metrics,
+    attach_mechanism_ci,
     family_or_gene_clusters,
     paired_oof_diff,
+    stack_oof_over_seeds,
 )
 
 # The matched ESM-2 probe for the ESM-3 comparison: MLP, delta_mean, family-split.
@@ -726,21 +726,20 @@ def phase3_probes(
                 "n_seeds": n_seeds_scored,
             }
             if compute_ci:
-                # Each seed reshuffles the CV fold assignment, so its OOF cannot be
-                # bootstrapped directly against another seed's — average_oof_over_seeds
-                # collapses the per-seed OOF predictions to one proba-per-variant
-                # first (matching classify_by_mechanism's cross-seed CI convention),
-                # then the cluster bootstrap runs once over that combined OOF.
-                combined_oof = average_oof_over_seeds(seed_oof_list)
+                combined_oof = stack_oof_over_seeds(seed_oof_list)
                 if combined_oof is not None:
                     oof_by_arm[(cond, cv_name)] = combined_oof
                     clusters = family_or_gene_clusters(
                         combined_oof["genes"], pfam_map,
                         is_family_split=(cv_name == "family_split"),
                     )
-                    r["ci"] = bootstrap_mechanism_metrics(
-                        combined_oof["y_true"], combined_oof["proba"],
-                        clusters, n_resamples=n_boot, seed=0,
+                    attach_mechanism_ci(
+                        r,
+                        combined_oof,
+                        clusters,
+                        compute_ci=True,
+                        n_resamples=n_boot,
+                        seed=0,
                     )
             cond_results[cv_name] = r
             print(

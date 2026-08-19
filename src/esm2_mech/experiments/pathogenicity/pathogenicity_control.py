@@ -59,7 +59,7 @@ print = functools.partial(print, flush=True)
 ESM2_MODEL_650M = "esm2_t33_650M_UR50D"
 CLAIM_2C_THRESHOLD = 0.85
 _EMBEDDING_METADATA_VERSION = 2
-_PROBE_RESULT_VERSION = 2
+_PROBE_RESULT_VERSION = 3
 _BINARY_METRICS = ("auroc", "auprc", "prevalence", "ppv", "npv")
 
 
@@ -462,6 +462,9 @@ def probe_phase(
 
     features = {"delta_mean": delta, "wt_only": wt_mean}
     probes = {"logreg": run_logreg_binary_cv, "mlp": run_mlp_binary_cv}
+    family_validation_groups = family_or_gene_clusters(
+        genes, pfam_map, is_family_split=True
+    )
 
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -495,8 +498,17 @@ def probe_phase(
         ]
 
         def _run_cell(fname, pname, split_name, splits, seed=seed):
+            probe_kwargs = {
+                "seed": seed,
+                "genes": genes,
+                "return_oof": True,
+            }
+            if pname == "mlp":
+                probe_kwargs["validation_groups"] = (
+                    family_validation_groups if split_name == "family" else genes
+                )
             probe_result, oof = probes[pname](
-                features[fname], y, splits, seed=seed, genes=genes, return_oof=True
+                features[fname], y, splits, **probe_kwargs
             )
             if compute_ci and oof is not None and seed == 0:
                 clusters = family_or_gene_clusters(
@@ -680,6 +692,8 @@ def main():
 
     if args.seeds < 1:
         parser.error("--seeds must be >= 1")
+    if args.force_embed and args.phase == "probe":
+        parser.error("--force_embed requires --phase embed or --phase both")
 
     variants, fetch_metadata = load_fetched_variants()
 

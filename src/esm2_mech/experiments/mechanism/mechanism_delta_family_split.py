@@ -34,7 +34,7 @@ from esm2_mech.utils.io import atomic_write_json, write_result_json
 from esm2_mech.utils.probes import run_logreg_pca_cv
 from esm2_mech.utils.bootstrap import (
     adjudicate_diff,
-    bootstrap_mechanism_metrics,
+    attach_mechanism_ci,
     family_or_gene_clusters,
     label_permutation_pvalue,
     oof_permutation_pvalue,
@@ -154,11 +154,14 @@ def run(
             X, feat_labels, feat_gene_splits, seed=seed, genes=feat_genes,
             label=f"{name} gene", n_pca=PCA_COMPONENTS, return_oof=True,
         )
-        if compute_ci and gs_oof is not None:
-            gs["ci"] = bootstrap_mechanism_metrics(
-                gs_oof["y_true"], gs_oof["proba"], gs_oof["genes"], gs_oof["folds"],
-                n_resamples=n_boot, seed=seed,
-            )
+        attach_mechanism_ci(
+            gs,
+            gs_oof,
+            gs_oof["genes"] if gs_oof is not None else None,
+            compute_ci=compute_ci,
+            n_resamples=n_boot,
+            seed=seed,
+        )
         results["gene_split"][name] = gs
         gs_f1 = gs.get("macro_f1_mean", float("nan"))
         print(
@@ -174,14 +177,21 @@ def run(
                 X, feat_labels, feat_family_splits, seed=seed, genes=feat_genes,
                 label=f"{name} family", n_pca=PCA_COMPONENTS, return_oof=True,
             )
-            if compute_ci and fs_oof is not None:
-                fs_clusters = family_or_gene_clusters(
+            fs_clusters = (
+                family_or_gene_clusters(
                     fs_oof["genes"], pfam_map, is_family_split=True
                 )
-                fs["ci"] = bootstrap_mechanism_metrics(
-                    fs_oof["y_true"], fs_oof["proba"], fs_clusters, fs_oof["folds"],
-                    n_resamples=n_boot, seed=seed,
-                )
+                if fs_oof is not None
+                else None
+            )
+            attach_mechanism_ci(
+                fs,
+                fs_oof,
+                fs_clusters,
+                compute_ci=compute_ci,
+                n_resamples=n_boot,
+                seed=seed,
+            )
             if n_permutations > 0 and name in REFIT_PERMUTATION_FEATURES:
                 # feat_family_splits only ever spans rows whose gene has a Pfam
                 # annotation (family_split_cv excludes the rest from both sides of

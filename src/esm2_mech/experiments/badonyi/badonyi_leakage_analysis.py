@@ -14,7 +14,7 @@ from esm2_mech.utils.constants import MECHANISM_CLASSES, BOOTSTRAP_N_RESAMPLES
 from esm2_mech.utils.data import build_gene_to_row as _build_gene_to_row, load_pfam_map
 from esm2_mech.utils.splits import family_split_indices
 from esm2_mech.utils.probes import run_histgb_cv
-from esm2_mech.utils.bootstrap import bootstrap_mechanism_metrics, family_or_gene_clusters
+from esm2_mech.utils.bootstrap import attach_mechanism_ci, family_or_gene_clusters
 from esm2_mech.utils.paths import (
     BADONYI_CACHE_DIR,
     GENE_UNIVERSE,
@@ -113,12 +113,19 @@ def run_probe(
     """NaN-native family-split CV."""
     splits = list(family_split_indices(groups, n_folds, seed))
     agg, oof = run_histgb_cv(X, y, splits, seed=seed, genes=genes, label=label, return_oof=True)
-    if compute_ci and oof is not None:
-        clusters = family_or_gene_clusters(oof["genes"], pfam_map, is_family_split=True)
-        agg["ci"] = bootstrap_mechanism_metrics(
-            oof["y_true"], oof["proba"], clusters, n_resamples=n_boot, seed=seed,
-        )
-    return agg
+    clusters = (
+        family_or_gene_clusters(oof["genes"], pfam_map, is_family_split=True)
+        if oof is not None
+        else None
+    )
+    return attach_mechanism_ci(
+        agg,
+        oof,
+        clusters,
+        compute_ci=compute_ci,
+        n_resamples=n_boot,
+        seed=seed,
+    )
 
 
 def run_regime(

@@ -55,6 +55,7 @@ from esm2_mech.utils.bootstrap import (
     adjudicate_diff,
     adjudicate_equivalence,
     adjudicate_level,
+    attach_mechanism_ci,
     average_oof_over_seeds,
     binary_auroc_cluster_bootstrap_ci,
     bootstrap_mechanism_metrics,
@@ -557,6 +558,48 @@ class TestBootstrapMechanismMetrics:
         y, proba, genes, folds = self._signal_data()
         out = bootstrap_mechanism_metrics(y, proba, genes, folds, n_resamples=10)
         assert out["macro_f1"]["n_clusters"] == len(set(genes.tolist()))
+
+    def test_attach_helper_uses_oof_folds(self):
+        y, proba, genes, folds = self._signal_data()
+        result = {"macro_f1_mean": 1.0}
+        oof = {"y_true": y, "proba": proba, "folds": folds}
+
+        returned = attach_mechanism_ci(
+            result,
+            oof,
+            genes,
+            compute_ci=True,
+            n_resamples=10,
+        )
+
+        assert returned is result
+        assert result["ci"]["macro_f1"]["n_clusters"] == len(set(genes.tolist()))
+
+    def test_attach_helper_leaves_result_unchanged_when_disabled(self):
+        result = {"macro_f1_mean": 1.0}
+
+        returned = attach_mechanism_ci(
+            result,
+            None,
+            None,
+            compute_ci=False,
+        )
+
+        assert returned is result
+        assert "ci" not in result
+
+    def test_attach_helper_rejects_misaligned_clusters(self):
+        y, proba, genes, folds = self._signal_data()
+        oof = {"y_true": y, "proba": proba, "folds": folds}
+
+        with pytest.raises(ValueError, match="not aligned"):
+            attach_mechanism_ci(
+                {},
+                oof,
+                genes[:-1],
+                compute_ci=True,
+                n_resamples=10,
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -1711,6 +1754,11 @@ class TestAdjudicateLevel:
 
     def test_below_threshold_with_covering_interval_is_underpowered(self):
         assert "underpowered" in adjudicate_level(0.83, {"ci_low": 0.79, "ci_high": 0.88}, 0.85)
+
+    def test_interval_ending_at_threshold_still_covers_it(self):
+        assert adjudicate_level(0.83, {"ci_low": 0.79, "ci_high": 0.85}, 0.85) == (
+            "fail, underpowered (CI covers the threshold)"
+        )
 
     def test_below_threshold_with_clear_interval_is_established(self):
         assert adjudicate_level(0.80, {"ci_low": 0.77, "ci_high": 0.83}, 0.85) == (

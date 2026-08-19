@@ -14,7 +14,7 @@ from pathlib import Path
 
 import numpy as np
 from sklearn.preprocessing import LabelEncoder
-from esm2_mech.utils.bootstrap import bootstrap_mechanism_metrics
+from esm2_mech.utils.bootstrap import attach_mechanism_ci
 from esm2_mech.utils.constants import BOOTSTRAP_N_RESAMPLES, MECHANISM_CLASSES
 from esm2_mech.utils.data import build_gene_to_row as _build_gene_to_row
 from esm2_mech.utils.metrics import mean_std_n
@@ -120,13 +120,15 @@ def run_histgb(X, y, genes, groups, n_folds, seed, label, return_oof=False):
 
 def _attach_cluster_ci(agg, oof, cluster_ids, n_boot, seed):
     """Attach a cluster-resampled bootstrap CI to agg["ci"]."""
-    if oof is None:
-        return agg
-    row_clusters = cluster_ids[oof["row_ids"]]
-    agg["ci"] = bootstrap_mechanism_metrics(
-        oof["y_true"], oof["proba"], row_clusters, n_resamples=n_boot, seed=seed
+    row_clusters = cluster_ids[oof["row_ids"]] if oof is not None else None
+    return attach_mechanism_ci(
+        agg,
+        oof,
+        row_clusters,
+        compute_ci=True,
+        n_resamples=n_boot,
+        seed=seed,
     )
-    return agg
 
 
 def run_seed(

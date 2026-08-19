@@ -22,7 +22,7 @@ from esm2_mech.utils.splits import family_split_indices
 from esm2_mech.utils.constants import MECHANISM_CLASSES, BOOTSTRAP_N_RESAMPLES
 from esm2_mech.utils.metrics import compute_metrics, mean_std_n, align_proba
 from esm2_mech.utils.probes import run_mlp_cv, run_logreg_cv, run_histgb_cv
-from esm2_mech.utils.bootstrap import bootstrap_mechanism_metrics
+from esm2_mech.utils.bootstrap import attach_mechanism_ci
 from esm2_mech.utils.data import build_gene_to_row, observed_rows_mask, load_pfam_map
 from esm2_mech.utils.io import load_variants_and_delta
 from esm2_mech.utils.paths import (
@@ -192,11 +192,14 @@ def _attach_ci(agg: dict, oof: dict | None, compute_ci: bool, n_boot: int, seed:
 
     oof["genes"] is already the cluster array (family id or gene id depending on arm).
     """
-    if compute_ci and oof is not None:
-        agg["ci"] = bootstrap_mechanism_metrics(
-            oof["y_true"], oof["proba"], oof["genes"], n_resamples=n_boot, seed=seed,
-        )
-    return agg
+    return attach_mechanism_ci(
+        agg,
+        oof,
+        oof["genes"] if oof is not None else None,
+        compute_ci=compute_ci,
+        n_resamples=n_boot,
+        seed=seed,
+    )
 
 
 def run_family_split_mlp(

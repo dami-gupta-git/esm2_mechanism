@@ -13,7 +13,7 @@ from esm2_mech.utils.constants import MECHANISM_CLASSES, BOOTSTRAP_N_RESAMPLES
 from esm2_mech.utils.data import build_gene_to_row as _build_gene_to_row, load_pfam_map
 from esm2_mech.utils.splits import family_split_indices
 from esm2_mech.utils.probes import run_mlp_cv, run_logreg_cv, run_histgb_cv
-from esm2_mech.utils.bootstrap import bootstrap_mechanism_metrics, family_or_gene_clusters
+from esm2_mech.utils.bootstrap import attach_mechanism_ci, family_or_gene_clusters
 from esm2_mech.utils.paths import (
     RESULTS_DIR,
     VALID_VARIANTS_JSON,
@@ -96,12 +96,19 @@ def _attach_family_split_ci(
     agg: dict, oof: dict | None, pfam_map: dict, compute_ci: bool, n_boot: int, seed: int
 ) -> dict:
     """Attach a family-resampled cluster-bootstrap CI to a family-split CV result."""
-    if compute_ci and oof is not None:
-        clusters = family_or_gene_clusters(oof["genes"], pfam_map, is_family_split=True)
-        agg["ci"] = bootstrap_mechanism_metrics(
-            oof["y_true"], oof["proba"], clusters, n_resamples=n_boot, seed=seed,
-        )
-    return agg
+    clusters = (
+        family_or_gene_clusters(oof["genes"], pfam_map, is_family_split=True)
+        if oof is not None
+        else None
+    )
+    return attach_mechanism_ci(
+        agg,
+        oof,
+        clusters,
+        compute_ci=compute_ci,
+        n_resamples=n_boot,
+        seed=seed,
+    )
 
 
 def run_logreg_family_split(

@@ -26,11 +26,11 @@ from esm2_mech.utils.splits import gene_split_cv, family_split_cv
 from esm2_mech.utils.data import build_gene_to_row, load_pfam_map
 from esm2_mech.utils.io import write_result_json
 from esm2_mech.utils.bootstrap import (
+    attach_mechanism_ci,
     folds_to_arms,
     score_within_folds,
     adjudicate_equivalence,
     adjudicate_level,
-    bootstrap_mechanism_metrics,
     family_or_gene_clusters,
     independent_cluster_bootstrap_diff,
     oof_permutation_pvalue,
@@ -395,16 +395,18 @@ def run_multiseed(
         clusters = family_or_gene_clusters(
             seed0_fs_oof["genes"], pfam_map, is_family_split=True
         )
-        ci_result = bootstrap_mechanism_metrics(
-            y_true=oof_y_str,
-            proba=seed0_fs_oof["proba"],
-            clusters=clusters,
-            folds=seed0_fs_oof["folds"],
+        ci_container: dict = {}
+        attach_mechanism_ci(
+            ci_container,
+            {**seed0_fs_oof, "y_true": oof_y_str},
+            clusters,
+            compute_ci=True,
             classes=classes,
             n_resamples=n_boot,
             ci_level=BOOTSTRAP_CI_LEVEL,
             seed=0,
         )
+        ci_result = ci_container["ci"]
         for metric_name, ci in ci_result.items():
             lo = ci.get("ci_lower")
             hi = ci.get("ci_upper")

@@ -23,7 +23,7 @@ from esm2_mech.utils.paths import (
     EMB_MUT_MEAN, EMB_MUT_POS, EMB_VALID_VARIANTS_JSON, EMB_WT_MEAN, EMB_WT_POS,
     PFAM_JSON, RESULTS_DIR, VALID_VARIANTS_JSON,
 )
-from esm2_mech.utils.bootstrap import bootstrap_mechanism_metrics, family_or_gene_clusters
+from esm2_mech.utils.bootstrap import attach_mechanism_ci, family_or_gene_clusters
 from esm2_mech.utils.data import load_pfam_map
 from esm2_mech.utils.io import load_variants_and_delta, write_result_json
 from esm2_mech.utils.probes import run_mlp_probe_cv, run_sklearn_probe_pca, run_sklearn_probe
@@ -53,15 +53,21 @@ def run_seed(seed, args, labels, genes, delta_mean, delta_pos, pfam_map):
     n_boot = args.n_boot
 
     def _attach_ci(agg, oof, split_name):
-        if compute_ci and oof is not None:
-            clusters = family_or_gene_clusters(
+        clusters = (
+            family_or_gene_clusters(
                 oof["genes"], pfam_map, is_family_split=(split_name == SPLIT_FAMILY)
             )
-            agg["ci"] = bootstrap_mechanism_metrics(
-                oof["y_true"], oof["proba"], clusters, oof["folds"],
-                n_resamples=n_boot, seed=seed,
-            )
-        return agg
+            if oof is not None
+            else None
+        )
+        return attach_mechanism_ci(
+            agg,
+            oof,
+            clusters,
+            compute_ci=compute_ci,
+            n_resamples=n_boot,
+            seed=seed,
+        )
 
     gene_splits = gene_split_cv(genes, seed=seed)
     family_splits = family_split_cv(genes, pfam_map, seed=seed)

@@ -13,7 +13,8 @@ missense variants in the Gerasimavicius gene set (<= max_per_gene_per_class
 each), restricted to the GRCh38 assembly (the only place a genome build is
 selected — see CLINVAR_ASSEMBLY), attach UniProt IDs.
 
-Caches its variant set and re-fetches only if the fetch params change.
+Caches its variant set. A stale or partial cache requires an explicit ``--force``
+refetch so the existing scientific input is never replaced implicitly.
 
   Input : data/variants.json (target gene set + gene -> UniProt map)
   Output: data/clinvar_pathogenicity_variants.json,
@@ -326,6 +327,14 @@ def _validate_fetch_metadata(metadata, current_selection):
                 f"ClinVar pathogenicity cache metadata is missing {required!r}; "
                 "rerun with --force"
             )
+    if not isinstance(metadata["clinvar_source"], dict):
+        raise StalePathogenicityCacheError(
+            "ClinVar pathogenicity source provenance is malformed; rerun with --force"
+        )
+    if not isinstance(metadata["accounting"], dict):
+        raise StalePathogenicityCacheError(
+            "ClinVar pathogenicity accounting is malformed; rerun with --force"
+        )
 
 
 def validate_cached_pathogenicity_variants(variants, metadata, current_selection):

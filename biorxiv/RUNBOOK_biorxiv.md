@@ -152,9 +152,11 @@ The ClinVar fetch is the slowest step because it queries NCBI once per gene. Gen
 | 2.5 | `python -m esm2_mech.fetch_data.fetch_annotations --step pfam` | Fetch Pfam families | `variants.json` | `pfam_families.json` |
 | 2.6 | `python -m esm2_mech.fetch_data.fetch_alphamissense_mechanism` | Fetch AlphaMissense scores | `variants.json` | `alphamissense_scores_full.json` |
 | 2.7 | `python -m esm2_mech.fetch_data.build_valid_variants` | Build filtered variant list | `variants.json`, `cache/sequences.json` | `valid_variants.json` |
-| 2.8 | `python -m esm2_mech.fetch_data.fetch_pathogenicity_variants` | Fetch balanced pathogenic/benign ClinVar variants for section 5 (separate from step 2.2's pathogenic-only fetch) | `variants.json` | `clinvar_pathogenicity_variants.json`, `clinvar_pathogenicity_variants.params.json` |
+| 2.8 | `python -m esm2_mech.fetch_data.fetch_pathogenicity_variants --max_per_gene_per_class 20 --fetch_seed 42 --force` | Fetch balanced pathogenic/benign ClinVar variants for section 5 (separate from step 2.2's pathogenic-only fetch) | `variants.json` | `clinvar_pathogenicity_variants.json`, `clinvar_pathogenicity_variants.params.json` |
 
-Step 2.8 is network-only, so it runs locally rather than on the pod, unlike section 5's embedding step below. It caches its output and only re-fetches if `--max_per_gene_per_class` (default 20) or `--fetch_seed` (default 42) change from what produced the cached file.
+Step 2.8 is network-only, so it runs locally rather than on the pod. The command uses `--force`
+because this repaired run must replace the pre-fix cache. Without `--force`, a current matching
+cache is reused and a stale, partial, or corrupt cache raises instead of being replaced silently.
 
 ---
 
@@ -253,21 +255,23 @@ result isn't an artifact of merging two differently-curated datasets.
 
 ## 5. Experiment: Pathogenicity positive control
 
-Tests whether the same delta embeddings that show no mechanism signal in section 4 can still
-tell pathogenic from benign ClinVar variants, confirming they carry usable signal at all. Pass
-criterion: `delta_mean` MLP AUROC ≥ 0.85.
+Tests whether the same delta embeddings used in section 4 can distinguish pathogenic from benign
+ClinVar variants on a different task. A passing control shows that the embeddings and probe
+pipeline recover strong pathogenicity discrimination; it does not establish that mechanism
+information is absent. Pass criterion: the seed-0 family-split `delta_mean` MLP AUROC CI excludes
+0.85.
 
 A small neural network (the MLP) is trained to look at a variant's embedding and guess whether it
 is disease-causing or harmless. AUROC is a score from 0.5 to 1 measuring how well it separates the
 two: 0.5 means no better than a coin flip, 1.0 means it always gets it right. The 0.85 threshold is
-set in advance — scoring at least that well is treated as proof the embeddings carry real
-biological signal, since section 4 found mechanism prediction near chance.
+set in advance. The seed-0 family-split out-of-fold predictions supply the adjudicating point
+estimate and family-bootstrap interval; the five-seed mean is descriptive.
 
 This experiment uses its own ClinVar pull, separate from section 2's. Step 2.2 fetched
 pathogenic variants only, to label genes by mechanism; step 2.8
-(`fetch_pathogenicity_variants`) fetches benign variants too, in equal numbers to pathogenic ones
-per gene, to train a pathogenic-vs-benign classifier. Run step 2.8 before this experiment, if
-not already done — its output is this experiment's input.
+(`fetch_pathogenicity_variants`) fetches benign variants too. It deduplicates identical
+protein-level substitutions before selecting equal numbers of pathogenic and benign variants per
+gene. Run step 2.8 before this experiment; both output files are required inputs.
 
 The embedding step (GPU) runs on the pod; the probe step (CPU) runs locally after copying the
 embeddings back. The `--phase` flag separates them so the bootstrap gets all your local cores
@@ -275,13 +279,16 @@ instead of burning GPU-hours on the pod.
 
 | Step | Command | Description |
 |---|---|---|
-| 5.1 | `scp -i ~/.ssh/id_runpod_2 -P <pod-port> data/clinvar_pathogenicity_variants.json root@<pod-ip>:/workspace/repo/data/` | Copy pathogenicity variants to pod |
+| 5.1 | `scp -i ~/.ssh/id_runpod_2 -P <pod-port> data/clinvar_pathogenicity_variants.json data/clinvar_pathogenicity_variants.params.json root@<pod-ip>:/workspace/repo/data/` | Copy pathogenicity variants and fetch metadata to the pod |
 | 5.2 | `scp -i ~/.ssh/id_runpod_2 -P <pod-port> data/pfam_families.json root@<pod-ip>:/workspace/repo/data/` | Copy the current Pfam mapping to the pod |
-| 5.3 | `python -m esm2_mech.experiments.pathogenicity.pathogenicity_control --phase embed --model esm2_t33_650M_UR50D` | 🔴 GPU. Embed the fetched pathogenicity variants. Inputs: `clinvar_pathogenicity_variants.json`, `cache/sequences.json`. Outputs: `data/embeddings/esm2_t33_650M_UR50D/pathogenicity_{wt,mut}_mean.npy`, `data/embeddings/esm2_t33_650M_UR50D/pathogenicity_meta.json` |
+| 5.3 | `python -m esm2_mech.experiments.pathogenicity.pathogenicity_control --phase embed --model esm2_t33_650M_UR50D --force_embed` | 🔴 GPU. Replace the pathogenicity embedding cache from the repaired fetched set. Inputs: `clinvar_pathogenicity_variants.json`, `clinvar_pathogenicity_variants.params.json`, `cache/sequences.json`. Outputs: `data/embeddings/esm2_t33_650M_UR50D/pathogenicity_{wt,mut}_mean.npy`, `data/embeddings/esm2_t33_650M_UR50D/pathogenicity_meta.json` |
 | 5.4 | `scp -i ~/.ssh/id_runpod_2 -P <pod-port> root@<pod-ip>:/workspace/repo/data/embeddings/esm2_t33_650M_UR50D/pathogenicity_*.npy root@<pod-ip>:/workspace/repo/data/embeddings/esm2_t33_650M_UR50D/pathogenicity_meta.json data/embeddings/esm2_t33_650M_UR50D/` | Copy embeddings and metadata back to the local machine |
-| 5.5 | `python -m esm2_mech.experiments.pathogenicity.pathogenicity_control --phase probe` | 🟡 CPU — more cores help. Run the pathogenic-vs-benign probe on the cached embeddings. Inputs: `pathogenicity_{wt,mut}_mean.npy`, `pathogenicity_meta.json`, `clinvar_pathogenicity_variants.json`, `pfam_families.json`. Output: `results/run_biorxiv/pathogenicity_control.json` |
+| 5.5 | `python -m esm2_mech.experiments.pathogenicity.pathogenicity_control --phase probe --seeds 5 --n_jobs <workers> --n_boot 1000` | 🟡 CPU — more cores help. Run the pathogenic-vs-benign probe on the validated embeddings. Inputs: `pathogenicity_{wt,mut}_mean.npy`, `pathogenicity_meta.json`, `clinvar_pathogenicity_variants.json`, `clinvar_pathogenicity_variants.params.json`, `pfam_families.json`. Outputs: `results/run_biorxiv/pathogenicity_control_seed{0..4}.json`, `results/run_biorxiv/pathogenicity_control.json` |
 
-Step 5.3 errors immediately if `clinvar_pathogenicity_variants.json` is missing. The `--phase` flag accepts `embed`, `probe`, or `both` (the default, which preserves the old single-command behavior).
+Step 5.3 uses `--force_embed` because this repaired run must replace the old embedding cache. The
+embed and probe phases both validate the fetched-set metadata, the exact selected rows, the exact
+sequence windows supplied to ESM-2, and the embedding-array fingerprint. A mismatch raises. The
+`--phase` flag accepts `embed`, `probe`, or `both`.
 
 Classes are balanced by construction (equal numbers of pathogenic and benign variants per gene).
 However, genes still cluster into protein families, so family-split confidence intervals resample

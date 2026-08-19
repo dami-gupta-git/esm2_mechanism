@@ -13,10 +13,11 @@ from collections import Counter, defaultdict
 import numpy as np
 
 from esm2_mech.utils.bootstrap import (
+    attach_mechanism_ci,
     average_oof_over_seeds,
-    bootstrap_mechanism_metrics,
     cluster_bootstrap_ci,
     label_permutation_pvalue,
+    stack_oof_over_seeds,
 )
 from esm2_mech.utils.constants import (
     BOOTSTRAP_CI_LEVEL,
@@ -179,6 +180,7 @@ def _probe_one_family(
         oof_out[view] = {}
         for probe_name in probes:
             seed_avg_oof = average_oof_over_seeds(oof_by_view_probe[view][probe_name])
+            stacked_oof = stack_oof_over_seeds(oof_by_view_probe[view][probe_name])
             oof_out[view][probe_name] = seed_avg_oof
             entry = {
                 "macro_f1": summarize(per_seed_f1[view][probe_name]),
@@ -187,12 +189,15 @@ def _probe_one_family(
                     for cls in classes
                 },
             }
-            if compute_ci and seed_avg_oof is not None:
-                entry["ci"] = bootstrap_mechanism_metrics(
-                    seed_avg_oof["y_true"], seed_avg_oof["proba"],
-                    seed_avg_oof["genes"], classes=classes,
-                    n_resamples=BOOTSTRAP_N_RESAMPLES, ci_level=BOOTSTRAP_CI_LEVEL,
-                )
+            attach_mechanism_ci(
+                entry,
+                stacked_oof,
+                stacked_oof["genes"] if stacked_oof is not None else None,
+                compute_ci=compute_ci,
+                classes=classes,
+                n_resamples=BOOTSTRAP_N_RESAMPLES,
+                ci_level=BOOTSTRAP_CI_LEVEL,
+            )
             out[view][probe_name] = entry
     return out, oof_out
 

@@ -142,15 +142,22 @@ def run_seed(seed, pfam_map, out_dir):
         delta, y, genes = load_pathogenicity(pfam_map)
         gs = gene_split_cv(genes, seed=seed)
         fs = family_split_cv(genes, pfam_map, seed=seed)
+        family_validation_groups = family_or_gene_clusters(
+            genes, pfam_map, is_family_split=True
+        )
         path_results = {}
         print(f"  logreg gene-split")
         path_results["logreg_gene"] = run_logreg_binary_cv(delta, y, gs, seed=seed)
         print(f"  logreg family-split")
         path_results["logreg_family"] = run_logreg_binary_cv(delta, y, fs, seed=seed)
         print(f"  MLP gene-split")
-        path_results["mlp_gene"] = run_mlp_binary_cv(delta, y, gs, seed=seed)
+        path_results["mlp_gene"] = run_mlp_binary_cv(
+            delta, y, gs, validation_groups=genes, seed=seed
+        )
         print(f"  MLP family-split")
-        path_results["mlp_family"] = run_mlp_binary_cv(delta, y, fs, seed=seed)
+        path_results["mlp_family"] = run_mlp_binary_cv(
+            delta, y, fs, validation_groups=family_validation_groups, seed=seed
+        )
         write_result_json(path_out, path_results, seeds=[seed], indent=2)
         print(f"  -> {path_out}")
 

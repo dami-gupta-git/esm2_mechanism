@@ -29,7 +29,7 @@ from esm2_mech.utils.paths import (
 )
 from esm2_mech.utils.bootstrap import (
     adjudicate_diff,
-    bootstrap_mechanism_metrics,
+    attach_mechanism_ci,
     family_or_gene_clusters,
     paired_oof_diff,
 )
@@ -481,8 +481,11 @@ def run(
                 clusters = family_or_gene_clusters(
                     oof["genes"], pfam_map, is_family_split=is_family_split
                 )
-                agg["ci"] = bootstrap_mechanism_metrics(
-                    oof["y_true"], oof["proba"], clusters,
+                attach_mechanism_ci(
+                    agg,
+                    oof,
+                    clusters,
+                    compute_ci=True,
                     n_resamples=n_boot, seed=seed,
                 )
 

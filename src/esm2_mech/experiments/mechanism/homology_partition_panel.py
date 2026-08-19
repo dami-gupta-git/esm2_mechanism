@@ -55,7 +55,7 @@ from esm2_mech.experiments.mechanism.mmseqs_cluster_holdout import (
     run_mlp as run_mmseqs_mlp,
 )
 from esm2_mech.utils.bootstrap import (
-    bootstrap_mechanism_metrics,
+    attach_mechanism_ci,
     cluster_bootstrap_ci,
     family_or_gene_clusters,
 )
@@ -171,10 +171,16 @@ def _partition_row(
 ):
     """One robustness-table row: mechanism-null CI + leakage-fraction CI, both
     resampled at `partition_clusters` (the row's own held-out unit)."""
-    null_ci = bootstrap_mechanism_metrics(
-        oof_partition["y_true"], oof_partition["proba"], partition_clusters,
-        n_resamples=n_boot, seed=seed,
+    ci_container: dict = {}
+    attach_mechanism_ci(
+        ci_container,
+        oof_partition,
+        partition_clusters,
+        compute_ci=True,
+        n_resamples=n_boot,
+        seed=seed,
     )
+    null_ci = ci_container["ci"]
     lf_ci = leakage_fraction_ci_for_partition(
         oof_gene, oof_partition, partition_clusters, n_boot, seed
     )

@@ -880,6 +880,43 @@ def bootstrap_mechanism_metrics_from_oof(
     return out
 
 
+def attach_mechanism_ci(
+    result: dict,
+    oof: dict | None,
+    clusters: np.ndarray | None,
+    *,
+    compute_ci: bool,
+    classes: list[str] = MECHANISM_CLASSES,
+    n_resamples: int = BOOTSTRAP_N_RESAMPLES,
+    ci_level: float = BOOTSTRAP_CI_LEVEL,
+    seed: int = 0,
+) -> dict:
+    """Attach fold-aware mechanism bootstrap intervals to an experiment result.
+
+    `clusters` must be aligned to the rows in `oof`. Callers select the resampling
+    unit, such as gene, Pfam family, clan, or sequence cluster. The OOF dict remains
+    intact so the bootstrap scorer always receives its fold assignments.
+    """
+    if not compute_ci or oof is None:
+        return result
+    if clusters is None:
+        raise ValueError("attach_mechanism_ci: clusters are required when CI is enabled")
+    if len(clusters) != len(oof["y_true"]):
+        raise ValueError(
+            "attach_mechanism_ci: clusters and OOF rows are not aligned: "
+            f"{len(clusters)} clusters for {len(oof['y_true'])} rows"
+        )
+    result["ci"] = bootstrap_mechanism_metrics_from_oof(
+        oof,
+        np.asarray(clusters),
+        classes=classes,
+        n_resamples=n_resamples,
+        ci_level=ci_level,
+        seed=seed,
+    )
+    return result
+
+
 def family_or_gene_clusters(
     genes: np.ndarray, pfam_map: dict, is_family_split: bool
 ) -> np.ndarray:
@@ -1100,7 +1137,7 @@ def adjudicate_level(value: float | None, ci: dict | None, threshold: float) -> 
         if ci["ci_low"] > threshold:
             return "pass, established (CI excludes the threshold)"
         return "pass on point estimate, not distinguishable (CI covers the threshold)"
-    if ci["ci_high"] > threshold:
+    if ci["ci_high"] >= threshold:
         return "fail, underpowered (CI covers the threshold)"
     return "fail, established (CI excludes the threshold)"
 

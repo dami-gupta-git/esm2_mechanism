@@ -11,6 +11,8 @@ Invariants:
 - run_logreg_binary_cv: empty splits returns empty dict
 - run_mlp_binary_cv: returns auroc_mean on separable binary data
 - run_mlp_binary_cv: empty splits returns empty dict
+- run_mlp_binary_cv: early-stopping validation rejects groups crossing an
+  outer-CV train/test boundary
 - run_mlp_cv: returns macro_f1_mean and recovers signal; per_gene_f1 when genes given
 - run_mlp_probe_cv: keeps a fold whose train has 2 of 3 classes; skips a
   fold whose train has 1 class
@@ -69,7 +71,7 @@ def _binary_data(seed=0):
     X = rng.randn(n, 10) + y[:, None] * 2.0
     genes = np.array([f"G{i % 20}" for i in range(n)])
     splits = gene_split_cv(genes, n_folds=5, seed=seed)
-    return X, y, splits
+    return X, y, splits, genes
 
 
 # ---------------------------------------------------------------------------
@@ -118,13 +120,13 @@ class TestRunLogregCv:
 class TestRunLogregBinaryCv:
 
     def test_returns_auroc_mean(self):
-        X, y, splits = _binary_data()
+        X, y, splits, _ = _binary_data()
         r = run_logreg_binary_cv(X, y, splits)
         assert "auroc_mean" in r
         assert "auroc_std" in r
 
     def test_above_chance_on_separable(self):
-        X, y, splits = _binary_data()
+        X, y, splits, _ = _binary_data()
         r = run_logreg_binary_cv(X, y, splits)
         assert r["auroc_mean"] > 0.5
 
@@ -132,7 +134,7 @@ class TestRunLogregBinaryCv:
         assert run_logreg_binary_cv(np.zeros((10, 5)), np.zeros(10, dtype=int), []) == {}
 
     def test_n_folds_present(self):
-        X, y, splits = _binary_data()
+        X, y, splits, _ = _binary_data()
         r = run_logreg_binary_cv(X, y, splits)
         assert "n_folds" in r
 
@@ -144,17 +146,47 @@ class TestRunLogregBinaryCv:
 class TestRunMlpBinaryCv:
 
     def test_returns_auroc(self):
-        X, y, splits = _binary_data()
-        r = run_mlp_binary_cv(X, y, splits)
+        X, y, splits, genes = _binary_data()
+        r = run_mlp_binary_cv(X, y, splits, validation_groups=genes)
         assert "auroc_mean" in r
 
     def test_above_chance_on_separable(self):
-        X, y, splits = _binary_data()
-        r = run_mlp_binary_cv(X, y, splits)
+        X, y, splits, genes = _binary_data()
+        r = run_mlp_binary_cv(X, y, splits, validation_groups=genes)
         assert r["auroc_mean"] > 0.5
 
     def test_empty_splits_returns_empty(self):
-        assert run_mlp_binary_cv(np.zeros((10, 5)), np.zeros(10, dtype=int), []) == {}
+        assert run_mlp_binary_cv(
+            np.zeros((10, 5)),
+            np.zeros(10, dtype=int),
+            [],
+            validation_groups=np.arange(10),
+        ) == {}
+
+    def test_group_crossing_outer_boundary_raises(self):
+        rng = np.random.RandomState(0)
+        X = rng.randn(20, 4)
+        y = np.array([0, 1] * 10)
+        train_idx = np.arange(16)
+        test_idx = np.arange(16, 20)
+        validation_groups = np.array(
+            [
+                "shared",
+                *[f"train{i}" for i in range(1, 16)],
+                "shared",
+                "test1",
+                "test2",
+                "test3",
+            ]
+        )
+
+        with pytest.raises(ValueError, match="spans the outer CV train/test"):
+            run_mlp_binary_cv(
+                X,
+                y,
+                [(train_idx, test_idx)],
+                validation_groups=validation_groups,
+            )
 
 
 # ---------------------------------------------------------------------------

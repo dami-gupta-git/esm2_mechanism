@@ -17,7 +17,7 @@ from sklearn.preprocessing import LabelEncoder
 from sklearn.neighbors import KNeighborsClassifier
 import functools
 
-from esm2_mech.utils.bootstrap import bootstrap_mechanism_metrics
+from esm2_mech.utils.bootstrap import attach_mechanism_ci
 from esm2_mech.utils.constants import BOOTSTRAP_N_RESAMPLES, MECHANISM_CLASSES
 from esm2_mech.utils.io import load_variants_and_delta, write_result_json
 from esm2_mech.utils.data import load_pfam_map
@@ -165,9 +165,9 @@ def run_clan_holdout(delta, labels, genes, gene_clan, clan_names, le, seed=42, n
         )
 
     clan_results = []
-    oof_y, oof_proba, oof_clan, oof_rows = [], [], [], []
+    oof_y, oof_proba, oof_clan, oof_rows, oof_folds = [], [], [], [], []
 
-    for q in qualifying:
+    for fold_idx, q in enumerate(qualifying):
         clan = q["clan"]
         test_idx = np.array(q["idxs"])
         train_mask = np.ones(len(delta), dtype=bool)
@@ -199,6 +199,7 @@ def run_clan_holdout(delta, labels, genes, gene_clan, clan_names, le, seed=42, n
             oof_proba.append(proba_aligned)
             oof_clan.append(np.full(len(test_idx), clan, dtype=object))
             oof_rows.append(test_idx)
+            oof_folds.append(np.full(len(test_idx), fold_idx, dtype=int))
         except Exception as e:
             print(f"    MLP failed: {e}")
             mlp_res = {"error": str(e)}
@@ -245,10 +246,18 @@ def run_clan_holdout(delta, labels, genes, gene_clan, clan_names, le, seed=42, n
             "proba": np.concatenate(oof_proba),
             "clan": np.concatenate(oof_clan),
             "row_ids": np.concatenate(oof_rows),
+            "folds": np.concatenate(oof_folds),
         }
-        ci = bootstrap_mechanism_metrics(
-            oof["y_true"], oof["proba"], oof["clan"], n_resamples=n_boot, seed=seed
+        ci_container: dict = {}
+        attach_mechanism_ci(
+            ci_container,
+            oof,
+            oof["clan"],
+            compute_ci=True,
+            n_resamples=n_boot,
+            seed=seed,
         )
+        ci = ci_container["ci"]
         print(
             f"\n  Clan-resampled CI (n_clusters={len(set(oof['clan'].tolist()))}, "
             f"n_resamples={n_boot}): "

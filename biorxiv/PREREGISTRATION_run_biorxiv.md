@@ -280,17 +280,29 @@ does not become one.
 
 ### 2C — pathogenicity positive control (Runbook §5)
 
+**Post-result specification amendment, 2026-08-19.** The initial results were inspected before
+these two omitted rules were recorded. The repaired run uses seed 0 as the inferential unit: its
+family-split out-of-fold predictions supply both the point estimate and the cluster-bootstrap CI.
+The five-seed mean remains descriptive and is not paired with the seed-0 interval. ClinVar records
+encoding the same gene, protein position, wildtype residue, and mutant residue are deduplicated
+before per-gene balancing. Their ClinVar identifiers are retained as provenance, and a
+protein-level substitution carrying conflicting labels is an error. This amendment resolves the
+two omissions for the repaired run; it is not prospective preregistration.
+
 CI must exclude 0.85. Resampled by family, not gene — this experiment's classes are balanced by
 construction, but genes still cluster into families, so the resampling unit rule (§1.2) still
-applies; the calibration caveat (§1.4) still governs how the result is described. The CI is
-cluster-bootstrap on seed-0 family-split OOF predictions, the same seed-0 convention as §2F–2H —
-each seed reshuffles the CV fold assignment, so a single seed's predictions are the coherent unit
-to resample. **Would overturn 2C:** the CI includes 0.85 — the positive control would no longer
-license the dissociation, and the whole paper weakens.
+applies; the calibration caveat (§1.4) still governs how the result is described. Each seed
+reshuffles the CV fold assignment, so one seed's predictions form the coherent unit to resample.
+**Would overturn 2C:** the CI includes 0.85 — the positive control would no longer license the
+dissociation, and the whole paper weakens.
 
 **Checklist:**
 - [ ] CI is resampled by family, not gene.
 - [ ] CI is computed from seed-0 OOF predictions.
+- [ ] Seed-0 point estimate and seed-0 CI are reported together; the five-seed mean is labelled
+      descriptive.
+- [ ] Repeated protein-level substitutions are deduplicated before balancing, with the removed
+      count and retained ClinVar identifiers recorded.
 - [ ] Report states the probe measures discrimination only, not a calibrated risk estimate (§1.4).
 - [ ] Verdict recorded as overturned only if the CI includes 0.85.
 
