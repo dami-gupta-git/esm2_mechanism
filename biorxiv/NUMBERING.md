@@ -25,7 +25,7 @@ from earlier drafts to that schema. New writing and generated outputs use only t
 | K1, C4 | 2D | Conservation alone clears family-split AUROC 0.85 |
 | K2 | 2E | Adding the embedding delta to conservation improves AUROC by at least 0.02 |
 | 2E.1 | 2F | Enzyme classification clears family-split LogReg macro-F1 0.70 |
-| 2E.2 | 2G | Enzyme family-split F1 substantially exceeds the mechanism floor |
+| 2E.2 | 2G | Enzyme family-split macro-F1 exceeds mechanism family-split macro-F1 by at least 0.05 |
 | 2E.3 | 2H | MLP does not substantially outperform LogReg for enzyme classification |
 
 `K2b`, conservation plus delta versus delta alone, is descriptive and has no confirmatory claim

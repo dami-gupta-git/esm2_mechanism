@@ -114,7 +114,7 @@ the paper relies on.
 | 2D | Conservation alone clears AUROC 0.85 for pathogenicity | family-cluster bootstrap CI | §6.7 |
 | 2E | Adding the embedding delta to conservation improves AUROC by at least 0.02 | paired bootstrap | §6.7 |
 | 2F | Enzyme type classification clears family-split LogReg macro-F1 0.70 | cluster-bootstrap CI | §8 |
-| 2G | Enzyme family-split F1 substantially exceeds the mechanism family-split floor | paired cluster-bootstrap CI | §8 |
+| 2G | Enzyme family-split macro-F1 exceeds mechanism family-split macro-F1 by at least 0.05 | paired cluster-bootstrap CI | §8 |
 | 2H | The enzyme signal is linearly separable: MLP does not substantially outperform LogReg under family-split | paired cluster-bootstrap CI | §8 |
 
 Claims 2A and 2C form the load-bearing dissociation, and 2B provides the leakage account. Claims
@@ -240,7 +240,8 @@ the null holding.
       or called chance.
 - [ ] Verdict recorded is "affirmed" or "not adjudicated" only, never "confirmed" outright.
 - [ ] "Affirmed" is used only if the linear `delta_mean` family-split CI's upper bound is below the
-      measured chance floor + 0.05.
+      measured chance floor + 0.05 on at least three of the five seeds.
+- [ ] The interval rule is evaluated only when all five seed-specific intervals are available.
 - [ ] `delta_mean`'s reported p-value states which test variant (refit macro-F1 vs. no-refit AUROC)
       produced it.
 - [ ] Both `wt_only_mean` and `delta_mean` permutation nulls are built by shuffling at the family
@@ -381,6 +382,8 @@ one, so proteome features should be near chance.
 **Checklist:**
 - [ ] Mechanism reference F1 is read from this run's own aggregate, never hardcoded.
 - [ ] CIs are resampled by family, not gene.
+- [ ] Claim 2G uses a minimum enzyme-minus-mechanism macro-F1 difference of 0.05 on the shared
+      family subset, with the paired interval excluding zero for affirmation.
 - [ ] Protease per-class AUROC is flagged under the rare-class caveat (§1.3).
 
 ---

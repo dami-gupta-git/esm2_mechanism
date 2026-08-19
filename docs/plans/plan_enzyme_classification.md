@@ -77,7 +77,7 @@ No GPU required if restricting to the already-embedded gene set (~1,985 genes).
 Linear probe (LogReg) on WT mean-pooled embeddings achieves macro-F1 ≥ 0.70 under family-split CV across the 4-class scheme. Motivated by: enzyme class is stereotyped by fold; ESM-2 WT embeddings cluster strongly by family (result 4, 26× purity); enzyme class is near-perfectly correlated with Pfam family.
 
 **H2 — Family-split >> mechanism floor:**
-Family-split enzyme classification F1 substantially exceeds the mechanism floor (0.385 ± 0.018 merged, 5-seed). If H1 passes, the contrast directly shows that the mechanism null result is task-specific, not a probe/data failure.
+Family-split enzyme classification macro-F1 exceeds the mechanism macro-F1 by at least 0.05. If H1 passes, the contrast shows that the mechanism null result is task-specific, not a probe or data failure.
 
 **H3 — Clan-holdout shows partial cross-fold generalisation:**
 Leave-one-clan-out evaluation (mirroring result 10) gives enzyme F1 above majority baseline but below family-split. Expected given that some enzyme classes (e.g. oxidoreductases) span multiple structural superfamilies, providing genuine cross-fold signal.
@@ -190,7 +190,7 @@ No GPU required if restricting to the already-embedded gene set.
 |---|---|---|
 | **H1 passes** | Family-split LogReg macro-F1 ≥ 0.70 | Enzyme class is strongly encoded in ESM-2 WT embeddings; confirms family-split CV is a meaningful discriminator |
 | **H1 fails** | Family-split macro-F1 < 0.70 | Unexpected; would suggest either label quality issues or that the 4-class scheme spans too many structural superfamilies. Investigate per-class AUROCs and confusion matrix before concluding |
-| **H2 confirmed** | Enzyme family-split F1 >> mechanism family-split F1 (0.385) | Mechanism null result is task-specific: ESM-2 WT embeddings encode enzyme class but delta embeddings do not encode mutation mechanism |
+| **H2 confirmed** | Enzyme family-split macro-F1 exceeds mechanism family-split macro-F1 by at least 0.05, with the paired CI excluding zero | Mechanism null result is task-specific: ESM-2 WT embeddings encode enzyme class but delta embeddings do not encode mutation mechanism |
 | **H4 confirmed** | MLP − LogReg family-split ΔF1 < 0.05 | Linear readout is sufficient; consistent with pathogenicity result and contrast with stability (result 21) |
 | **H4 fails** | MLP − LogReg ΔF1 ≥ 0.05 | Nonlinear organisation in WT enzyme embedding space — interesting; would contrast with the pathogenicity result and would mirror the stability result (nonlinear cross-family structure) |
 

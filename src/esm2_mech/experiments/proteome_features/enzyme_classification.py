@@ -697,14 +697,14 @@ def main():
     verdict_2h = adjudicate_equivalence(gate_2h, paired_ci, 0.05)
 
     print(f"\n2F — family-split F1 >= 0.70:  {verdict_2f}  (F1={fs_f1:.3f})")
-    if mechanism_point is not None:
+    if enzyme_mechanism_diff is not None:
         print(
             f"2G — enzyme minus mechanism F1 >= "
             f"{ENZYME_MECHANISM_MIN_F1_GAP:.2f}:  {verdict_2g}  "
             f"(delta={enzyme_mechanism_diff:+.3f})"
         )
     else:
-        print("2G — enzyme > mechanism floor:  SKIPPED (mechanism reference unavailable)")
+        print("2G — not adjudicated (paired enzyme-mechanism difference unavailable)")
     if mlp_f1 is not None and fs_f1 is not None:
         print(
             f"2H — MLP approx LogReg family-split:  {verdict_2h}  "
