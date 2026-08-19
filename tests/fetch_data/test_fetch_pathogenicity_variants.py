@@ -1,118 +1,182 @@
-"""
-Tests for fetch_pathogenicity_variants.py.
-
-Covers:
-- Cache invalidation when balance_version changes
-- Cache invalidation when source_fingerprint changes
-- _fetch_clinvar balancing: per-gene equalization
-- _fetch_clinvar balancing: genes with only one class are dropped
-"""
+"""Tests for the pathogenicity ClinVar fetch and cache contract."""
 
 import json
+
 import pytest
 
+from esm2_mech.fetch_data import fetch_pathogenicity_variants as fetch_module
 from esm2_mech.fetch_data.fetch_pathogenicity_variants import (
-    _BALANCE_VERSION,
+    StalePathogenicityCacheError,
+    _deduplicate_protein_substitutions,
+    _selection_params,
     fetch_phase,
+)
+from esm2_mech.utils.data import (
+    validate_balanced_pathogenicity_variants,
+    variants_fingerprint,
 )
 
 
 def _make_mechanism_variants(genes_and_uids):
-    """Build a minimal variants.json list from (gene, uniprot_id) pairs."""
     return [
-        {"gene": g, "uniprot_id": uid, "aa_wt": "A", "aa_mut": "V", "aa_pos": 1}
-        for g, uid in genes_and_uids
+        {"gene": gene, "uniprot_id": uid, "aa_wt": "A", "aa_mut": "V", "aa_pos": 1}
+        for gene, uid in genes_and_uids
     ]
 
 
-class TestFetchPhaseCacheInvalidation:
+def _balanced_variants():
+    return [
+        {
+            "gene": "BRAF",
+            "label": "pathogenic",
+            "aa_pos": 600,
+            "aa_wt": "V",
+            "aa_mut": "E",
+            "clinvar_id": "1",
+            "clinvar_ids": ["1"],
+            "uniprot_id": "P15056",
+        },
+        {
+            "gene": "BRAF",
+            "label": "benign",
+            "aa_pos": 601,
+            "aa_wt": "V",
+            "aa_mut": "A",
+            "clinvar_id": "2",
+            "clinvar_ids": ["2"],
+            "uniprot_id": "P15056",
+        },
+    ]
 
-    def _write_cache(self, tmp_path, variants, params):
-        vpath = tmp_path / "clinvar_pathogenicity_variants.json"
-        ppath = tmp_path / "clinvar_pathogenicity_variants.params.json"
-        vpath.write_text(json.dumps(variants))
-        ppath.write_text(json.dumps(params))
-        return vpath, ppath
 
-    def test_balance_version_mismatch_invalidates_cache(self, tmp_path, monkeypatch):
-        """A cache built without balance_version (or an old version) must not be reused."""
-        monkeypatch.setattr(
-            "esm2_mech.fetch_data.fetch_pathogenicity_variants.CLINVAR_PATHOGENICITY_VARIANTS_JSON",
-            tmp_path / "clinvar_pathogenicity_variants.json",
-        )
-        monkeypatch.setattr(
-            "esm2_mech.fetch_data.fetch_pathogenicity_variants.CLINVAR_PATHOGENICITY_PARAMS_JSON",
-            tmp_path / "clinvar_pathogenicity_variants.params.json",
-        )
+def _current_metadata(mechanism, variants):
+    return {
+        "metadata_version": fetch_module._FETCH_METADATA_VERSION,
+        "selection": _selection_params(mechanism, 20, 42),
+        "clinvar_source": {
+            "url": fetch_module.CLINVAR_URL,
+            "assembly": fetch_module.CLINVAR_ASSEMBLY,
+            "retrieved_at_utc": "2026-08-19T00:00:00+00:00",
+            "compressed_sha256": "fixture",
+            "compressed_bytes": 1,
+            "last_modified": None,
+        },
+        "accounting": {
+            "realised_design": validate_balanced_pathogenicity_variants(
+                variants, require_unique_substitutions=True
+            )
+        },
+        "variant_fingerprint": variants_fingerprint(variants),
+    }
 
+
+def _point_cache_at_tmp(monkeypatch, tmp_path, mechanism):
+    variant_path = tmp_path / "clinvar_pathogenicity_variants.json"
+    metadata_path = tmp_path / "clinvar_pathogenicity_variants.params.json"
+    monkeypatch.setattr(fetch_module, "CLINVAR_PATHOGENICITY_VARIANTS_JSON", variant_path)
+    monkeypatch.setattr(fetch_module, "CLINVAR_PATHOGENICITY_PARAMS_JSON", metadata_path)
+    monkeypatch.setattr(fetch_module, "VARIANTS_JSON", tmp_path / "variants.json")
+    monkeypatch.setattr(fetch_module, "load_variants", lambda _: mechanism)
+    return variant_path, metadata_path
+
+
+class TestFetchPhaseCacheValidation:
+    def test_old_metadata_is_rejected_with_named_staleness_error(
+        self, tmp_path, monkeypatch
+    ):
         mechanism = _make_mechanism_variants([("BRAF", "P15056")])
-        monkeypatch.setattr(
-            "esm2_mech.fetch_data.fetch_pathogenicity_variants.load_variants",
-            lambda _: mechanism,
+        variant_path, metadata_path = _point_cache_at_tmp(
+            monkeypatch, tmp_path, mechanism
+        )
+        variant_path.write_text(json.dumps(_balanced_variants()))
+        metadata_path.write_text(
+            json.dumps(
+                {
+                    "max_per_gene_per_class": 20,
+                    "seed": 42,
+                    "source_fingerprint": "old-schema",
+                }
+            )
         )
 
-        old_cached_variants = [{"gene": "BRAF", "label": "pathogenic", "aa_pos": 600,
-                                "aa_wt": "V", "aa_mut": "E", "clinvar_id": "1",
-                                "uniprot_id": "P15056"}]
-        old_params = {
-            "max_per_gene_per_class": 20,
-            "seed": 42,
-            "source_fingerprint": "anything",
-        }
-        self._write_cache(tmp_path, old_cached_variants, old_params)
+        with pytest.raises(StalePathogenicityCacheError, match="metadata_version"):
+            fetch_phase(max_per_gene_per_class=20, seed=42)
 
-        from esm2_mech.fetch_data.fetch_pathogenicity_variants import (
-            _source_fingerprint,
-        )
-        current_fp = _source_fingerprint(mechanism)
-        current_params = {
-            "max_per_gene_per_class": 20,
-            "seed": 42,
-            "source_fingerprint": current_fp,
-            "balance_version": _BALANCE_VERSION,
-        }
-
-        # The old params have no balance_version key, so they must differ
-        assert old_params != current_params
-
-    def test_matching_params_reuse_cache(self, tmp_path, monkeypatch):
-        """When all params including balance_version match, the cache is reused."""
-        monkeypatch.setattr(
-            "esm2_mech.fetch_data.fetch_pathogenicity_variants.CLINVAR_PATHOGENICITY_VARIANTS_JSON",
-            tmp_path / "clinvar_pathogenicity_variants.json",
-        )
-        monkeypatch.setattr(
-            "esm2_mech.fetch_data.fetch_pathogenicity_variants.CLINVAR_PATHOGENICITY_PARAMS_JSON",
-            tmp_path / "clinvar_pathogenicity_variants.params.json",
-        )
-        monkeypatch.setattr(
-            "esm2_mech.fetch_data.fetch_pathogenicity_variants.VARIANTS_JSON",
-            tmp_path / "variants.json",
-        )
-
+    def test_matching_metadata_reuses_cache(self, tmp_path, monkeypatch):
         mechanism = _make_mechanism_variants([("BRAF", "P15056")])
-        monkeypatch.setattr(
-            "esm2_mech.fetch_data.fetch_pathogenicity_variants.load_variants",
-            lambda _: mechanism,
+        variants = _balanced_variants()
+        variant_path, metadata_path = _point_cache_at_tmp(
+            monkeypatch, tmp_path, mechanism
         )
+        variant_path.write_text(json.dumps(variants))
+        metadata_path.write_text(json.dumps(_current_metadata(mechanism, variants)))
 
-        from esm2_mech.fetch_data.fetch_pathogenicity_variants import (
-            _source_fingerprint,
-        )
+        assert fetch_phase(max_per_gene_per_class=20, seed=42) == variants
 
-        cached_variants = [
-            {"gene": "BRAF", "label": "pathogenic", "aa_pos": 600,
-             "aa_wt": "V", "aa_mut": "E", "clinvar_id": "1", "uniprot_id": "P15056"},
-            {"gene": "BRAF", "label": "benign", "aa_pos": 601,
-             "aa_wt": "V", "aa_mut": "A", "clinvar_id": "2", "uniprot_id": "P15056"},
+    def test_partial_cache_is_rejected(self, tmp_path, monkeypatch):
+        mechanism = _make_mechanism_variants([("BRAF", "P15056")])
+        variant_path, _ = _point_cache_at_tmp(monkeypatch, tmp_path, mechanism)
+        variant_path.write_text(json.dumps(_balanced_variants()))
+
+        with pytest.raises(StalePathogenicityCacheError, match="only one"):
+            fetch_phase(max_per_gene_per_class=20, seed=42)
+
+
+class TestProteinSubstitutionDeduplication:
+    def test_duplicate_records_are_merged_before_balance(self):
+        variants = [
+            {
+                "gene": "BRAF",
+                "aa_pos": 600,
+                "aa_wt": "V",
+                "aa_mut": "E",
+                "label": "pathogenic",
+                "clinvar_id": "20",
+            },
+            {
+                "gene": "BRAF",
+                "aa_pos": 600,
+                "aa_wt": "V",
+                "aa_mut": "E",
+                "label": "pathogenic",
+                "clinvar_id": "10",
+            },
         ]
-        params = {
-            "max_per_gene_per_class": 20,
-            "seed": 42,
-            "source_fingerprint": _source_fingerprint(mechanism),
-            "balance_version": _BALANCE_VERSION,
-        }
-        self._write_cache(tmp_path, cached_variants, params)
 
-        result = fetch_phase(max_per_gene_per_class=20, seed=42)
-        assert result == cached_variants
+        deduplicated, accounting = _deduplicate_protein_substitutions(variants)
+
+        assert len(deduplicated) == 1
+        assert deduplicated[0]["clinvar_ids"] == ["10", "20"]
+        assert accounting["n_duplicate_substitution_keys"] == 1
+        assert accounting["n_duplicate_rows_removed"] == 1
+
+    def test_conflicting_labels_abort(self):
+        variants = [
+            {
+                "gene": "BRAF",
+                "aa_pos": 600,
+                "aa_wt": "V",
+                "aa_mut": "E",
+                "label": label,
+                "clinvar_id": str(index),
+            }
+            for index, label in enumerate(("pathogenic", "benign"))
+        ]
+
+        with pytest.raises(RuntimeError, match="conflicting labels"):
+            _deduplicate_protein_substitutions(variants)
+
+    def test_unknown_label_aborts(self):
+        variants = [
+            {
+                "gene": "BRAF",
+                "aa_pos": 600,
+                "aa_wt": "V",
+                "aa_mut": "E",
+                "label": "uncertain",
+                "clinvar_id": "1",
+            }
+        ]
+
+        with pytest.raises(ValueError, match="unexpected pathogenicity label"):
+            _deduplicate_protein_substitutions(variants)

@@ -14,6 +14,8 @@ Invariants:
 - run_mlp_cv: returns macro_f1_mean and recovers signal; per_gene_f1 when genes given
 - run_mlp_probe_cv: keeps a fold whose train has 2 of 3 classes; skips a
   fold whose train has 1 class
+- run_mlp_probe_cv: early-stopping validation holds out whole dependency groups
+  and rejects groups that cross an outer-CV train/test boundary
 - run_sklearn_probe: returns macro_f1_mean; insufficient data returns error
 - run_sklearn_probe_pca: returns macro_f1_mean with per-fold PCA reduction
 - run_histgb_cv: fits a matrix containing NaN without imputing, while
@@ -39,6 +41,7 @@ from esm2_mech.utils.probes import (
     run_sklearn_probe,
     run_sklearn_probe_pca,
     pca_reduce,
+    _validation_group_mask,
     _pos_class_col,
 )
 from esm2_mech.utils.splits import gene_split_cv
@@ -209,6 +212,41 @@ class TestRunMlpCv:
 
 class TestRunMlpProbeCv:
 
+    def test_validation_mask_keeps_dependency_groups_intact(self):
+        groups = np.repeat(np.array([f"PF{i}" for i in range(10)]), 3)
+
+        validation_mask = _validation_group_mask(groups, seed=7)
+
+        assert validation_mask is not None
+        assert validation_mask.any()
+        assert (~validation_mask).any()
+        for group in set(groups):
+            group_mask = validation_mask[groups == group]
+            assert np.all(group_mask == group_mask[0])
+
+    def test_group_crossing_outer_boundary_raises(self):
+        rng = np.random.RandomState(0)
+        X = rng.randn(12, 4)
+        y = np.array([GOF, DN] * 6)
+        train_idx = np.arange(8)
+        test_idx = np.arange(8, 12)
+        validation_groups = np.array(
+            [
+                "shared", "train1", "train2", "train3", "train4", "train5",
+                "train6", "train7", "shared", "test1", "test2", "test3",
+            ]
+        )
+
+        with pytest.raises(ValueError, match="spans the outer CV train/test"):
+            run_mlp_probe_cv(
+                X,
+                y,
+                [(train_idx, test_idx)],
+                validation_groups=validation_groups,
+                hidden=(8,),
+                max_epochs=1,
+            )
+
     def test_fold_with_rare_class_only_in_test_is_kept(self):
         # Train has 2 of 3 classes — fittable, so the fold must be scored.
         rng = np.random.RandomState(0)
@@ -222,7 +260,10 @@ class TestRunMlpProbeCv:
         test_idx = np.concatenate([lof_idx, extra])
         train_idx = np.setdiff1d(np.arange(n), test_idx)
         assert len(set(y[train_idx].tolist())) == 2  # rare class only in test
-        r = run_mlp_probe_cv(X, y, [(train_idx, test_idx)], hidden=(16,), max_epochs=3)
+        r = run_mlp_probe_cv(
+            X, y, [(train_idx, test_idx)], validation_groups=np.arange(n),
+            hidden=(16,), max_epochs=3,
+        )
         assert "macro_f1_mean" in r  # fold kept and scored, not skipped
 
     def test_single_class_train_fold_is_skipped(self):
@@ -233,7 +274,10 @@ class TestRunMlpProbeCv:
         X = rng.randn(n, 8)
         train_idx = np.arange(60)  # GOF only
         test_idx = np.arange(60, n)
-        r = run_mlp_probe_cv(X, y, [(train_idx, test_idx)], hidden=(16,), max_epochs=3)
+        r = run_mlp_probe_cv(
+            X, y, [(train_idx, test_idx)], validation_groups=np.arange(n),
+            hidden=(16,), max_epochs=3,
+        )
         assert r == {}  # no scorable fold
 
 

@@ -24,6 +24,7 @@ from esm2_mech.utils.data import load_pfam_map
 from esm2_mech.utils.metrics import align_proba, majority_baseline_f1
 from esm2_mech.utils.paths import (
     CONTRASTIVE_AGGREGATE_JSON,
+    EMB_VALID_VARIANTS_JSON,
     EMB_MUT_MEAN,
     EMB_WT_MEAN,
     NONLINEAR_RESULTS_SEED_JSON,
@@ -39,7 +40,7 @@ warnings.filterwarnings("ignore")
 
 def load_data(data_dir, emb_dir):
     variants, labels, genes, delta, _ = load_variants_and_delta(
-        VALID_VARIANTS_JSON, EMB_WT_MEAN, EMB_MUT_MEAN
+        VALID_VARIANTS_JSON, EMB_VALID_VARIANTS_JSON, EMB_WT_MEAN, EMB_MUT_MEAN
     )
     return variants, labels, genes, delta
 

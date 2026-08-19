@@ -21,6 +21,7 @@ from esm2_mech.utils.paths import (
     CONTRASTIVE_AGGREGATE_JSON,
     CONTRASTIVE_RESULTS_DIR,
     EMB_MUT_MEAN,
+    EMB_VALID_VARIANTS_JSON,
     EMB_WT_MEAN,
     MECHANISM_AGGREGATE_JSON,
     PFAM_JSON,
@@ -57,7 +58,7 @@ warnings.filterwarnings("ignore")
 
 def load_data():
     variants, labels, genes, delta_mean, _ = load_variants_and_delta(
-        VALID_VARIANTS_JSON, EMB_WT_MEAN, EMB_MUT_MEAN
+        VALID_VARIANTS_JSON, EMB_VALID_VARIANTS_JSON, EMB_WT_MEAN, EMB_MUT_MEAN
     )
     return variants, labels, genes, delta_mean
 

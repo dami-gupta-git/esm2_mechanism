@@ -162,6 +162,10 @@ MEGASCALE_DDG_MISSING = "-"
 BOOTSTRAP_N_RESAMPLES = 1000
 BOOTSTRAP_CI_LEVEL = 0.95
 PERMUTATION_N_RESAMPLES = 1000
+# Claim 2A's preregistered across-seed permutation rule. A result is evaluable
+# only when all N_SEEDS requested seed runs produced a finite p-value.
+PERMUTATION_SIGNIFICANCE_THRESHOLD = 0.05
+PERMUTATION_MIN_SIGNIFICANT_SEEDS = 3
 # A cluster-bootstrap metric can be undefined on a resample (e.g. a rare class is
 # absent, so one-vs-rest AUROC is undefined) and is dropped from the percentile. If
 # too few resamples survive, the CI is built on a biased, thinned subset and must not

@@ -28,6 +28,7 @@ from esm2_mech.utils.io import load_variants_and_delta
 from esm2_mech.utils.paths import (
     RESULTS_DIR,
     VALID_VARIANTS_JSON,
+    EMB_VALID_VARIANTS_JSON,
     EMB_WT_MEAN,
     EMB_MUT_MEAN,
     GENE_UNIVERSE,
@@ -124,7 +125,8 @@ def gene_split_indices(
 def load_data() -> tuple[list[dict], np.ndarray, np.ndarray, np.ndarray]:
     """Load merged variants, labels, genes, and ESM-2 delta embeddings."""
     variants, labels, genes, delta, _ = load_variants_and_delta(
-        MERGED_VALID_VARIANTS, MERGED_WT_MEAN, MERGED_MUT_MEAN
+        MERGED_VALID_VARIANTS, EMB_VALID_VARIANTS_JSON,
+        MERGED_WT_MEAN, MERGED_MUT_MEAN
     )
     return variants, labels, genes, delta
 

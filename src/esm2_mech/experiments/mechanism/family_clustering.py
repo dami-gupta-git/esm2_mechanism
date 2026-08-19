@@ -25,11 +25,16 @@ from esm2_mech.utils.bootstrap import (
     within_stratum_bootstrap_ci,
 )
 from esm2_mech.utils.constants import BOOTSTRAP_N_RESAMPLES, N_SEEDS
-from esm2_mech.utils.data import load_pfam_map, load_variants
+from esm2_mech.utils.data import (
+    load_pfam_map,
+    load_variants,
+    validate_embedding_variant_identity,
+)
 from esm2_mech.utils.io import write_result_json
 from esm2_mech.utils.metrics import fold_macro_f1, majority_baseline_f1, mean_std_n
 from esm2_mech.utils.paths import (
     EMB_MUT_MEAN,
+    EMB_VALID_VARIANTS_JSON,
     EMB_WT_MEAN,
     FAMILY_CLUSTERING_JSON,
     PFAM_JSON,
@@ -309,6 +314,7 @@ def main():
     # were extracted from), so no rebuild/refilter is needed here.
     print("=== Loading dataset and embeddings ===")
     valid_variants = load_variants(VALID_VARIANTS_JSON)
+    validate_embedding_variant_identity(valid_variants, EMB_VALID_VARIANTS_JSON)
 
     emb_wt = np.load(EMB_WT_MEAN)
     emb_mut = np.load(EMB_MUT_MEAN)

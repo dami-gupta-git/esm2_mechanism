@@ -20,7 +20,7 @@ from esm2_mech.utils.constants import (
     nonlinear_key,
 )
 from esm2_mech.utils.paths import (
-    EMB_MUT_MEAN, EMB_MUT_POS, EMB_WT_MEAN, EMB_WT_POS,
+    EMB_MUT_MEAN, EMB_MUT_POS, EMB_VALID_VARIANTS_JSON, EMB_WT_MEAN, EMB_WT_POS,
     PFAM_JSON, RESULTS_DIR, VALID_VARIANTS_JSON,
 )
 from esm2_mech.utils.bootstrap import bootstrap_mechanism_metrics, family_or_gene_clusters
@@ -36,7 +36,8 @@ OUT_DIR = RESULTS_DIR
 
 def load_data():
     _variants, labels, genes, delta_mean, delta_pos = load_variants_and_delta(
-        VALID_VARIANTS_JSON, EMB_WT_MEAN, EMB_MUT_MEAN, EMB_WT_POS, EMB_MUT_POS
+        VALID_VARIANTS_JSON, EMB_VALID_VARIANTS_JSON,
+        EMB_WT_MEAN, EMB_MUT_MEAN, EMB_WT_POS, EMB_MUT_POS
     )
 
     pfam_map = load_pfam_map(PFAM_JSON)
@@ -64,6 +65,12 @@ def run_seed(seed, args, labels, genes, delta_mean, delta_pos, pfam_map):
 
     gene_splits = gene_split_cv(genes, seed=seed)
     family_splits = family_split_cv(genes, pfam_map, seed=seed)
+    validation_groups_by_split = {
+        SPLIT_GENE: genes,
+        SPLIT_FAMILY: family_or_gene_clusters(
+            genes, pfam_map, is_family_split=True
+        ),
+    }
     print(f"Gene-split folds: {len(gene_splits)}  Family-split folds: {len(family_splits)}")
 
     def gbm_fn(random_state):
@@ -123,7 +130,9 @@ def run_seed(seed, args, labels, genes, delta_mean, delta_pos, pfam_map):
             key = nonlinear_key("mlp", feat_name, split_name)
             print(f"\n=== MLP {split_name}-split: {feat_name} ===")
             agg, oof = run_mlp_probe_cv(
-                X, labels, splits, seed=seed, genes=genes,
+                X, labels, splits,
+                validation_groups=validation_groups_by_split[split_name],
+                seed=seed, genes=genes,
                 max_epochs=args.max_epochs, patience=args.patience, label=key,
                 return_oof=True,
             )

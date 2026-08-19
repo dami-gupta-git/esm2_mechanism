@@ -197,11 +197,22 @@ def _mechanism_one_seed(seed, feats, labels, genes, pfam_map):
     res = {}
     for fname, X in feats.items():
         for split_name, splits in [("gene_split", gs), ("family_split", fs)]:
+            validation_groups = (
+                genes
+                if split_name == "gene_split"
+                else family_or_gene_clusters(genes, pfam_map, is_family_split=True)
+            )
             lr, lr_oof = run_logreg_multi(
                 X, labels, splits, seed=seed, genes=genes, return_oof=True
             )
             mlp, mlp_oof = run_mlp_probe_cv(
-                X, labels, splits, seed=seed, genes=genes, return_oof=True
+                X,
+                labels,
+                splits,
+                validation_groups=validation_groups,
+                seed=seed,
+                genes=genes,
+                return_oof=True,
             )
             res[(fname, split_name)] = {
                 "logreg_f1": lr.get("macro_f1_mean"),

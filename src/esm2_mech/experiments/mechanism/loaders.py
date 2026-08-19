@@ -9,6 +9,7 @@ import numpy as np
 from esm2_mech.utils.io import load_variants_and_delta
 from esm2_mech.utils.paths import (
     VALID_VARIANTS_JSON,
+    EMB_VALID_VARIANTS_JSON,
     EMB_WT_MEAN,
     EMB_MUT_MEAN,
     EMB_WT_POS,
@@ -38,6 +39,7 @@ def load_mechanism_variants(
     """Load mechanism variants + ESM-2 embeddings. Returns (delta_mean, delta_pos, labels, genes)."""
     variants, _labels, genes, delta_mean, delta_pos = load_variants_and_delta(
         VALID_VARIANTS_JSON,
+        EMB_VALID_VARIANTS_JSON,
         EMB_WT_MEAN,
         EMB_MUT_MEAN,
         EMB_WT_POS,
@@ -55,6 +57,7 @@ def load_merged(
     """Mean-pooled mechanism variants: (delta_mean, labels, genes)."""
     variants, _labels, genes, delta_mean, _delta_pos = load_variants_and_delta(
         VALID_VARIANTS_JSON,
+        EMB_VALID_VARIANTS_JSON,
         EMB_WT_MEAN,
         EMB_MUT_MEAN,
         verbose=False,

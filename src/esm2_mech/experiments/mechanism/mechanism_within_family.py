@@ -27,11 +27,12 @@ from esm2_mech.utils.constants import (
     N_FOLDS,
     N_SEEDS,
 )
-from esm2_mech.utils.data import load_variants
+from esm2_mech.utils.data import load_variants, validate_embedding_variant_identity
 from esm2_mech.utils.io import write_result_json
 from esm2_mech.utils.metrics import align_proba, majority_baseline_f1
 from esm2_mech.utils.paths import (
     EMB_MUT_MEAN,
+    EMB_VALID_VARIANTS_JSON,
     EMB_WT_MEAN,
     PFAM_JSON,
     VALID_VARIANTS_JSON,
@@ -61,6 +62,7 @@ def load_phase():
     """Load embeddings, variants, and pfam map; align and return them."""
     print("=== Phase 1: load ESM-2 embeddings + variants + pfam ===")
     valid_variants = load_variants(VALID_VARIANTS_JSON)
+    validate_embedding_variant_identity(valid_variants, EMB_VALID_VARIANTS_JSON)
     wt_mean = np.load(EMB_WT_MEAN)
     mut_mean = np.load(EMB_MUT_MEAN)
 
@@ -332,9 +334,14 @@ def pooled_gof_test(
         )
         perm["observed"] = observed if observed is not None else perm.get("observed")
         out["permutation_mlp"] = perm
+        p_value_text = (
+            f"unresolved at resolution {perm['p_value_resolution']}"
+            if perm.get("resolution_limited")
+            else str(perm.get("p_value"))
+        )
         print(
             f"  permutation: observed GOF AUROC {perm.get('observed')}  "
-            f"null mean {perm.get('null_mean')}  p = {perm.get('p_value')}"
+            f"null mean {perm.get('null_mean')}  p = {p_value_text}"
         )
 
     return out

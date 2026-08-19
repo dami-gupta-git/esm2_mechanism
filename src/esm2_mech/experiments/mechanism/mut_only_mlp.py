@@ -12,11 +12,14 @@ import os
 import numpy as np
 
 from esm2_mech.experiments.mechanism.loaders import _label_3class
+from esm2_mech.utils.bootstrap import family_or_gene_clusters
+from esm2_mech.utils.data import validate_embedding_variant_identity
 from esm2_mech.utils.splits import gene_split_cv, family_split_cv
 from esm2_mech.utils.probes import run_mlp_probe_cv
 from esm2_mech.utils.io import write_result_json
 from esm2_mech.utils.paths import (
     EMB_MUT_MEAN,
+    EMB_VALID_VARIANTS_JSON,
     EMB_WT_MEAN,
     PFAM_JSON,
     VALID_VARIANTS_JSON,
@@ -80,6 +83,7 @@ def main():
 
     print("=== Loading variants and labels ===")
     valid_variants, labels, genes = load_variants_and_labels(args.variants_file)
+    validate_embedding_variant_identity(valid_variants, EMB_VALID_VARIANTS_JSON)
 
     print("\n=== Loading WT and mut mean-pooled embeddings ===")
     wt, mut = load_wt_mut_mean_embeddings()
@@ -139,6 +143,7 @@ def main():
             X,
             labels,
             gene_splits,
+            validation_groups=genes,
             seed=args.seed,
             genes=genes,
             max_epochs=args.max_epochs,
@@ -159,6 +164,9 @@ def main():
                 X,
                 labels,
                 family_splits,
+                validation_groups=family_or_gene_clusters(
+                    genes, pfam_map, is_family_split=True
+                ),
                 seed=args.seed,
                 genes=genes,
                 max_epochs=args.max_epochs,

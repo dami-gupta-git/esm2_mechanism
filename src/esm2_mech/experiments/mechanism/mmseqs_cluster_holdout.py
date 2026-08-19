@@ -23,6 +23,7 @@ from esm2_mech.utils.probes import run_mlp_cv, run_histgb_cv
 from esm2_mech.utils.paths import (
     RESULTS_DIR,
     VALID_VARIANTS_JSON,
+    EMB_VALID_VARIANTS_JSON,
     EMB_WT_MEAN,
     EMB_MUT_MEAN,
     GENE_UNIVERSE,
@@ -44,6 +45,7 @@ OUT_DIR = RESULTS_DIR
 warnings.filterwarnings("ignore")
 
 MERGED_VALID_VARIANTS = VALID_VARIANTS_JSON
+MERGED_EMBEDDED_VARIANTS = EMB_VALID_VARIANTS_JSON
 MERGED_WT_MEAN = EMB_WT_MEAN
 MERGED_MUT_MEAN = EMB_MUT_MEAN
 
@@ -59,7 +61,8 @@ CLASSES = MECHANISM_CLASSES
 
 def load_data():
     _variants, labels, genes, delta, _ = load_variants_and_delta(
-        MERGED_VALID_VARIANTS, MERGED_WT_MEAN, MERGED_MUT_MEAN
+        MERGED_VALID_VARIANTS, MERGED_EMBEDDED_VARIANTS,
+        MERGED_WT_MEAN, MERGED_MUT_MEAN
     )
     return labels, genes, delta
 

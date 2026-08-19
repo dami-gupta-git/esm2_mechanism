@@ -62,7 +62,8 @@ def test_load_merged_does_not_require_position_embeddings(monkeypatch):
     monkeypatch.setattr(loaders, "load_variants_and_delta", fake_load)
     delta, labels, genes = loaders.load_merged()
 
-    assert len(calls[0][0]) == 3
+    assert len(calls[0][0]) == 4
+    assert calls[0][0][1] == loaders.EMB_VALID_VARIANTS_JSON
     assert calls[0][1] == {"verbose": False}
     assert delta.shape == (1, 3)
     assert labels.tolist() == [GOF]

@@ -6,21 +6,31 @@ import os
 
 import numpy as np
 
-from esm2_mech.experiments.mechanism.mechanism_delta_family_split import run as run_family_split
+from esm2_mech.experiments.mechanism.mechanism_delta_family_split import (
+    PERMUTATION_FEATURES,
+    run as run_family_split,
+)
 from esm2_mech.experiments.mechanism.mechanism_delta_probe import _load_alphamissense_scores
-from esm2_mech.utils.data import load_variants
+from esm2_mech.utils.data import load_variants, validate_embedding_variant_identity
 from esm2_mech.utils.io import write_result_json
 from esm2_mech.utils.seed_aggregation import (
     aggregate_across_seeds,
     load_seed_files,
     print_table,
 )
-from esm2_mech.utils.constants import BOOTSTRAP_N_RESAMPLES, N_SEEDS, SEED_RESULT_GLOB
+from esm2_mech.utils.constants import (
+    BOOTSTRAP_N_RESAMPLES,
+    N_SEEDS,
+    PERMUTATION_MIN_SIGNIFICANT_SEEDS,
+    PERMUTATION_SIGNIFICANCE_THRESHOLD,
+    SEED_RESULT_GLOB,
+)
 from esm2_mech.utils.paths import (
     EMB_WT_MEAN,
     EMB_MUT_MEAN,
     EMB_WT_POS,
     EMB_MUT_POS,
+    EMB_VALID_VARIANTS_JSON,
     MECHANISM_AGGREGATE_JSON,
     RESULTS_DIR,
     VALID_VARIANTS_JSON,
@@ -31,10 +41,109 @@ print = functools.partial(print, flush=True)
 OUT_DIR = RESULTS_DIR
 
 
+def aggregate_permutation_results(
+    seed_results: list[tuple[int, str, dict]],
+) -> dict[str, dict]:
+    """Collect the preregistered permutation distribution across seeds.
+
+    The ordinary across-seed metric aggregator only reads flat ``*_mean`` values,
+    so nested permutation results need an explicit path. A three-of-five decision
+    is emitted only when all five seeds have a finite p-value; incomplete results
+    remain visible and the decision is ``None`` rather than being treated as a
+    negative result.
+    """
+    summaries = {}
+    for feature in PERMUTATION_FEATURES:
+        per_seed = []
+        missing_seeds = []
+        seeds_without_valid_p_value = []
+        for seed, filename, result in seed_results:
+            permutation = (
+                result.get("family_split", {})
+                .get(feature, {})
+                .get("permutation")
+            )
+            if permutation is None:
+                missing_seeds.append(seed)
+                continue
+
+            p_value = permutation.get("p_value")
+            if p_value is None or not np.isfinite(p_value):
+                seeds_without_valid_p_value.append(seed)
+            per_seed.append({
+                "seed": seed,
+                "source_file": filename,
+                **permutation,
+            })
+
+        finite_p_values = [
+            row["p_value"]
+            for row in per_seed
+            if row.get("p_value") is not None and np.isfinite(row["p_value"])
+        ]
+        n_below_threshold = sum(
+            p_value < PERMUTATION_SIGNIFICANCE_THRESHOLD
+            for p_value in finite_p_values
+        )
+        complete = (
+            len(seed_results) == N_SEEDS
+            and len(per_seed) == N_SEEDS
+            and len(finite_p_values) == N_SEEDS
+        )
+        summaries[feature] = {
+            "per_seed": per_seed,
+            "n_seed_results": len(per_seed),
+            "n_valid_p_values": len(finite_p_values),
+            "missing_seeds": missing_seeds,
+            "seeds_without_valid_p_value": seeds_without_valid_p_value,
+            "resolution_limited_seeds": [
+                row["seed"] for row in per_seed if row.get("resolution_limited") is True
+            ],
+            "significance_threshold": PERMUTATION_SIGNIFICANCE_THRESHOLD,
+            "n_below_significance_threshold": n_below_threshold,
+            "required_seed_count": N_SEEDS,
+            "required_significant_seed_count": PERMUTATION_MIN_SIGNIFICANT_SEEDS,
+            "preregistered_rule_evaluable": complete,
+            "meets_preregistered_three_of_five_rule": (
+                n_below_threshold >= PERMUTATION_MIN_SIGNIFICANT_SEEDS
+                if complete else None
+            ),
+        }
+    return summaries
+
+
+def print_permutation_summary(summary: dict[str, dict]) -> None:
+    """Print the full-seed permutation decision without hiding incomplete runs."""
+    print("\n=== Permutation results across seeds ===")
+    for feature in PERMUTATION_FEATURES:
+        feature_summary = summary[feature]
+        count = feature_summary["n_below_significance_threshold"]
+        if feature_summary["preregistered_rule_evaluable"]:
+            verdict = (
+                "criterion met"
+                if feature_summary["meets_preregistered_three_of_five_rule"]
+                else "criterion not met"
+            )
+            print(
+                f"  {feature}: {count}/{N_SEEDS} p-values below "
+                f"{PERMUTATION_SIGNIFICANCE_THRESHOLD} ({verdict}); "
+                f"resolution-limited seeds "
+                f"{feature_summary['resolution_limited_seeds']}"
+            )
+        else:
+            print(
+                f"  {feature}: incomplete, {feature_summary['n_valid_p_values']}/"
+                f"{N_SEEDS} valid p-values; missing permutation seeds "
+                f"{feature_summary['missing_seeds']}; invalid p-value seeds "
+                f"{feature_summary['seeds_without_valid_p_value']}"
+            )
+
+
 def load_data() -> dict:
     """Load variants, embeddings, labels, and auxiliary features."""
     print("\n=== Loading valid variants ===")
     valid_variants = load_variants(VALID_VARIANTS_JSON)
+    validate_embedding_variant_identity(valid_variants, EMB_VALID_VARIANTS_JSON)
     print(f"Valid variant pairs: {len(valid_variants)}")
     if len(valid_variants) < 50:
         print("WARNING: Very few valid variants. Results may not be reliable.")
@@ -128,16 +237,25 @@ def main():
         print(f"  {filename}")
 
     aggregated = aggregate_across_seeds(seed_results)
+    permutation_summary = (
+        aggregate_permutation_results(seed_results)
+        if args.n_permutations > 0 else None
+    )
+    aggregate_payload = {
+        "n_seeds": len(seed_results),
+        "seed_files": [filename for _seed, filename, _result in seed_results],
+        "across_seed": aggregated,
+    }
+    if permutation_summary is not None:
+        aggregate_payload["permutation_summary"] = permutation_summary
     write_result_json(
         MECHANISM_AGGREGATE_JSON,
-        {
-            "n_seeds": len(seed_results),
-            "seed_files": [filename for _seed, filename, _result in seed_results],
-            "across_seed": aggregated,
-        },
+        aggregate_payload,
         seeds=list(range(args.seeds)),
     )
     print_table(aggregated)
+    if permutation_summary is not None:
+        print_permutation_summary(permutation_summary)
     print(f"\nWrote {MECHANISM_AGGREGATE_JSON}")
 
 

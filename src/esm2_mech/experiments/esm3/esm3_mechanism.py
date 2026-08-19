@@ -677,10 +677,18 @@ def phase3_probes(
                 # compared against (M1/M2/M3). Using it — rather than a local copy —
                 # is what keeps the fold-skip condition, the standardization and the
                 # per-fold metric aggregation identical across the two arms.
+                validation_groups = (
+                    genes_cond
+                    if cv_name == "gene_split"
+                    else family_or_gene_clusters(
+                        genes_cond, pfam_map, is_family_split=True
+                    )
+                )
                 agg, oof = run_mlp_probe_cv(
                     delta,
                     labels_cond,
                     splits,
+                    validation_groups=validation_groups,
                     seed=seed,
                     genes=genes_cond,
                     label=f"{cond}_{cv_name}_seed{seed}",

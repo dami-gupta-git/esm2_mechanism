@@ -1197,30 +1197,25 @@ def _permute_labels(
     return np.array([mapping[g] for g in groups])
 
 
-def _permute_labels_by_cluster(
-    labels: np.ndarray,
+def _cluster_partition(
     groups: np.ndarray,
     clusters: np.ndarray,
     folds: np.ndarray,
-    rng: np.random.RandomState,
-) -> tuple[np.ndarray, int]:
-    """Swap whole clusters' label blocks between same-size clusters in the same fold.
+) -> tuple[dict, dict]:
+    """Group genes by cluster and clusters by (fold, cluster size).
 
-    Preserves within-cluster label mixing (unlike one-label-per-cluster
-    broadcast, which would widen the null). Swaps are confined to a fold for the
-    reason given in _permute_labels. Clusters with no same-size partner inside their
-    own fold keep their labels; that count is returned.
+    Purely structural: depends only on which gene belongs to which cluster and fold,
+    never on labels or an rng draw. A cluster's swap eligibility (whether it has a
+    same-size partner in its own fold) is therefore fixed before any permutation is
+    drawn, so it can be counted once instead of re-derived from a single draw.
     """
-    labels = np.asarray(labels)
     groups = np.asarray(groups)
     clusters = np.asarray(clusters)
     folds = np.asarray(folds)
 
-    gene_label = {}
     gene_cluster = {}
     for gene in np.unique(groups):
         mask = groups == gene
-        gene_label[gene] = labels[mask][0]
         gene_cluster[gene] = clusters[mask][0]
 
     cluster_genes: dict = {}
@@ -1235,12 +1230,51 @@ def _permute_labels_by_cluster(
     for cluster, genes_in in cluster_genes.items():
         by_fold_size.setdefault((fold_of_cluster[cluster], len(genes_in)), []).append(cluster)
 
+    return cluster_genes, by_fold_size
+
+
+def count_immovable_clusters(
+    groups: np.ndarray,
+    clusters: np.ndarray,
+    folds: np.ndarray,
+) -> int:
+    """Count clusters with no same-size partner in their own fold.
+
+    These clusters keep their real labels in every draw of `_permute_labels_by_cluster`
+    (there is nothing same-size to swap with), so this count is identical for every
+    permutation and must be reported alongside the p-value per the preregistration.
+    """
+    _, by_fold_size = _cluster_partition(groups, clusters, folds)
+    return sum(1 for cluster_ids in by_fold_size.values() if len(cluster_ids) == 1)
+
+
+def _permute_labels_by_cluster(
+    labels: np.ndarray,
+    groups: np.ndarray,
+    clusters: np.ndarray,
+    folds: np.ndarray,
+    rng: np.random.RandomState,
+) -> np.ndarray:
+    """Swap whole clusters' label blocks between same-size clusters in the same fold.
+
+    Preserves within-cluster label mixing (unlike one-label-per-cluster
+    broadcast, which would widen the null). Swaps are confined to a fold for the
+    reason given in _permute_labels. Clusters with no same-size partner inside their
+    own fold keep their labels; use `count_immovable_clusters` for that count.
+    """
+    labels = np.asarray(labels)
+    groups = np.asarray(groups)
+
+    gene_label = {}
+    for gene in np.unique(groups):
+        gene_label[gene] = labels[groups == gene][0]
+
+    cluster_genes, by_fold_size = _cluster_partition(groups, clusters, folds)
+
     new_gene_label = {}
-    immovable = 0
     for key in sorted(by_fold_size, key=str):
         cluster_ids = sorted(by_fold_size[key], key=str)
         if len(cluster_ids) == 1:
-            immovable += 1
             only = cluster_ids[0]
             for gene in cluster_genes[only]:
                 new_gene_label[gene] = gene_label[gene]
@@ -1251,7 +1285,7 @@ def _permute_labels_by_cluster(
             for gene, label in zip(cluster_genes[target], donor_labels):
                 new_gene_label[gene] = label
 
-    return np.array([new_gene_label[g] for g in groups]), immovable
+    return np.array([new_gene_label[g] for g in groups])
 
 
 def _permutation_null_value(
@@ -1265,7 +1299,7 @@ def _permutation_null_value(
     """Shuffle labels within fold and recompute the metric for one permutation draw."""
     rng = np.random.RandomState(child_seed)
     if clusters is not None:
-        permuted, _ = _permute_labels_by_cluster(
+        permuted = _permute_labels_by_cluster(
             np.asarray(labels), np.asarray(groups), clusters, folds, rng
         )
     else:
@@ -1335,15 +1369,18 @@ def oof_permutation_pvalue(
     folds = np.asarray(folds)
     observed, observed_classes = macro_ovr_auroc(y_true, proba, folds, classes)
 
+    if clusters is not None and groups is None:
+        raise ValueError("clusters requires groups (the gene-level label unit)")
+    immovable = (
+        count_immovable_clusters(groups, clusters, folds) if clusters is not None else None
+    )
+
     rng = np.random.RandomState(seed)
     null = []
     dropped_class_mismatch = 0
-    immovable = None
     for _ in range(n_permutations):
         if clusters is not None:
-            if groups is None:
-                raise ValueError("clusters requires groups (the gene-level label unit)")
-            permuted, immovable = _permute_labels_by_cluster(
+            permuted = _permute_labels_by_cluster(
                 y_true, groups, clusters, folds, rng
             )
         else:
@@ -1373,6 +1410,10 @@ def oof_permutation_pvalue(
             **common,
             "observed": float(observed) if observed is not None and np.isfinite(observed) else None,
             "p_value": None,
+            "p_value_resolution": (
+                float(1 / (1 + len(null_arr))) if len(null_arr) else None
+            ),
+            "resolution_limited": None,
             "null_mean": float(np.mean(null_arr)) if len(null_arr) else None,
             "null_std": float(np.std(null_arr)) if len(null_arr) else None,
         }
@@ -1381,6 +1422,8 @@ def oof_permutation_pvalue(
         **common,
         "observed": float(observed),
         "p_value": float((1 + extreme) / (1 + len(null_arr))),
+        "p_value_resolution": float(1 / (1 + len(null_arr))),
+        "resolution_limited": extreme == 0,
         "null_mean": float(np.mean(null_arr)),
         "null_std": float(np.std(null_arr)),
     }
@@ -1405,6 +1448,9 @@ def label_permutation_pvalue(
     """
     if clusters is not None and groups is None:
         raise ValueError("clusters requires groups (the gene-level label unit)")
+    immovable = (
+        count_immovable_clusters(groups, clusters, folds) if clusters is not None else None
+    )
 
     observed = run_metric_fn(labels)
 
@@ -1420,14 +1466,22 @@ def label_permutation_pvalue(
     null = [value for value in null_values if value is not None]
 
     null_arr = np.array(null)
+    common = {
+        "statistic": statistic,
+        "null_type": "refit_per_permutation",
+        "permutation_unit": "cluster_block" if clusters is not None else "gene",
+        "shuffle_scope": "within_fold",
+        "n_clusters_immovable": immovable,
+    }
     if observed is None or not np.isfinite(observed) or len(null_arr) == 0:
         return {
-            "statistic": statistic,
-            "null_type": "refit_per_permutation",
-            "permutation_unit": "cluster_block" if clusters is not None else "gene",
-            "shuffle_scope": "within_fold",
+            **common,
             "observed": float(observed) if observed is not None and np.isfinite(observed) else None,
             "p_value": None,
+            "p_value_resolution": (
+                float(1 / (1 + len(null_arr))) if len(null_arr) else None
+            ),
+            "resolution_limited": None,
             "null_mean": float(np.mean(null_arr)) if len(null_arr) else None,
             "null_std": float(np.std(null_arr)) if len(null_arr) else None,
             "n_permutations": int(len(null_arr)),
@@ -1440,12 +1494,11 @@ def label_permutation_pvalue(
         raise ValueError(f"alternative must be 'greater' or 'less', got {alternative!r}")
     p_value = (1 + extreme) / (1 + len(null_arr))
     return {
-        "statistic": statistic,
-        "null_type": "refit_per_permutation",
-        "permutation_unit": "cluster_block" if clusters is not None else "gene",
-        "shuffle_scope": "within_fold",
+        **common,
         "observed": float(observed),
         "p_value": float(p_value),
+        "p_value_resolution": float(1 / (1 + len(null_arr))),
+        "resolution_limited": extreme == 0,
         "null_mean": float(np.mean(null_arr)),
         "null_std": float(np.std(null_arr)),
         "n_permutations": int(len(null_arr)),

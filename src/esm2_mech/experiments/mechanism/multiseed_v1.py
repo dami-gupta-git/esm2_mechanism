@@ -18,6 +18,7 @@ from esm2_mech.utils.constants import (
 )
 from esm2_mech.utils.splits import gene_split_cv, family_split_cv
 from esm2_mech.utils.probes import run_logreg_binary_cv, run_mlp_binary_cv, run_mlp_probe_cv
+from esm2_mech.utils.bootstrap import family_or_gene_clusters
 from esm2_mech.utils.io import atomic_write_json, load_json_or_discard, write_result_json
 from esm2_mech.utils.paths import (
     PFAM_JSON,
@@ -88,15 +89,20 @@ def run_seed(seed, pfam_map, out_dir):
         dm, dp, labels, genes = load_mechanism_variants(pfam_map)
         gs = gene_split_cv(genes, seed=seed)
         fs = family_split_cv(genes, pfam_map, seed=seed)
+        family_validation_groups = family_or_gene_clusters(
+            genes, pfam_map, is_family_split=True
+        )
         geras_results = {}
         for feat_name, X in [(DELTA_MEAN_FEATURE, dm), (DELTA_POS_FEATURE, dp)]:
             print(f"  MLP gene-split {feat_name}")
             geras_results[nonlinear_key("mlp", feat_name, SPLIT_GENE)] = run_mlp_probe_cv(
-                X, labels, gs, seed=seed, genes=genes, label=f"{feat_name}_gene"
+                X, labels, gs, validation_groups=genes,
+                seed=seed, genes=genes, label=f"{feat_name}_gene"
             )
             print(f"  MLP family-split {feat_name}")
             geras_results[nonlinear_key("mlp", feat_name, SPLIT_FAMILY)] = run_mlp_probe_cv(
-                X, labels, fs, seed=seed, genes=genes, label=f"{feat_name}_family"
+                X, labels, fs, validation_groups=family_validation_groups,
+                seed=seed, genes=genes, label=f"{feat_name}_family"
             )
         write_result_json(geras_out, geras_results, seeds=[seed], indent=2)
         print(f"  -> {geras_out}")
@@ -110,14 +116,19 @@ def run_seed(seed, pfam_map, out_dir):
         dm, labels, genes = load_merged(pfam_map)
         gs = gene_split_cv(genes, seed=seed)
         fs = family_split_cv(genes, pfam_map, seed=seed)
+        family_validation_groups = family_or_gene_clusters(
+            genes, pfam_map, is_family_split=True
+        )
         merged_results = {}
         print(f"  MLP gene-split delta_mean")
         merged_results[MLP_DELTA_MEAN_GENE] = run_mlp_probe_cv(
-            dm, labels, gs, seed=seed, genes=genes, label="delta_mean_gene"
+            dm, labels, gs, validation_groups=genes,
+            seed=seed, genes=genes, label="delta_mean_gene"
         )
         print(f"  MLP family-split delta_mean")
         merged_results[MLP_DELTA_MEAN_FAMILY] = run_mlp_probe_cv(
-            dm, labels, fs, seed=seed, genes=genes, label="delta_mean_family"
+            dm, labels, fs, validation_groups=family_validation_groups,
+            seed=seed, genes=genes, label="delta_mean_family"
         )
         write_result_json(merged_out, merged_results, seeds=[seed], indent=2)
         print(f"  -> {merged_out}")

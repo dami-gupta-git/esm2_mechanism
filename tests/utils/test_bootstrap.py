@@ -62,6 +62,7 @@ from esm2_mech.utils.bootstrap import (
     cluster_bootstrap_ci_multi,
     cluster_subsample_ci,
     independent_cluster_bootstrap_diff,
+    count_immovable_clusters,
     label_permutation_pvalue,
     macro_ovr_auroc,
     oof_permutation_pvalue,
@@ -890,6 +891,43 @@ class TestPermuteLabels:
 
 
 class TestLabelPermutationPvalue:
+    def test_resolution_floor_is_flagged_as_unresolved(self):
+        labels = np.arange(10)
+
+        def exact_original_order(permuted_labels):
+            return float(np.array_equal(permuted_labels, labels))
+
+        out = label_permutation_pvalue(
+            exact_original_order,
+            labels,
+            statistic="exact_original_order",
+            folds=_one_fold(labels),
+            n_permutations=1,
+            seed=0,
+            n_jobs=1,
+        )
+        assert out["p_value"] == pytest.approx(0.5)
+        assert out["p_value_resolution"] == pytest.approx(0.5)
+        assert out["resolution_limited"] is True
+
+    def test_refit_permutation_reports_immovable_cluster_count(self):
+        labels = np.array([GOF, LOF, DN, DN, GOF, GOF, LOF])
+        genes = np.array(["a", "b", "c", "d", "e", "f", "g"])
+        clusters = np.array(["F0", "F0", "F1", "F1", "F2", "F2", "F3"])
+
+        out = label_permutation_pvalue(
+            lambda permuted_labels: 0.5,
+            labels,
+            statistic="constant",
+            folds=_one_fold(labels),
+            groups=genes,
+            clusters=clusters,
+            n_permutations=5,
+            seed=0,
+            n_jobs=1,
+        )
+        assert out["n_clusters_immovable"] == 1
+
     def test_null_centers_on_chance_and_signal_is_significant(self):
         # A metric that perfectly separates by the *current* labels: the observed
         # value is high, but under a gene-level shuffle it collapses toward chance.
@@ -1061,7 +1099,7 @@ class TestPermuteLabelsByCluster:
     def test_whole_blocks_move_together(self):
         labels, genes, clusters = self._families()
         rng = np.random.RandomState(0)
-        permuted, _ = _permute_labels_by_cluster(labels, genes, clusters, _one_fold(labels), rng)
+        permuted = _permute_labels_by_cluster(labels, genes, clusters, _one_fold(labels), rng)
         # Every size-2 family must now hold some size-2 family's original block.
         original_blocks = {("F0", (GOF, LOF)), ("F1", (DN, DN)), ("F2", (GOF, GOF))}
         blocks_in = {tuple(sorted(b)) for _, b in original_blocks}
@@ -1072,7 +1110,7 @@ class TestPermuteLabelsByCluster:
     def test_label_multiset_is_preserved(self):
         labels, genes, clusters = self._families()
         rng = np.random.RandomState(1)
-        permuted, _ = _permute_labels_by_cluster(labels, genes, clusters, _one_fold(labels), rng)
+        permuted = _permute_labels_by_cluster(labels, genes, clusters, _one_fold(labels), rng)
         assert sorted(permuted.tolist()) == sorted(labels.tolist())
 
     def test_unique_size_cluster_cannot_move_and_is_counted(self):
@@ -1080,7 +1118,8 @@ class TestPermuteLabelsByCluster:
         # with and keeps its own label. That has to be visible, not silent.
         labels, genes, clusters = self._families()
         rng = np.random.RandomState(2)
-        permuted, immovable = _permute_labels_by_cluster(labels, genes, clusters, _one_fold(labels), rng)
+        permuted = _permute_labels_by_cluster(labels, genes, clusters, _one_fold(labels), rng)
+        immovable = count_immovable_clusters(genes, clusters, _one_fold(labels))
         assert immovable == 1
         assert permuted[clusters == "F3"][0] == LOF
 
@@ -1092,7 +1131,7 @@ class TestPermuteLabelsByCluster:
         homogeneous_before = sum(
             len(set(labels[clusters == fam].tolist())) == 1 for fam in ["F0", "F1", "F2"]
         )
-        permuted, _ = _permute_labels_by_cluster(labels, genes, clusters, _one_fold(labels), rng)
+        permuted = _permute_labels_by_cluster(labels, genes, clusters, _one_fold(labels), rng)
         homogeneous_after = sum(
             len(set(permuted[clusters == fam].tolist())) == 1 for fam in ["F0", "F1", "F2"]
         )
@@ -1106,7 +1145,8 @@ class TestPermuteLabelsByCluster:
         labels = np.array([GOF, GOF, LOF, LOF])
         folds = np.array([0, 0, 1, 1])
         rng = np.random.RandomState(0)
-        permuted, immovable = _permute_labels_by_cluster(labels, genes, clusters, folds, rng)
+        permuted = _permute_labels_by_cluster(labels, genes, clusters, folds, rng)
+        immovable = count_immovable_clusters(genes, clusters, folds)
         assert immovable == 2
         assert np.array_equal(permuted, labels)
 
@@ -1126,7 +1166,7 @@ class TestPermuteLabelsByCluster:
         clusters = np.repeat(["F0", "F0", "F1", "F1"], rows_per_gene)
         labels = np.repeat([GOF, LOF, DN, GOF], rows_per_gene)
         rng = np.random.RandomState(4)
-        permuted, _ = _permute_labels_by_cluster(labels, genes, clusters, _one_fold(labels), rng)
+        permuted = _permute_labels_by_cluster(labels, genes, clusters, _one_fold(labels), rng)
         for gene in np.unique(genes):
             assert len(set(permuted[genes == gene].tolist())) == 1
 
@@ -1243,6 +1283,21 @@ class TestMacroOvrAuroc:
 
 
 class TestOofPermutationPvalue:
+    def test_resolution_floor_is_flagged_as_unresolved(self):
+        labels = np.array([GOF, GOF, DN, DN, LOF, LOF])
+        genes = np.array(["G0", "G1", "G2", "G3", "G4", "G5"])
+        out = oof_permutation_pvalue(
+            labels,
+            _proba_matching(labels),
+            _one_fold(labels),
+            groups=genes,
+            n_permutations=1,
+            seed=0,
+        )
+        assert out["p_value"] == pytest.approx(0.5)
+        assert out["p_value_resolution"] == pytest.approx(0.5)
+        assert out["resolution_limited"] is True
+
     def test_planted_signal_is_significant_and_null_centers_on_chance(self):
         rng = np.random.RandomState(0)
         genes, labels = _gene_level_labels(rng, 60, 4)
@@ -1291,6 +1346,7 @@ class TestOofPermutationPvalue:
             labels, proba, folds, groups=genes, n_permutations=300, seed=0
         )
         assert block["permutation_unit"] == "cluster_block"
+        assert block["n_clusters_immovable"] == 0
         assert gene_level["permutation_unit"] == "gene"
         assert block["null_std"] > gene_level["null_std"]
 

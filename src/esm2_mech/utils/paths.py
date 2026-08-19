@@ -166,9 +166,8 @@ CLINVAR_PATHOGENICITY_PARAMS_JSON = DATA_DIR / "clinvar_pathogenicity_variants.p
 # ── ESM-2 Gerasimavicius embeddings (embed_variants.py) ──────────────────────
 # Row-aligned subset of variants actually embedded (one row per .npy array row).
 # Distinct from VALID_VARIANTS_JSON (the pre-filter input written by build_valid_variants).
-# Write-only sanity/provenance artifact — NO code reads it; always identical to
-# VALID_VARIANTS_JSON because the embed step re-applies the same filters. See the
-# _flush_checkpoint docstring in utils/embed.py for the full rationale.
+# Required row-identity sidecar. Every mechanism embedding loader compares it to
+# the current variant list before using the arrays.
 EMB_VALID_VARIANTS_JSON = EMB_DIR / "embedded_variants.json"
 EMB_WT_MEAN = EMB_DIR / "embeddings_wt_mean.npy"
 EMB_MUT_MEAN = EMB_DIR / "embeddings_mut_mean.npy"

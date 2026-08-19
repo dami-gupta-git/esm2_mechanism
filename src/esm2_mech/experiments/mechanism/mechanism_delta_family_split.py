@@ -7,9 +7,14 @@ from collections import Counter
 
 import numpy as np
 
-from esm2_mech.utils.data import load_pfam_map
+from esm2_mech.utils.data import (
+    embedding_variant_fingerprint,
+    load_pfam_map,
+    validate_embedding_variant_identity,
+)
 from esm2_mech.utils.paths import (
     EMB_WT_MEAN, EMB_MUT_MEAN, EMB_WT_POS, EMB_MUT_POS,
+    EMB_VALID_VARIANTS_JSON,
     SEQUENCES_JSON, VARIANTS_JSON, RESULTS_DIR, PFAM_JSON,
 )
 
@@ -121,6 +126,7 @@ def run(
 
     results = {
         "n_variants": len(valid_variants),
+        "embedding_variant_fingerprint": embedding_variant_fingerprint(valid_variants),
         "n_genes": int(len(set(genes_arr))),
         "n_families": n_families,
         "class_distribution": dict(Counter(labels_3class)),
@@ -225,16 +231,25 @@ def run(
                 )
             if "permutation" in fs:
                 perm = fs["permutation"]
+                p_value_text = (
+                    f"unresolved at resolution {perm['p_value_resolution']}"
+                    if perm.get("resolution_limited")
+                    else str(perm.get("p_value"))
+                )
                 excluded_str = (
                     f", excluded {perm['n_excluded_unannotated']} unannotated-gene rows"
                     if "n_excluded_unannotated" in perm else ""
                 )
+                immovable_str = (
+                    f", {perm['n_clusters_immovable']} immovable families"
+                    if perm.get("n_clusters_immovable") is not None else ""
+                )
                 print(
-                    f"  family-split permutation p = {perm.get('p_value')} "
+                    f"  family-split permutation p = {p_value_text} "
                     f"({perm.get('statistic')} via {perm.get('null_type')}, "
                     f"unit {perm.get('permutation_unit')}, "
                     f"observed {perm.get('observed')}, null mean {perm.get('null_mean')}"
-                    f"{excluded_str})"
+                    f"{immovable_str}{excluded_str})"
                 )
             # Cached for every feature and every seed, not just the permutation
             # features at seed 0: the leakage fraction's headline reads each arm's
@@ -349,6 +364,7 @@ def _load_data_inline() -> dict:
         valid_variants.append(v)
 
     print(f"Valid variant pairs: {len(valid_variants)}")
+    validate_embedding_variant_identity(valid_variants, EMB_VALID_VARIANTS_JSON)
 
     for path in [EMB_WT_MEAN, EMB_MUT_MEAN, EMB_WT_POS, EMB_MUT_POS]:
         if not os.path.exists(path):

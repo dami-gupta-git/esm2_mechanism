@@ -64,6 +64,7 @@ from esm2_mech.utils.metrics import majority_baseline_f1
 from esm2_mech.utils.io import load_variants_and_delta, write_result_json
 from esm2_mech.utils.paths import (
     EMB_MUT_MEAN,
+    EMB_VALID_VARIANTS_JSON,
     EMB_WT_MEAN,
     HOMOLOGY_PARTITION_PANEL_DIR,
     HOMOLOGY_PARTITION_PANEL_JSON,
@@ -84,7 +85,7 @@ PARTITION_MMSEQS = "mmseqs2_cluster"
 
 def load_data():
     _variants, labels, genes, delta, _ = load_variants_and_delta(
-        VALID_VARIANTS_JSON, EMB_WT_MEAN, EMB_MUT_MEAN
+        VALID_VARIANTS_JSON, EMB_VALID_VARIANTS_JSON, EMB_WT_MEAN, EMB_MUT_MEAN
     )
     return labels, genes, delta
 

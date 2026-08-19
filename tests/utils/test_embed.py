@@ -14,6 +14,8 @@ Covers:
 - _flush_checkpoint: atomic — no .tmp file left after success
 - _flush_checkpoint: written arrays round-trip with correct shape/values
 - _flush_checkpoint: embedded_variants.json holds the provided slice
+- inspect_variant_embedding_checkpoint: complete arrays require an exact,
+  order-aligned embedded_variants.json sidecar
 """
 
 import json
@@ -21,7 +23,13 @@ import json
 import numpy as np
 import pytest
 
-from esm2_mech.utils.embed import _flush_checkpoint, load_gene_delta, unpack_run_data
+from esm2_mech.utils.embed import (
+    EMB_ARRAY_NAMES,
+    _flush_checkpoint,
+    inspect_variant_embedding_checkpoint,
+    load_gene_delta,
+    unpack_run_data,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -225,3 +233,54 @@ class TestFlushCheckpoint:
         _, _, _, _, valid = self._flush(tmp_path, n=3)
         written = json.loads((tmp_path / "embedded_variants.json").read_text())
         assert written == valid
+
+
+class TestInspectVariantEmbeddingCheckpoint:
+
+    @staticmethod
+    def _variants(n):
+        return [
+            {
+                "gene": f"G{i}",
+                "uniprot_id": f"P{i:05d}",
+                "aa_pos": i + 1,
+                "aa_wt": "A",
+                "aa_mut": "G",
+            }
+            for i in range(n)
+        ]
+
+    @staticmethod
+    def _write_arrays(tmp_path, n, d=4):
+        paths = [tmp_path / name for name in EMB_ARRAY_NAMES]
+        for path in paths:
+            np.save(path, np.zeros((n, d), dtype=np.float32))
+        return paths
+
+    def test_complete_checkpoint_with_aligned_sidecar_is_accepted(self, tmp_path):
+        variants = self._variants(4)
+        paths = self._write_arrays(tmp_path, len(variants))
+        sidecar = _write_json(tmp_path / "embedded_variants.json", variants)
+
+        status, payload = inspect_variant_embedding_checkpoint(
+            paths, variants, sidecar
+        )
+
+        assert status == "complete"
+        assert payload is None
+
+    def test_same_count_reordered_sidecar_forces_reextraction(self, tmp_path):
+        variants = self._variants(4)
+        paths = self._write_arrays(tmp_path, len(variants))
+        sidecar = _write_json(
+            tmp_path / "embedded_variants.json", list(reversed(variants))
+        )
+
+        status, payload = inspect_variant_embedding_checkpoint(
+            paths, variants, sidecar
+        )
+
+        assert status == "reextract"
+        assert payload is None
+        assert not sidecar.exists()
+        assert all(not path.exists() for path in paths)

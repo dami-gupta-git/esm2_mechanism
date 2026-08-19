@@ -6,11 +6,105 @@ import csv
 import functools
 import hashlib
 import json
+from collections import Counter, defaultdict
 from pathlib import Path
 
 import numpy as np
 
 print = functools.partial(print, flush=True)
+
+
+def pathogenicity_label(label: str) -> int:
+    """Map the two allowed pathogenicity labels to integers."""
+    if label == "pathogenic":
+        return 1
+    if label == "benign":
+        return 0
+    raise ValueError(
+        f"unexpected pathogenicity label {label!r} "
+        "(expected 'pathogenic' or 'benign')"
+    )
+
+
+def protein_substitution_key(variant: dict) -> tuple[str, int, str, str]:
+    """Protein-level identity used to deduplicate ClinVar records."""
+    return (
+        variant["gene"],
+        int(variant["aa_pos"]),
+        variant["aa_wt"],
+        variant["aa_mut"],
+    )
+
+
+def validate_balanced_pathogenicity_variants(
+    variants: list[dict], *, require_unique_substitutions: bool
+) -> dict:
+    """Validate labels, protein-substitution uniqueness, and per-gene balance.
+
+    Returns compact realised-design counts for provenance. Any violation raises;
+    an invalid scientific input is never coerced into one of the two classes.
+    """
+    if not variants:
+        raise ValueError("pathogenicity variant set is empty")
+
+    per_gene = defaultdict(Counter)
+    substitutions: dict[tuple[str, int, str, str], str] = {}
+    duplicate_keys = set()
+    for variant in variants:
+        label = variant["label"]
+        pathogenicity_label(label)
+        gene = variant["gene"]
+        per_gene[gene][label] += 1
+
+        key = protein_substitution_key(variant)
+        previous_label = substitutions.get(key)
+        if previous_label is None:
+            substitutions[key] = label
+        else:
+            duplicate_keys.add(key)
+            if previous_label != label:
+                raise ValueError(
+                    "protein substitution has conflicting pathogenicity labels: "
+                    f"{key!r} is both {previous_label!r} and {label!r}"
+                )
+
+    if require_unique_substitutions and duplicate_keys:
+        examples = sorted(duplicate_keys)[:5]
+        raise ValueError(
+            f"pathogenicity set contains {len(duplicate_keys)} repeated protein "
+            f"substitution(s); examples: {examples}"
+        )
+
+    unbalanced = {
+        gene: {
+            "pathogenic": counts["pathogenic"],
+            "benign": counts["benign"],
+        }
+        for gene, counts in per_gene.items()
+        if counts["pathogenic"] != counts["benign"]
+    }
+    if unbalanced:
+        examples = list(sorted(unbalanced.items()))[:5]
+        raise ValueError(
+            f"pathogenicity set has {len(unbalanced)} gene(s) with unequal class "
+            f"counts; examples: {examples}"
+        )
+
+    per_gene_count_distribution = Counter(
+        counts["pathogenic"] for counts in per_gene.values()
+    )
+    label_counts = Counter(variant["label"] for variant in variants)
+    return {
+        "n_variants": len(variants),
+        "n_genes": len(per_gene),
+        "n_pathogenic": label_counts["pathogenic"],
+        "n_benign": label_counts["benign"],
+        "per_gene_class_count_distribution": {
+            str(count): n_genes
+            for count, n_genes in sorted(per_gene_count_distribution.items())
+        },
+        "n_duplicate_substitution_keys": len(duplicate_keys),
+    }
 
 
 def variants_fingerprint(variants: list[dict]) -> str:
@@ -27,6 +121,48 @@ def variants_fingerprint(variants: list[dict]) -> str:
         digest.update(key.encode())
         digest.update(b"\x00")
     return digest.hexdigest()
+
+
+def embedding_variant_fingerprint(variants: list[dict]) -> str:
+    """Order-sensitive hash of the fields that identify an embedding row.
+
+    Labels and other annotations are excluded because they do not determine the
+    ESM-2 input. The variant identity, substitution, and row order do.
+    """
+    required_fields = ("gene", "uniprot_id", "aa_pos", "aa_wt", "aa_mut")
+    digest = hashlib.sha256()
+    for row_index, variant in enumerate(variants):
+        missing = [field for field in required_fields if field not in variant]
+        if missing:
+            raise ValueError(
+                f"variant row {row_index} lacks embedding identity fields {missing}"
+            )
+        key = "|".join(str(variant[field]) for field in required_fields)
+        digest.update(key.encode())
+        digest.update(b"\x00")
+    return digest.hexdigest()
+
+
+def validate_embedding_variant_identity(
+    variants: list[dict],
+    embedded_variants_path: Path,
+) -> str:
+    """Require the current variants to match the embedding row sidecar exactly."""
+    if not embedded_variants_path.exists():
+        raise FileNotFoundError(
+            f"embedding row-identity sidecar missing: {embedded_variants_path}"
+        )
+    with open(embedded_variants_path) as handle:
+        embedded_variants = json.load(handle)
+
+    current_fingerprint = embedding_variant_fingerprint(variants)
+    embedded_fingerprint = embedding_variant_fingerprint(embedded_variants)
+    if current_fingerprint != embedded_fingerprint:
+        raise ValueError(
+            f"{embedded_variants_path} does not match the current variant identities "
+            "and row order; the embedding arrays are stale or misaligned"
+        )
+    return current_fingerprint
 
 
 def embedding_fingerprint(*arrays: np.ndarray) -> str:

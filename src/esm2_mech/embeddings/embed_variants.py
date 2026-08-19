@@ -5,6 +5,7 @@ import functools
 import json
 import os
 from collections import Counter
+from pathlib import Path
 
 print = functools.partial(print, flush=True)
 
@@ -12,10 +13,14 @@ from esm2_mech.utils.sequences import build_windowed_pair
 from esm2_mech.utils.embed import (
     EMB_ARRAY_NAMES,
     get_esm2_embeddings_for_pairs,
-    inspect_four_array_checkpoint,
+    inspect_variant_embedding_checkpoint,
 )
 from esm2_mech.utils.constants import ESM2_MODEL as ESM2_MODEL_650M, ESM2_MODEL_3B
-from esm2_mech.utils.paths import VALID_VARIANTS_JSON, SEQUENCES_JSON, DATA_DIR
+from esm2_mech.utils.paths import (
+    VALID_VARIANTS_JSON,
+    SEQUENCES_JSON,
+    DATA_DIR,
+)
 
 
 
@@ -88,9 +93,12 @@ def main() -> None:
     os.makedirs(out_dir, exist_ok=True)
 
     all_ckpts = [os.path.join(out_dir, name) for name in EMB_ARRAY_NAMES]
+    embedded_variants_path = Path(out_dir) / "embedded_variants.json"
     resume_arrays = None
     resume_start = 0
-    status, payload = inspect_four_array_checkpoint(all_ckpts, len(valid))
+    status, payload = inspect_variant_embedding_checkpoint(
+        all_ckpts, valid, embedded_variants_path
+    )
     if status == "complete":
         print("Embeddings already complete — nothing to do.")
         return

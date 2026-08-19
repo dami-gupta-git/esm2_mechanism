@@ -9,6 +9,8 @@ from pathlib import Path
 
 import numpy as np
 
+from esm2_mech.utils.data import validate_embedding_variant_identity
+
 print = functools.partial(print, flush=True)
 
 
@@ -55,6 +57,7 @@ def write_result_json(path, results: dict, seeds=None, **json_kwargs) -> None:
 
 def load_variants_and_delta(
     variants_path,
+    embedded_variants_path,
     wt_mean_path,
     mut_mean_path,
     wt_pos_path=None,
@@ -69,10 +72,9 @@ def load_variants_and_delta(
     (mut - wt). When ``wt_pos_path``/``mut_pos_path`` are given it also computes the
     per-residue delta_pos; otherwise that element of the returned tuple is None.
 
-    Embedding rows must match the variant count exactly. A mismatch raises
-    ValueError rather than silently slicing to the shorter length — a row-count
-    mismatch means the .npy is not aligned to the variant list and any downstream
-    label assignment would be wrong.
+    The embedding row-identity sidecar must match the current variants by content
+    and order, and embedding rows must match the variant count exactly. Either
+    mismatch raises rather than attaching labels to the wrong embedding rows.
 
     Returns ``(variants, labels, genes, delta_mean, delta_pos)`` where labels and
     genes are string ndarrays, delta_mean is float32 (n, d), and delta_pos is
@@ -80,6 +82,8 @@ def load_variants_and_delta(
     """
     with open(variants_path) as f:
         variants = json.load(f)
+
+    validate_embedding_variant_identity(variants, Path(embedded_variants_path))
 
     labels = np.array([v["label_3class"] for v in variants])
     genes = np.array([v["gene"] for v in variants])

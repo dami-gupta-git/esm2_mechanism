@@ -482,8 +482,16 @@ def run_multiseed(
                 n_permutations=n_permutations,
                 seed=0,
             )
-            pval = permutation_result.get("p_value")
-            print(f"    permutation p-value: {pval}")
+            p_value_text = (
+                f"unresolved at resolution {permutation_result['p_value_resolution']}"
+                if permutation_result.get("resolution_limited")
+                else str(permutation_result.get("p_value"))
+            )
+            immovable_text = (
+                f"; {permutation_result['n_clusters_immovable']} immovable families"
+                if permutation_result.get("n_clusters_immovable") is not None else ""
+            )
+            print(f"    permutation p-value: {p_value_text}{immovable_text}")
 
     result = {
         "majority_f1": maj_f1,

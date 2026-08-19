@@ -11,6 +11,7 @@ from pathlib import Path
 import numpy as np
 
 from esm2_mech.utils.io import save_npy
+from esm2_mech.utils.data import validate_embedding_variant_identity
 
 print = functools.partial(print, flush=True)
 
@@ -99,8 +100,8 @@ def _flush_checkpoint(
     """Atomically write accumulated embeddings and embedded_variants.json to checkpoint files.
 
     embedded_variants.json is the row-aligned slice of variants whose embeddings
-    occupy the .npy arrays (row i of the json == row i of every array). It exists
-    purely as a sanity-check / provenance artifact — NO code reads it.
+    occupy the .npy arrays (row i of the json == row i of every array). Downstream
+    loaders require it and reject arrays whose row identities do not match.
 
     In practice it is always identical to the input data/valid_variants.json: the
     embed step's _build_valid_pairs re-applies the same three filters (empty
@@ -126,6 +127,36 @@ def _flush_checkpoint(
         os.fsync(f.fileno())
     os.replace(tmp_valid, valid_path)
     print(f"  Checkpoint: {n_done} variants flushed to {out_dir}", flush=True)
+
+
+def inspect_variant_embedding_checkpoint(
+    ckpt_paths: list,
+    expected_variants: list[dict],
+    embedded_variants_path: Path,
+):
+    """Inspect an embedding checkpoint and verify its row-identity sidecar.
+
+    A complete or resumable array checkpoint without a matching sidecar cannot be
+    associated with the current variants. Such arrays are removed and rebuilt.
+    """
+    status, payload = inspect_four_array_checkpoint(ckpt_paths, len(expected_variants))
+    if status == "reextract":
+        return status, payload
+
+    n_on_disk = len(expected_variants) if status == "complete" else payload[0]
+    try:
+        validate_embedding_variant_identity(
+            expected_variants[:n_on_disk], embedded_variants_path
+        )
+    except (FileNotFoundError, ValueError, json.JSONDecodeError) as exc:
+        print(f"WARNING: {exc} — re-extracting embedding checkpoint", flush=True)
+        for path in ckpt_paths:
+            if os.path.exists(path):
+                os.remove(path)
+        if embedded_variants_path.exists():
+            embedded_variants_path.unlink()
+        return "reextract", None
+    return status, payload
 
 
 def load_esm2_model(model_name: str, device: str = "cuda"):

@@ -4,27 +4,42 @@ from __future__ import annotations
 
 import argparse
 import functools
+import hashlib
 import json
 from collections import Counter, defaultdict
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
+import sklearn
 from joblib import Parallel, delayed
 
-from esm2_mech.utils.bootstrap import binary_auroc_cluster_bootstrap_ci, family_or_gene_clusters
-from esm2_mech.fetch_data.fetch_pathogenicity_variants import _BALANCE_VERSION
+from esm2_mech.fetch_data.fetch_pathogenicity_variants import (
+    load_validated_pathogenicity_cache,
+)
+from esm2_mech.utils import bootstrap as bootstrap_module
+from esm2_mech.utils import data as data_module
+from esm2_mech.utils import metrics as metrics_module
+from esm2_mech.utils import probes as probes_module
+from esm2_mech.utils import sequences as sequences_module
+from esm2_mech.utils import splits as splits_module
+from esm2_mech.utils.bootstrap import (
+    adjudicate_level,
+    binary_auroc_cluster_bootstrap_ci,
+    family_or_gene_clusters,
+)
 from esm2_mech.utils.constants import BOOTSTRAP_N_RESAMPLES, N_SEEDS
 from esm2_mech.utils.data import (
     embedding_fingerprint,
     load_pfam_map,
+    pathogenicity_label,
     pfam_fingerprint,
+    validate_balanced_pathogenicity_variants,
     variants_fingerprint,
 )
 from esm2_mech.utils.embed import get_esm2_embeddings_for_pairs
 from esm2_mech.utils.io import atomic_write_json, save_npy, write_result_json
 from esm2_mech.utils.paths import (
-    CLINVAR_PATHOGENICITY_PARAMS_JSON,
-    CLINVAR_PATHOGENICITY_VARIANTS_JSON,
     EMB_DIR,
     PATH_EMB_META,
     PATH_EMB_MUT_MEAN,
@@ -42,50 +57,47 @@ from esm2_mech.utils.splits import family_split_cv, gene_split_cv
 print = functools.partial(print, flush=True)
 
 ESM2_MODEL_650M = "esm2_t33_650M_UR50D"
+CLAIM_2C_THRESHOLD = 0.85
+_EMBEDDING_METADATA_VERSION = 2
+_PROBE_RESULT_VERSION = 2
+_BINARY_METRICS = ("auroc", "auprc", "prevalence", "ppv", "npv")
+
+
+@dataclass(frozen=True)
+class ExpectedPathogenicitySelection:
+    valid_indices: list[int]
+    variants: list[dict]
+    wt_sequences: list[str]
+    mut_sequences: list[str]
+    positions: list[int]
+    fingerprint: str
+    embedding_input_fingerprint: str
+    accounting: dict
+
+
+def _source_files_fingerprint() -> str:
+    """Hash every project source file that defines the Section 5 estimand."""
+    paths = {
+        Path(__file__),
+        Path(bootstrap_module.__file__),
+        Path(data_module.__file__),
+        Path(metrics_module.__file__),
+        Path(probes_module.__file__),
+        Path(sequences_module.__file__),
+        Path(splits_module.__file__),
+    }
+    digest = hashlib.sha256()
+    for path in sorted(paths, key=str):
+        digest.update(str(path.name).encode())
+        digest.update(b"\x00")
+        digest.update(path.read_bytes())
+        digest.update(b"\x00")
+    return digest.hexdigest()
 
 
 def load_fetched_variants():
-    """Load the variant set written by fetch_pathogenicity_variants.py.
-
-    This experiment's validity depends on that script's per-gene balancing step
-    having actually run on the file being loaded — a variant set fetched by an
-    older, unbalanced version of that script produces a gene-prevalence signal
-    that inflates the pathogenicity AUROC this experiment reports (see
-    biorxiv/issues/exp5_issues.md, issue 1). The runbook telling the operator to
-    re-run the fetch step first is not enough: nothing stopped this script from
-    running anyway against a stale file, which is exactly what happened. This
-    reads the params file the fetch step writes alongside its output and refuses
-    to proceed if it predates the current balancing version, rather than
-    silently scoring unbalanced data.
-    """
-    if not CLINVAR_PATHOGENICITY_VARIANTS_JSON.exists():
-        raise FileNotFoundError(
-            f"{CLINVAR_PATHOGENICITY_VARIANTS_JSON} not found. Run "
-            "`python -m esm2_mech.fetch_data.fetch_pathogenicity_variants` first "
-            "(locally — it's network-only, no GPU needed) and copy its output here."
-        )
-    if not CLINVAR_PATHOGENICITY_PARAMS_JSON.exists():
-        raise FileNotFoundError(
-            f"{CLINVAR_PATHOGENICITY_VARIANTS_JSON} exists but "
-            f"{CLINVAR_PATHOGENICITY_PARAMS_JSON} does not, so its provenance cannot be "
-            "checked. Re-run `python -m esm2_mech.fetch_data.fetch_pathogenicity_variants` "
-            "to regenerate both files together."
-        )
-    with open(CLINVAR_PATHOGENICITY_PARAMS_JSON) as f:
-        fetch_params = json.load(f)
-    cached_version = fetch_params.get("balance_version")
-    if cached_version != _BALANCE_VERSION:
-        raise RuntimeError(
-            f"{CLINVAR_PATHOGENICITY_VARIANTS_JSON} was fetched with balance_version="
-            f"{cached_version!r}, but the current fetch script writes "
-            f"balance_version={_BALANCE_VERSION!r}. This variant set predates the per-gene "
-            "balancing fix and would let gene identity predict the label, which this "
-            "experiment must not permit. Re-run "
-            "`python -m esm2_mech.fetch_data.fetch_pathogenicity_variants` to refetch a "
-            "balanced set, then re-copy it here — do not rebalance in place."
-        )
-    with open(CLINVAR_PATHOGENICITY_VARIANTS_JSON) as f:
-        return json.load(f)
+    """Load the fetched variant set and validate its complete metadata contract."""
+    return load_validated_pathogenicity_cache()
 
 
 def _build_valid_pairs_indexed(variants, seq_cache):
@@ -114,7 +126,7 @@ def _build_valid_pairs_indexed(variants, seq_cache):
         if count:
             print(f"  WARNING: skipped {count} variants ({bucket})")
     print(f"  Valid variant pairs: {len(valid)}")
-    return valid_indices, valid, wt_seqs, mut_seqs, positions
+    return valid_indices, valid, wt_seqs, mut_seqs, positions, skipped
 
 
 def _rebalance_after_filter(valid_indices, valid, wt_seqs, mut_seqs, positions):
@@ -149,44 +161,145 @@ def _rebalance_after_filter(valid_indices, valid, wt_seqs, mut_seqs, positions):
     if n_removed:
         print(f"  Rebalanced after filter: {pre_counts} -> {post_counts} "
               f"(removed {n_removed} variants, dropped {n_dropped_genes} single-class genes)")
-    return out_indices, out_valid, out_wt, out_mut, out_pos
+    accounting = {
+        "n_embeddable_before_rebalance": len(valid),
+        "n_removed_by_postfilter_balance": n_removed,
+        "n_single_class_genes_dropped_postfilter": n_dropped_genes,
+    }
+    return out_indices, out_valid, out_wt, out_mut, out_pos, accounting
 
 
-def _embeddings_complete(valid_fingerprint, n_valid):
-    """True only if cached embeddings match the current valid set by content fingerprint."""
-    if not all(p.exists() for p in [PATH_EMB_WT_MEAN, PATH_EMB_MUT_MEAN, PATH_EMB_META]):
-        return False
-    try:
-        with open(PATH_EMB_META) as f:
-            meta = json.load(f)
-    except json.JSONDecodeError:
-        print(f"  WARNING: corrupt {PATH_EMB_META} — re-extracting")
-        PATH_EMB_META.unlink()
-        return False
-    n_on_disk = np.load(PATH_EMB_WT_MEAN, mmap_mode="r").shape[0]
-    return (
-        n_on_disk == n_valid == meta.get("n_valid")
-        and meta.get("fingerprint") == valid_fingerprint
+def _derive_expected_selection(variants, seq_cache):
+    """Apply the current filter and balance code used to define embedding rows."""
+    (
+        valid_indices,
+        valid,
+        wt_sequences,
+        mut_sequences,
+        positions,
+        skipped,
+    ) = _build_valid_pairs_indexed(variants, seq_cache)
+    (
+        valid_indices,
+        valid,
+        wt_sequences,
+        mut_sequences,
+        positions,
+        balance_accounting,
+    ) = _rebalance_after_filter(
+        valid_indices, valid, wt_sequences, mut_sequences, positions
+    )
+    realised_design = validate_balanced_pathogenicity_variants(
+        valid, require_unique_substitutions=True
+    )
+    accounting = {
+        "n_fetched_variants": len(variants),
+        "filter_skips": skipped,
+        **balance_accounting,
+        "n_scored_variants": len(valid),
+        "realised_design": realised_design,
+    }
+    input_digest = hashlib.sha256()
+    for variant, wt_sequence, mut_sequence, position in zip(
+        valid, wt_sequences, mut_sequences, positions
+    ):
+        input_digest.update(variants_fingerprint([variant]).encode())
+        input_digest.update(b"\x00")
+        input_digest.update(wt_sequence.encode())
+        input_digest.update(b"\x00")
+        input_digest.update(mut_sequence.encode())
+        input_digest.update(b"\x00")
+        input_digest.update(str(position).encode())
+        input_digest.update(b"\x00")
+    return ExpectedPathogenicitySelection(
+        valid_indices=valid_indices,
+        variants=valid,
+        wt_sequences=wt_sequences,
+        mut_sequences=mut_sequences,
+        positions=positions,
+        fingerprint=variants_fingerprint(valid),
+        embedding_input_fingerprint=input_digest.hexdigest(),
+        accounting=accounting,
     )
 
 
-def embed_phase(variants, model, batch_size):
+def _validate_embedding_cache(expected, fetch_metadata, model):
+    """Load embeddings only when arrays, metadata, and current selection agree."""
+    paths = [PATH_EMB_WT_MEAN, PATH_EMB_MUT_MEAN, PATH_EMB_META]
+    existing = [path.exists() for path in paths]
+    if not all(existing):
+        missing = [str(path) for path, exists in zip(paths, existing) if not exists]
+        raise FileNotFoundError(
+            f"pathogenicity embedding cache is incomplete; missing {missing}. "
+            "Run the embed phase to regenerate all three files."
+        )
+    try:
+        with open(PATH_EMB_META) as f:
+            meta = json.load(f)
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            f"{PATH_EMB_META} is corrupt; regenerate the embedding cache"
+        ) from exc
+
+    expected_metadata = {
+        "metadata_version": _EMBEDDING_METADATA_VERSION,
+        "n": expected.accounting["n_fetched_variants"],
+        "n_valid": len(expected.variants),
+        "fingerprint": expected.fingerprint,
+        "embedding_input_fingerprint": expected.embedding_input_fingerprint,
+        "model": model,
+        "fetch_variant_fingerprint": fetch_metadata["variant_fingerprint"],
+        "selection_accounting": expected.accounting,
+    }
+    mismatches = {
+        key: {"cached": meta.get(key), "current": value}
+        for key, value in expected_metadata.items()
+        if meta.get(key) != value
+    }
+    if meta.get("valid_indices") != expected.valid_indices:
+        mismatches["valid_indices"] = {
+            "cached_count": len(meta.get("valid_indices", [])),
+            "current_count": len(expected.valid_indices),
+            "same_count": len(meta.get("valid_indices", [])) == len(expected.valid_indices),
+        }
+    if mismatches:
+        raise ValueError(
+            "pathogenicity embedding cache was not produced by the current "
+            f"selection contract: {mismatches}. Regenerate the embed phase."
+        )
+
+    wt_mean = np.load(PATH_EMB_WT_MEAN)
+    mut_mean = np.load(PATH_EMB_MUT_MEAN)
+    expected_rows = len(expected.variants)
+    if wt_mean.shape[0] != expected_rows or mut_mean.shape[0] != expected_rows:
+        raise ValueError(
+            f"embedding row mismatch: expected {expected_rows}, got "
+            f"wt={wt_mean.shape[0]} and mut={mut_mean.shape[0]}"
+        )
+    actual_embedding_fingerprint = embedding_fingerprint(wt_mean, mut_mean)
+    if meta.get("embedding_fingerprint") != actual_embedding_fingerprint:
+        raise ValueError(
+            "pathogenicity embedding arrays do not match the fingerprint stored "
+            "at extraction time; regenerate the embed phase"
+        )
+    return wt_mean, mut_mean, meta
+
+
+def embed_phase(variants, fetch_metadata, model, batch_size, force=False):
     """Phase 1. Extract and cache pathogenicity embeddings (GPU)."""
     print("\n=== Phase 1: extract ESM-2 embeddings ===")
     with open(SEQUENCES_JSON) as f:
         seq_cache = json.load(f)
 
-    valid_indices, valid, wt_seqs, mut_seqs, positions = _build_valid_pairs_indexed(
-        variants, seq_cache
-    )
-    valid_indices, valid, wt_seqs, mut_seqs, positions = _rebalance_after_filter(
-        valid_indices, valid, wt_seqs, mut_seqs, positions
-    )
-    valid_fingerprint = variants_fingerprint(valid)
+    expected = _derive_expected_selection(variants, seq_cache)
 
-    if _embeddings_complete(valid_fingerprint, len(valid)):
-        print("  Embeddings already complete — skipping extraction.")
+    cache_paths = [PATH_EMB_WT_MEAN, PATH_EMB_MUT_MEAN, PATH_EMB_META]
+    if any(path.exists() for path in cache_paths) and not force:
+        _validate_embedding_cache(expected, fetch_metadata, model)
+        print("  Embeddings already complete and validated; skipping extraction.")
         return
+    if force and any(path.exists() for path in cache_paths):
+        print("  Replacing the pathogenicity embedding cache (--force_embed).")
 
     import torch
 
@@ -195,21 +308,33 @@ def embed_phase(variants, model, batch_size):
     EMB_DIR.mkdir(parents=True, exist_ok=True)
 
     wt_mean, mut_mean, _, _ = get_esm2_embeddings_for_pairs(
-        wt_seqs, mut_seqs, positions,
-        valid_variants=valid, out_dir=None,
+        expected.wt_sequences, expected.mut_sequences, expected.positions,
+        valid_variants=expected.variants, out_dir=None,
         model_name=model, device=device, batch_size=batch_size,
     )
+
+    if wt_mean.shape[0] != len(expected.variants) or mut_mean.shape[0] != len(expected.variants):
+        raise ValueError(
+            "embedding extractor returned a row count that does not match the "
+            "derived pathogenicity selection"
+        )
+    extracted_embedding_fingerprint = embedding_fingerprint(wt_mean, mut_mean)
 
     save_npy(str(PATH_EMB_WT_MEAN), wt_mean)
     save_npy(str(PATH_EMB_MUT_MEAN), mut_mean)
     atomic_write_json(
         PATH_EMB_META,
         {
-            "valid_indices": valid_indices,
+            "metadata_version": _EMBEDDING_METADATA_VERSION,
+            "valid_indices": expected.valid_indices,
             "n": len(variants),
-            "n_valid": len(valid),
-            "fingerprint": valid_fingerprint,
+            "n_valid": len(expected.variants),
+            "fingerprint": expected.fingerprint,
+            "embedding_input_fingerprint": expected.embedding_input_fingerprint,
             "model": model,
+            "fetch_variant_fingerprint": fetch_metadata["variant_fingerprint"],
+            "selection_accounting": expected.accounting,
+            "embedding_fingerprint": extracted_embedding_fingerprint,
         },
     )
     print(f"  Saved {wt_mean.shape} -> {EMB_DIR}")
@@ -218,33 +343,117 @@ def embed_phase(variants, model, batch_size):
 # ===========================================================================
 # Phase 2 — 5-seed probes
 # ===========================================================================
-def probe_phase(variants, n_seeds, n_jobs=-1, compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES):
+def _json_fingerprint(value: dict) -> str:
+    encoded = json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _finite_or_none(value):
+    if value is None:
+        return None
+    return float(value) if np.isfinite(value) else None
+
+
+def _seed_params(seed, compute_ci, n_boot, meta, fetch_metadata, pfam_map, genes):
+    return {
+        "probe_result_version": _PROBE_RESULT_VERSION,
+        "seed": int(seed),
+        "compute_ci": bool(compute_ci),
+        "n_boot": int(n_boot) if compute_ci else None,
+        "variant_fingerprint": meta["fingerprint"],
+        "model": meta["model"],
+        "pfam_fingerprint": pfam_fingerprint(pfam_map, genes.tolist()),
+        "embedding_fingerprint": meta["embedding_fingerprint"],
+        "fetch_metadata_fingerprint": _json_fingerprint(fetch_metadata),
+        "analysis_source_fingerprint": _source_files_fingerprint(),
+        "runtime_versions": {
+            "numpy": np.__version__,
+            "scikit_learn": sklearn.__version__,
+        },
+    }
+
+
+def _seed_cell(probe_result, oof, ci, split_name):
+    metrics = {}
+    for metric in _BINARY_METRICS:
+        mean_key = f"{metric}_mean"
+        std_key = f"{metric}_std"
+        metrics[metric] = {
+            "fold_mean": _finite_or_none(probe_result.get(mean_key)),
+            "fold_std": _finite_or_none(probe_result.get(std_key)),
+        }
+    return {
+        "metrics": metrics,
+        "n_folds": probe_result.get("n_folds"),
+        "n_scored": None if oof is None else int(len(oof["y_true"])),
+        "resampling_unit": "pfam_family" if split_name == "family" else "gene",
+        "auroc_ci": ci,
+    }
+
+
+def _aggregate_metric(seed_cells, metric):
+    per_seed = [cell["metrics"][metric]["fold_mean"] for cell in seed_cells]
+    finite = [value for value in per_seed if value is not None]
+    return {
+        "across_seed_mean": float(np.mean(finite)) if finite else None,
+        "across_seed_std": float(np.std(finite)) if finite else None,
+        "per_seed": per_seed,
+        "per_seed_fold_std": [
+            cell["metrics"][metric]["fold_std"] for cell in seed_cells
+        ],
+    }
+
+
+def _build_claim_2c(seed0_inference):
+    """Adjudicate claim 2C only on its registered seed-0 family-split CI."""
+    point_estimate = seed0_inference["point_estimate"]
+    ci = seed0_inference["ci"]
+    if (
+        ci is None
+        or ci.get("ci_suppressed")
+        or ci.get("ci_low") is None
+        or ci.get("ci_high") is None
+    ):
+        verdict = "not adjudicated (CI unavailable)"
+    else:
+        verdict = adjudicate_level(point_estimate, ci, CLAIM_2C_THRESHOLD)
+    return {
+        "claim": "2C",
+        "feature": "delta_mean",
+        "probe": "mlp",
+        "split": "family",
+        "seed": 0,
+        "threshold": CLAIM_2C_THRESHOLD,
+        "point_estimate": point_estimate,
+        "ci": ci,
+        "estimate_basis": seed0_inference["estimate_basis"],
+        "resampling_unit": seed0_inference["resampling_unit"],
+        "n_scored": seed0_inference["n_scored"],
+        "n_excluded": seed0_inference["n_excluded"],
+        "verdict": verdict,
+    }
+
+
+def probe_phase(
+    variants,
+    fetch_metadata,
+    n_seeds,
+    n_jobs=-1,
+    compute_ci=True,
+    n_boot=BOOTSTRAP_N_RESAMPLES,
+):
     """Phase 2. 5-seed logreg + MLP probes on delta_mean and wt_only."""
     print("\n=== Phase 2: probes ===")
-    with open(PATH_EMB_META) as f:
-        meta = json.load(f)
-    wt_mean = np.load(PATH_EMB_WT_MEAN)
-    mut_mean = np.load(PATH_EMB_MUT_MEAN)
-
-    # valid_indices index into the variant list that produced the embeddings.
-    valid = [variants[i] for i in meta["valid_indices"]]
-    if not (len(valid) == wt_mean.shape[0] == mut_mean.shape[0]):
-        raise ValueError(
-            f"Row mismatch: {len(valid)} variants vs {wt_mean.shape[0]} embedding rows."
-        )
-
-    # Verify by content, not count: the embeddings must have been built from
-    # exactly these variants in this order. A seed/cap change that yields a
-    # colliding count would otherwise misalign labels/genes to embedding rows.
-    if variants_fingerprint(valid) != meta.get("fingerprint"):
-        raise ValueError(
-            "Embedding fingerprint does not match the current variant set — the "
-            f"embedding cache is stale. Delete {PATH_EMB_META.name} and the "
-            "pathogenicity_*.npy files to re-extract."
-        )
+    with open(SEQUENCES_JSON) as handle:
+        seq_cache = json.load(handle)
+    expected = _derive_expected_selection(variants, seq_cache)
+    wt_mean, mut_mean, meta = _validate_embedding_cache(
+        expected, fetch_metadata, ESM2_MODEL_650M
+    )
+    valid = expected.variants
 
     delta = mut_mean - wt_mean
-    y = np.array([1 if v["label"] == "pathogenic" else 0 for v in valid])
+    y = np.array([pathogenicity_label(v["label"]) for v in valid])
     genes = np.array([v["gene"] for v in valid])
     pfam_map = load_pfam_map(PFAM_JSON)
 
@@ -256,15 +465,10 @@ def probe_phase(variants, n_seeds, n_jobs=-1, compute_ci=True, n_boot=BOOTSTRAP_
 
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
-    seed_params = {
-        "compute_ci": compute_ci,
-        "n_boot": n_boot if compute_ci else None,
-        "variant_fingerprint": meta["fingerprint"],
-        "model": meta.get("model"),
-        "pfam_fingerprint": pfam_fingerprint(pfam_map, list(set(genes))),
-        "embedding_fingerprint": embedding_fingerprint(wt_mean, mut_mean),
-    }
     for seed in range(n_seeds):
+        seed_params = _seed_params(
+            seed, compute_ci, n_boot, meta, fetch_metadata, pfam_map, genes
+        )
         seed_path = Path(PATHOGENICITY_CONTROL_SEED_JSON.format(seed=seed))
         if seed_path.exists():
             cached_seed_params = None
@@ -291,16 +495,9 @@ def probe_phase(variants, n_seeds, n_jobs=-1, compute_ci=True, n_boot=BOOTSTRAP_
         ]
 
         def _run_cell(fname, pname, split_name, splits, seed=seed):
-            res, oof = probes[pname](
+            probe_result, oof = probes[pname](
                 features[fname], y, splits, seed=seed, genes=genes, return_oof=True
             )
-            # CI from seed 0's OOF only, per the pre-registered §2C seed-0 convention:
-            # each seed reshuffles the CV fold assignment, so a single seed's
-            # predictions are the coherent unit to resample — pooling OOF across
-            # seeds would bootstrap over predictions built under different,
-            # incompatible fold assignments. The aggregation step below only ever
-            # keeps seed 0's CI, so computing it for every seed would be pure waste,
-            # since seeds 1..n-1's bootstrap runs are discarded.
             if compute_ci and oof is not None and seed == 0:
                 clusters = family_or_gene_clusters(
                     oof["genes"], pfam_map, is_family_split=(split_name == "family")
@@ -310,56 +507,64 @@ def probe_phase(variants, n_seeds, n_jobs=-1, compute_ci=True, n_boot=BOOTSTRAP_
                 )
             else:
                 ci = None
-            return (fname, pname, split_name, res.get("auroc_mean", float("nan")), ci)
+            key = f"{fname}_{pname}_{split_name}"
+            return key, _seed_cell(probe_result, oof, ci, split_name)
 
         outcomes = Parallel(n_jobs=n_jobs)(
             delayed(_run_cell)(*c) for c in cells
         )
 
-        # Keep NaN (undefined AUROC: a cell with no valid fold) out of the JSON.
-        # json.dump emits the bare token `NaN`, which is invalid JSON; store null
-        # so absent data round-trips as None.
-        seed_result = {"_params": seed_params}
-        for fname, pname, split_name, auroc, ci in outcomes:
-            key = f"{fname}_{pname}_{split_name}"
-            seed_result[key] = None if np.isnan(auroc) else auroc
-            seed_result[f"{key}_ci"] = ci
+        seed_result = {
+            "_params": seed_params,
+            "cells": {key: cell for key, cell in outcomes},
+        }
         write_result_json(seed_path, seed_result, seeds=[seed], indent=2)
         summary = "  ".join(
-            f"{k}={v:.3f}" for k, v in seed_result.items()
-            if "mlp" in k and not k.endswith("_ci") and v is not None
+            f"{key}={cell['metrics']['auroc']['fold_mean']:.3f}"
+            for key, cell in seed_result["cells"].items()
+            if "mlp" in key and cell["metrics"]["auroc"]["fold_mean"] is not None
         )
         print(f"  seed {seed} done -> {seed_path.name}   {summary}")
 
-    # Aggregate per-seed files into the final mean ± std result.
-    per_cell = defaultdict(list)
-    seed0_ci = {}
+    seed_results = []
     for seed in range(n_seeds):
         seed_path = Path(PATHOGENICITY_CONTROL_SEED_JSON.format(seed=seed))
-        try:
-            with open(seed_path) as f:
-                seed_result = json.load(f)
-        except json.JSONDecodeError:
-            # Partial write on interrupt. Delete so the next run recomputes this
-            # seed rather than aggregating a truncated file.
-            print(f"  WARNING: corrupt {seed_path.name} — deleting; re-run to recompute this seed")
-            seed_path.unlink()
-            raise
-        for key, value in seed_result.items():
-            if key == "_params":
-                continue
-            if key.endswith("_ci"):
-                if seed == 0:
-                    seed0_ci[key[: -len("_ci")]] = value
-                continue
-            per_cell[key].append(value)
+        with open(seed_path) as handle:
+            seed_result = json.load(handle)
+        expected_params = _seed_params(
+            seed, compute_ci, n_boot, meta, fetch_metadata, pfam_map, genes
+        )
+        if seed_result.get("_params") != expected_params:
+            raise ValueError(
+                f"{seed_path} changed between cache validation and aggregation"
+            )
+        seed_results.append(seed_result)
 
     results = {
+        "result_version": _PROBE_RESULT_VERSION,
         "n_variants": int(len(valid)),
         "n_pathogenic": int(y.sum()),
         "n_benign": int((1 - y).sum()),
         "n_genes": int(len(set(genes))),
         "n_seeds": n_seeds,
+        "data_accounting": {
+            "fetch": fetch_metadata["accounting"],
+            "embedding_selection": expected.accounting,
+        },
+        "data_provenance": {
+            "fetch_selection": fetch_metadata["selection"],
+            "clinvar_source": fetch_metadata["clinvar_source"],
+            "fetch_variant_fingerprint": fetch_metadata["variant_fingerprint"],
+            "scored_variant_fingerprint": expected.fingerprint,
+            "embedding_fingerprint": meta["embedding_fingerprint"],
+            "pfam_fingerprint": pfam_fingerprint(pfam_map, genes.tolist()),
+            "model": meta["model"],
+            "analysis_source_fingerprint": _source_files_fingerprint(),
+            "runtime_versions": {
+                "numpy": np.__version__,
+                "scikit_learn": sklearn.__version__,
+            },
+        },
         "by_feature": {},
     }
     for fname in features:
@@ -367,21 +572,43 @@ def probe_phase(variants, n_seeds, n_jobs=-1, compute_ci=True, n_boot=BOOTSTRAP_
         for pname in probes:
             for split_name in ("gene", "family"):
                 key = f"{fname}_{pname}_{split_name}"
-                vals = [v for v in per_cell[key] if v is not None]
-                mean = float(np.mean(vals)) if vals else None
-                std = float(np.std(vals)) if vals else None
-                cell = {
-                    "auroc_mean": mean,
-                    "auroc_std": std,
-                    "per_seed": per_cell[key],
+                seed_cells = [seed_result["cells"][key] for seed_result in seed_results]
+                metrics = {
+                    metric: _aggregate_metric(seed_cells, metric)
+                    for metric in _BINARY_METRICS
                 }
-                # Cluster-bootstrap CI from seed 0's OOF only, per the pre-registered
-                # §2C seed-0 convention: each seed reshuffles the CV fold assignment,
-                # so a single seed's predictions are the coherent unit to resample
-                # rather than merging OOF across seeds' differing folds.
-                if compute_ci and key in seed0_ci:
-                    cell["ci"] = seed0_ci[key]
+                seed0_ci = seed_cells[0]["auroc_ci"]
+                seed0_point = metrics["auroc"]["per_seed"][0]
+                if seed0_ci is not None and not np.isclose(
+                    seed0_ci["point"], seed0_point
+                ):
+                    raise ValueError(
+                        f"{key} seed-0 CI point {seed0_ci['point']} does not match "
+                        f"the seed-0 fold-mean AUROC {seed0_point}"
+                    )
+                cell = {
+                    "auroc_mean": metrics["auroc"]["across_seed_mean"],
+                    "auroc_std": metrics["auroc"]["across_seed_std"],
+                    "per_seed": metrics["auroc"]["per_seed"],
+                    "metrics": metrics,
+                    "seed0_inference": {
+                        "point_estimate": seed0_point,
+                        "ci": seed0_ci,
+                        "n_scored": seed_cells[0]["n_scored"],
+                        "n_excluded": (
+                            None
+                            if seed_cells[0]["n_scored"] is None
+                            else len(valid) - seed_cells[0]["n_scored"]
+                        ),
+                        "resampling_unit": seed_cells[0]["resampling_unit"],
+                        "estimate_basis": "seed_0_mean_of_fold_aurocs",
+                    },
+                }
                 results["by_feature"][fname][f"{pname}_{split_name}"] = cell
+
+    claim_cell = results["by_feature"]["delta_mean"]["mlp_family"]
+    claim_inference = claim_cell["seed0_inference"]
+    results["claim_2c"] = _build_claim_2c(claim_inference)
 
     write_result_json(PATHOGENICITY_CONTROL_JSON, results, seeds=list(range(n_seeds)), indent=2)
     print(f"  Aggregated results written to {PATHOGENICITY_CONTROL_JSON}")
@@ -406,19 +633,30 @@ def _print_headline(results):
                 print(f"  {feature:11s} {key:14s} AUROC = {mean:.3f} ± {std:.3f}")
         print()
 
-    d_mean, _ = cell("delta_mean", "mlp_gene")
-    d_fam, _ = cell("delta_mean", "mlp_family")
-    if d_mean is None or d_fam is None:
-        print("  delta_mean MLP gene/family AUROC is undefined — cannot evaluate the control.")
+    claim = results["claim_2c"]
+    point = claim["point_estimate"]
+    ci = claim["ci"]
+    if point is None:
+        print("  Claim 2C is not adjudicated because its point estimate is unavailable.")
         return
-    print(f"  delta_mean MLP gene→family Δ = {d_mean - d_fam:+.3f}")
-    if d_mean >= 0.85:
-        print("  ⇒ Pipeline PASSES positive control (delta MLP AUROC ≥ 0.85).")
-        print("    The mechanism null is a real absence of signal, not a pipeline failure.")
-    elif d_mean >= 0.70:
-        print("  ⇒ MODERATE pathogenicity signal (0.70–0.85). Interpretable but weak.")
+    if ci is None or ci.get("ci_low") is None:
+        print(
+            f"  Claim 2C: seed-0 family-split AUROC = {point:.3f}; "
+            f"{claim['verdict']}."
+        )
     else:
-        print("  ⇒ Pipeline FAILS positive control (< 0.70). Mechanism null UNINTERPRETABLE.")
+        print(
+            f"  Claim 2C: seed-0 family-split AUROC = {point:.3f}, "
+            f"95% family-bootstrap CI [{ci['ci_low']:.3f}, {ci['ci_high']:.3f}]."
+        )
+        print(f"  Verdict: {claim['verdict']}.")
+    if claim["verdict"].startswith("pass, established"):
+        print(
+            "  The positive control establishes that the embeddings and probe "
+            "pipeline recover strong discrimination on pathogenicity."
+        )
+    else:
+        print("  The preregistered positive-control gate was not established.")
 
 
 def main():
@@ -430,6 +668,11 @@ def main():
     parser.add_argument("--no_ci", action="store_true", help="skip cluster-bootstrap CIs")
     parser.add_argument("--n_boot", type=int, default=BOOTSTRAP_N_RESAMPLES)
     parser.add_argument(
+        "--force_embed",
+        action="store_true",
+        help="replace the three pathogenicity embedding-cache files",
+    )
+    parser.add_argument(
         "--phase", choices=["embed", "probe", "both"], default="both",
         help="Run only 'embed' (GPU) or 'probe' (CPU), or 'both' (default)",
     )
@@ -438,14 +681,20 @@ def main():
     if args.seeds < 1:
         parser.error("--seeds must be >= 1")
 
-    variants = load_fetched_variants()
+    variants, fetch_metadata = load_fetched_variants()
 
     if args.phase in ("embed", "both"):
-        embed_phase(variants, model=args.model, batch_size=args.batch_size)
+        embed_phase(
+            variants,
+            fetch_metadata,
+            model=args.model,
+            batch_size=args.batch_size,
+            force=args.force_embed,
+        )
 
     if args.phase in ("probe", "both"):
         results = probe_phase(
-            variants, n_seeds=args.seeds, n_jobs=args.n_jobs,
+            variants, fetch_metadata, n_seeds=args.seeds, n_jobs=args.n_jobs,
             compute_ci=not args.no_ci, n_boot=args.n_boot,
         )
         _print_headline(results)

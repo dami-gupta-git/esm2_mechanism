@@ -36,11 +36,18 @@ import re
 import urllib.request
 import zlib
 from collections import Counter, defaultdict
+from datetime import datetime, timezone
 
 import numpy as np
 
 from esm2_mech.utils.constants import HTTP_USER_AGENT
-from esm2_mech.utils.data import load_variants
+from esm2_mech.utils.data import (
+    load_variants,
+    pathogenicity_label,
+    protein_substitution_key,
+    validate_balanced_pathogenicity_variants,
+    variants_fingerprint,
+)
 from esm2_mech.utils.io import atomic_write_json
 from esm2_mech.utils.paths import (
     CLINVAR_PATHOGENICITY_PARAMS_JSON,
@@ -69,8 +76,58 @@ AA3 = {
 }
 HGVSP_PAT = re.compile(r"p\.([A-Z][a-z]{2})(\d+)([A-Z][a-z]{2})(?=[^a-zA-Z]|$)")
 
-# Bump whenever the balancing algorithm changes so old caches are invalidated.
-_BALANCE_VERSION = 1
+# Bump whenever selection, deduplication, or balancing changes.
+_BALANCE_VERSION = 2
+_FETCH_METADATA_VERSION = 2
+_DUPLICATE_POLICY = "deduplicate_protein_substitution_before_balance"
+
+
+class StalePathogenicityCacheError(RuntimeError):
+    """The cached ClinVar set was not produced by the current selection contract."""
+
+
+def _deduplicate_protein_substitutions(variants):
+    """Merge ClinVar records encoding the same protein substitution.
+
+    Distinct records are retained as ``clinvar_ids`` provenance on the one
+    protein-level row. A substitution carrying conflicting labels aborts rather
+    than selecting a label.
+    """
+    unique: dict[tuple[str, int, str, str], dict] = {}
+    ordered_keys = []
+    duplicate_keys = set()
+    n_duplicate_rows_removed = 0
+    for variant in variants:
+        pathogenicity_label(variant["label"])
+        key = protein_substitution_key(variant)
+        if key not in unique:
+            row = dict(variant)
+            row["clinvar_ids"] = [variant["clinvar_id"]]
+            unique[key] = row
+            ordered_keys.append(key)
+            continue
+
+        duplicate_keys.add(key)
+        n_duplicate_rows_removed += 1
+        existing = unique[key]
+        if existing["label"] != variant["label"]:
+            raise RuntimeError(
+                "ClinVar records assign conflicting labels to protein substitution "
+                f"{key!r}: {existing['label']!r} and {variant['label']!r}"
+            )
+        if variant["clinvar_id"] not in existing["clinvar_ids"]:
+            existing["clinvar_ids"].append(variant["clinvar_id"])
+
+    deduplicated = []
+    for key in ordered_keys:
+        row = unique[key]
+        row["clinvar_ids"] = sorted(row["clinvar_ids"])
+        deduplicated.append(row)
+    return deduplicated, {
+        "duplicate_policy": _DUPLICATE_POLICY,
+        "n_duplicate_substitution_keys": len(duplicate_keys),
+        "n_duplicate_rows_removed": n_duplicate_rows_removed,
+    }
 
 
 def _fetch_clinvar(target_genes, max_per_gene_per_class, seed):
@@ -79,6 +136,16 @@ def _fetch_clinvar(target_genes, max_per_gene_per_class, seed):
     req = urllib.request.Request(CLINVAR_URL, headers={"User-Agent": HTTP_USER_AGENT})
     with urllib.request.urlopen(req, timeout=600) as resp:
         raw = resp.read()
+        last_modified = resp.headers.get("Last-Modified")
+
+    clinvar_source = {
+        "url": CLINVAR_URL,
+        "assembly": CLINVAR_ASSEMBLY,
+        "retrieved_at_utc": datetime.now(timezone.utc).isoformat(),
+        "compressed_sha256": hashlib.sha256(raw).hexdigest(),
+        "compressed_bytes": len(raw),
+        "last_modified": last_modified,
+    }
 
     print(f"  Downloaded {len(raw) / 1e6:.0f} MB, decompressing ...")
     gz = gzip.GzipFile(fileobj=io.BytesIO(raw))
@@ -92,7 +159,7 @@ def _fetch_clinvar(target_genes, max_per_gene_per_class, seed):
     max_needed_idx = max(col[c] for c in needed)
 
     target_set = set(target_genes)
-    by_gene_class = defaultdict(list)
+    matched = []
     n_seen = 0
     try:
         for line in text:
@@ -124,7 +191,7 @@ def _fetch_clinvar(target_genes, max_per_gene_per_class, seed):
             wt3, pos_s, mut3 = m.groups()
             if wt3 not in AA3 or mut3 not in AA3 or wt3 == mut3:
                 continue
-            by_gene_class[(gene, label)].append({
+            matched.append({
                 "gene": gene,
                 "aa_pos": int(pos_s),
                 "aa_wt": AA3[wt3],
@@ -140,7 +207,17 @@ def _fetch_clinvar(target_genes, max_per_gene_per_class, seed):
             "Re-run to retry; nothing was cached."
         ) from exc
 
-    print(f"  Scanned {n_seen} ClinVar rows; matched {sum(len(v) for v in by_gene_class.values())} variants")
+    print(f"  Scanned {n_seen} ClinVar rows; matched {len(matched)} records")
+
+    deduplicated, duplicate_accounting = _deduplicate_protein_substitutions(matched)
+    print(
+        f"  Protein substitutions: {len(deduplicated)} unique; removed "
+        f"{duplicate_accounting['n_duplicate_rows_removed']} repeated record(s)"
+    )
+
+    by_gene_class = defaultdict(list)
+    for variant in deduplicated:
+        by_gene_class[(variant["gene"], variant["label"])].append(variant)
 
     rng = np.random.RandomState(seed)
     capped = {}
@@ -161,7 +238,17 @@ def _fetch_clinvar(target_genes, max_per_gene_per_class, seed):
     n_dropped = len(set(g for (g, _) in capped) - genes_with_both)
     if n_dropped:
         print(f"  Dropped {n_dropped} genes with only one class")
-    return chosen
+    accounting = {
+        "n_clinvar_rows_scanned": n_seen,
+        "n_matched_records": len(matched),
+        "n_unique_substitutions": len(deduplicated),
+        **duplicate_accounting,
+        "n_after_cap_before_balance": sum(len(rows) for rows in capped.values()),
+        "n_genes_with_both_classes": len(genes_with_both),
+        "n_single_class_genes_dropped": n_dropped,
+        "n_after_balance_before_uniprot": len(chosen),
+    }
+    return chosen, clinvar_source, accounting
 
 
 def _attach_uniprot_ids(variants, mechanism_variants):
@@ -174,8 +261,7 @@ def _attach_uniprot_ids(variants, mechanism_variants):
     for v in variants:
         uid = gene_to_uid.get(v["gene"].upper())
         if uid:
-            v["uniprot_id"] = uid
-            out.append(v)
+            out.append({**v, "uniprot_id": uid})
     print(f"  {len(out)}/{len(variants)} variants mapped to a UniProt ID")
     return out
 
@@ -196,7 +282,121 @@ def _source_fingerprint(mechanism_variants):
     return digest.hexdigest()
 
 
-def fetch_phase(max_per_gene_per_class=20, seed=42):
+def _selection_params(mechanism_variants, max_per_gene_per_class, seed):
+    return {
+        "max_per_gene_per_class": int(max_per_gene_per_class),
+        "seed": int(seed),
+        "source_fingerprint": _source_fingerprint(mechanism_variants),
+        "balance_version": _BALANCE_VERSION,
+        "duplicate_policy": _DUPLICATE_POLICY,
+    }
+
+
+def _validate_fetch_metadata(metadata, current_selection):
+    if metadata.get("metadata_version") != _FETCH_METADATA_VERSION:
+        raise StalePathogenicityCacheError(
+            "ClinVar pathogenicity cache metadata_version is missing or stale; "
+            "rerun with --force to rebuild both cache files"
+        )
+    cached_selection = metadata.get("selection")
+    if not isinstance(cached_selection, dict):
+        raise StalePathogenicityCacheError(
+            "ClinVar pathogenicity cache has no selection metadata; rerun with "
+            "--force to rebuild both cache files"
+        )
+    missing = sorted(set(current_selection) - set(cached_selection))
+    if missing:
+        raise StalePathogenicityCacheError(
+            "ClinVar pathogenicity cache is missing selection key(s) "
+            f"{missing}; rerun with --force"
+        )
+    changed = {
+        key: {"cached": cached_selection[key], "current": value}
+        for key, value in current_selection.items()
+        if cached_selection[key] != value
+    }
+    if changed or set(cached_selection) != set(current_selection):
+        raise StalePathogenicityCacheError(
+            "ClinVar pathogenicity cache selection differs from the current "
+            f"contract: {changed}; rerun with --force"
+        )
+    for required in ("clinvar_source", "accounting", "variant_fingerprint"):
+        if required not in metadata:
+            raise StalePathogenicityCacheError(
+                f"ClinVar pathogenicity cache metadata is missing {required!r}; "
+                "rerun with --force"
+            )
+
+
+def validate_cached_pathogenicity_variants(variants, metadata, current_selection):
+    """Validate a fetched variant JSON and its metadata as one artifact."""
+    _validate_fetch_metadata(metadata, current_selection)
+    actual_fingerprint = variants_fingerprint(variants)
+    if metadata["variant_fingerprint"] != actual_fingerprint:
+        raise StalePathogenicityCacheError(
+            "ClinVar pathogenicity variant JSON does not match the fingerprint in "
+            "its metadata; rerun with --force"
+        )
+    realised = validate_balanced_pathogenicity_variants(
+        variants, require_unique_substitutions=True
+    )
+    recorded = metadata["accounting"].get("realised_design")
+    if recorded != realised:
+        raise StalePathogenicityCacheError(
+            "ClinVar pathogenicity realised-design accounting does not match the "
+            "variant JSON; rerun with --force"
+        )
+    return realised
+
+
+def load_validated_pathogenicity_cache():
+    """Load the fetched set only when both files match the current contract."""
+    if not CLINVAR_PATHOGENICITY_VARIANTS_JSON.exists():
+        raise FileNotFoundError(
+            f"{CLINVAR_PATHOGENICITY_VARIANTS_JSON} not found; run "
+            "`python -m esm2_mech.fetch_data.fetch_pathogenicity_variants --force`"
+        )
+    if not CLINVAR_PATHOGENICITY_PARAMS_JSON.exists():
+        raise FileNotFoundError(
+            f"{CLINVAR_PATHOGENICITY_PARAMS_JSON} not found; the variant set has no "
+            "verifiable fetch provenance"
+        )
+    try:
+        with open(CLINVAR_PATHOGENICITY_PARAMS_JSON) as handle:
+            metadata = json.load(handle)
+        with open(CLINVAR_PATHOGENICITY_VARIANTS_JSON) as handle:
+            variants = json.load(handle)
+    except json.JSONDecodeError as exc:
+        raise StalePathogenicityCacheError(
+            "ClinVar pathogenicity cache JSON is corrupt; rerun the fetch with --force"
+        ) from exc
+
+    cached_selection = metadata.get("selection")
+    if not isinstance(cached_selection, dict):
+        raise StalePathogenicityCacheError(
+            "ClinVar pathogenicity cache has no selection metadata; rerun the fetch "
+            "with --force"
+        )
+    for key in ("max_per_gene_per_class", "seed"):
+        if key not in cached_selection:
+            raise StalePathogenicityCacheError(
+                f"ClinVar pathogenicity selection metadata is missing {key!r}; "
+                "rerun the fetch with --force"
+            )
+
+    mechanism_variants = load_variants(VARIANTS_JSON)
+    current_selection = _selection_params(
+        mechanism_variants,
+        cached_selection["max_per_gene_per_class"],
+        cached_selection["seed"],
+    )
+    validate_cached_pathogenicity_variants(
+        variants, metadata, current_selection
+    )
+    return variants, metadata
+
+
+def fetch_phase(max_per_gene_per_class=20, seed=42, force=False):
     """Returns the variant list; caches to CLINVAR_PATHOGENICITY_VARIANTS_JSON."""
     print("=== Fetch ClinVar pathogenic/benign variants ===")
 
@@ -208,35 +408,54 @@ def fetch_phase(max_per_gene_per_class=20, seed=42):
     target_genes = sorted({v["gene"].upper() for v in mechanism_variants if v.get("gene")})
     print(f"  Target gene set: {len(target_genes)} genes")
 
-    params = {
-        "max_per_gene_per_class": max_per_gene_per_class,
-        "seed": seed,
-        "source_fingerprint": _source_fingerprint(mechanism_variants),
-        "balance_version": _BALANCE_VERSION,
-    }
-    if CLINVAR_PATHOGENICITY_VARIANTS_JSON.exists():
-        cached_params = None
-        if CLINVAR_PATHOGENICITY_PARAMS_JSON.exists():
-            try:
-                with open(CLINVAR_PATHOGENICITY_PARAMS_JSON) as f:
-                    cached_params = json.load(f)
-            except json.JSONDecodeError:
-                cached_params = None
-        if cached_params != params:
-            print(
-                f"  Cache was built with {cached_params}, current params {params} — re-fetching"
-            )
-        else:
-            try:
-                with open(CLINVAR_PATHOGENICITY_VARIANTS_JSON) as f:
-                    cached = json.load(f)
-                print(f"  Loaded cached set: {len(cached)} variants ({Counter(v['label'] for v in cached)})")
-                return cached
-            except json.JSONDecodeError:
-                print("  WARNING: corrupt cache — re-fetching")
+    selection = _selection_params(mechanism_variants, max_per_gene_per_class, seed)
+    cache_files_exist = (
+        CLINVAR_PATHOGENICITY_VARIANTS_JSON.exists(),
+        CLINVAR_PATHOGENICITY_PARAMS_JSON.exists(),
+    )
+    if any(cache_files_exist) and not all(cache_files_exist) and not force:
+        raise StalePathogenicityCacheError(
+            "only one ClinVar pathogenicity cache file exists; rerun with --force "
+            "to rebuild the pair"
+        )
+    if all(cache_files_exist) and not force:
+        try:
+            with open(CLINVAR_PATHOGENICITY_PARAMS_JSON) as f:
+                metadata = json.load(f)
+            with open(CLINVAR_PATHOGENICITY_VARIANTS_JSON) as f:
+                cached = json.load(f)
+        except json.JSONDecodeError as exc:
+            raise StalePathogenicityCacheError(
+                "ClinVar pathogenicity cache JSON is corrupt; rerun with --force"
+            ) from exc
+        validate_cached_pathogenicity_variants(cached, metadata, selection)
+        print(
+            f"  Loaded cached set: {len(cached)} variants "
+            f"({Counter(v['label'] for v in cached)})"
+        )
+        return cached
 
-    variants = _fetch_clinvar(target_genes, max_per_gene_per_class, seed)
+    variants, clinvar_source, accounting = _fetch_clinvar(
+        target_genes, max_per_gene_per_class, seed
+    )
+    n_before_uniprot = len(variants)
     variants = _attach_uniprot_ids(variants, mechanism_variants)
+    realised_design = validate_balanced_pathogenicity_variants(
+        variants, require_unique_substitutions=True
+    )
+    accounting = {
+        **accounting,
+        "n_unmapped_to_uniprot_removed": n_before_uniprot - len(variants),
+        "n_fetched_variants": len(variants),
+        "realised_design": realised_design,
+    }
+    metadata = {
+        "metadata_version": _FETCH_METADATA_VERSION,
+        "selection": selection,
+        "clinvar_source": clinvar_source,
+        "accounting": accounting,
+        "variant_fingerprint": variants_fingerprint(variants),
+    }
     print(
         f"  Final set: {len(variants)} variants ({Counter(v['label'] for v in variants)}), "
         f"{len({v['gene'] for v in variants})} genes"
@@ -244,7 +463,7 @@ def fetch_phase(max_per_gene_per_class=20, seed=42):
 
     CLINVAR_PATHOGENICITY_VARIANTS_JSON.parent.mkdir(parents=True, exist_ok=True)
     atomic_write_json(CLINVAR_PATHOGENICITY_VARIANTS_JSON, variants)
-    atomic_write_json(CLINVAR_PATHOGENICITY_PARAMS_JSON, params)
+    atomic_write_json(CLINVAR_PATHOGENICITY_PARAMS_JSON, metadata)
     return variants
 
 
@@ -252,8 +471,17 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--max_per_gene_per_class", type=int, default=20)
     parser.add_argument("--fetch_seed", type=int, default=42)
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="replace an existing cache after validating that a full refetch is intended",
+    )
     args = parser.parse_args()
-    fetch_phase(max_per_gene_per_class=args.max_per_gene_per_class, seed=args.fetch_seed)
+    fetch_phase(
+        max_per_gene_per_class=args.max_per_gene_per_class,
+        seed=args.fetch_seed,
+        force=args.force,
+    )
 
 
 if __name__ == "__main__":

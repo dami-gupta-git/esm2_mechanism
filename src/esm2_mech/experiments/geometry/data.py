@@ -11,6 +11,7 @@ import numpy as np
 from esm2_mech.embeddings.embed_variants import ESM2_MODEL_650M
 from esm2_mech.utils.data import (
     embedding_fingerprint,
+    pathogenicity_label,
     pfam_fingerprint,
     variants_fingerprint,
 )
@@ -33,17 +34,6 @@ class PathogenicityGeometryInputs:
     variant_fingerprint: str
     embedding_fingerprint: str
     model: str
-
-
-def pathogenicity_label(label: str) -> int:
-    """Map the two allowed labels without treating an unknown label as benign."""
-    if label == "pathogenic":
-        return 1
-    if label == "benign":
-        return 0
-    raise ValueError(
-        f"unexpected pathogenicity label {label!r} (expected 'pathogenic' or 'benign')"
-    )
 
 
 def load_pathogenicity_geometry_inputs() -> PathogenicityGeometryInputs:

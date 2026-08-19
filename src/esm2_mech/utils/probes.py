@@ -712,10 +712,29 @@ def run_sklearn_probe_pca(
     )
 
 
+def _validation_group_mask(
+    training_groups: np.ndarray,
+    seed: int,
+    validation_fraction: float = 0.15,
+) -> np.ndarray | None:
+    """Select whole groups for early stopping; return None if fewer than two exist."""
+    training_groups = np.asarray(training_groups)
+    unique_groups = np.array(sorted(set(training_groups.tolist()), key=str), dtype=object)
+    if len(unique_groups) < 2:
+        return None
+    rng = np.random.RandomState(seed)
+    rng.shuffle(unique_groups)
+    n_validation_groups = max(1, int(validation_fraction * len(unique_groups)))
+    n_validation_groups = min(n_validation_groups, len(unique_groups) - 1)
+    validation_group_set = set(unique_groups[:n_validation_groups])
+    return np.array([group in validation_group_set for group in training_groups])
+
+
 def run_mlp_probe_cv(
     X: np.ndarray,
     labels: np.ndarray,
     splits: list[tuple],
+    validation_groups: np.ndarray,
     seed: int = 42,
     hidden: tuple = (256, 64),
     dropout: float = 0.3,
@@ -729,8 +748,10 @@ def run_mlp_probe_cv(
 ):
     """PyTorch MLP multi-class CV returning macro-F1 and per-class AUROC mean ± std.
 
-    genes : if provided, the 15% validation split is gene-disjoint (recommended);
-            otherwise 15% of samples are held out randomly.
+    validation_groups : dependency unit for the 15% early-stopping holdout.
+        Pass genes for gene-split CV and Pfam-family IDs for family-split CV.
+        The function rejects a group that spans the outer train/test boundary.
+    genes : row-aligned gene IDs used for per-gene metrics and OOF metadata.
     label : prefix for per-fold log lines.
     return_oof : if True, return (agg, oof) with out-of-fold test predictions
         {"y_true", "proba" (aligned to MECHANISM_CLASSES), "genes", "row_ids",
@@ -749,6 +770,11 @@ def run_mlp_probe_cv(
     n_classes = len(classes)
     cls_to_idx = {cls: idx for idx, cls in enumerate(classes)}
     y = np.array([cls_to_idx[lab] for lab in labels])
+    validation_groups = np.asarray(validation_groups)
+    if len(validation_groups) != len(X):
+        raise ValueError(
+            f"validation_groups has {len(validation_groups)} rows for {len(X)} samples"
+        )
     fold_results, pg_f1s = [], []
     oof = _OofCollector()
 
@@ -762,20 +788,19 @@ def run_mlp_probe_cv(
             print(f"    [{label}] Fold {fold_i+1}: skipped (< 2 classes in train)")
             continue
 
-        rng = np.random.RandomState(seed + fold_i)
-        if genes is not None:
-            tr_genes = genes[train_idx]
-            unique_tr_genes = np.array(sorted(set(tr_genes)))
-            rng.shuffle(unique_tr_genes)
-            n_val_genes = max(1, int(0.15 * len(unique_tr_genes)))
-            val_gene_set = set(unique_tr_genes[:n_val_genes])
-            val_mask = np.array([g in val_gene_set for g in tr_genes])
-        else:
-            order = np.arange(len(train_idx))
-            rng.shuffle(order)
-            n_val = max(1, int(0.15 * len(order)))
-            val_mask = np.zeros(len(train_idx), dtype=bool)
-            val_mask[order[:n_val]] = True
+        training_groups = validation_groups[train_idx]
+        test_groups = set(validation_groups[test_idx].tolist())
+        outer_overlap = set(training_groups.tolist()) & test_groups
+        if outer_overlap:
+            examples = sorted(outer_overlap, key=str)[:5]
+            raise ValueError(
+                "validation group spans the outer CV train/test boundary; "
+                f"examples: {examples}"
+            )
+        val_mask = _validation_group_mask(training_groups, seed + fold_i)
+        if val_mask is None:
+            print(f"    [{label}] Fold {fold_i+1}: skipped (< 2 validation groups)")
+            continue
         fit_mask = ~val_mask
 
         X_fit, y_fit = X_tr[fit_mask], y_tr[fit_mask]
@@ -860,5 +885,4 @@ def run_mlp_probe_cv(
     if return_oof:
         return agg, oof.finalize()
     return agg
-
 
