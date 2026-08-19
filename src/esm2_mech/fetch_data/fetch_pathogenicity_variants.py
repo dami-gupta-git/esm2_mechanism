@@ -78,8 +78,8 @@ AA3 = {
 HGVSP_PAT = re.compile(r"p\.([A-Z][a-z]{2})(\d+)([A-Z][a-z]{2})(?=[^a-zA-Z]|$)")
 
 # Bump whenever selection, deduplication, or balancing changes.
-_BALANCE_VERSION = 2
-_FETCH_METADATA_VERSION = 2
+_BALANCE_VERSION = 3
+_FETCH_METADATA_VERSION = 3
 _DUPLICATE_POLICY = "deduplicate_protein_substitution_before_balance"
 
 
@@ -91,16 +91,20 @@ def _deduplicate_protein_substitutions(variants):
     """Merge ClinVar records encoding the same protein substitution.
 
     Distinct records are retained as ``clinvar_ids`` provenance on the one
-    protein-level row. A substitution carrying conflicting labels aborts rather
-    than selecting a label.
+    protein-level row. A substitution carrying conflicting labels across
+    ClinVar records is dropped entirely rather than having either label
+    selected for it.
     """
     unique: dict[tuple[str, int, str, str], dict] = {}
     ordered_keys = []
     duplicate_keys = set()
+    conflicting_keys = set()
     n_duplicate_rows_removed = 0
     for variant in variants:
         pathogenicity_label(variant["label"])
         key = protein_substitution_key(variant)
+        if key in conflicting_keys:
+            continue
         if key not in unique:
             row = dict(variant)
             row["clinvar_ids"] = [variant["clinvar_id"]]
@@ -112,15 +116,16 @@ def _deduplicate_protein_substitutions(variants):
         n_duplicate_rows_removed += 1
         existing = unique[key]
         if existing["label"] != variant["label"]:
-            raise RuntimeError(
-                "ClinVar records assign conflicting labels to protein substitution "
-                f"{key!r}: {existing['label']!r} and {variant['label']!r}"
-            )
+            conflicting_keys.add(key)
+            del unique[key]
+            continue
         if variant["clinvar_id"] not in existing["clinvar_ids"]:
             existing["clinvar_ids"].append(variant["clinvar_id"])
 
     deduplicated = []
     for key in ordered_keys:
+        if key in conflicting_keys:
+            continue
         row = unique[key]
         row["clinvar_ids"] = sorted(row["clinvar_ids"])
         deduplicated.append(row)
@@ -128,6 +133,7 @@ def _deduplicate_protein_substitutions(variants):
         "duplicate_policy": _DUPLICATE_POLICY,
         "n_duplicate_substitution_keys": len(duplicate_keys),
         "n_duplicate_rows_removed": n_duplicate_rows_removed,
+        "n_conflicting_substitutions_dropped": len(conflicting_keys),
     }
 
 
