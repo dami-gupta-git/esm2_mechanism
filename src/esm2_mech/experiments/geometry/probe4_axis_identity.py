@@ -12,7 +12,7 @@ print = functools.partial(print, flush=True)
 
 from esm2_mech.utils.constants import N_SEEDS
 from esm2_mech.utils.data import load_pfam_map
-from esm2_mech.utils.io import atomic_write_json
+from esm2_mech.utils.io import write_result_json
 from esm2_mech.utils.paths import (
     GEOMETRY_RESULTS_DIR,
     PROBE4_AXIS_IDENTITY_JSON,
@@ -247,7 +247,7 @@ def run(n_seeds=N_SEEDS):
             "esm2_plus_biochem": [bm, bstd],
         },
     }
-    atomic_write_json(PROBE4_AXIS_IDENTITY_JSON, result)
+    write_result_json(PROBE4_AXIS_IDENTITY_JSON, result, seeds=list(range(n_seeds)))
     print(f"\nResults -> {PROBE4_AXIS_IDENTITY_JSON}")
 
     print("\n=== READ ===")

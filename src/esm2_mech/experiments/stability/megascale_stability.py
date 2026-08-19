@@ -35,7 +35,7 @@ from esm2_mech.utils.constants import (
     N_FOLDS,
 )
 from esm2_mech.utils.data import load_pfam_map
-from esm2_mech.utils.io import atomic_write_json
+from esm2_mech.utils.io import write_result_json
 from esm2_mech.utils.metrics import auroc_at_median, fold_macro_f1, mean_std_n, standardize
 from esm2_mech.utils.splits import family_split_cv
 from esm2_mech.utils.paths import (
@@ -439,7 +439,7 @@ def main(compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES, n_jobs=1):
     else:
         print("  Per-protein ρ: no protein yielded a finite ρ — skipped")
 
-    atomic_write_json(os.path.join(OUT, "per_protein_spearman.json"), per_prot)
+    write_result_json(os.path.join(OUT, "per_protein_spearman.json"), per_prot, seeds=None)
 
     summary = {}
     all_keys = set()
@@ -507,8 +507,9 @@ def main(compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES, n_jobs=1):
             f"Δ={control_3c_result['delta_f1']:+.3f}  "
             f"passes={'YES' if control_3c_result['3C_passes'] else 'NO (stability direction is informative)'}"
         )
-        atomic_write_json(
-            os.path.join(OUT, "stability_projection_3c.json"), control_3c_result
+        write_result_json(
+            os.path.join(OUT, "stability_projection_3c.json"), control_3c_result,
+            seeds=list(range(N_SEEDS)),
         )
     else:
         print("\nSkipping 3C (merged embeddings not found — run on pod with full data)")
@@ -582,7 +583,7 @@ def main(compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES, n_jobs=1):
         )
     print(f"{'='*60}")
 
-    atomic_write_json(os.path.join(OUT, "summary.json"), summary)
+    write_result_json(os.path.join(OUT, "summary.json"), summary, seeds=list(range(N_SEEDS)))
     print(f"\nResults written to {OUT}/")
 
 

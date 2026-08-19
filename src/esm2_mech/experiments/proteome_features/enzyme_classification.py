@@ -24,7 +24,7 @@ from esm2_mech.utils.constants import (
 from esm2_mech.utils.metrics import fold_macro_f1, majority_baseline_f1
 from esm2_mech.utils.splits import gene_split_cv, family_split_cv
 from esm2_mech.utils.data import build_gene_to_row, load_pfam_map
-from esm2_mech.utils.io import atomic_write_json
+from esm2_mech.utils.io import write_result_json
 from esm2_mech.utils.bootstrap import (
     folds_to_arms,
     score_within_folds,
@@ -701,7 +701,7 @@ def main():
         },
     }
 
-    atomic_write_json(ENZYME_CLASSIFICATION_JSON, output, indent=2)
+    write_result_json(ENZYME_CLASSIFICATION_JSON, output, seeds=seeds, indent=2)
     print(f"\nResults written to {ENZYME_CLASSIFICATION_JSON}")
 
 

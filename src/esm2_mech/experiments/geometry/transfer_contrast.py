@@ -9,7 +9,7 @@ import functools
 print = functools.partial(print, flush=True)
 
 from esm2_mech.utils.data import load_pfam_map
-from esm2_mech.utils.io import atomic_write_json
+from esm2_mech.utils.io import write_result_json
 from esm2_mech.utils.paths import (
     GEOMETRY_RESULTS_DIR,
     TRANSFER_CONTRAST_JSON,
@@ -207,7 +207,7 @@ def run(n_seeds=N_SEEDS, stability_dataset=DEFAULT_STABILITY_DATASET):
             }
             print(f"{name:42s} {kind:7s} {pm:.3f}±{ps:.3f}  {tm:.3f}±{ts:.3f}  (seeds={n_seeds})")
 
-    atomic_write_json(TRANSFER_CONTRAST_JSON, results)
+    write_result_json(TRANSFER_CONTRAST_JSON, results, seeds=list(range(n_seeds)))
     print(f"\nResults -> {TRANSFER_CONTRAST_JSON}")
     return results
 
@@ -225,8 +225,9 @@ def main():
     )
     args = ap.parse_args()
     run(n_seeds=args.seeds, stability_dataset=args.stability_dataset)
-    print("\nRead: 'pooled' = random-split (easy). 'transfer' = probe fit on one")
-    print("group-half, scored on the disjoint half. linear vs gbm shows whether")
+    print("\nRead: 'pooled' = group-disjoint k-fold (easy: most groups seen in train).")
+    print("'transfer' = probe fit on one group-half, scored on the disjoint half.")
+    print("linear vs gbm shows whether")
     print("nonlinearity recovers cross-group signal (result_21: it does for stability,")
     print("not for mechanism). NOTE: stability grouped by protein (S1724 has no local")
     print(

@@ -21,7 +21,7 @@ from esm2_mech.utils.bootstrap import (
 )
 from esm2_mech.utils.constants import BOOTSTRAP_N_RESAMPLES, MIN_TRAIN_CLASSES, N_SEEDS
 from esm2_mech.utils.data import load_pfam_map
-from esm2_mech.utils.io import atomic_write_json
+from esm2_mech.utils.io import write_result_json
 from esm2_mech.utils.paths import (
     GEOMETRY_RESULTS_DIR,
     MAGNITUDE_DIRECTION_JSON,
@@ -529,7 +529,7 @@ def _run_seeds(
             "P4_mag_spearman_min": P4_MAG_SPEARMAN_MIN,
         },
     }
-    atomic_write_json(MAGNITUDE_DIRECTION_JSON, result)
+    write_result_json(MAGNITUDE_DIRECTION_JSON, result, seeds=list(seeds))
     print(f"\nResults -> {MAGNITUDE_DIRECTION_JSON}")
     return result
 

@@ -15,7 +15,7 @@ import functools
 print = functools.partial(print, flush=True)
 
 from esm2_mech.utils.data import load_pfam_map
-from esm2_mech.utils.io import atomic_write_json, save_npy, load_npy_or_discard
+from esm2_mech.utils.io import atomic_write_json, save_npy, load_npy_or_discard, write_result_json
 from esm2_mech.utils.paths import (
     GEOMETRY_RESULTS_DIR,
     CONSERVATION_AXIS_JSON,
@@ -327,7 +327,7 @@ def analyse():
             "reported AUROCs are not risk estimates (pre-registration §1.4)."
         ),
     }
-    atomic_write_json(CONSERVATION_AXIS_JSON, result)
+    write_result_json(CONSERVATION_AXIS_JSON, result, seeds=list(range(5)))
 
     print("\n" + "=" * 60)
     print("CONSERVATION DECIDER")

@@ -29,7 +29,7 @@ from esm2_mech.experiments.stability.stability_data import (
 )
 from esm2_mech.experiments.stability.megascale_stability import run_regression_cv, OUT
 from esm2_mech.utils.constants import N_SEEDS
-from esm2_mech.utils.io import atomic_write_json
+from esm2_mech.utils.io import write_result_json
 from esm2_mech.utils.metrics import auroc_at_median, mean_std_n, standardize
 
 os.makedirs(OUT, exist_ok=True)
@@ -244,7 +244,7 @@ def main(use_xgboost=False):
     # Separate output file for the xgboost variant so it never overwrites the
     # default sklearn comparison (mlp_summary.json).
     out_name = "mlp_summary_xgb.json" if use_xgboost else "mlp_summary.json"
-    atomic_write_json(os.path.join(OUT, out_name), summary)
+    write_result_json(os.path.join(OUT, out_name), summary, seeds=list(range(N_SEEDS)))
     print(f"\nResults written to {os.path.join(OUT, out_name)}")
 
 

@@ -65,6 +65,11 @@ def load_seed_files(
     A corrupt (unparseable JSON) seed file is skipped with a warning rather than
     silently dropped or fabricated; that seed is then treated as absent for the
     `expected_seeds` completeness check.
+
+    A result that itself records which seed produced it (a top-level "seed" key)
+    must agree with the seed parsed from its filename — a renamed or misfiled
+    copy (e.g. backfilling a missing seed by copying another seed's file) would
+    otherwise be silently aggregated under the wrong seed number.
     """
     if seed_glob.count("*") != 1:
         raise ValueError(f"seed_glob must contain exactly one '*': {seed_glob!r}")
@@ -91,9 +96,17 @@ def load_seed_files(
         seed_to_filename[seed] = filename
         try:
             with open(path) as handle:
-                loaded.append((seed, filename, json.load(handle)))
+                result = json.load(handle)
         except json.JSONDecodeError:
             print(f"  WARNING: corrupt seed file {path} — skipping")
+            continue
+        recorded_seed = result.get("seed")
+        if recorded_seed is not None and recorded_seed != seed:
+            raise ValueError(
+                f"{path}: filename encodes seed {seed} but the result records "
+                f"seed {recorded_seed!r} — file was renamed or copied to the wrong seed"
+            )
+        loaded.append((seed, filename, result))
 
     if expected_seeds is not None:
         expected = set(expected_seeds)

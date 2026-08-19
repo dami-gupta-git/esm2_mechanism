@@ -213,9 +213,13 @@ def run_mlp_cv(
         train_mask[test_idx] = False
         splits.append((np.where(train_mask)[0], test_idx))
 
+    # classes must be le.classes_ (alphabetical), not CLASSES (declaration order):
+    # every downstream read of this arm's probs (hi3_analysis, unannotated_analysis)
+    # indexes columns via le.classes_.index(...), and le.classes_ sorts alphabetically
+    # ("DN","GOF","LOF"), which differs from CLASSES = MECHANISM_CLASSES = ["GOF","DN","LOF"].
     _, oof = _shared_run_mlp_cv(
         X_obs, y_obs_str, splits, hidden=(64, 32), seed=RANDOM_STATE,
-        classes=CLASSES, genes=genes_obs, label="MLP", return_oof=True,
+        classes=list(le.classes_), genes=genes_obs, label="MLP", return_oof=True,
     )
     if oof is not None:
         probs[obs_rows[oof["row_ids"]]] = oof["proba"]

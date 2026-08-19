@@ -12,7 +12,7 @@ print = functools.partial(print, flush=True)
 
 from esm2_mech.utils.constants import N_SEEDS
 from esm2_mech.utils.data import load_pfam_map
-from esm2_mech.utils.io import atomic_write_json
+from esm2_mech.utils.io import write_result_json
 from esm2_mech.utils.paths import (
     GEOMETRY_RESULTS_DIR,
     DIRECTION_GEOMETRY_JSON,
@@ -226,7 +226,7 @@ def run(n_seeds=N_SEEDS):
     r2 = probe2_universal(delta, y, genes, fam, seeds=seeds)
 
     result = {"probe1_rank": r1, "probe2_universal": r2, "n_variants": int(len(y))}
-    atomic_write_json(DIRECTION_GEOMETRY_JSON, result)
+    write_result_json(DIRECTION_GEOMETRY_JSON, result, seeds=list(seeds))
     print(f"\nResults -> {DIRECTION_GEOMETRY_JSON}")
     return result
 

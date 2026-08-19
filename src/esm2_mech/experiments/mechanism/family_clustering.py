@@ -463,8 +463,7 @@ def main():
         if per_seed_acc:
             acc_mean, acc_std, n_seeds_used = mean_std_n(per_seed_acc)
             f1_mean, f1_std, _ = mean_std_n(per_seed_f1)
-            seed0_accuracy = probe["accuracy"]
-            seed0_macro_f1 = probe["macro_f1"]
+            probe_seed0 = probe
             probe = {
                 **probe,
                 "accuracy": acc_mean,
@@ -474,13 +473,15 @@ def main():
                 "n_seeds": n_seeds_used,
             }
             if compute_ci and probe_oof is not None:
-                # This CI is a cluster bootstrap over seed 0's OOF rows only, so
-                # it brackets seed 0's point estimate, not the multi-seed mean
-                # above. Store both together so the mismatch can't be mistaken
-                # for a CI on the 5-seed mean.
+                # probe_oof is only non-None when seed 0's family_probe scored at
+                # least one fold, so probe_seed0's "accuracy"/"macro_f1" are
+                # guaranteed present here. This CI is a cluster bootstrap over
+                # seed 0's OOF rows only, so it brackets seed 0's point estimate,
+                # not the multi-seed mean above. Store both together so the
+                # mismatch can't be mistaken for a CI on the 5-seed mean.
                 probe["ci_seed0_point"] = {
-                    "accuracy": seed0_accuracy,
-                    "macro_f1": seed0_macro_f1,
+                    "accuracy": probe_seed0["accuracy"],
+                    "macro_f1": probe_seed0["macro_f1"],
                 }
                 probe["ci"] = _family_probe_bootstrap_ci(probe_oof, args.n_boot, seed=0)
         view_res["family_probe"] = probe

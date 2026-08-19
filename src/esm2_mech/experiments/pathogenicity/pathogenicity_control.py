@@ -21,7 +21,7 @@ from esm2_mech.utils.data import (
     variants_fingerprint,
 )
 from esm2_mech.utils.embed import get_esm2_embeddings_for_pairs
-from esm2_mech.utils.io import atomic_write_json, save_npy
+from esm2_mech.utils.io import atomic_write_json, save_npy, write_result_json
 from esm2_mech.utils.paths import (
     CLINVAR_PATHOGENICITY_PARAMS_JSON,
     CLINVAR_PATHOGENICITY_VARIANTS_JSON,
@@ -295,10 +295,11 @@ def probe_phase(variants, n_seeds, n_jobs=-1, compute_ci=True, n_boot=BOOTSTRAP_
                 features[fname], y, splits, seed=seed, genes=genes, return_oof=True
             )
             # CI from seed 0's OOF only: each seed reshuffles the CV fold
-            # assignment, and the aggregation step below only ever keeps seed
-            # 0's CI (matching megascale_stability.py / magnitude_direction.py's
-            # Pre-registration §2C seed-0 convention — computing it for every seed would be
-            # pure waste, since seeds 1..n-1's bootstrap runs are discarded.
+            # assignment, so a single seed's predictions are the coherent unit to
+            # resample — pooling OOF across seeds would bootstrap over predictions
+            # built under different, incompatible fold assignments. The aggregation
+            # step below only ever keeps seed 0's CI, so computing it for every seed
+            # would be pure waste, since seeds 1..n-1's bootstrap runs are discarded.
             if compute_ci and oof is not None and seed == 0:
                 clusters = family_or_gene_clusters(
                     oof["genes"], pfam_map, is_family_split=(split_name == "family")
@@ -322,7 +323,7 @@ def probe_phase(variants, n_seeds, n_jobs=-1, compute_ci=True, n_boot=BOOTSTRAP_
             key = f"{fname}_{pname}_{split_name}"
             seed_result[key] = None if np.isnan(auroc) else auroc
             seed_result[f"{key}_ci"] = ci
-        atomic_write_json(seed_path, seed_result, indent=2)
+        write_result_json(seed_path, seed_result, seeds=[seed], indent=2)
         summary = "  ".join(
             f"{k}={v:.3f}" for k, v in seed_result.items()
             if "mlp" in k and not k.endswith("_ci") and v is not None
@@ -373,15 +374,17 @@ def probe_phase(variants, n_seeds, n_jobs=-1, compute_ci=True, n_boot=BOOTSTRAP_
                     "auroc_std": std,
                     "per_seed": per_cell[key],
                 }
-                # Cluster-bootstrap CI from seed 0's OOF only (pre-registration §2C
-                # convention): each seed reshuffles the CV fold assignment, so a
-                # single seed's CI is the coherent unit rather than merging OOF
-                # across seeds' differing folds.
+                # Cluster-bootstrap CI from seed 0's OOF only: each seed reshuffles
+                # the CV fold assignment, so a single seed's predictions are the
+                # coherent unit to resample rather than merging OOF across seeds'
+                # differing folds. This is an implementation choice, not a
+                # pre-registered convention — the preregistration's §2C does not
+                # specify a seed for the CI.
                 if compute_ci and key in seed0_ci:
                     cell["ci"] = seed0_ci[key]
                 results["by_feature"][fname][f"{pname}_{split_name}"] = cell
 
-    atomic_write_json(PATHOGENICITY_CONTROL_JSON, results, indent=2)
+    write_result_json(PATHOGENICITY_CONTROL_JSON, results, seeds=list(range(n_seeds)), indent=2)
     print(f"  Aggregated results written to {PATHOGENICITY_CONTROL_JSON}")
     return results
 

@@ -21,7 +21,7 @@ from esm2_mech.experiments.stability.megascale_stability import (
     OUT,
 )
 from esm2_mech.utils.constants import N_SEEDS
-from esm2_mech.utils.io import atomic_write_json
+from esm2_mech.utils.io import write_result_json
 from esm2_mech.utils.metrics import mean_std_n, standardize
 
 print = functools.partial(print, flush=True)
@@ -176,7 +176,7 @@ def main(n_jobs):
         print(f"  {split:7s}: {pretty}")
 
     out_path = os.path.join(OUT, "baselines.json")
-    atomic_write_json(out_path, results)
+    write_result_json(out_path, results, seeds=list(range(N_SEEDS)))
     print(f"\nResults written to {out_path}")
 
 
