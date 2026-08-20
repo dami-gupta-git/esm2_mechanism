@@ -54,9 +54,9 @@ weaker.
 
 | Feature | Logistic-regression AUROC | MLP AUROC |
 |---|---:|---:|
-| Full delta | 0.838 [0.831, 0.845] | 0.885 [0.880, 0.891] |
+| Full delta | 0.838 [0.831, 0.845] | 0.885 [0.880, 0.890] |
 | Magnitude | 0.610 [0.603, 0.619] | 0.610 [0.603, 0.619] |
-| Direction | 0.855 [0.848, 0.862] | 0.892 [0.887, 0.898] |
+| Direction | 0.855 [0.848, 0.862] | 0.893 [0.887, 0.898] |
 | *No-signal reference* | *0.500* | *0.500* |
 
 Values are five-seed family-split means with 95% family-bootstrap intervals. Direction slightly
@@ -224,8 +224,9 @@ establish that the gain is mechanism signal rather than family recognition.
 
 ## Provenance
 
-The result files were produced from commit `b50295205940aca08ce3f733b651db684387e25e` with
-`commit_dirty: true`. The stored scientific-input fingerprints match the final audited inputs.
+The analyses were rerun from the fingerprint-verified inputs at clean commit
+`c9945b43dbc279af988ce888febd570fd1e2d5df`. The result files record `commit_dirty: false`, and
+their stored scientific-input fingerprints match the audited inputs.
 
 | Result | Source |
 |---|---|

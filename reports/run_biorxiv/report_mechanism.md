@@ -64,7 +64,7 @@ resemblance can inflate performance.
 | Feature | Macro-F1, five-seed mean | Macro-F1, seed 0 (95% CI) | AUROC GOF | AUROC DN | AUROC LOF |
 |---|---:|---:|---:|---:|---:|
 | wt_only_mean | 0.552 | 0.534 [0.458, 0.583] | 0.814 | 0.747 | 0.838 |
-| mut_only_mean | 0.548 | 0.533 [0.457, 0.581] | 0.816 | 0.745 | 0.837 |
+| mut_only_mean | 0.549 | 0.533 [0.457, 0.581] | 0.816 | 0.745 | 0.837 |
 | wt_concat_mut | 0.552 | 0.536 [0.462, 0.583] | 0.810 | 0.736 | 0.833 |
 | delta_mean | 0.288 | 0.287 [0.275, 0.298] | 0.629 | 0.553 | 0.607 |
 | delta_per_residue | 0.338 | 0.325 [0.306, 0.348] | 0.633 | 0.596 | 0.625 |
@@ -82,7 +82,7 @@ The family split tests transfer after all genes from each Pfam family are held o
 
 | Feature | Macro-F1, five-seed mean | Macro-F1, seed 0 (95% CI) | AUROC GOF | AUROC DN | AUROC LOF |
 |---|---:|---:|---:|---:|---:|
-| wt_only_mean | 0.449 | 0.488 [0.414, 0.528] | 0.759 | 0.729 | 0.799 |
+| wt_only_mean | 0.450 | 0.488 [0.414, 0.528] | 0.759 | 0.729 | 0.799 |
 | mut_only_mean | 0.451 | 0.486 [0.413, 0.526] | 0.760 | 0.727 | 0.799 |
 | wt_concat_mut | 0.449 | 0.465 [0.400, 0.504] | 0.749 | 0.717 | 0.786 |
 | delta_mean | 0.290 | 0.290 [0.276, 0.305] | 0.584 | 0.524 | 0.557 |
@@ -111,11 +111,11 @@ wildtype embedding.
 |---|---:|---:|---:|---:|
 | MLP | 0.408 [0.365, 0.434] | 0.395 | 0.380 [0.333, 0.399] | 0.375 |
 | k-nearest neighbours | 0.393 [0.359, 0.417] | 0.414 | 0.357 [0.328, 0.369] | 0.357 |
-| Gradient-boosted trees | 0.306 [0.290, 0.327] | 0.310 | 0.297 [0.280, 0.313] | 0.297 |
+| Gradient-boosted trees | 0.307 [0.291, 0.329] | 0.309 | 0.299 [0.283, 0.316] | 0.298 |
 | Random forest | 0.295 [0.281, 0.313] | 0.298 | 0.290 [0.276, 0.306] | 0.290 |
 
 The MLP is the strongest delta model under family holdout at a five-seed mean of 0.375. This is
-above the 0.290 measured floor but below the 0.449 linear wildtype result.
+above the 0.290 measured floor but below the 0.450 linear wildtype result.
 
 ## Table 4. Family identity in the embedding
 
@@ -136,7 +136,7 @@ share its Pfam family, compared with 0.52% after family labels are shuffled. The
 smaller local family signal: 5.20% purity compared with a 0.52% shuffled reference.
 
 Among genes in multi-gene families, 83.2% match their family's majority mechanism label. The
-wildtype leakage fraction is 0.389, with a 95% family-bootstrap interval of 0.241 to 0.542. This
+wildtype leakage fraction is 0.389, with a 95% family-bootstrap interval of 0.239 to 0.543. This
 means that about 39% of its performance above the measured floor does not survive family holdout.
 
 ## Table 5. Single-source check
@@ -160,7 +160,7 @@ The delta remains at the subset's measured floor, while the wildtype embedding r
    mutation-induced change.
 2. The family-split AUROC for `delta_mean` is highest for GOF at 0.584. This is weak ranking
    information, not useful three-class classification.
-3. `wt_only_mean` falls from a five-seed mean of 0.552 in Table 1 to 0.449 in Table 2. Because this
+3. `wt_only_mean` falls from a five-seed mean of 0.552 in Table 1 to 0.450 in Table 2. Because this
    feature never sees the mutation, its performance reflects the protein and its family.
 4. `mut_only_mean` performs almost identically to `wt_only_mean`, and combining the two embeddings
    does not improve the family-split result. The mutation adds no meaningful linear classification
@@ -246,9 +246,9 @@ preregistered linear PCA probe.
 ## Provenance
 
 Embeddings are four arrays with shape `(17770, 1280)`, row-aligned to 17,770 variant records. The
-result files record the shared input fingerprints and commit
-`b50295205940aca08ce3f733b651db684387e25e` with `commit_dirty: true`. The stored scientific-input
-fingerprints match the final audited inputs.
+analysis was rerun from the fingerprint-verified inputs at clean commit
+`c9945b43dbc279af988ce888febd570fd1e2d5df`. The result files record `commit_dirty: false`, and
+their stored scientific-input fingerprints match the audited inputs.
 
 | Result | Source |
 |---|---|

@@ -62,13 +62,13 @@ but similarly-drawn sample of genes, rather than reporting a single number as if
 
 | Step | Command | Outputs | Status |
 |---|---|---|---|
-| 4.1 | `python -m esm2_mech.experiments.mechanism.classify_by_mechanism --seeds 5` | `results/run_biorxiv/family_split_baselines_seed{0..4}.json`, `mechanism_oof_cache_seed{0..4}.json` | ✅ 2026-08-19 |
-| 4.2 | `python -m esm2_mech.experiments.mechanism.mlp --seeds 5` | `results/run_biorxiv/nonlinear_results_seed{0..4}.json` | ✅ 2026-08-19 |
-| 4.3 | `python -m esm2_mech.experiments.mechanism.family_clustering --seeds 5` | `results/run_biorxiv/family_clustering.json` | ✅ 2026-08-19 |
-| 4.4 | `python -m esm2_mech.experiments.mechanism.naive_baseline` | `results/run_biorxiv/naive_baseline.json` | ✅ 2026-08-19 |
-| 4.7 | `python -m esm2_mech.experiments.mechanism.single_source_mechanism --seeds 5` | `results/run_biorxiv/single_source_gerasimavicius/...` | ✅ 2026-08-19 |
-| 4.6 | `python -m esm2_mech.experiments.mechanism.classify_by_mechanism --seeds 5 --n_permutations 1000` | `results/run_biorxiv/...` | ✅ 2026-08-19 |
-| 4.5 | `python -m esm2_mech.experiments.mechanism.leakage_fraction` | `results/run_biorxiv/leakage_fraction.json` | ✅ 2026-08-19 |
+| 4.1 | `python -m esm2_mech.experiments.mechanism.classify_by_mechanism --seeds 5` | `results/run_biorxiv/family_split_baselines_seed{0..4}.json`, `mechanism_oof_cache_seed{0..4}.json` | ✅ clean rerun through step 4.6, 2026-08-20 |
+| 4.2 | `python -m esm2_mech.experiments.mechanism.mlp --seeds 5` | `results/run_biorxiv/nonlinear_results_seed{0..4}.json` | ✅ clean rerun 2026-08-20 |
+| 4.3 | `python -m esm2_mech.experiments.mechanism.family_clustering --seeds 5` | `results/run_biorxiv/family_clustering.json` | ✅ clean rerun 2026-08-20 |
+| 4.4 | `python -m esm2_mech.experiments.mechanism.naive_baseline` | `results/run_biorxiv/naive_baseline.json` | ✅ clean rerun 2026-08-20 |
+| 4.7 | `python -m esm2_mech.experiments.mechanism.single_source_mechanism --seeds 5` | `results/run_biorxiv/single_source_gerasimavicius/...` | ✅ clean rerun 2026-08-20 |
+| 4.6 | `python -m esm2_mech.experiments.mechanism.classify_by_mechanism --seeds 5 --n_permutations 1000` | `results/run_biorxiv/...` | ✅ clean rerun 2026-08-20 |
+| 4.5 | `python -m esm2_mech.experiments.mechanism.leakage_fraction` | `results/run_biorxiv/leakage_fraction.json` | ✅ clean rerun 2026-08-20 |
 
 ## 5. Experiment: Pathogenicity positive control
 
@@ -78,19 +78,19 @@ but similarly-drawn sample of genes, rather than reporting a single number as if
 | 5.2 | `scp pfam_families.json` to pod | | ✅ 2026-08-19 |
 | 5.3 | `python -m esm2_mech.experiments.pathogenicity.pathogenicity_control --phase embed --model esm2_t33_650M_UR50D --force_embed` | `pathogenicity_{wt,mut}_mean.npy`, `pathogenicity_meta.json` | ✅ 2026-08-19 |
 | 5.4 | Copy embeddings back to local | | ✅ 2026-08-19 |
-| 5.5 | `python -m esm2_mech.experiments.pathogenicity.pathogenicity_control --phase probe --seeds 5 --n_jobs <workers> --n_boot 1000` | `results/run_biorxiv/pathogenicity_control_seed{0..4}.json`, `pathogenicity_control.json` | ✅ 2026-08-19 |
+| 5.5 | `python -m esm2_mech.experiments.pathogenicity.pathogenicity_control --phase probe --seeds 5 --n_jobs <workers> --n_boot 1000` | `results/run_biorxiv/pathogenicity_control_seed{0..4}.json`, `pathogenicity_control.json` | ✅ clean rerun 2026-08-20 |
 
 ## 6. Experiment: Geometry of the pathogenicity direction
 
 | Step | Command | Outputs | Status |
 |---|---|---|---|
 | 6.1 | `python -m esm2_mech.experiments.geometry.build_canonical_pathogenicity` | `data/pathogenicity_valid_variants_canonical.json` | ✅ 2026-08-19 |
-| 6.2 | `python -m esm2_mech.experiments.geometry.run_geometry --seeds 5 --stability-dataset tsuboyama` | `results/run_biorxiv/magnitude_direction/{probe_results,geometry_results,transfer_contrast,probe4_axis_identity}.json` | ✅ 2026-08-19 |
+| 6.2 | `python -m esm2_mech.experiments.geometry.run_geometry --seeds 5 --stability-dataset tsuboyama` | `results/run_biorxiv/magnitude_direction/{probe_results,geometry_results,transfer_contrast,probe4_axis_identity}.json` | ✅ clean rerun 2026-08-20 |
 | 6.3 | `scp pathogenicity_valid_variants_canonical.json` to pod | | ✅ 2026-08-19 |
 | 6.4 | `scp sequences.json` to pod | | ✅ 2026-08-19 |
 | 6.5 | `python -m esm2_mech.experiments.geometry.conservation_axis --extract` | `data/conservation_pathogenicity.npy`, `data/conservation_pathogenicity_meta.json` | ✅ 2026-08-19 |
 | 6.6 | Copy conservation outputs back to local | | ✅ 2026-08-19 |
-| 6.7 | `python -m esm2_mech.experiments.geometry.conservation_axis` | `results/run_biorxiv/magnitude_direction/conservation_axis.json` | ✅ 2026-08-19 |
+| 6.7 | `python -m esm2_mech.experiments.geometry.conservation_axis` | `results/run_biorxiv/magnitude_direction/conservation_axis.json` | ✅ clean rerun 2026-08-20 |
 
 ## 7. Experiment: Megascale stability positive control
 
@@ -165,7 +165,7 @@ but similarly-drawn sample of genes, rather than reporting a single number as if
 - [x] Full test suite. The manuscript-freeze suite passed with 758 tests passed, 1 skipped, and
       1 expected failure.
 - [x] Final repository state. The manuscript-freeze release is recorded by tag
-      `run_biorxiv-manuscript-freeze-2026-08-19` on `main`.
+      `run_biorxiv-manuscript-freeze-2026-08-20` on `main`.
 - [x] Execution environments. Every local and pod environment used by the completed steps is recorded
       in `ENV_SNAPSHOT.md`, including the environment used for step 7.3.
 - [x] Result fingerprints. Every completed result used by the manuscript was checked against its
@@ -180,9 +180,9 @@ but similarly-drawn sample of genes, rather than reporting a single number as if
 - [x] Cross-report numbers and provenance. Claims 2A-1 through 2H and 3A through 3D match their
       cited result files, and all 63 local links in the quantitative reports, literature audit,
       manuscript files, and verification record resolve. The mechanism, pathogenicity, and geometry
-      outputs record commit `b502952` with `commit_dirty: true`; their stored scientific-input
-      fingerprints match the final audited inputs. Enzyme and stability outputs record clean commit
-      `6937c85`. The confirmatory mechanism score of 0.290, exploratory geometry score of 0.387,
+      outputs record clean commit `c9945b4`; their stored scientific-input fingerprints match the
+      final audited inputs. Enzyme and stability outputs record clean commit `6937c85`. The
+      confirmatory mechanism score of 0.290, exploratory geometry score of 0.387,
       and shared-family mechanism score of 0.280 remain separately labeled by probe and cohort.
 
 ### Per-claim checks
@@ -231,10 +231,10 @@ under the registered three-of-five rule. The reported gap range, seed intervals,
 fraction, and Gerasimavicius-only seed-0 sensitivity result match their source files.
 
 Claim 2C was verified against `pathogenicity_control_seed0.json` and the five-seed
-`pathogenicity_control.json` summary. The seed-0 family-split `delta_mean` MLP AUROC is 0.887601,
-with a 1,072-family bootstrap interval of [0.882320, 0.893363]. The lower bound exceeds the
+`pathogenicity_control.json` summary. The seed-0 family-split `delta_mean` MLP AUROC is 0.885617,
+with a 1,072-family bootstrap interval of [0.880193, 0.891240]. The lower bound exceeds the
 registered 0.85 threshold, so the affirmed verdict is established. The descriptive five-seed mean
-is 0.885004, and the reported deduplication, balancing, and exclusion counts match the source.
+is 0.884894, and the reported deduplication, balancing, and exclusion counts match the source.
 
 Claim 2D was verified against `magnitude_direction/conservation_axis.json`. The seed-0
 conservation-only family-split AUROC is 0.887626, with a one-arm 1,072-family bootstrap interval of
@@ -243,8 +243,8 @@ verdict is established. The descriptive five-seed mean is 0.887541, and all five
 are retained in the result file.
 
 Claim 2E was verified against `magnitude_direction/conservation_axis.json`. On seed 0,
-conservation plus the embedding delta minus conservation alone is -0.004738, with a paired
-1,072-family bootstrap interval of [-0.008391, -0.001341] over 24,176 shared variants. The point
+conservation plus the embedding delta minus conservation alone is -0.004706, with a paired
+1,072-family bootstrap interval of [-0.008343, -0.001306] over 24,176 shared variants. The point
 estimate does not reach the registered +0.02 improvement, and the interval does not span that
 threshold. The report's failed, established verdict therefore follows the registered underpowered
 rule.

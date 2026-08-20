@@ -117,3 +117,47 @@ joblib==1.5.3
 GPU: NVIDIA H100 80GB HBM3
 NVIDIA driver: 580.126.09
 ```
+
+## Clean provenance rerun, pod 1
+
+This environment produced clean reruns of steps 4.2 through 4.6, 5.5, and 6.7 at commit
+`c9945b43dbc279af988ce888febd570fd1e2d5df`. The working tree was clean. The source snapshot is
+retained as `results/run_biorxiv/environment_snapshot_clean_rerun_pod1.txt`.
+
+```
+python 3.12.3 | Linux-6.8.0-90-generic-x86_64-with-glibc2.39
+numpy==2.2.6
+scipy==1.18.0
+scikit-learn==1.9.0
+pandas==2.3.3
+torch==2.13.0
+fair-esm==2.0.0
+xgboost==3.4.1
+biopython==1.88
+joblib==1.5.3
+CPU: Intel Xeon Platinum 8470, 208 logical CPUs
+GPU: NVIDIA H100 80GB HBM3
+NVIDIA driver: 580.126.09
+```
+
+## Clean provenance rerun, pod 2
+
+This environment produced the clean reruns of steps 4.7 and 6.2 at commit
+`c9945b43dbc279af988ce888febd570fd1e2d5df`. The working tree was clean. The source snapshot is
+retained as `results/run_biorxiv/environment_snapshot_clean_rerun_pod2.txt`.
+
+```
+python 3.12.13 | Linux-6.8.0-90-generic-x86_64-with-glibc2.35
+numpy==2.2.6
+scipy==1.18.0
+scikit-learn==1.9.0
+pandas==2.3.3
+torch==2.13.0
+fair-esm==2.0.0
+xgboost==3.4.1
+biopython==1.88
+joblib==1.5.3
+CPU: Intel Xeon Platinum 8470, 208 logical CPUs
+GPU: NVIDIA H100 80GB HBM3
+NVIDIA driver: 580.126.09
+```

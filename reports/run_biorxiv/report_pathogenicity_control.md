@@ -59,10 +59,10 @@ held out.
 
 | Feature | Probe | Gene-split AUROC, five-seed mean | Family-split AUROC, five-seed mean | Family split, seed 0 (95% CI) | Split drop |
 |---|---|---:|---:|---:|---:|
-| delta_mean | MLP | 0.888 | 0.885 | 0.888 [0.882, 0.893] | 0.003 |
+| delta_mean | MLP | 0.887 | 0.885 | 0.886 [0.880, 0.891] | 0.003 |
 | delta_mean | Logistic regression | 0.840 | 0.838 | 0.835 [0.828, 0.842] | 0.002 |
-| wt_only | MLP | 0.535 | 0.525 | 0.524 [0.516, 0.532] | 0.010 |
-| wt_only | Logistic regression | 0.530 | 0.518 | 0.515 [0.509, 0.522] | 0.012 |
+| wt_only | MLP | 0.535 | 0.525 | 0.527 [0.519, 0.536] | 0.010 |
+| wt_only | Logistic regression | 0.530 | 0.518 | 0.516 [0.509, 0.523] | 0.012 |
 | *No-signal reference* | *None* | *0.500* | *0.500* | *0.500* | *Not applicable* |
 
 The split drop is the gene-split mean minus the family-split mean. A small drop means performance
@@ -74,10 +74,10 @@ The positive-control threshold is evaluated on the seed-0 family-split MLP resul
 
 ### 2C. Pathogenicity clears AUROC 0.85 under family holdout
 
-The seed-0 `delta_mean` MLP AUROC is 0.888, with a 95% bootstrap interval from 0.882 to 0.893 after
+The seed-0 `delta_mean` MLP AUROC is 0.886, with a 95% bootstrap interval from 0.880 to 0.891 after
 resampling 1,072 Pfam families. The complete interval is above the preregistered threshold of 0.85.
 
-✅ **Affirmed.** The CI lower bound is 0.882, which exceeds 0.85. The descriptive five-seed
+✅ **Affirmed.** The CI lower bound is 0.880, which exceeds 0.85. The descriptive five-seed
 family-split mean is 0.885.
 
 ## Reading the table
@@ -133,8 +133,9 @@ classification floor, although weak mechanism-ranking information is detectable.
 ## Provenance
 
 The final analysis uses result version 4 and input fingerprints recorded in the result files. The
-files were produced from commit `b50295205940aca08ce3f733b651db684387e25e` with
-`commit_dirty: true`. The stored scientific-input fingerprints match the final audited inputs.
+probe was rerun from the fingerprint-verified inputs at clean commit
+`c9945b43dbc279af988ce888febd570fd1e2d5df`. The result files record `commit_dirty: false`, and
+their stored scientific-input fingerprints match the audited inputs.
 
 | Result | Source |
 |---|---|
