@@ -421,8 +421,8 @@ or rebuilds the arrays when that identity cannot be established.
 Fits a Ridge regression from the embeddings to ΔΔG under three cross-validation schemes — random
 split, holding out whole domains, and holding out whole Pfam families — and tests four pre-registered
 hypotheses: 3A, the random-split correlation (Spearman ρ) reaches at least 0.5; 3B, that correlation
-drops by no more than 0.10 when switching to a family-split (a big drop would mean the model is
-recognizing domains rather than learning a general stability signal); 3C, projecting the fitted
+drops by no more than 0.05 when switching to a family split, while a drop of at least 0.10 triggers
+the `LEAKY` outcome and the interval between them is not adjudicated; 3C, projecting the fitted
 stability direction out of section 4's mechanism-classification features does not raise the
 family-split mechanism score by more than 0.01 (stability and mechanism should be separable); 3D, the
 per-domain spread in correlation stays tight (standard deviation ≤ 0.10).
@@ -467,11 +467,15 @@ stability signal actually occupies.
 `--n_jobs` is required here too, for the same reason as step 7.2 — its per-seed loops fork workers
 against the full embedding matrix. Start at `--n_jobs 4`.
 
-Gates are unchanged from run6: 3A random-split ρ ≥ 0.5, 3B the random-to-family-split drop stays
-below 0.10, 3C the mechanism-F1 change from projecting out stability stays ≤ +0.01, 3D per-domain ρ
-standard deviation stays tight. run_biorxiv's only addition here is confidence intervals on these
-figures; since this experiment has no ClinVar dependency, it is the one part of this run that
-isolates the effect of the new statistics from any effect of the refreshed ClinVar snapshot.
+Gates are unchanged from run6: 3A random-split ρ ≥ 0.5; 3B is affirmed when the
+random-to-family-split drop is at most 0.05, fails as `LEAKY` when the drop is at least 0.10, and is
+not adjudicated between those boundaries; 3C the mechanism-F1 change from projecting out stability
+stays ≤ +0.01; and 3D per-domain ρ standard deviation stays tight. run_biorxiv's only addition here
+is confidence intervals on these figures; since this experiment has no ClinVar dependency, it is
+the one part of this run that isolates the effect of the new statistics from any effect of the
+refreshed ClinVar snapshot. The audit clarification in `PREREGISTRATION_run_biorxiv.md`, Part 3,
+records why the executed result's single 0.10 upper-bound field does not change the observed 3B
+verdict.
 
 ---
 
@@ -553,17 +557,17 @@ from the rule in §1.1 rather than from the point estimate alone.
 |---|---|---|---|
 | 2A-1 | `mechanism_oof_cache_seed{0..4}.json`, `family_split_baselines_seed{0..4}.json` | report_mechanism.md | [ ] |
 | 2A-2 | permutation output under `results/run_biorxiv/` (Runbook §4.6) | report_mechanism.md | [ ] |
-| 2B | `leakage_fraction.json`, `family_clustering.json` | report_mechanism.md | [ ] |
+| 2B | `family_split_baselines_seed{0..4}.json`, `aggregate.json`; descriptive `leakage_fraction.json` and single-source seed files | report_mechanism.md | [ ] |
 | 2C | `pathogenicity_control_seed{0..4}.json`, `pathogenicity_control.json` | report_pathogenicity_control.md | [ ] |
 | 2D | `magnitude_direction/conservation_axis.json` | report_geometry.md | [ ] |
 | 2E | `magnitude_direction/conservation_axis.json` | report_geometry.md | [ ] |
 | 2F | `enzyme_classification/enzyme_classification_summary.json` | report_enzyme_classification.md | [ ] |
 | 2G | `enzyme_classification/enzyme_classification_summary.json` (paired against §4's mechanism OOF) | report_enzyme_classification.md | [ ] |
 | 2H | `enzyme_classification/enzyme_classification_summary.json` | report_enzyme_classification.md | [ ] |
-| 3A | `megascale_stability/summary.json` | report_stability.md | [ ] pending experiment 7 |
-| 3B | `megascale_stability/summary.json` | report_stability.md | [ ] pending experiment 7 |
-| 3C | `megascale_stability/stability_projection_3c.json` | report_stability.md | [ ] pending experiment 7 |
-| 3D | `megascale_stability/mlp_summary.json`, `mlp_summary_xgb.json` | report_stability.md | [ ] pending experiment 7 |
+| 3A | `megascale_stability/summary.json` | report_stability.md | [ ] |
+| 3B | `megascale_stability/summary.json` | report_stability.md | [ ] |
+| 3C | `megascale_stability/stability_projection_3c.json` | report_stability.md | [ ] |
+| 3D | `megascale_stability/summary.json`, `megascale_stability/per_protein_spearman.json` | report_stability.md | [ ] |
 
 ### Exit condition
 

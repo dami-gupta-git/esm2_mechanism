@@ -75,8 +75,13 @@ The same decomposition does not reveal a strong mechanism signal.
 | *Measured chance floor* | *0.290* | *0.290* |
 
 Values are five-seed family-split means. Direction performs similarly to the full delta, while
-magnitude is at or near the measured floor. This analysis does not replace the preregistered
-mechanism tests in [`report_mechanism.md`](report_mechanism.md).
+magnitude is at or near the measured floor. The logistic-regression rows use the exploratory
+geometry probe: all 1,280 delta dimensions, standardization fitted within each training fold, and
+balanced class weights. The preregistered mechanism probe in
+[`report_mechanism.md`](report_mechanism.md) instead uses 256 per-fold PCA components without
+standardization or class weighting and reports 0.290 for the full delta. The values of 0.387 and
+0.290 therefore describe different probe specifications on the same mechanism cohort. This
+exploratory comparison does not replace or readjudicate the preregistered mechanism test.
 
 ## Table 3. Exploratory geometry of the pathogenicity direction
 
@@ -154,6 +159,9 @@ Conservation alone predicts pathogenicity better than the full embedding delta.
 | Conservation plus delta minus conservation | -0.005 [-0.008, -0.001] |
 | Conservation plus delta minus delta | +0.048 [+0.044, +0.051] |
 
+All intervals use seed-0 held-out-fold predictions and resample 1,072 Pfam families. The paired
+comparisons apply each bootstrap draw to both feature sets.
+
 The held-out correlation between the masked-marginal score and the pathogenicity axis is 0.684.
 The full conservation feature set and the single masked-marginal score perform almost identically.
 
@@ -194,6 +202,14 @@ same direction-based decomposition remains weak for three-class mechanism classi
 reported in [`report_mechanism.md`](report_mechanism.md). The underlying pathogenicity result is
 reported in [`report_pathogenicity_control.md`](report_pathogenicity_control.md).
 
+A related pattern appears in Zhong and Shen's RESCVE model (`papers/rescve_zhong_shen_2022.pdf`),
+which reports the same untrained masked-marginal score from ESM1b and ESM2 as a baseline. That
+score reaches AUROC 0.815 to 0.922 for pathogenicity but only 0.541 to 0.653 for gain-of-function
+versus loss-of-function classification, close to chance. Their trained model raises the
+gain-of-function/loss-of-function score to 0.79 to 0.93, but only after training and testing on
+variants from the same protein family with a random, non-family-held-out split. It does not
+establish that the gain is mechanism signal rather than family recognition.
+
 ## What this is and is not
 
 - The magnitude, direction-ablation, transfer, and biochemistry analyses are exploratory. Claims
@@ -208,7 +224,8 @@ reported in [`report_pathogenicity_control.md`](report_pathogenicity_control.md)
 
 ## Provenance
 
-The result files were produced from commit `b50295205940aca08ce3f733b651db684387e25e`.
+The result files were produced from commit `b50295205940aca08ce3f733b651db684387e25e` with
+`commit_dirty: true`. The stored scientific-input fingerprints match the final audited inputs.
 
 | Result | Source |
 |---|---|

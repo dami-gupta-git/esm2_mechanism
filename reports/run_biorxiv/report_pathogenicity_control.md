@@ -74,11 +74,11 @@ The positive-control threshold is evaluated on the seed-0 family-split MLP resul
 
 ### 2C. Pathogenicity clears AUROC 0.85 under family holdout
 
-The seed-0 `delta_mean` MLP AUROC is 0.888, with a 95% family-bootstrap interval from 0.882 to
-0.893. The complete interval is above the preregistered threshold of 0.85.
+The seed-0 `delta_mean` MLP AUROC is 0.888, with a 95% bootstrap interval from 0.882 to 0.893 after
+resampling 1,072 Pfam families. The complete interval is above the preregistered threshold of 0.85.
 
-✅ **Affirmed.** The CI lower bound is 0.882, which exceeds 0.85. The five-seed family-split mean is
-0.885.
+✅ **Affirmed.** The CI lower bound is 0.882, which exceeds 0.85. The descriptive five-seed
+family-split mean is 0.885.
 
 ## Reading the table
 
@@ -133,7 +133,8 @@ classification floor, although weak mechanism-ranking information is detectable.
 ## Provenance
 
 The final analysis uses result version 4 and input fingerprints recorded in the result files. The
-files were produced from commit `b50295205940aca08ce3f733b651db684387e25e`.
+files were produced from commit `b50295205940aca08ce3f733b651db684387e25e` with
+`commit_dirty: true`. The stored scientific-input fingerprints match the final audited inputs.
 
 | Result | Source |
 |---|---|

@@ -404,6 +404,14 @@ one, so proteome features should be near chance.
 A second positive control with its own gates, 3A–3D, governed by the same verdict rule (§1.1) and
 resampling rule (§1.2). These gates are not part of the confirmatory set.
 
+**Audit clarification, 2026-08-19.** The originating stability plan defines two boundaries for
+claim 3B. A random-to-family Spearman decrease of at most 0.05 supports family robustness, while a
+decrease of at least 0.10 triggers the `LEAKY` outcome. A decrease between 0.05 and 0.10 leaves 3B
+not adjudicated. Later runbook wording and the executed result encoded 3B as a single upper-bound
+gate at 0.10. The original two-boundary rule governs manuscript adjudication. The observed paired
+decrease is 0.153 [0.112, 0.192], so it exceeds the 0.10 refutation boundary and produces the same
+failed, `LEAKY` verdict under either formulation.
+
 ---
 
 ## Part 4 — Exploratory analyses

@@ -6,10 +6,11 @@ Confirmatory rules: [`PREREGISTRATION_run_biorxiv.md`](../../biorxiv/PREREGISTRA
 
 ## Summary
 
-The mutation-induced change in the ESM-2 embedding does not support reliable classification of
-loss-of-function, gain-of-function, and dominant-negative mechanisms. The unmutated protein
-embedding performs better, but part of that result comes from protein-family identity. A weak
-mutation-related ranking signal remains, so the finding is not a complete absence of information.
+Under the preregistered linear PCA probe, the mutation-induced change in the ESM-2 embedding does
+not support reliable classification of loss-of-function, gain-of-function, and dominant-negative
+mechanisms. The unmutated protein embedding performs better, but part of that result comes from
+protein-family identity. A weak mutation-related ranking signal remains, so the finding is not a
+complete absence of information.
 
 ## The question
 
@@ -94,6 +95,13 @@ The family split tests transfer after all genes from each Pfam family are held o
 AUROC values are five-seed means. DN is the smallest class, so its class-specific estimates are
 less precise. The matched `foldx_ddg` macro-F1 floor is 0.280.
 
+Table 2 reports the preregistered linear probe: 256 PCA components fitted within each training fold,
+without feature standardization or class weighting. The exploratory magnitude-and-direction analysis
+in [`report_geometry.md`](report_geometry.md) uses a full-dimensional, fold-standardized,
+class-balanced logistic regression and obtains macro-F1 0.387 for the same full delta and mechanism
+cohort. That value is a different probe specification and does not replace the 0.290 confirmatory
+result or change claim 2A-1.
+
 ## Table 3. Nonlinear probes on the delta
 
 Flexible probes recover some information from the mean-pooled delta, but remain below the linear
@@ -148,8 +156,8 @@ The delta remains at the subset's measured floor, while the wildtype embedding r
 ## Reading the tables
 
 1. In Table 2, `delta_mean` has a family-split macro-F1 of 0.290, equal to the measured floor. A
-   linear classifier cannot reliably assign the three mechanism labels from the mutation-induced
-   change.
+   preregistered linear PCA probe cannot reliably assign the three mechanism labels from the
+   mutation-induced change.
 2. The family-split AUROC for `delta_mean` is highest for GOF at 0.584. This is weak ranking
    information, not useful three-class classification.
 3. `wt_only_mean` falls from a five-seed mean of 0.552 in Table 1 to 0.449 in Table 2. Because this
@@ -172,24 +180,30 @@ information.
 The delta ranking test is significant in four seeds, while the wildtype gene-minus-family gap is
 supported in four seeds.
 
-| Seed | Delta permutation p-value | Wildtype split gap | Split-gap 95% CI |
-|---:|---:|---:|---:|
-| 0 | 0.029 | 0.046 | [-0.028, 0.121] |
-| 1 | 0.003 | 0.140 | [0.043, 0.222] |
-| 2 | 0.011 | 0.122 | [0.044, 0.189] |
-| 3 | 0.003 | 0.116 | [0.035, 0.188] |
-| 4 | 0.054 | 0.088 | [0.031, 0.146] |
+| Seed | Delta permutation p-value | Families without a swap partner | Wildtype split gap | Split-gap 95% CI |
+|---:|---:|---:|---:|---:|
+| 0 | 0.029 | 18 | 0.046 | [-0.028, 0.121] |
+| 1 | 0.003 | 14 | 0.140 | [0.043, 0.222] |
+| 2 | 0.011 | 26 | 0.122 | [0.044, 0.189] |
+| 3 | 0.003 | 16 | 0.116 | [0.035, 0.188] |
+| 4 | 0.054 | 17 | 0.088 | [0.031, 0.146] |
 
-### 2A-1. Linear mechanism classification sits at the measured floor
+Families without a same-size partner in their fold retain their observed labels in every
+permutation. Every split-gap interval resamples the 1,144 Pfam families and applies each shared
+bootstrap draw to both split arms.
+
+### 2A-1. Preregistered linear PCA classification sits at the measured floor
 
 The interval threshold is the measured family-split floor of 0.290 plus 0.05, giving 0.340. The
-upper confidence bound for linear `delta_mean` is below this threshold in all five seeds. In seed
-0, macro-F1 is 0.290 with a 95% family-bootstrap interval of 0.276 to 0.305.
+upper confidence bound for the preregistered linear PCA `delta_mean` probe is below this threshold
+in all five seeds. In seed 0, macro-F1 is 0.290 with a 95% family-bootstrap interval of 0.276 to
+0.305.
 
-✅ **Affirmed.** The classification-floor criterion is met in all 5 seeds. Linear `delta_mean`
-does not support reliable three-class mechanism classification under family holdout.
+✅ **Affirmed.** The classification-floor criterion is met in all 5 seeds. Under the preregistered
+linear PCA probe, `delta_mean` does not support reliable three-class mechanism classification under
+family holdout.
 
-### 2A-2. The linear mechanism delta has no detectable ranking signal
+### 2A-2. The preregistered linear mechanism delta has no detectable ranking signal
 
 The family-block permutation sensitivity test uses fixed out-of-fold predictions and macro
 one-vs-rest AUROC. Four of five seeds have p-values below 0.05.
@@ -206,7 +220,7 @@ The paired family-bootstrap interval excludes zero in four of five seeds.
 varies across seeds, from 0.046 to 0.140. The Gerasimavicius-only subset, which contains 666
 families, gives a gap of 0.147 with a 95% family-bootstrap interval of -0.004 to 0.227. Its direction
 is consistent with the merged analysis, but its interval spans zero and is not independently
-conclusive.
+conclusive. The leakage fraction in Table 4 is descriptive and does not adjudicate this claim.
 
 ## Interpretation
 
@@ -215,9 +229,10 @@ mechanism. Protein families correlate with curated gene-level mechanisms, so an 
 embedding can predict mechanism partly by recognizing the type of protein. Subtracting the
 wildtype embedding removes most family information and most classification performance.
 
-The result does not establish that the delta contains no mechanism-related information. AUROC and
-nonlinear probes detect weak signal, particularly for GOF, but that signal is insufficient for
-reliable separation of all three classes.
+The result does not establish that the delta contains no mechanism-related information. AUROC,
+nonlinear probes, and the exploratory alternative linear probe in `report_geometry.md` detect weak
+signal, particularly for GOF. The confirmatory classification-floor conclusion is specific to the
+preregistered linear PCA probe.
 
 ## What this is and is not
 
@@ -231,7 +246,9 @@ reliable separation of all three classes.
 ## Provenance
 
 Embeddings are four arrays with shape `(17770, 1280)`, row-aligned to 17,770 variant records. The
-result files record the shared input fingerprints and commit `b50295205940aca08ce3f733b651db684387e25e`.
+result files record the shared input fingerprints and commit
+`b50295205940aca08ce3f733b651db684387e25e` with `commit_dirty: true`. The stored scientific-input
+fingerprints match the final audited inputs.
 
 | Result | Source |
 |---|---|
