@@ -153,7 +153,7 @@ that mechanism labels are error-free or that the two classification tasks have e
 ## Provenance
 
 This report was regenerated from the final result produced at clean commit
-`6937c85bfb90269ae0451b2fe4684caf5c6a6f0f`. The result records fingerprints for the labeled gene
+`c9945b43dbc279af988ce888febd570fd1e2d5df`. The result records fingerprints for the labeled gene
 cohort, wildtype embeddings, Pfam assignments, proteome-feature rows and columns, and the mechanism
 reference used for claim 2G.
 

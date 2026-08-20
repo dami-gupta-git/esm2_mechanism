@@ -106,7 +106,7 @@ but similarly-drawn sample of genes, rather than reporting a single number as if
 
 | Step | Command | Outputs | Status |
 |---|---|---|---|
-| 8.1 | `python -m esm2_mech.experiments.proteome_features.enzyme_classification --seeds 5` | `results/run_biorxiv/enzyme_classification/enzyme_classification_summary.json` | ✅ 2026-08-19 |
+| 8.1 | `python -m esm2_mech.experiments.proteome_features.enzyme_classification --seeds 5` | `results/run_biorxiv/enzyme_classification/enzyme_classification_summary.json` | ✅ 2026-08-20 |
 
 ## Dataset and verification records
 
@@ -145,7 +145,7 @@ but similarly-drawn sample of genes, rather than reporting a single number as if
   `ENV_SNAPSHOT.md`.
 - Step 7.4 was rerun after fingerprint tracking was added. Its input fingerprints match the current
   step 7.2 result, and its environment is recorded in `ENV_SNAPSHOT.md`.
-- Step 8.1 was run at clean commit `6937c85`. Its result fingerprints match the current enzyme
+- Step 8.1 was rerun at clean commit `c9945b4`. Its result fingerprints match the current enzyme
   cohort, wildtype embeddings, Pfam assignments, proteome features, and mechanism reference. The
   Section 8 report was regenerated from this result, and claims 2F–2H were verified. Its environment
   is recorded in `ENV_SNAPSHOT.md`.
@@ -181,8 +181,9 @@ but similarly-drawn sample of genes, rather than reporting a single number as if
       cited result files, and all 63 local links in the quantitative reports, literature audit,
       manuscript files, and verification record resolve. The mechanism, pathogenicity, and geometry
       outputs record clean commit `c9945b4`; their stored scientific-input fingerprints match the
-      final audited inputs. Enzyme and stability outputs record clean commit `6937c85`. The
-      confirmatory mechanism score of 0.290, exploratory geometry score of 0.387,
+      final audited inputs. The enzyme output records clean commit `c9945b4`, while the stability
+      outputs record clean commit `6937c85`. The confirmatory mechanism score of 0.290,
+      exploratory geometry score of 0.387,
       and shared-family mechanism score of 0.280 remain separately labeled by probe and cohort.
 
 ### Per-claim checks

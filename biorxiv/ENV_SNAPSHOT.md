@@ -59,7 +59,7 @@ joblib==1.5.3
 
 ## Final Experiment 8 pod
 
-This environment produced the final step 8.1 result at clean commit `6937c85`. The source snapshot
+This environment produced the final step 8.1 result at clean commit `c9945b4`. The source snapshot
 is retained with the result as `results/run_biorxiv/enzyme_classification/environment_snapshot.txt`.
 
 ```
@@ -68,7 +68,7 @@ numpy==2.2.6
 scipy==1.18.0
 scikit-learn==1.9.0
 pandas==2.3.3
-torch==2.13.0
+torch==2.13.0+cu130
 fair-esm==2.0.0
 xgboost==3.4.1
 biopython==1.88
