@@ -342,6 +342,12 @@ The mechanism classification, ranking, and gene-to-family claims used their pres
 three-of-five seed rules. Other threshold tests used seed-0 out-of-fold predictions and
 cluster-bootstrap intervals for inference; five-seed means were descriptive.
 
+### 9. Use of generative AI
+
+Generative AI tools, including Claude (Anthropic) and Codex (OpenAI), were used to assist with code
+development, analysis review, figure preparation, and manuscript drafting and editing. All outputs
+were reviewed and verified by the author, who takes full responsibility for the work.
+
 ## Discussion
 
 A central finding was that mechanism-classification performance from frozen ESM-2 wildtype and
@@ -414,6 +420,24 @@ appropriate no-signal reference alongside performance. The next priority is vari
 mechanism labels established by functional assays. Such labels would address label granularity;
 stricter homology partitions would test transfer; and additional model sizes and pooling strategies
 would test representation choice.
+
+## Author contributions
+
+Dami Gupta conceived the study, developed the methodology and software, curated the data,
+performed the analyses, prepared the figures, and wrote and revised the manuscript.
+
+## Code availability
+
+Code used for cohort construction, analysis, and figure generation is available at
+https://github.com/dami-gupta-git/esm2_mechanism.
+
+## Funding
+
+This work received no external funding.
+
+## Competing interests
+
+The author declares no competing interests.
 
 ## References
 
