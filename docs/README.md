@@ -238,7 +238,6 @@ and measure discrimination only.
 - `plan_esm2_proteome.md` — Detailed Phase 1+2 plan for proteome feature engineering
 - `plan_clinical.md` — Clinical utility analysis plan (result 14)
 - `plan_badonyi.md` — Pre-registration for Badonyi raw-model holdout (result 16 addendum)
-- `progress_notes.md` — Running log of decisions, bugs fixed, observations
 - `../scripts/README.md` — What each script does
 
 ---

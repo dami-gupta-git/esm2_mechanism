@@ -244,9 +244,11 @@ results/
 !scripts
 !scripts/**
 
-# ...but never track .DS_Store, even under the un-ignored dirs above
+# ...but never track .DS_Store or bytecode, even under the un-ignored dirs above
 .DS_Store
 **/.DS_Store
+**/__pycache__/
+**/*.py[codz]
 for_me/
 docs/connect_runpod.md
 handoffs/
@@ -255,3 +257,8 @@ reports/summaries
 /tmp/
 reports/run_biorxiv_bak
 reports/bak/
+
+# Superseded runs — kept on disk, not shipped
+reports/run0/
+reports/run1/
+reports/run6/

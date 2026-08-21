@@ -1,39 +1,10 @@
 # Dissecting protein identity, mutation effects, and disease mechanism in ESM-2 embeddings
 
-## Status
+Dami Gupta ([ORCID: 0009-0009-2510-6104](https://orcid.org/0009-0009-2510-6104))
 
-This is the working manuscript skeleton, based on the current mechanism, pathogenicity control,
-geometry, enzyme classification, stability, and family-split literature-audit reports under
-`reports/run_biorxiv/`. A prior draft plan is kept at `biorxiv/bak/MANUSCRIPT.md` for reference
-only.
+Faculty of Computing & Data Sciences, Boston University, Boston, Massachusetts, USA
 
-## Length
-
-The main text should contain 3,000 to 4,000 words, excluding references, figure captions, and
-supplementary material.
-
-| Section | Target words |
-|---|---:|
-| Abstract | 200 |
-| Introduction | 400-450 |
-| Results | 1,300-1,450 |
-| Discussion | 600-700 |
-| Methods | 700-900 |
-| Total | 3,200-3,900 |
-
-Within Results, the mechanism and family sections (§1-3) should receive roughly half the Results
-budget, since they carry the study's primary finding. Pathogenicity, conservation, enzyme, and
-stability (§4-7) should stay tighter.
-
-| Results subsection | Target words |
-|---|---:|
-| 1. The preregistered delta probe matches the majority-class reference | 200-250 |
-| 2. Weak classification and ranking signals depend on probe choice | 200 |
-| 3. Wildtype embeddings predict Pfam family | 200-250 |
-| 4. Pathogenicity is recoverable across families | 125-175 |
-| 5. Pathogenicity information is largely redundant with conservation | 100-150 |
-| 6. Enzyme type is recoverable from the wildtype embedding | 150-200 |
-| 7. Stability is recoverable but not uniformly family-robust | 200-250 |
+Correspondence: Dami Gupta, dami.gupta@gmail.com
 
 ## Abstract
 
@@ -60,7 +31,8 @@ represented families.
 
 Protein language models such as ESM-2 are trained on large sequence databases and produce
 embeddings used to predict variant effects. Whether those embeddings can predict a particular
-downstream property is a separate empirical question. Performance on pathogenicity, for example,
+downstream property is a separate empirical question (Lin et al., 2023). Performance on
+pathogenicity, for example,
 does not establish that they can distinguish disease mechanisms.
 
 Pathogenicity and disease mechanism are distinct properties. A pathogenic variant may abolish
@@ -116,7 +88,6 @@ held-out units within the shared framework.
 ## Results
 
 ### 1. The preregistered delta probe matches the majority-class reference
-Source: `report_mechanism.md`.
 Under family holdout, the preregistered linear probe on the mean-pooled mutation delta scored a
 five-seed mean macro-F1 of 0.290, equal to the measured majority-class reference of 0.290. Across
 all five seeds, the upper 95% family-bootstrap confidence bound remained below 0.340, the measured
@@ -134,7 +105,6 @@ family holdout (0.280 versus 0.280). Wildtype macro-F1 decreased from 0.611 to 0
 pattern therefore did not depend on adding the G2P-derived cohort (Supplementary Figure S1).
 
 ### 2. Weak classification and ranking signals depend on probe choice
-Source: `report_mechanism.md`.
 The delta's macro one-vs-rest AUROC ranged from 0.532 to 0.578 across seeds. The five-seed
 family-split AUROC was 0.584 for gain-of-function, 0.557 for loss-of-function, and 0.524 for
 dominant-negative. Ranking performance was strongest for gain-of-function, while dominant-negative
@@ -163,7 +133,6 @@ Five-seed family-split one-versus-rest AUROC for gain-of-function, loss-of-funct
 dominant-negative variants. The dashed line marks the 0.500 no-signal value.
 
 ### 3. Wildtype embeddings predict Pfam family
-Source: `report_mechanism.md`.
 In a subset of 755 genes spanning 145 Pfam families, a linear probe predicted family from the
 wildtype embedding with a five-seed mean accuracy of 60.2%, compared with a 4.37% majority-class
 baseline. Applied to the mutation delta, the same probe matched the baseline at 4.37%. In a
@@ -189,7 +158,6 @@ above the majority-class reference that was lost under family holdout, with its 
 family-bootstrap confidence interval.
 
 ### 4. Pathogenicity is recoverable across families
-Sources: `report_pathogenicity_control.md`, `report_geometry.md`.
 Under family holdout, the mean-pooled mutation delta reached a five-seed mean AUROC of 0.885 with an
 MLP. The seed-0 estimate was 0.886 (95% CI 0.880-0.891), with the interval entirely above the
 preregistered threshold of 0.85. The five-seed mean decreased by only 0.003 from the gene-split
@@ -198,7 +166,6 @@ an MLP, matching or exceeding the corresponding full-delta values, while magnitu
 weaker at 0.610 under both probes (Figure 4A-B).
 
 ### 5. Pathogenicity information is largely redundant with conservation
-Source: `report_geometry.md`.
 In a matched seed-0 logistic-regression comparison, ESM-2's masked-marginal conservation score
 reached AUROC 0.888, exceeding both the delta (0.835) and the delta-plus-conservation combination
 (0.883). Adding the delta changed AUROC by -0.005 (95% CI -0.008 to -0.001). The pathogenicity
@@ -217,7 +184,6 @@ comparison of the delta, ESM-2 masked-marginal conservation score, and their com
 between the combined and conservation-only models.
 
 ### 6. Enzyme type is recoverable from the wildtype embedding
-Source: `report_enzyme_classification.md`.
 The wildtype embedding classified enzyme type as kinase, protease, oxidoreductase, or non-enzyme
 with a five-seed mean family-split macro-F1 of 0.779. The seed-0 estimate was 0.787 (95% CI
 0.732-0.818), with the interval entirely above the preregistered threshold of 0.70 and a
@@ -245,7 +211,6 @@ row shows MLP-minus-logistic enzyme macro-F1, with the equivalence range shaded.
 differences and bars show 95% family-bootstrap confidence intervals.
 
 ### 7. Stability is recoverable but not uniformly family-robust
-Source: `report_stability.md`.
 The mean-pooled mutation delta predicted experimentally measured folding stability. Under a random
 split, the seed-0 Spearman correlation from the preregistered ridge probe was 0.693 (95% CI
 0.675-0.709), with the interval entirely above the threshold of 0.50. Under family holdout, the
@@ -275,7 +240,7 @@ its 95% bootstrap confidence interval.
 ### 1. Mechanism cohort and labels
 
 Gene-level disease-mechanism labels were assembled from Gerasimavicius et al. (2022) and
-Gene2Phenotype (G2P). Gerasimavicius assignments took priority. G2P records were restricted to
+Gene2Phenotype (G2P; Thormann et al., 2019). Gerasimavicius assignments took priority. G2P records were restricted to
 strong or definitive gene-disease associations with an unambiguous molecular-mechanism annotation;
 unresolved conflicts were excluded. Haploinsufficiency and autosomal-recessive annotations were
 combined as loss-of-function (LOF); the other classes were gain-of-function (GOF) and
@@ -283,15 +248,17 @@ dominant-negative (DN). Labels were gene-level, so each variant inherited its ge
 LOF class was not equivalent to a variant-level functional-assay classification.
 
 Missense variants came from the Gerasimavicius supplementary data and from pathogenic ClinVar
-records for genes covered only by G2P; likely-pathogenic records were excluded. Variants required a
-UniProt identifier, an available reference sequence, a complete substitution, and agreement between
+records (Landrum et al., 2018) for genes covered only by G2P; likely-pathogenic records were
+excluded. Variants required a UniProt identifier (The UniProt Consortium, 2023), an available
+reference sequence, a complete substitution, and agreement between
 the recorded and reference wildtype residues. The final cohort contained 17,770 variants across
 1,931 genes: 13,556 LOF, 2,668 GOF, and 1,546 DN. Pfam annotations covered 1,907 genes in 1,144
 families.
 
 ### 2. Pathogenicity cohort
 
-The pathogenicity control used a separate ClinVar extraction from the same target-gene universe.
+The pathogenicity control used a separate ClinVar extraction from the same target-gene universe
+(Landrum et al., 2018).
 The extraction retained GRCh38 single-nucleotide missense records. Records classified as
 conflicting, uncertain, not provided, or other, and records without assertion criteria, were
 excluded. Pathogenic and likely-pathogenic records formed the pathogenic class; benign and
@@ -306,7 +273,8 @@ variants without Pfam assignments were excluded only from those splits.
 
 ### 3. Enzyme cohort
 
-Enzyme-type labels were derived from UniProt EC-number and keyword annotations. Genes were
+Enzyme-type labels were derived from UniProt EC-number and keyword annotations (The UniProt
+Consortium, 2023). Genes were
 classified as kinase, protease, oxidoreductase, or non-enzyme, with priority in that order when
 annotations overlapped. Enzymes outside the three named classes and genes without the required
 annotation were excluded. The cohort contained 1,451 genes: 130 kinases, 68 proteases, 123
@@ -321,7 +289,8 @@ Folding-stability measurements were obtained from the Tsuboyama et al. (2023) me
 Single substitutions in natural PDB domains with numeric `ddG_ML` values were retained; designed
 proteins, mutated backgrounds, insertions, deletions, and multi-mutants were excluded. The target
 was the reported folding-stability change, ΔΔG, for 177,315 variants across 181 domains. Evaluation
-used random, domain-disjoint, and Pfam-family-disjoint splits. HMMER searches against Pfam-A assigned
+used random, domain-disjoint, and Pfam-family-disjoint splits. HMMER searches (Eddy, 2011) against
+Pfam-A (Mistry et al., 2021) assigned
 the best hit passing the curated gathering threshold. Fourteen unassigned domains were excluded
 only from the family split, leaving 167 domains in 77 families.
 
@@ -446,64 +415,50 @@ mechanism labels established by functional assays. Such labels would address lab
 stricter homology partitions would test transfer; and additional model sizes and pooling strategies
 would test representation choice.
 
-## Supplementary methods
+## References
 
-### ClinVar pathogenicity cohort audit trail
+Badonyi M, Marsh JA. Prevalence of loss-of-function, gain-of-function and dominant-negative
+mechanisms across genetic disease phenotypes. *Nature Communications*. 2025;16:8392.
+https://doi.org/10.1038/s41467-025-63234-3
 
-Records came from the ClinVar GRCh38 `variant_summary` file retrieved on 19 August 2026 and last
-modified on 17 August 2026.
+Eddy SR. Accelerated profile HMM searches. *PLoS Computational Biology*. 2011;7:e1002195.
+https://doi.org/10.1371/journal.pcbi.1002195
 
-Repeated ClinVar records encoding the same gene, protein position, wildtype residue, and mutant
-residue were collapsed into one row, removing 1,219 duplicate records while retaining their ClinVar
-identifiers. One substitution with conflicting pathogenic and benign labels was excluded. After
-sampling at most 20 variants per class per gene with seed 42, 96 genes containing only one class
-were excluded. The balanced intermediate cohort contained 25,740 variants across 1,837 genes, with
-12,870 variants per class. Sequence application removed 1,063 variants. Restoring per-gene balance
-removed another 293 variants and 22 genes, producing the final cohort of 24,384 variants across
-1,802 genes.
+Gerasimavicius L, Livesey BJ, Marsh JA. Loss-of-function, gain-of-function and dominant-negative
+mutations have profoundly different effects on protein structure. *Nature Communications*.
+2022;13:3895. https://doi.org/10.1038/s41467-022-31686-6
 
-### Probe configurations
+Ha D, Kim S, Kwon K, Chung W, Han J. Learning sequence to predict gain- or loss-of-function
+variants. *Research Square* [preprint]. 2025. https://doi.org/10.21203/rs.3.rs-6705195/v1
 
-The preregistered mechanism probe used training-fold PCA with at most 256 components followed by
-logistic regression (`C=1.0`, `lbfgs`, 1,000 maximum iterations), without standardization or class
-weighting. The exploratory multiclass logistic probe standardized within each training fold and
-used balanced class weights and 2,000 maximum iterations. Mechanism and enzyme MLPs had hidden
-layers of 256 and 64 ReLU units, minority-class oversampling, an L2 penalty of 0.0001, 500 maximum
-iterations, and early stopping with a 15% validation fraction and patience of 10 iterations.
+Landrum MJ, Lee JM, Benson M, et al. ClinVar: improving access to variant interpretations and
+supporting evidence. *Nucleic Acids Research*. 2018;46:D1062-D1067.
+https://doi.org/10.1093/nar/gkx1153
 
-The pathogenicity logistic probe used fold-standardized inputs, `C=1.0`, and 1,000 maximum
-iterations. Its MLP had one 256-unit hidden layer and 300 maximum iterations, with early stopping on
-a group-disjoint 10% validation subset of each outer training fold. The stability MLP had hidden
-layers of 256 and 64 ReLU units with dropout 0.2 and used Adam with learning rate 0.001, weight decay
-0.001, batches of 2,048, 60 maximum epochs, and patience of 15. The exploratory random forest used
-100 trees. XGBoost used 300 trees, depth 6, learning rate 0.1, row and feature subsampling of 0.8,
-and histogram tree construction.
+Lin Z, Akin H, Rao R, et al. Evolutionary-scale prediction of atomic-level protein structure with a
+language model. *Science*. 2023;379:1123-1130. https://doi.org/10.1126/science.ade2574
 
-### Additional provenance
+Mistry J, Chuguransky S, Williams L, et al. Pfam: the protein families database in 2021. *Nucleic
+Acids Research*. 2021;49:D412-D419. https://doi.org/10.1093/nar/gkaa913
 
-FoldX ΔΔG and AlphaMissense scores were external baselines where available. Analysis outputs
-recorded the Git commit, input fingerprints, parameters, and software versions. Embedding arrays and
-cohorts were checked against stored fingerprints; environment snapshots and logs were retained.
+Stein D, Kars ME, Wu Y, et al. Genome-wide prediction of pathogenic gain- and loss-of-function
+variants from ensemble learning of a diverse feature set. *Genome Medicine*. 2023;15:103.
+https://doi.org/10.1186/s13073-023-01261-9
 
-## Supplementary figures
+Thormann A, Halachev M, McLaren W, et al. Flexible and scalable diagnostic filtering of genomic
+variants using G2P with Ensembl VEP. *Nature Communications*. 2019;10:2373.
+https://doi.org/10.1038/s41467-019-10016-3
 
-![Supplementary Figure S1](../reports/run_biorxiv/figures/figureS1_single_source.png)
+Tsuboyama K, Dauparas J, Chen J, et al. Mega-scale experimental analysis of protein folding
+stability in biology and design. *Nature*. 2023;620:434-444.
+https://doi.org/10.1038/s41586-023-06328-6
 
-Supplementary Figure S1. Single-source mechanism robustness analysis. (A) Five-seed mean macro-F1
-from the mutation delta on the Gerasimavicius-only subset under gene and Pfam-family holdout. Open
-points show the majority-class references recomputed for the subset. (B) Five-seed mean wildtype
-macro-F1 under gene and family holdout in the merged mechanism cohort and the Gerasimavicius-only
-subset. The gene-to-family decrease was reproduced in the single-source analysis.
+The UniProt Consortium. UniProt: the Universal Protein Knowledgebase in 2023. *Nucleic Acids
+Research*. 2023;51:D523-D531. https://doi.org/10.1093/nar/gkac1052
 
-![Supplementary Figure S2](../reports/run_biorxiv/figures/figureS2_stability_direction_ablation.png)
+Zhong G, Shen Y. Representation of missense variants for predicting modes of action. *Machine
+Learning in Structural Biology workshop, NeurIPS*. 2022.
 
-Supplementary Figure S2. Stability-direction removal from the mechanism representation. (A)
-Five-seed mean mechanism macro-F1 before and after removing the fitted stability direction; bars
-show standard deviations across seeds. The mechanism classifier used the exploratory
-full-dimensional, standardized, class-balanced specification. (B) Paired projected-minus-baseline
-macro-F1 with its 95% family-bootstrap confidence interval. The dotted line marks the registered
-+0.01 threshold.
-
-## Open items
-
-- Draft the article text, figures, and supplementary material from the verified reports.
+Zhong G, Zhao Y, Zhuang D, Chung WK, Shen Y. PreMode predicts mode-of-action of missense variants
+by deep graph representation learning of protein sequence and structural context. *Nature
+Communications*. 2025;16:7189. https://doi.org/10.1038/s41467-025-62318-4
