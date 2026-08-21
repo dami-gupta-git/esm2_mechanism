@@ -240,7 +240,7 @@ and Pfam-family holdout for the ESM-2 wildtype embedding and the proteome-featur
 The dashed line is the majority-class reference. (B) Five-seed family-split one-versus-rest AUROC
 from the logistic-regression probe for each enzyme class. The dashed line marks the 0.500 no-signal
 value. (C) Paired family-split comparisons. The upper row shows enzyme-minus-mechanism macro-F1 on
-the shared family subset, with the preregistered minimum gap marked by the dotted line. The lower
+the shared family subset, with the comparison minimum gap marked by the dotted line. The lower
 row shows MLP-minus-logistic enzyme macro-F1, with the equivalence range shaded. Points show paired
 differences and bars show 95% family-bootstrap confidence intervals.
 
@@ -252,13 +252,23 @@ split, the seed-0 Spearman correlation from the preregistered ridge probe was 0.
 five-seed mean fell to 0.554. On the matched seed-0 cohort, the random-to-family decrease was 0.153
 (95% CI 0.112-0.192), with the interval entirely above the preregistered 0.10 boundary for family
 dependence. Performance also varied among domains: the per-domain correlation standard deviation
-was 0.160 (95% CI 0.132-0.183), above the registered maximum of 0.10.
+was 0.160 (95% CI 0.132-0.183), above the registered maximum of 0.10 (Figure 6A-C).
 
 Using the exploratory full-dimensional, standardized, class-balanced mechanism classifier,
 removing a fitted stability direction changed mechanism macro-F1 by -0.0009 (95% CI -0.0025 to
-+0.0007).
++0.0007; Supplementary Figure S2).
 Exploratory nonlinear probes retained family-held-out stability signal, with correlations of 0.627
 for the MLP and 0.630 for XGBoost, but did not alter the preregistered linear-probe conclusions.
+
+![Figure 6](../reports/run_biorxiv/figures/figure6_folding_stability.png)
+
+Figure 6. Folding-stability transfer across held-out units. (A) Five-seed mean Spearman correlation
+under random, PDB-domain, and Pfam-family holdout. Ridge regression was the preregistered probe;
+MLP and XGBoost were exploratory. (B) Matched seed-0 random-minus-family difference for the ridge
+probe, with its 95% family-bootstrap confidence interval. The dotted line marks the preregistered
+0.10 tolerance for family dependence. (C) Distribution of per-domain Spearman correlations. The
+vertical line marks the across-domain mean, and the annotation reports the standard deviation and
+its 95% bootstrap confidence interval.
 
 ## Methods
 
@@ -436,16 +446,6 @@ mechanism labels established by functional assays. Such labels would address lab
 stricter homology partitions would test transfer; and additional model sizes and pooling strategies
 would test representation choice.
 
-## Main figures (draft mapping)
-
-| Figure | Content |
-|---|---:|
-| 1 | Cohort construction, delta extraction, gene vs. family splits |
-| 2 | Delta classification at floor + ranking signal + probe sensitivity |
-| 3 | Family prediction from wildtype embedding + gene-to-family performance gap |
-| 4 | Pathogenicity under family holdout + conservation alone vs. conservation + delta |
-| 5 | Stability across random, domain, and family splits; enzyme classification by representation |
-
 ## Supplementary methods
 
 ### ClinVar pathogenicity cohort audit trail
@@ -484,6 +484,25 @@ and histogram tree construction.
 FoldX ΔΔG and AlphaMissense scores were external baselines where available. Analysis outputs
 recorded the Git commit, input fingerprints, parameters, and software versions. Embedding arrays and
 cohorts were checked against stored fingerprints; environment snapshots and logs were retained.
+
+## Supplementary figures
+
+![Supplementary Figure S1](../reports/run_biorxiv/figures/figureS1_single_source.png)
+
+Supplementary Figure S1. Single-source mechanism robustness analysis. (A) Five-seed mean macro-F1
+from the mutation delta on the Gerasimavicius-only subset under gene and Pfam-family holdout. Open
+points show the majority-class references recomputed for the subset. (B) Five-seed mean wildtype
+macro-F1 under gene and family holdout in the merged mechanism cohort and the Gerasimavicius-only
+subset. The gene-to-family decrease was reproduced in the single-source analysis.
+
+![Supplementary Figure S2](../reports/run_biorxiv/figures/figureS2_stability_direction_ablation.png)
+
+Supplementary Figure S2. Stability-direction removal from the mechanism representation. (A)
+Five-seed mean mechanism macro-F1 before and after removing the fitted stability direction; bars
+show standard deviations across seeds. The mechanism classifier used the exploratory
+full-dimensional, standardized, class-balanced specification. (B) Paired projected-minus-baseline
+macro-F1 with its 95% family-bootstrap confidence interval. The dotted line marks the registered
++0.01 threshold.
 
 ## Open items
 
