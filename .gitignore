@@ -228,7 +228,7 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 docs/connnect_runpod.md
-docs/PUBLISH.md
+bak/PUBLISH.md
 for_me/interview.md
 docs/explain.txt
 docs/plans/INTERVIEW.md
