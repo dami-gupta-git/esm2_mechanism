@@ -45,6 +45,11 @@ are singletons, so the effective cluster count is far below the gene count. That
 correct answer, not an artifact to tune away, and the effective cluster count is reported next to
 every family-split interval.
 
+**Post-run annotation (2026-08-20; not part of the preregistered rule):** The 1,134-family and
+833-singleton counts above describe the cohort before the final ClinVar and Pfam refresh. The
+confirmatory run used 1,144 families, including 846 singletons. The cohort changes are documented
+in `DELTA_run6_to_run_biorxiv.md`.
+
 **Pairing.** A paired difference is resampled once per replicate and that same draw is applied to
 both arms, restricted to the shared cluster subset — resampling arms independently inflates the
 variance of the difference. Two modes: arms sharing a fold assignment (e.g. conservation vs.

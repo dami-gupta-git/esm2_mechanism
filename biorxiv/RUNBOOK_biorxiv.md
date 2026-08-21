@@ -489,7 +489,7 @@ property of the task, not a failure of the pipeline or the embeddings.
 
 The experiment mirrors section 4's structure: gene-split, family-split, and the gap between them
 (leakage fraction), run across 5 seeds with cluster-bootstrap CIs on the seed-0 family-split OOF
-predictions. A proteome-features baseline (37 gene-level biology features) runs alongside as a
+predictions. A proteome-features baseline (33 gene-level biology features) runs alongside as a
 negative control — enzyme class is a structural property, not a population-genetics one, so
 proteome features should be near chance.
 

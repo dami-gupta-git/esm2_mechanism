@@ -109,9 +109,10 @@ The delta's macro one-vs-rest AUROC ranged from 0.532 to 0.578 across seeds. The
 family-split AUROC was 0.584 for gain-of-function, 0.557 for loss-of-function, and 0.524 for
 dominant-negative. Ranking performance was strongest for gain-of-function, while dominant-negative
 remained close to the 0.500 no-signal value. Family-block permutation tests detected ranking signal
-in four of five seeds (p = 0.029, 0.003, 0.011, 0.003, 0.054). Thus, although the preregistered
-linear probe matched the majority-class reference in macro-F1, it retained weak ranking
-information.
+in four of five seeds (p = 0.029, 0.003, 0.011, 0.003, 0.054). By the preregistered three-of-five
+decision rule, this overturned the claim that the delta had no detectable family-robust ranking
+signal. Thus, although the preregistered linear probe matched the majority-class reference in
+macro-F1, it retained weak ranking information.
 
 Exploratory probes recovered additional classification performance. In one analysis, a
 full-dimensional, standardized, class-balanced logistic regression decreased from macro-F1 0.415
@@ -430,6 +431,14 @@ performed the analyses, prepared the figures, and wrote and revised the manuscri
 
 Code used for cohort construction, analysis, and figure generation is available at
 https://github.com/dami-gupta-git/esm2_mechanism.
+
+## Data availability
+
+The reproducibility package supporting this study is available in Zenodo at
+https://doi.org/10.5281/zenodo.22037471. It contains the processed cohorts, statistical outputs,
+out-of-fold predictions, reports, figures, preregistration records, environment records, and frozen
+source snapshot. Large ESM-2 embedding arrays and upstream download caches are excluded;
+row-identity metadata, sequence inputs, model identifiers, and content fingerprints are included.
 
 ## Funding
 

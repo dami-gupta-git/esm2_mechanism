@@ -30,6 +30,9 @@ follow-up work. The paper claims partition-independence nowhere and must not imp
 from a rerun, not from `results/run_biorxiv/homology_partition_panel/panel.json`, which is deleted.
 Three defects produced its apparent finding that the null strengthens under stricter partitions:
 
+The values in this withdrawn-panel audit describe the pre-refresh cohort on which that panel ran.
+They are retained as historical values and must not be used as current cohort references.
+
 - **The clan arm ran on a different dataset, not a stricter split.** Only genes whose Pfam family
   belongs to a clan can be clan-split, which drops roughly two thirds of the genes — a smaller,
   differently-composed subset biased toward well-studied superfamilies.
@@ -80,7 +83,8 @@ the (recomputed) floor on that subset, label noise is excluded empirically rathe
 `experiments/mechanism/single_source_mechanism.py`, which already re-runs the same probe on the
 Gerasimavicius-only subset to remove the curation-source confound. Reuse `load_data()` and
 `run_family_split()` unchanged, filter the row set, and **recompute the majority-class floor on the
-subset** — the class balance shifts, so the merged-set floor of 0.288 does not carry over. That
+subset** — the class balance shifts, so the full-cohort family-split majority-class reference of
+0.290 does not carry over. That
 recomputation is the part most likely to be got wrong by copying the merged number across.
 
 **Inputs.** Badonyi & Marsh's Table S1 (N = 2,837 OMIM phenotypes with MIM identifiers, EDC and
@@ -90,8 +94,8 @@ one qualifying phenotype, not by reading a "clean" column. Their gene set derive
 Gerasimavicius et al., which is also this project's source, so overlap should be substantial.
 
 ★ **Go/no-go check before this is scoped as a robustness row.** Perform the join and count the
-intersection against the 1,935 genes in `valid_variants.json` **first**. Under family-split the
-effective unit is the family, and the merged set already has 833 singleton families out of 1,134 —
+intersection against the 1,931 genes in `valid_variants.json` **first**. Under family-split the
+effective unit is the family, and the merged set already has 846 singleton families out of 1,144 —
 a clean subset of a few hundred genes may leave too few non-singleton families to support an
 interval worth reporting.
 
@@ -100,13 +104,13 @@ merged set's *gene-level* label distribution is far more skewed than its variant
 
 | | Genes | Families |
 |---|---|---|
-| Total | 1,935 (33 with no Pfam) | 1,134 — **833 singleton**, 301 non-singleton |
-| In non-singleton families | 1,069 | 301 |
-| **LOF** | 1,701 | |
+| Total | 1,931 (24 with no Pfam) | 1,144 — **846 singleton**, 298 non-singleton |
+| In non-singleton families | 1,061 | 298 |
+| **LOF** | 1,697 | |
 | **GOF** | **136** | |
 | **DN** | **98** | |
 
-DN is 98 genes and GOF 136, spread across 301 non-singleton families. Any clean-label filter cuts
+DN is 98 genes and GOF 136, spread across 298 non-singleton families. Any clean-label filter cuts
 directly into those. If the subset retains even half, DN lands near ~50 genes across perhaps ~150
 families — below what a family-resampled CI can usefully constrain, and squarely in the rare-class
 regime where a rare-class interval is indicative rather than authoritative. **The thin branch is
@@ -234,11 +238,11 @@ Task 2d asks whether the null survives clean labels. This asks the complementary
 family-resampled interval. This task runs on the full pathogenicity set and has no such dependency,
 so it should be run first of the two.
 
-**Method.** Take the pathogenicity task — the same embeddings, the same pipeline, and a
-demonstrated AUROC of 0.894 family-split — and corrupt its labels at increasing rates spanning the
-heterogeneity Badonyi & Marsh report (roughly 20–50%). Plot performance against noise rate under
-the same family-split CV. The output is a degradation curve on *these* embeddings, not a textbook
-argument about label noise in general.
+**Method.** Use the pathogenicity task with the same embeddings and pipeline. Its five-seed mean
+AUROC is 0.885 under family holdout. Corrupt its labels at increasing rates spanning the
+heterogeneity Badonyi & Marsh report (roughly 20–50%), then plot performance against noise rate
+under the same family-split CV. The output is a degradation curve on *these* embeddings, not a
+textbook argument about label noise in general.
 
 **The read.** If a probe at 45% label noise still scores well above chance, then noise at the rate
 observed in mechanism annotations does not explain a result sitting at the floor, and the
