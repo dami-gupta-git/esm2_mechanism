@@ -153,25 +153,28 @@ conservation axis and ask whether the residual carries mechanism. Untested.
 
 **Difficulty: low, roughly a day of work.** It is a near-exact clone of an experiment already
 built and debugged:
-[`megascale_stability.py:171`](../src/esm2_mech/experiments/stability/megascale_stability.py#L171)
-`run_h3_stability_projection` has the identical shape — fit a direction, project it out of
+`run_stability_projection_3c` in
+[`megascale_stability.py`](../src/esm2_mech/experiments/stability/megascale_stability.py)
+has the identical shape — fit a direction, project it out of
 `delta_mean`, re-run the family-split mechanism probe on the residual, compare against the
 unprojected baseline. Swap the stability axis for the conservation axis. The subtle parts are
 already solved there and should be copied, not re-derived:
 
 - Standardize once up front, project last, and never re-standardize after projecting (the
   residuals are rank-deficient along the removed direction; per-column rescaling reintroduces
-  variance along it and silently undoes the projection). See the comment at L220.
-- Verify the removal with `var_after ≈ 0` along the direction (L234).
+  variance along it and silently undoes the projection). See the comment on the per-fold
+  re-standardisation inside `run_stability_projection_3c`.
+- Verify the removal with the `var_after` check at the end of `run_stability_projection_3c`.
 - Both arms get identical preprocessing so the projection is the only difference.
 
-`project_out_subspace` at
-[`mechanism_delta_probe.py:234`](../src/esm2_mech/experiments/mechanism/mechanism_delta_probe.py#L234)
+`project_out_subspace` in
+[`mechanism_delta_probe.py`](../src/esm2_mech/experiments/mechanism/mechanism_delta_probe.py)
 is a second reference implementation.
 
 **What is genuinely new:**
 
-1. **Conservation must be extracted for the mechanism variant set.** `conservation_axis.py:74`
+1. **Conservation must be extracted for the mechanism variant set.** `extract_conservation` in
+   [`conservation_axis.py`](../src/esm2_mech/experiments/geometry/conservation_axis.py)
    currently extracts masked logP_wt / logP_mut / entropy for the *pathogenicity* set only. The
    mechanism set (`valid_variants.json`, 17,826 variants) needs its own masked-LM pass — a GPU
    step, and the only meaningful compute cost in this task.
@@ -182,15 +185,15 @@ is a second reference implementation.
 
 **Two preconditions, both cheap, both determining whether the result is interpretable at all.**
 
-*(a) Confirm the strip worked, at two levels.* The existing `var_after ≈ 0` assertion
-(`megascale_stability.py:229-240`) is a *geometric* check — it proves the direction was removed
+*(a) Confirm the strip worked, at two levels.* The existing `var_after` assertion at the end of
+`run_stability_projection_3c` is a *geometric* check — it proves the direction was removed
 from the matrix, and it must be carried over verbatim. But it does not prove conservation was
 removed as a *predictive* signal, because a scalar regressed onto 1280 dimensions leaves
 conservation-correlated variance in the orthogonal complement. So add a second, functional
 check: re-run the pathogenicity probe on `d_resid` and confirm it now scores at chance (≈ 0.50
 AUROC). If the residual still predicts pathogenicity above chance, conservation was not fully
 removed and a mechanism null is uninterpretable — indistinguishable from the projection having done
-nothing. This is a few lines reusing `auroc_family_split` (`conservation_axis.py:199`). Report the
+nothing. This is a few lines reusing `auroc_family_split` from `conservation_axis.py`. Report the
 residual pathogenicity AUROC alongside the mechanism number whatever the outcome.
 
 *(b) Pre-register the read before seeing the number.* Both outcomes are publishable, which is

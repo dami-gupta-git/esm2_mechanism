@@ -4,20 +4,29 @@ Re-scores run6's experiments with confidence intervals that account for genes in
 not being independent, permutation p-values, and real tests behind every "A beats B" claim. The
 experiments, hypotheses and gates are unchanged.
 
-Anything under `docs/` indexing the numbered `result_*.md` files is the run0-era exploratory phase.
-Assume it is stale.
+`docs/README.md` and `docs/EXPERIMENT.md` index the run0-era exploratory phase; assume both are
+stale. `docs/FINDINGS.md` is current and describes the statistics machinery this run uses, and the
+runbook cites it as authoritative.
 
-Three documents, and each fact lives in exactly one of them. Where one needs something another
-states, it references it by name rather than restating it, so a change lands in a single file.
+Each fact lives in exactly one of the files below. Where one needs something another states, it
+references it by name rather than restating it, so a change lands in a single file.
 
 | File | What it is |
 |---|---|
 | `PREREGISTRATION_run_biorxiv.md` | The claims under test (2A–2H), the decision rules, the resampling and pairing rules, what counts as passing, and what would overturn each claim. Its dated amendments identify rules recorded after earlier results were inspected. |
-| `RUNBOOK_biorxiv.md` | What changed since run6, preconditions, the pinned environment, commands in order with live status, and the verification checklist. |
+| `RUNBOOK_biorxiv.md` | Preconditions and the commands to run, in order, with the verification checklist. Steps only, with no status markers, dates, or result numbers. |
+| `PROGRESS.md` | The live status record, with one table per runbook section in the same order and numbering. |
+| `ENV_SNAPSHOT.md` | The package versions each cited result was computed under, per machine. Required by the runbook's verification checklist. |
+| `DELTA_run6_to_run_biorxiv.md` | What moved between run6 and this run, and the cohort changes behind it. |
 | `FOLLOWUP_biorxiv.md` | Deferred and withdrawn work. Gates nothing here. |
+| `manuscript.md` | The paper. |
+| `supplementary.md` | Supplementary methods and figures. |
 
-The run_biorxiv plan, the separate progress table, and the separate environment file are retired:
-their live content is in the runbook and their rules are in the pre-registration.
+`findings.md` was retired on 2026-08-20 and archived as `bak/findings_biorxiv_19Aug_2026.md`. Its
+rules moved to the files that own them: pod operating rules to `docs/connect_runpod.md`,
+result-file naming to `for_me/BUG_PATTERNS.md`, runbook and progress conventions to `CLAUDE.md`,
+and report conventions to the project report skill.
+
 
 ## Canonical facts
 

@@ -73,8 +73,8 @@ pip install -e .
 emits CI keys. Verify by running each module for one seed and confirming `ci_low`/`ci_high` are
 actually populated, not just that it exited cleanly.
 
-**0.3 — Methodology rules.** Rule 3 (resampling unit/pairing) and Rule 4 (rare-class intervals) of the
-pre-registration, implemented by the 0.2 wiring.
+**0.3 — Methodology rules.** §1.2 (what gets resampled, and pairing) and §1.3 (rare-class
+intervals) of the pre-registration, implemented by the 0.2 wiring.
 
 **0.4 — Paired cluster bootstrap.** Implemented in `utils/bootstrap.py`, call sites
 `conservation_axis.py` and `mechanism_delta_family_split.py`. Covers two paired claims — the
@@ -82,8 +82,8 @@ conservation-vs-embedding-delta gap that claim 2E turns on and the
 gene-split-minus-family-split gap (the leakage account, 2B) — plus the pathogenicity-vs-mechanism
 cross-family transfer contrast (not paired — different datasets, no shared row space).
 
-**0.5/0.6 — Pre-registered decision rules.** CI decision rule (Rule 1) and confirmatory/exploratory
-split (Rule 2), written into
+**0.5/0.6 — Pre-registered decision rules.** The CI decision rule (§1.1) and the
+confirmatory/exploratory split (Parts 2 and 4), written into
 [`PREREGISTRATION_run_biorxiv.md`](PREREGISTRATION_run_biorxiv.md) before the run.
 
 **0.7 — Pinned environment.** Confirm before the run:
@@ -225,10 +225,7 @@ CPU instance) helps more than trying to parallelize them on a small machine:
 | 4.4 | `python -m esm2_mech.experiments.mechanism.naive_baseline` | 🟢 Light. Measured majority-class / stratified macro-F1 + AUROC floor (DummyClassifier, 5 seeds, same CV) — the chance reference for the other tables | `valid_variants.json`, `pfam_families.json` | `results/<run>/naive_baseline.json` |
 | 4.5 | `python -m esm2_mech.experiments.mechanism.leakage_fraction` | 🟢 Light. Derived diagnostic: leakage fraction per feature = (gene − family macro-F1) / (gene − chance), the share of each feature's above-chance gene-split score attributable to family recognition | `family_split_baselines_seed{0..4}.json`, `mechanism_oof_cache_seed{0..4}.json`, `naive_baseline.json`, `family_clustering.json` | `results/<run>/leakage_fraction.json` |
 
-All outputs write to `results/<run>/`. Each of `classify_by_mechanism`, `single_source_mechanism`,
-and `mechanism_delta_family_split` accepts `--no_ci` (skip the confidence-interval computation, for
-faster iteration only), `--n_boot N` (number of bootstrap resamples, default 1000), and
-`--n_permutations N` (run a permutation test, default 0 = off).
+All outputs write to `results/<run>/`.
 
 ### Permutation tests (CPU, all five seeds)
 

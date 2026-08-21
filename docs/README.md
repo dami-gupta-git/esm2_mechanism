@@ -2,14 +2,18 @@
 
 **This is a historical document.** It indexes the exploratory phase — twenty-six `result_*.md`
 files written across May 23–29, 2026, plus `result_leakage_fraction.md` (working note) — in the
-order that makes the narrative arc readable. Results 3 and 5 are superseded by result 7.
+order that makes the narrative arc readable. Results 3 and 5 are superseded by result 7. The
+result files themselves live in `reports/run0/`.
 
 **Assume it is stale.** These are run0-era numbers with 5-seed fold-jitter error bars, and most
 have been re-measured since. Where run6 or `run_biorxiv` covers a result, the later run governs and
 this file does not track it. Current work starts at `biorxiv/README.md`; nothing here should be cited without
 checking against it.
 
-**This is a standalone research project, not an AI Scientist run.** All experiments were designed and executed manually. The code lives in `esm2_mechanism/scripts/` and was run directly on RunPod (A100 80GB) or local CPU. The project will likely move to its own repository.
+**This is a standalone research project, not an AI Scientist run.** All experiments were designed
+and executed manually, and were run directly on RunPod (A100 80GB) or local CPU. At the time these
+results were written the code lived in a flat `scripts/` directory; it has since been reorganised
+into the `src/esm2_mech/` package, so the script names used below no longer match file paths.
 
 ---
 
@@ -233,43 +237,51 @@ and measure discrimination only.
 
 ## Supporting docs
 
-- `EXPERIMENT.md` — Pre-registration document (original ESM-2 hypothesis, results 1–10 scope)
-- `plan_experiment.md` — Experiment 11 plan: per-variant ESM-2 + gene-level proteome features (staged execution: pilot → V2 → V3 → V4)
-- `plan_esm2_proteome.md` — Detailed Phase 1+2 plan for proteome feature engineering
-- `plan_clinical.md` — Clinical utility analysis plan (result 14)
-- `plan_badonyi.md` — Pre-registration for Badonyi raw-model holdout (result 16 addendum)
-- `../scripts/README.md` — What each script does
+- `docs/EXPERIMENT.md` — Pre-registration document (original ESM-2 hypothesis, results 1–10 scope)
+- `bak/plans/plan_esm2_proteome.md` — Detailed Phase 1+2 plan for proteome feature engineering
+- `bak/plans/plan_clinical.md` — Clinical utility analysis plan (result 14)
+- `bak/plans/plan_badonyi.md` — Pre-registration for Badonyi raw-model holdout (result 16 addendum)
+
+The Experiment 11 plan (`plan_experiment.md`) and the script-by-script index (`scripts/README.md`)
+no longer exist in the repository.
 
 ---
 
 ## Companion data
 
+Every path in the table below is relative to `results/bak/results_0/`, where the run0-era output
+directories were archived.
+
 | Result | Primary JSON file |
 |---|---|
-| 1 | `results/20260524_baseline_run/run_0/final_info_seed0.json` |
-| 2 | `results/20260524_baseline_run/run_0/family_split_baselines.json` |
-| 3, 5 | `results/20260524_baseline_run/run_0/mlp_results_seed0.json` |
-| 4 | `results/20260524_baseline_run/run_0/family_clustering.json` |
-| 6 | `results/20260524_baseline_run/run_0/pathogenicity_control.json` |
-| 7 | `results/20260524_baseline_run/run_0/option_b_gene_level_wt_merged.json` + merged MLP |
-| 8 | `results/20260524_baseline_run/run_0/within_family_analysis.json` |
-| 9 | `results/20260524_baseline_run/run_0/contrastive_results_{geras,merged}_seed0.json` |
-| 10 | `results/20260524_baseline_run/run_0/clan_holdout_results_seed0.json` |
-| 11 | `results/proteome_pilot/pilot_results_summary_5seed.json` |
-| 12 | `data/gene_proteome_features.tsv`, `data/proteome_features_aligned.npy`, `data/proteome_feature_columns.json` |
-| 13 | `results/proteome_mechanism/proteome_mechanism_summary.json`, `per_gene_summary.json`, `v2_ablation_summary.json` |
-| 14 | `results/clinical_utility/hi3_family_split_summary.json` |
-| 15 | `results/badonyi_mechanism/badonyi_mechanism_summary.json` |
-| 15-AppA | `results/badonyi_leakage/leakage_summary.json` |
-| 15-AppB | `results/mmseqs_cluster_holdout/cluster_summary.json` |
-| 16 | `results/within_family/within_family_summary.json` |
-| 16-addendum | `results/badonyi_survival/badonyi_survival_summary.json` |
-| 25 | `results/enzyme_classification/enzyme_classification_summary.json` |
+| 1 | `20260524_baseline_run/run_0/final_info_seed0.json` |
+| 2 | `20260524_baseline_run/run_0/family_split_baselines.json` |
+| 3, 5 | `20260524_baseline_run/run_0/mlp_results_seed0.json` |
+| 4 | `20260524_baseline_run/run_0/family_clustering.json` |
+| 6 | `20260524_baseline_run/run_0/pathogenicity_control.json` |
+| 7 | `20260524_baseline_run/run_0/option_b_gene_level_wt_merged.json` + merged MLP |
+| 8 | `20260524_baseline_run/run_0/within_family_analysis.json` |
+| 9 | `20260524_baseline_run/run_0/contrastive_results_{geras,merged}_seed0.json` |
+| 10 | `20260524_baseline_run/run_0/clan_holdout_results_seed0.json` |
+| 11 | `proteome_pilot/pilot_results_summary_5seed.json` |
+| 12 | `data/gene_proteome_features.tsv`, `data/proteome_features_aligned.npy`, `data/proteome_feature_columns.json` (still at the repository root, not archived) |
+| 13 | `proteome_mechanism/proteome_mechanism_summary.json`, `per_gene_summary.json`, `v2_ablation_summary.json` |
+| 14 | `clinical_utility/hi3_family_split_summary.json` |
+| 15 | `badonyi_mechanism/badonyi_mechanism_summary.json` |
+| 15-AppA | `badonyi_leakage/leakage_summary.json` |
+| 15-AppB | `mmseqs_cluster_holdout/cluster_summary.json` |
+| 16 | `within_family/within_family_summary.json` |
+| 16-addendum | `badonyi_survival/badonyi_survival_summary.json` |
+| 25 | `enzyme_classification/enzyme_classification_summary.json` |
 
-ESM-2 embeddings under `data/embeddings/`:
-- `embeddings_{wt,mut}{,_pos}_esm2_t33_650M_UR50D.npy` — Gerasimavicius 10,231 variants (results 1–5, 7)
-- `merged_embeddings_{wt,mut}_{mean,pos}.npy` — merged 1,985-gene / 19,100-variant dataset (results 7, 9, 13–15)
-- `emb_{wt,mut}_mean_pathogenicity_*.npy` — ClinVar 17,236 pathogenicity variants (result 6)
+ESM-2 embeddings were stored flat under `data/embeddings/` when these results were written. They
+now live in a model-keyed subdirectory, `data/embeddings/esm2_t33_650M_UR50D/`, with the model
+name dropped from the filenames:
+- `embeddings_{wt,mut}_{mean,pos}.npy` — Gerasimavicius 10,231 variants (results 1–5, 7)
+- `pathogenicity_{wt,mut}_mean.npy` — ClinVar pathogenicity variants (result 6)
+
+The separate `merged_embeddings_*` arrays for the merged 1,985-gene / 19,100-variant dataset
+(results 7, 9, 13–15) are not present in the current repository.
 
 Feature matrices:
 - `data/proteome_features_aligned.npy` (2,424 × 37) — gnomAD + paralogs + HPA + PaxDb + BioPlex + ClinGen (result 12)
@@ -279,9 +291,10 @@ Feature matrices:
 
 ---
 
-## Remaining work
+## Remaining work as it stood at the close of the exploratory phase
 
-The experimental matrix is essentially complete. What's left:
+This was the open list in May 2026 and is not a current to-do list. Items 2 and 3 are covered by
+`run_biorxiv`; see `biorxiv/README.md` for what is actually outstanding.
 
 1. **One master figure** — bar chart of macro-F1 / per-class AUROC × modality (V1/V2/V_bad/V2+bad) × holdout (family-split / MMseqs2-20). ~half day.
 2. **Bootstrap CIs on headline numbers** — V_bad and V2+bad DN AUROC have seed std but not within-seed CIs. ~2 hours.
