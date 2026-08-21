@@ -62,6 +62,14 @@ WITHIN_FAMILY_MECHANISM_JSON = RESULTS_DIR / "within_family_mechanism.json"
 # ── Enzyme classification (positive control for the mechanism arc) ───────────
 ENZYME_RESULTS_DIR = RESULTS_DIR / "enzyme_classification"
 ENZYME_CLASSIFICATION_JSON = ENZYME_RESULTS_DIR / "enzyme_classification_summary.json"
+
+# ── Folding-stability control ─────────────────────────────────────────────────
+STABILITY_RESULTS_DIR = RESULTS_DIR / "megascale_stability"
+STABILITY_SUMMARY_JSON = STABILITY_RESULTS_DIR / "summary.json"
+STABILITY_MLP_SUMMARY_JSON = STABILITY_RESULTS_DIR / "mlp_summary.json"
+STABILITY_XGB_SUMMARY_JSON = STABILITY_RESULTS_DIR / "mlp_summary_xgb.json"
+STABILITY_PER_PROTEIN_JSON = STABILITY_RESULTS_DIR / "per_protein_spearman.json"
+STABILITY_PROJECTION_JSON = STABILITY_RESULTS_DIR / "stability_projection_3c.json"
 # Per-seed ESM-2 nonlinear-probe results (MLP/GBM/RF/kNN on delta features). Format
 # with .format(seed=N). The ESM-3 experiment reads mlp_delta_mean_family from these to
 # derive the matched ESM-2 family-split floor instead of hardcoding it.
