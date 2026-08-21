@@ -1,15 +1,13 @@
-# esm2_mechanism_biorxiv
+# esm2_mechanism
 
 Does ESM-2 encode disease mechanism?
 
-This repository is the current home of the project. It was previously developed at
-`dami-gupta-git/esm2_mechanism`, which is no longer updated.
-
-A research project testing whether frozen ESM-2 650M delta-embeddings (mutant − wildtype) encode gene-level dominant disease mechanism class (GOF / DN / LOF) beyond protein stability, evaluated with gene-split and family-split cross-validation.
-
-**Headline finding:** ESM-2 encodes pathogenicity strongly and family-transferably (delta MLP family-split AUROC 0.897) but carries no mechanism signal in the mutant-minus-wildtype delta: a linear probe on the delta sits at the majority-class floor under both gene-split and family-split cross-validation (macro-F1 0.290 vs a 0.288 floor), and a nonlinear MLP reaches only 0.370 family-split. The apparent mechanism signal in wildtype-only embeddings drops from 0.552 gene-split to 0.449 family-split, about 30% of it family-recognition leakage. The null is task-specific rather than a pipeline failure: the same embeddings predict Megascale stability across held-out Pfam families (Spearman 0.554 linear, 0.634 MLP) and classify enzyme type family-split at macro-F1 0.674.
-
-All numbers above are from the current run (`results/run_biorxiv/`), five seeds, with cluster-bootstrap confidence intervals; see `biorxiv/README.md`.
+This project tests whether frozen ESM-2 650M representations predict loss-of-function,
+gain-of-function, or dominant-negative disease mechanism under gene and Pfam-family holdout. The
+preregistered linear probe on the mutation delta matched the majority-class reference under family
+holdout, while ranking tests and exploratory probes retained weak signal. The shared framework also
+recovered pathogenicity, folding stability, and enzyme type, showing that the mechanism result was
+specific to the target and probe rather than a general failure of the representations.
 
 `docs/README.md` indexes the earlier exploratory phase and is stale; `biorxiv/README.md` governs.
 
@@ -36,10 +34,14 @@ src/esm2_mech/
     alphamissense/ — AlphaMissense and ESM-1v comparisons, ProteinGym
     perturbation/  — in-silico perturbation and log-likelihood scans
     esm3/          — ESM-3 mechanism comparison
+    llm_judge/     — language-model baseline that predicts a variant's mechanism class
+  figures/         — the manuscript figure generator
   utils/           — paths, constants, splits, metrics, bootstrap, shared probe code
 
-biorxiv/           — the current run: pre-registration, runbook, progress, findings
-docs/              — the earlier exploratory phase (stale) plus per-experiment plans
+biorxiv/           — the current run: pre-registration, runbook, progress, manuscript
+docs/              — how figures, reports, the Zenodo package, the tests and the ESM-3
+                     embeddings are produced, plus the statistics-machinery notes, the
+                     RunPod reference, and the stale exploratory-phase index
 results/<run>/     — JSON outputs, one directory per run
 reports/<run>/     — write-ups and figures for a run
 scripts/           — the few CLI tools that are not part of the package
@@ -47,14 +49,14 @@ tests/
 data/              — all inputs and embeddings (gitignored in full)
 ```
 
-Directory paths are not written inline anywhere; they all come from `utils/paths.py`, and the run
-directory is keyed off a single run-name constant so a result file and its report always match.
+Pipeline paths are defined in `src/esm2_mech/utils/paths.py`. The run directory is keyed off a
+single run-name constant so a result file and its report select the same run.
 
 ---
 
 ## Setup
 
-Python 3.13.
+Python 3.13 is the pinned version; the package itself requires 3.10 or later.
 
 ```bash
 uv sync
@@ -70,13 +72,27 @@ pip install -e .
 
 Embedding extraction needs a CUDA GPU; every probe and bootstrap step runs on CPU.
 
+`docs/TESTING.md` covers running the test suite. Note that `pip install -e .` does not install
+pytest, which is in the `dev` dependency group.
+
 ---
 
 ## RUN
 
-`biorxiv/RUNBOOK_biorxiv.md` has the full ordered command list, including the GPU embedding steps,
-and `biorxiv/PROGRESS.md` records what has been executed. For RunPod setup and remote execution, see
-`docs/connect_runpod.md`.
+`biorxiv/RUNBOOK_biorxiv.md` has the full ordered command list for the experiments, including the
+GPU embedding steps, and `biorxiv/PROGRESS.md` records what has been executed. For RunPod setup and
+remote execution, see `docs/connect_runpod.md`.
+
+What happens after the experiments finish is documented separately:
+
+| Document | Covers |
+|---|---|
+| `docs/FIGURES.md` | Regenerating the eight manuscript figures, and which result files each one reads |
+| `docs/REPORTS.md` | The seven reports in `reports/<run>/`, how they are written, and diffing a run against the run6 baseline first |
+| `docs/ZENODO_PACKAGE.md` | Assembling the reproducibility package, what it excludes, and how the archive is built |
+
+The ESM-3 scale-and-structure experiment is a run6-era result outside this pipeline and needs a
+different ESM package and a licensed model download; see `docs/ESM3_EMBEDDINGS.md`.
 
 ---
 
@@ -85,11 +101,13 @@ and `biorxiv/PROGRESS.md` records what has been executed. For RunPod setup and r
 The whole of `data/` is gitignored, so nothing here is shipped with the repository. It holds the
 built variant and gene lists, the ESM-2 embedding arrays under `data/embeddings/`, downloaded
 third-party files under `data/downloads/` and `data/cache/`, and the Megascale dataset under
-`data/megascale/`. Embeddings are produced on a GPU machine and copied back; the loaders fingerprint
-the variant list and refuse to run against embeddings that do not match it.
+`data/downloads/megascale/`. The processed Megascale variant file is stored directly under
+`data/`. Embeddings are produced on a GPU machine and copied back; the loaders fingerprint the
+variant list and refuse to run against embeddings that do not match it.
 
-Two source files cannot be fetched automatically and must be placed in `data/downloads/` before
-anything else runs: `DiseaseMech_Stability_VEPS.xlsx` and `AllG2P.csv`.
+Several source files cannot be fetched automatically and must be placed in `data/downloads/` before
+anything else runs. `PRELOADED.md` lists all of them with their sources; the primary two are
+`DiseaseMech_Stability_VEPS.xlsx` and `AllG2P.csv`.
 
 Primary dataset: Gerasimavicius et al. 2022 (Nature Communications 13:3895), supplied as
 `DiseaseMech_Stability_VEPS.xlsx`.
@@ -120,21 +138,30 @@ The Badonyi feature builder joins on gene symbol and uses `pDN`, `pGOF`, `pLOF` 
 
 Current run (`run_biorxiv`), five seeds, cluster-bootstrap confidence intervals.
 
-| Experiment | Metric | Gene-split | Family-split |
+| Experiment | Metric | Gene split | Family split |
 |---|---|---|---|
 | Mechanism, linear probe on delta | macro-F1 | 0.288 | 0.290 |
-| Mechanism, linear probe on wildtype-only | macro-F1 | 0.552 | 0.449 |
-| Mechanism, MLP on delta | macro-F1 | 0.395 | 0.370 |
-| Majority-class floor | macro-F1 | 0.288 | 0.290 |
-| Pathogenicity control, MLP on delta | AUROC | 0.897 | 0.897 |
-| Pathogenicity, direction only | AUROC | — | 0.904 |
-| Pathogenicity, magnitude only | AUROC | — | 0.672 |
-| Conservation axis alone | AUROC | — | 0.891 |
-| Megascale stability, Ridge on delta | Spearman | 0.601 (domain) | 0.554 |
-| Megascale stability, MLP on delta | Spearman | 0.715 (domain) | 0.634 |
-| Enzyme type control, linear on wildtype | macro-F1 | 0.766 | 0.674 |
+| Mechanism, linear probe on wildtype-only | macro-F1 | 0.552 | 0.450 |
+| Mechanism, exploratory MLP on delta | macro-F1 | 0.395 | 0.375 |
+| Majority-class reference | macro-F1 | 0.288 | 0.290 |
+| Pathogenicity control, MLP on delta | AUROC | 0.887 | 0.885 |
+| Enzyme type control, linear on wildtype | macro-F1 | 0.832 | 0.779 |
 
-Family-recognition leakage in the wildtype-only mechanism probe: 30.0%.
+| Pathogenicity feature, family split | AUROC |
+|---|---:|
+| Direction only, MLP | 0.893 |
+| Magnitude only, MLP | 0.610 |
+| Masked-marginal conservation score | 0.888 |
+
+| Stability probe on mean delta | Random split Spearman | Domain split Spearman | Family split Spearman |
+|---|---:|---:|---:|
+| Ridge | 0.693 | 0.601 | 0.554 |
+| MLP | 0.868 | 0.703 | 0.627 |
+| XGBoost | 0.767 | 0.676 | 0.630 |
+
+The descriptive leakage fraction for the wildtype-only mechanism probe is 0.389 (95% CI 0.239 to
+0.543). The analysis does not establish family recognition as the cause of the gene-to-family
+decrease.
 
 The gene-level proteome and Badonyi structural-prior arcs have not been re-measured in the current
 run, so no numbers are quoted for them here. The run0-era figures are in `docs/README.md`.
