@@ -19,7 +19,7 @@ biopython==1.87
 joblib==1.5.3
 ```
 
-## Pod before environment rebuild (root@216.243.220.222:10625)
+## Pod before environment rebuild
 
 This environment was captured before the pod virtual environment was recreated during Experiment
 7. It applies to the earlier pod steps and to processes that were already running when the virtual
@@ -38,7 +38,7 @@ biopython==1.88
 joblib==1.5.3
 ```
 
-## Pod after environment rebuild (root@216.243.220.222:10625)
+## Pod after environment rebuild
 
 The virtual environment was rebuilt before the successful final run of step 7.2. These versions
 were verified directly on the pod on 2026-08-19. They also apply to steps 7.3 and 7.4 if those

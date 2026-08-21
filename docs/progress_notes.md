@@ -114,7 +114,7 @@ Full design: `EXPERIMENT.md`
 - API key: stored in RUN_AI_SCIENTIST.md (do not commit)
 
 ### Current pod
-- A100 SXM 80GB, `154.54.102.57:19561`
+- A100 SXM 80GB RunPod instance
 - Repo at `/workspace/dami-AI-Scientist`, branch `esm2-mechanism`
 - Baseline running in tmux session `baseline`
 
@@ -143,7 +143,7 @@ Full design: `EXPERIMENT.md`
 ### Central finding
 ESM-2 delta embeddings predict ClinVar pathogenic vs benign at AUROC 0.88 but cannot classify GOF/DN/LOF above chance (macro-F1 0.28). The apparent gene-level mechanism signal is family leakage. This is a methodological consolidation contribution (not a discovery) — publishable at Bioinformatics/Genome Biology.
 
-### Running on RunPod (154.54.102.28:13732)
+### Running on RunPod
 1. `tmux mlp2` — `experiment_mlp.py --family_split` — MLP probe under family-split CV (the single blocking experiment)
 2. `tmux merged_emb` — `extract_merged_embeddings.py` — ESM-2 embeddings for merged dataset (19,102 variants, 1,985 genes)
 
