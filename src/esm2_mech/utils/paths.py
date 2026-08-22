@@ -59,6 +59,14 @@ LEAKAGE_FRACTION_JSON = RESULTS_DIR / "leakage_fraction.json"
 PATHOGENICITY_CONTROL_SEED_JSON = str(RESULTS_DIR / "pathogenicity_control_seed{seed}.json")
 WITHIN_FAMILY_MECHANISM_JSON = RESULTS_DIR / "within_family_mechanism.json"
 
+# ── Two-stage cascade mechanism classifier (cascade_mechanism.py) ─────────────
+# Stage A separates LOF from the rest with family-matched, cluster-stratified
+# LOF downsampling; stage B separates GOF from DN on the non-LOF rows only.
+# Its own subdir so the per-seed files never collide with the single-stage
+# mechanism seed files written directly under RESULTS_DIR.
+CASCADE_MECHANISM_DIR = RESULTS_DIR / "cascade_mechanism"
+CASCADE_MECHANISM_AGGREGATE_JSON = CASCADE_MECHANISM_DIR / "aggregate.json"
+
 # ── Enzyme classification (positive control for the mechanism arc) ───────────
 ENZYME_RESULTS_DIR = RESULTS_DIR / "enzyme_classification"
 ENZYME_CLASSIFICATION_JSON = ENZYME_RESULTS_DIR / "enzyme_classification_summary.json"

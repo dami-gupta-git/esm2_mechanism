@@ -159,6 +159,36 @@ def contrastive_seed_result_filename(seed: int) -> str:
     )
 
 
+# ── Two-stage cascade mechanism classifier ────────────────────────────────────
+# Stage A is LOF vs {GOF, DN}; stage B is GOF vs DN fitted on the non-LOF rows.
+# Cascade posteriors are P(LOF)=pA, P(GOF)=(1-pA)*pB, P(DN)=(1-pA)*(1-pB).
+CASCADE_STAGE_A = "lof_vs_rest"
+CASCADE_STAGE_B = "gof_vs_dn"
+CASCADE_STAGES = (CASCADE_STAGE_A, CASCADE_STAGE_B)
+# Training-fold sampling arms. "family_matched" equalizes LOF against non-LOF
+# inside each Pfam family so family identity cannot predict the stage-A label;
+# "unbalanced" keeps the training fold as-is and is the ablation it is read
+# against. Never compare a family_matched number to a single-stage result
+# without also reading the unbalanced arm.
+CASCADE_ARM_FAMILY_MATCHED = "family_matched"
+CASCADE_ARM_UNBALANCED = "unbalanced"
+CASCADE_SAMPLING_ARMS = (CASCADE_ARM_FAMILY_MATCHED, CASCADE_ARM_UNBALANCED)
+# k-means clusters fitted on the training fold's LOF delta embeddings. LOF
+# downsampling draws round-robin across them so the retained LOF rows keep the
+# spread of the discarded ones rather than collapsing onto one region.
+CASCADE_LOF_N_CLUSTERS = 8
+# PCA components the LOF rows are reduced to before k-means, fitted on the
+# training fold only. k-means on the raw 1280-d delta is dominated by the
+# high-variance directions and is slow enough to matter across 5 seeds x 5 folds.
+CASCADE_LOF_CLUSTER_PCA = 50
+# Target LOF-to-non-LOF row ratio in a family_matched training fold. Matched
+# rows from mixed families are taken first; only if they fall short of the
+# target is the remainder drawn from LOF-only families, which carry no
+# within-family contrast and can only teach family identity.
+CASCADE_LOF_TARGET_RATIO = 1.0
+# Focal-loss focusing exponent. 0.0 reduces the loss to weighted cross-entropy.
+CASCADE_FOCAL_GAMMA = 2.0
+
 # ── Megascale / Tsuboyama 2023 stability parsing ──────────────────────────────
 # A natural domain's WT_name base is a real 4-char PDB id (digit + 3 alphanumeric)
 # followed by ".pdb"; de novo designs use synthetic names (e.g. "EA|run2_...",
