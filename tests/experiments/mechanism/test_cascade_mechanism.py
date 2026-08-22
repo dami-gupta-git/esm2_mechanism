@@ -10,6 +10,8 @@ invariants a reader has to be able to assume:
 - family_matched_training_rows: both GOF and DN survive the non-LOF downsample
 - family_matched_training_rows: a ratio above 1 tops LOF up from dropped families
 - family_matched_training_rows: selection never reaches outside the training rows
+- size_matched_training_rows: hits the requested counts and spans clusters
+- size_matched_training_rows: draws across families rather than pairing within one
 - lof_cluster_assignment: recovers separated groups and reports the realised design
 - lof_cluster_assignment: reports one cluster rather than failing on a single row
 """
@@ -21,6 +23,7 @@ from esm2_mech.experiments.mechanism.cascade_mechanism import (
     _round_robin_by_key,
     family_matched_training_rows,
     lof_cluster_assignment,
+    size_matched_training_rows,
 )
 from esm2_mech.utils.constants import DN, GOF, LOF
 
@@ -141,6 +144,53 @@ def test_selection_stays_inside_the_training_rows():
         target_ratio=1.0, rng=np.random.RandomState(0),
     )
     assert set(selected.tolist()) <= set(train_rows.tolist())
+
+
+# ---------------------------------------------------------------------------
+# size_matched_training_rows
+# ---------------------------------------------------------------------------
+
+
+def test_size_matched_hits_the_requested_counts_across_clusters():
+    labels, _families, train_rows, is_lof, _cluster_of = make_fold({
+        "PF1": [LOF] * 30 + [GOF] * 8 + [DN] * 4,
+    })
+    cluster_of = {int(row): int(row) % 4 for row in np.where(is_lof)[0]}
+    selected, design = size_matched_training_rows(
+        train_rows, is_lof, labels, cluster_of,
+        n_lof=6, n_non_lof=6, rng=np.random.RandomState(0),
+    )
+    assert design["n_lof_drawn"] == 6
+    assert design["n_non_lof_drawn"] == 6
+    kept_clusters = {cluster_of[int(row)] for row in selected if is_lof[int(row)]}
+    assert kept_clusters == {0, 1, 2, 3}
+    assert int((labels[selected] == GOF).sum()) == 3
+    assert int((labels[selected] == DN).sum()) == 3
+
+
+def test_size_matched_ignores_family_when_drawing():
+    """The control must be able to take LOF and non-LOF from disjoint families.
+
+    Family matching would drop both families here, since neither holds both
+    classes. The control draws the same counts anyway, which is the difference
+    the two arms exist to isolate.
+    """
+    labels, families, train_rows, is_lof, cluster_of = make_fold({
+        "PF_lof_only": [LOF] * 20,
+        "PF_gof_only": [GOF] * 10,
+    })
+    matched, _matched_design = family_matched_training_rows(
+        train_rows, is_lof, labels, families, cluster_of,
+        target_ratio=1.0, rng=np.random.RandomState(0),
+    )
+    assert len(matched) == 0
+
+    selected, design = size_matched_training_rows(
+        train_rows, is_lof, labels, cluster_of,
+        n_lof=5, n_non_lof=5, rng=np.random.RandomState(0),
+    )
+    assert design["n_train_rows_selected"] == 10
+    assert set(families[selected].tolist()) == {"PF_lof_only", "PF_gof_only"}
 
 
 # ---------------------------------------------------------------------------

@@ -172,7 +172,18 @@ CASCADE_STAGES = (CASCADE_STAGE_A, CASCADE_STAGE_B)
 # without also reading the unbalanced arm.
 CASCADE_ARM_FAMILY_MATCHED = "family_matched"
 CASCADE_ARM_UNBALANCED = "unbalanced"
-CASCADE_SAMPLING_ARMS = (CASCADE_ARM_FAMILY_MATCHED, CASCADE_ARM_UNBALANCED)
+# "size_matched" is the control that separates the two things family matching
+# does at once. It draws the same number of rows at the same LOF-to-non-LOF
+# ratio as the family_matched arm produced on that fold, but samples them across
+# the whole training fold instead of pairing within a family. Reading
+# family_matched against size_matched isolates the removal of the family
+# shortcut; reading it against unbalanced confounds that with the row count.
+CASCADE_ARM_SIZE_MATCHED = "size_matched"
+CASCADE_SAMPLING_ARMS = (
+    CASCADE_ARM_FAMILY_MATCHED,
+    CASCADE_ARM_SIZE_MATCHED,
+    CASCADE_ARM_UNBALANCED,
+)
 # k-means clusters fitted on the training fold's LOF delta embeddings. LOF
 # downsampling draws round-robin across them so the retained LOF rows keep the
 # spread of the discarded ones rather than collapsing onto one region.

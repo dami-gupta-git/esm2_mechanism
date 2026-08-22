@@ -34,6 +34,7 @@ from esm2_mech.utils.bootstrap import attach_mechanism_ci, family_or_gene_cluste
 from esm2_mech.utils.constants import (
     BOOTSTRAP_N_RESAMPLES,
     CASCADE_ARM_FAMILY_MATCHED,
+    CASCADE_ARM_SIZE_MATCHED,
     CASCADE_FOCAL_GAMMA,
     CASCADE_LOF_CLUSTER_PCA,
     CASCADE_LOF_N_CLUSTERS,
@@ -261,6 +262,49 @@ def family_matched_training_rows(
     return selected, design
 
 
+def size_matched_training_rows(
+    train_rows: np.ndarray,
+    is_lof: np.ndarray,
+    labels: np.ndarray,
+    cluster_of: dict[int, int],
+    n_lof: int,
+    n_non_lof: int,
+    rng: np.random.RandomState,
+) -> tuple[np.ndarray, dict]:
+    """Draw `n_lof` and `n_non_lof` rows from the whole training fold, unpaired.
+
+    The counts come from what family matching produced on the same fold, so this
+    arm differs from it in one respect only: which family a row belongs to plays
+    no part in the selection. Family matching changes both the size of the
+    training pool and whether family identity predicts the label; comparing it
+    against the untouched fold cannot say which of the two moved the result, and
+    comparing it against this arm can.
+
+    LOF rows are still drawn round-robin over the k-means clusters and non-LOF
+    rows round-robin over GOF and DN, so the only removed ingredient is the
+    within-family pairing rather than the cluster and class coverage as well.
+    """
+    lof_rows = [int(row) for row in train_rows if is_lof[int(row)]]
+    non_lof_rows = [int(row) for row in train_rows if not is_lof[int(row)]]
+    label_of = {int(row): labels[int(row)] for row in non_lof_rows}
+
+    kept_lof = _round_robin_by_key(lof_rows, cluster_of, n_lof, rng)
+    kept_non_lof = _round_robin_by_key(non_lof_rows, label_of, n_non_lof, rng)
+    selected = np.array(sorted(kept_lof + kept_non_lof), dtype=int)
+    design = {
+        "n_train_rows_available": int(len(train_rows)),
+        "n_train_rows_selected": int(len(selected)),
+        "n_lof_requested": int(n_lof),
+        "n_lof_drawn": len(kept_lof),
+        "n_non_lof_requested": int(n_non_lof),
+        "n_non_lof_drawn": len(kept_non_lof),
+        "realised_lof_to_non_lof_ratio": (
+            float(len(kept_lof) / len(kept_non_lof)) if kept_non_lof else None
+        ),
+    }
+    return selected, design
+
+
 # ── Focal-loss binary MLP ────────────────────────────────────────────────────
 
 
@@ -461,15 +505,29 @@ def run_fold(
     fold_seed = seed * 1000 + fold_index
     rng = np.random.RandomState(fold_seed)
 
-    if arm == CASCADE_ARM_FAMILY_MATCHED:
+    if arm in (CASCADE_ARM_FAMILY_MATCHED, CASCADE_ARM_SIZE_MATCHED):
         train_lof_rows = train_rows[is_lof[train_rows]]
         cluster_of, cluster_design = lof_cluster_assignment(
             delta, train_lof_rows, args.lof_clusters, args.lof_cluster_pca, fold_seed
         )
-        stage_a_pool, sampling_design = family_matched_training_rows(
+        # The size-matched control takes its row counts from what family matching
+        # produced on this same fold, so the matched selection is computed either
+        # way and only the arm decides which of the two is trained on.
+        matched_rows, matched_design = family_matched_training_rows(
             train_rows, is_lof, labels, families, cluster_of,
             target_ratio=args.lof_ratio, rng=rng,
         )
+        if arm == CASCADE_ARM_FAMILY_MATCHED:
+            stage_a_pool, sampling_design = matched_rows, matched_design
+        else:
+            n_lof_matched = int((labels[matched_rows] == LOF).sum())
+            stage_a_pool, sampling_design = size_matched_training_rows(
+                train_rows, is_lof, labels, cluster_of,
+                n_lof=n_lof_matched,
+                n_non_lof=len(matched_rows) - n_lof_matched,
+                rng=rng,
+            )
+            sampling_design["counts_taken_from_family_matched_arm"] = matched_design
     else:
         cluster_design = None
         stage_a_pool = train_rows
