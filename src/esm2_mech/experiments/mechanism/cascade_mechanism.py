@@ -30,7 +30,11 @@ from collections import defaultdict
 
 import numpy as np
 
-from esm2_mech.utils.bootstrap import attach_mechanism_ci, family_or_gene_clusters
+from esm2_mech.utils.bootstrap import (
+    UNANNOTATED_CLUSTER_PREFIX,
+    attach_mechanism_ci,
+    family_or_gene_clusters,
+)
 from esm2_mech.utils.constants import (
     BOOTSTRAP_N_RESAMPLES,
     CASCADE_ARM_FAMILY_MATCHED,
@@ -39,6 +43,8 @@ from esm2_mech.utils.constants import (
     CASCADE_LOF_CLUSTER_PCA,
     CASCADE_LOF_N_CLUSTERS,
     CASCADE_LOF_TARGET_RATIO,
+    CASCADE_MATCH_FAMILY,
+    CASCADE_MATCHING_UNITS,
     CASCADE_SAMPLING_ARMS,
     CASCADE_STAGE_A,
     CASCADE_STAGE_B,
@@ -72,6 +78,7 @@ from esm2_mech.utils.paths import (
     EMB_MUT_MEAN,
     EMB_VALID_VARIANTS_JSON,
     EMB_WT_MEAN,
+    PFAM_CLANS_TSV_GZ,
     PFAM_JSON,
     VALID_VARIANTS_JSON,
 )
@@ -91,6 +98,73 @@ LOF_COLUMN = MECHANISM_CLASSES.index(LOF)
 SKIP_NO_VALIDATION_GROUPS = "fewer than two training groups for the early-stopping holdout"
 SKIP_ONE_CLASS_IN_FIT = "the fitting subset carried only one class"
 SKIP_TOO_FEW_ROWS = "the fitting or validation subset was too small to train on"
+
+
+# ── Homology unit the resampling matches inside ──────────────────────────────
+
+
+def build_matching_groups(
+    genes: np.ndarray, pfam_map: dict, unit: str, clan_file
+) -> tuple[np.ndarray, dict]:
+    """Map each row to the homology group its LOF/non-LOF pairing happens inside.
+
+    Under "family" that is the gene's Pfam family. Under "clan" it is the clan the
+    family belongs to, which merges related families and so leaves more groups
+    holding both classes to pair within.
+
+    A family Pfam assigns no clan to keeps its own accession as its group, and a
+    gene with no Pfam annotation keeps a singleton group. Pfam leaves the majority
+    of families unassigned, so treating a blank clan field as a shared group would
+    pool thousands of unrelated proteins into one homology unit and let the
+    matching pair a variant against a protein it has nothing to do with.
+    """
+    if unit not in CASCADE_MATCHING_UNITS:
+        raise ValueError(f"unknown matching unit {unit!r}; expected one of {CASCADE_MATCHING_UNITS}")
+
+    family_of = {
+        gene: (pfam_map.get(gene) if pfam_map.get(gene) else None)
+        for gene in set(genes.tolist())
+    }
+    if unit == CASCADE_MATCH_FAMILY:
+        group_of = dict(family_of)
+        n_families_without_clan = None
+    else:
+        from esm2_mech.experiments.mechanism.clan_holdout import load_clan_map
+
+        clan_map, _clan_names = load_clan_map(str(clan_file))
+        group_of = {}
+        n_families_without_clan = 0
+        for gene, family in family_of.items():
+            if family is None:
+                group_of[gene] = None
+                continue
+            clan = clan_map.get(family.split(".")[0])
+            if clan:
+                group_of[gene] = clan
+            else:
+                n_families_without_clan += 1
+                group_of[gene] = family
+
+    groups = np.array([
+        group_of[gene] if group_of[gene] else f"{UNANNOTATED_CLUSTER_PREFIX}{gene}"
+        for gene in genes
+    ])
+    design = {
+        "matching_unit": unit,
+        "n_groups": int(len(set(groups.tolist()))),
+        "n_genes_without_pfam": sum(1 for family in family_of.values() if family is None),
+        "n_families_kept_as_own_group_for_lack_of_a_clan": n_families_without_clan,
+    }
+    print(
+        f"Matching unit '{unit}': {design['n_groups']} groups over "
+        f"{len(family_of)} genes"
+        + (
+            f"; {n_families_without_clan} families had no clan and stay their own group"
+            if n_families_without_clan is not None
+            else ""
+        )
+    )
+    return groups, design
 
 
 # ── Training-fold resampling ─────────────────────────────────────────────────
@@ -604,14 +678,15 @@ def run_arm(
     delta: np.ndarray,
     genes: np.ndarray,
     pfam_map: dict,
+    matching_groups: np.ndarray,
     seed: int,
     args,
 ) -> dict:
     """Run every fold of one split under one sampling arm and aggregate."""
-    # Two different units. The resampling matches within Pfam families under both
-    # splits, because a gene never holds both stage-A classes. The early-stopping
-    # holdout follows whichever unit the outer split used.
-    families = family_or_gene_clusters(genes, pfam_map, is_family_split=True)
+    # Two different units. The resampling matches within the homology group the
+    # caller chose (family or clan) under both splits, because a gene never holds
+    # both stage-A classes. The early-stopping holdout follows whichever unit the
+    # outer split used.
     validation_groups = family_or_gene_clusters(
         genes, pfam_map, is_family_split=(split_name == SPLIT_FAMILY)
     )
@@ -625,7 +700,7 @@ def run_arm(
         test_rows = np.asarray(test_rows)
         fold = run_fold(
             fold_index, train_rows, test_rows,
-            labels, delta, families, validation_groups, arm, seed, args,
+            labels, delta, matching_groups, validation_groups, arm, seed, args,
         )
         proba = fold.pop("proba", None)
         y_true = fold.pop("y_true", None)
@@ -699,7 +774,8 @@ def run_arm(
 
 
 def run_seed(
-    seed: int, labels, genes, delta, pfam_map, input_fingerprints, args
+    seed: int, labels, genes, delta, pfam_map, matching_groups,
+    input_fingerprints, args,
 ) -> dict:
     gene_splits = gene_split_cv(genes, n_folds=args.n_folds, seed=seed)
     family_splits = family_split_cv(genes, pfam_map, n_folds=args.n_folds, seed=seed)
@@ -713,7 +789,8 @@ def run_seed(
     for arm in args.arms:
         for split_name, splits in splits_by_name:
             arms[f"{arm}_{split_name}"] = run_arm(
-                arm, split_name, splits, labels, delta, genes, pfam_map, seed, args
+                arm, split_name, splits, labels, delta, genes, pfam_map,
+                matching_groups, seed, args,
             )
 
     result = {
@@ -722,17 +799,29 @@ def run_seed(
         "input_fingerprints": input_fingerprints,
         "analysis_parameters": analysis_parameters(args),
     }
-    CASCADE_MECHANISM_DIR.mkdir(parents=True, exist_ok=True)
-    out_path = CASCADE_MECHANISM_DIR / f"cascade_seed{seed}.json"
+    out_dir = output_dir(args)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / f"cascade_seed{seed}.json"
     write_result_json(out_path, result, seeds=[seed])
     print(f"\nWrote {out_path}")
     return result
+
+
+def output_dir(args):
+    """Result directory for one matching unit.
+
+    The unit changes every number in the file while leaving the filenames
+    identical, so the two runs get separate directories rather than the second
+    silently overwriting the first.
+    """
+    return CASCADE_MECHANISM_DIR / f"match_{args.matching_unit}"
 
 
 def analysis_parameters(args) -> dict:
     """Every setting that changes the numbers, recorded with the result."""
     return {
         "arms": list(args.arms),
+        "matching_unit": args.matching_unit,
         "n_folds": args.n_folds,
         "hidden": list(args.hidden),
         "dropout": args.dropout,
@@ -855,6 +944,13 @@ def main():
     parser.add_argument("--arms", nargs="+", default=list(CASCADE_SAMPLING_ARMS),
                         choices=list(CASCADE_SAMPLING_ARMS),
                         help="stage-A training-fold sampling arms to run")
+    parser.add_argument("--matching_unit", default=CASCADE_MATCH_FAMILY,
+                        choices=list(CASCADE_MATCHING_UNITS),
+                        help="homology unit the stage-A resampling pairs LOF "
+                             "against non-LOF inside; clan roughly doubles the "
+                             "matched pool but is a looser relationship")
+    parser.add_argument("--clan_file", default=str(PFAM_CLANS_TSV_GZ),
+                        help="Pfam-A.clans.tsv.gz, read only when matching on clan")
     parser.add_argument("--hidden", type=int, nargs="+", default=[256, 64])
     parser.add_argument("--dropout", type=float, default=0.3)
     parser.add_argument("--lr", type=float, default=1e-3)
@@ -878,7 +974,10 @@ def main():
         parser.error("--lof_ratio must be > 0")
 
     labels, genes, delta, pfam_map, input_fingerprints = load_data()
-    CASCADE_MECHANISM_DIR.mkdir(parents=True, exist_ok=True)
+    matching_groups, matching_design = build_matching_groups(
+        genes, pfam_map, args.matching_unit, args.clan_file
+    )
+    output_dir(args).mkdir(parents=True, exist_ok=True)
 
     seed_results = []
     for seed in range(args.seeds):
@@ -886,7 +985,10 @@ def main():
         print(f"# SEED {seed}")
         print("#" * 60)
         seed_results.append(
-            run_seed(seed, labels, genes, delta, pfam_map, input_fingerprints, args)
+            run_seed(
+                seed, labels, genes, delta, pfam_map, matching_groups,
+                input_fingerprints, args,
+            )
         )
 
     for result in seed_results:
@@ -894,19 +996,21 @@ def main():
             raise ValueError(f"seed {result['seed']} was produced from different inputs")
 
     across = aggregate_seeds(seed_results)
+    aggregate_path = output_dir(args) / CASCADE_MECHANISM_AGGREGATE_JSON.name
     write_result_json(
-        CASCADE_MECHANISM_AGGREGATE_JSON,
+        aggregate_path,
         {
             "n_seeds": len(seed_results),
             "seed_files": [f"cascade_seed{result['seed']}.json" for result in seed_results],
             "input_fingerprints": input_fingerprints,
             "analysis_parameters": analysis_parameters(args),
+            "matching_group_design": matching_design,
             "across_seed": across,
         },
         seeds=list(range(args.seeds)),
     )
     print_summary(across)
-    print(f"\nWrote {CASCADE_MECHANISM_AGGREGATE_JSON}")
+    print(f"\nWrote {aggregate_path}")
 
 
 if __name__ == "__main__":

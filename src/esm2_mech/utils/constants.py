@@ -184,6 +184,19 @@ CASCADE_SAMPLING_ARMS = (
     CASCADE_ARM_SIZE_MATCHED,
     CASCADE_ARM_UNBALANCED,
 )
+# Homology unit the stage-A resampling pairs LOF against non-LOF inside.
+# "family" is the strict setting: a Pfam family is a tight grouping, so a model
+# that still separates the classes inside one cannot be reading family identity.
+# "clan" groups related families together, which roughly doubles the matched
+# training pool but weakens the claim, since two proteins in a clan are more
+# distantly related than two in a family. A family carrying no clan assignment
+# stays its own group under both settings — Pfam leaves most families
+# unassigned, and collapsing them into a single shared group would pool
+# thousands of unrelated proteins into one spurious homology unit.
+CASCADE_MATCH_FAMILY = "family"
+CASCADE_MATCH_CLAN = "clan"
+CASCADE_MATCHING_UNITS = (CASCADE_MATCH_FAMILY, CASCADE_MATCH_CLAN)
+
 # k-means clusters fitted on the training fold's LOF delta embeddings. LOF
 # downsampling draws round-robin across them so the retained LOF rows keep the
 # spread of the discarded ones rather than collapsing onto one region.
