@@ -10,12 +10,17 @@ import warnings
 from collections import Counter
 
 import numpy as np
-from sklearn.metrics import roc_auc_score, f1_score
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.preprocessing import LabelEncoder
 from esm2_mech.utils.data import load_pfam_map
 from esm2_mech.utils.io import load_variants_and_delta, write_result_json
-from esm2_mech.utils.metrics import align_proba
+from esm2_mech.utils.classification import validate_complete_classification_splits
+from esm2_mech.utils.metrics import (
+    aggregate_folds,
+    align_proba,
+    compute_metrics,
+    empty_aggregate_metrics,
+)
 from esm2_mech.utils.splits import gene_split_cv, family_split_cv
 from esm2_mech.utils.paths import (
     CONTRASTIVE_AGGREGATE_JSON,
@@ -287,22 +292,26 @@ def run_knn(Z_train, Z_test, y_train, y_test, le, k=10):
     pred = knn.predict(Z_test)
 
     raw_proba = knn.predict_proba(Z_test)
-    all_classes = list(le.classes_)
     train_cls_str = le.classes_[np.asarray(knn.classes_)]
-    proba = align_proba(raw_proba, train_cls_str, all_classes)
-    proba_mechanism_order = align_proba(raw_proba, train_cls_str, MECHANISM_CLASSES)
+    proba_mechanism_order = align_proba(
+        raw_proba,
+        train_cls_str,
+        MECHANISM_CLASSES,
+        allow_missing_classes=False,
+    )
 
-    fm = {"macro_f1": float(f1_score(y_test, pred, average="macro", zero_division=0))}
+    true_labels = le.inverse_transform(y_test)
+    predicted_labels = le.inverse_transform(pred)
+    fm = compute_metrics(
+        true_labels, predicted_labels, proba_mechanism_order, MECHANISM_CLASSES
+    )
     auroc_skipped = {}
-    for all_i, cls_str in enumerate(all_classes):
-        cls_int = le.transform([cls_str])[0]
-        y_bin = (y_test == cls_int).astype(int)
-        if y_bin.sum() == 0 or (1 - y_bin).sum() == 0:
+    for cls_str in MECHANISM_CLASSES:
+        value = fm["per_class_auroc"][cls_str]
+        if value is None:
             auroc_skipped[cls_str] = "class_absent_in_test"
-        elif proba[:, all_i].std() == 0:
-            auroc_skipped[cls_str] = "constant_proba"
         else:
-            fm[f"auroc_{cls_str}"] = float(roc_auc_score(y_bin, proba[:, all_i]))
+            fm[f"auroc_{cls_str}"] = value
     if auroc_skipped:
         fm["auroc_skipped"] = auroc_skipped
     return fm, proba_mechanism_order
@@ -316,16 +325,40 @@ def run_cv(
     pfam_map,
     le,
     splits,
+    split_contract,
     split_name,
     hidden=(256, 64),
     seed=42,
     batch_size=512,
 ):
+    if split_contract["status"] != "valid":
+        result = empty_aggregate_metrics(
+            MECHANISM_CLASSES,
+            split_contract["requested_folds"],
+            "split_validation_failed",
+        )
+        result.update(
+            {
+                "status": "unscorable",
+                "classes": list(MECHANISM_CLASSES),
+                "eligible_rows": split_contract["eligible_rows"],
+                "out_of_fold_rows": 0,
+                "held_out_unit": split_contract.get("held_out_unit"),
+                "group_count": split_contract.get("group_count"),
+                "split_validation": split_contract,
+            }
+        )
+        return result, dict(result), None, None
+
     y = le.transform(labels)
     fold_results_contrastive = []
     fold_results_raw_knn = []
-    oof_contrastive = {"y_true": [], "proba": [], "genes": [], "row_ids": []}
-    oof_raw_knn = {"y_true": [], "proba": [], "genes": [], "row_ids": []}
+    oof_contrastive = {
+        "y_true": [], "proba": [], "genes": [], "row_ids": [], "folds": []
+    }
+    oof_raw_knn = {
+        "y_true": [], "proba": [], "genes": [], "row_ids": [], "folds": []
+    }
 
     for fold_i, (train_idx, test_idx) in enumerate(splits):
         X_tr, X_te = X[train_idx], X[test_idx]
@@ -333,11 +366,6 @@ def run_cv(
         labels_tr, labels_te = labels[train_idx], labels[test_idx]
         gene_pfam_tr = gene_pfam[train_idx]
         genes_te = genes[test_idx]
-
-        # fold_i advances even when skipped, keeping seed offset (seed + fold_i) stable.
-        if len(set(y_tr)) < 2 or len(set(y_te)) < 2:
-            print(f"  Split {fold_i+1}/{len(splits)}: skipped (missing class)")
-            continue
 
         print(
             f"\n  Split {fold_i+1}/{len(splits)} [{split_name}]  "
@@ -356,6 +384,7 @@ def run_cv(
         oof_raw_knn["proba"].append(raw_proba)
         oof_raw_knn["genes"].append(genes_te)
         oof_raw_knn["row_ids"].append(test_idx)
+        oof_raw_knn["folds"].append(np.full(len(test_idx), fold_i, dtype=int))
         print(
             f"    raw k-NN:      macro_f1={raw_fm['macro_f1']:.3f}  "
             f"{GOF}={raw_fm.get(f'auroc_{GOF}', float('nan')):.3f}  "
@@ -380,6 +409,7 @@ def run_cv(
         oof_contrastive["proba"].append(cont_proba)
         oof_contrastive["genes"].append(genes_te)
         oof_contrastive["row_ids"].append(test_idx)
+        oof_contrastive["folds"].append(np.full(len(test_idx), fold_i, dtype=int))
         print(
             f"    contrastive:   macro_f1={cont_fm['macro_f1']:.3f}  "
             f"{GOF}={cont_fm.get(f'auroc_{GOF}', float('nan')):.3f}  "
@@ -388,44 +418,34 @@ def run_cv(
         )
 
     def agg(fold_list):
-        if not fold_list:
-            return {"error": "no folds"}
-        # Only aggregate float-valued per-fold metrics, so int/bool fields are never meaned.
-        metric_keys = set()
-        for fold in fold_list:
-            for key, value in fold.items():
-                if type(value) is float:
-                    metric_keys.add(key)
-        out = {}
-        for key in metric_keys:
-            vals = [
-                fold[key]
-                for fold in fold_list
-                if key in fold and not np.isnan(fold[key])
-            ]
-            if vals:
-                out[f"{key}_mean"] = float(np.mean(vals))
-                out[f"{key}_std"] = float(np.std(vals))
-                out[f"{key}_n_folds"] = len(vals)
-        skip_counts = Counter()
-        for fold in fold_list:
-            for cls_str, reason in fold.get("auroc_skipped", {}).items():
-                skip_counts[f"auroc_{cls_str}:{reason}"] += 1
-        if skip_counts:
-            out["auroc_skipped_counts"] = dict(skip_counts)
-            print(f"    auroc skipped (by class:reason): {dict(skip_counts)}")
-        out["n_folds"] = len(fold_list)
+        out = aggregate_folds(
+            fold_list, MECHANISM_CLASSES, split_contract["requested_folds"]
+        )
+        out.update(
+            {
+                "status": "success",
+                "classes": list(MECHANISM_CLASSES),
+                "eligible_rows": split_contract["eligible_rows"],
+                "out_of_fold_rows": split_contract["eligible_rows"],
+                "held_out_unit": split_contract.get("held_out_unit"),
+                "group_count": split_contract.get("group_count"),
+                "split_validation": split_contract,
+            }
+        )
         return out
 
     def _finalize_oof(oof):
-        if not oof["y_true"]:
-            return None
-        return {
+        finalized = {
             "y_true": np.concatenate(oof["y_true"]),
             "proba": np.concatenate(oof["proba"]),
             "genes": np.concatenate(oof["genes"]),
             "row_ids": np.concatenate(oof["row_ids"]),
+            "folds": np.concatenate(oof["folds"]),
+            "classes": list(MECHANISM_CLASSES),
         }
+        if len(np.unique(finalized["row_ids"])) != split_contract["eligible_rows"]:
+            raise RuntimeError("contrastive OOF rows do not cover the eligible cohort once")
+        return finalized
 
     return (
         agg(fold_results_contrastive),
@@ -452,6 +472,25 @@ def run(
     print("\n=== Building CV splits ===")
     gene_splits = gene_split_cv(genes, n_folds=n_folds, seed=seed)
     fam_splits = family_split_cv(genes, pfam_map, n_folds=n_folds, seed=seed)
+    gene_contract = validate_complete_classification_splits(
+        gene_splits,
+        requested_folds=n_folds,
+        eligible_rows=np.concatenate([test for _train, test in gene_splits]),
+        labels=labels,
+        classes=MECHANISM_CLASSES,
+        groups=genes,
+        held_out_unit="gene",
+    )
+    family_groups = np.array([pfam_map.get(gene) for gene in genes], dtype=object)
+    family_contract = validate_complete_classification_splits(
+        fam_splits,
+        requested_folds=n_folds,
+        eligible_rows=np.concatenate([test for _train, test in fam_splits]),
+        labels=labels,
+        classes=MECHANISM_CLASSES,
+        groups=family_groups,
+        held_out_unit="family",
+    )
     print(f"Gene-split: {len(gene_splits)} folds | Family-split: {len(fam_splits)} folds")
 
     hidden = (256, proj_dim)
@@ -460,7 +499,7 @@ def run(
     print(f"GENE-SPLIT CV (seed {seed})")
     print("=" * 60)
     gene_cont, gene_raw, gene_cont_oof, gene_raw_oof = run_cv(
-        delta_mean, labels, genes, gene_pfam, pfam_map, le, gene_splits,
+        delta_mean, labels, genes, gene_pfam, pfam_map, le, gene_splits, gene_contract,
         "gene-split", hidden=hidden, seed=seed, batch_size=batch_size,
     )
 
@@ -468,7 +507,7 @@ def run(
     print(f"FAMILY-SPLIT CV (seed {seed})")
     print("=" * 60)
     fam_cont, fam_raw, fam_cont_oof, fam_raw_oof = run_cv(
-        delta_mean, labels, genes, gene_pfam, pfam_map, le, fam_splits,
+        delta_mean, labels, genes, gene_pfam, pfam_map, le, fam_splits, family_contract,
         "family-split", hidden=hidden, seed=seed, batch_size=batch_size,
     )
 
@@ -578,22 +617,27 @@ def run(
 
         def auroc_str(metrics):
             return "".join(
-                f"  {cls}={metrics.get(f'auroc_{cls}_mean', float('nan')):.3f}"
+                f"  {cls}=" + (
+                    "NA"
+                    if metrics.get(f"auroc_{cls}_mean") is None
+                    else f"{metrics[f'auroc_{cls}_mean']:.3f}"
+                )
                 for cls in MECHANISM_CLASSES
             )
 
         print(f"\n{split_name}:")
+        if cont.get("status") != "success" or raw.get("status") != "success":
+            print("  Contrastive and raw k-NN: Unscorable")
+            continue
         print(
-            f"  Contrastive k-NN:  macro_f1={cont.get('macro_f1_mean', float('nan')):.3f} "
-            f"± {cont.get('macro_f1_std', float('nan')):.3f}" + auroc_str(cont)
+            f"  Contrastive k-NN:  macro_f1={cont['macro_f1_mean']:.3f} "
+            f"± {cont['macro_f1_std']:.3f}" + auroc_str(cont)
         )
         print(
-            f"  Raw k-NN baseline: macro_f1={raw.get('macro_f1_mean', float('nan')):.3f} "
-            f"± {raw.get('macro_f1_std', float('nan')):.3f}" + auroc_str(raw)
+            f"  Raw k-NN baseline: macro_f1={raw['macro_f1_mean']:.3f} "
+            f"± {raw['macro_f1_std']:.3f}" + auroc_str(raw)
         )
-        delta_f1 = cont.get("macro_f1_mean", float("nan")) - raw.get(
-            "macro_f1_mean", float("nan")
-        )
+        delta_f1 = cont["macro_f1_mean"] - raw["macro_f1_mean"]
         print(f"  Δ contrastive − raw: {delta_f1:+.3f}")
 
     os.makedirs(out_dir, exist_ok=True)
@@ -633,16 +677,19 @@ def print_interpretation(aggregated):
     fam = aggregated.get(FAMILY_SPLIT, {})
     cont = fam.get("contrastive_knn", {})
     raw = fam.get("raw_knn_baseline", {})
-    cont_f1 = cont.get("macro_f1_seed_mean", float("nan"))
-    raw_f1 = raw.get("macro_f1_seed_mean", float("nan"))
+    cont_f1 = cont.get("macro_f1_seed_mean")
+    raw_f1 = raw.get("macro_f1_seed_mean")
     floor = read_across_seed_metric(
         MECHANISM_AGGREGATE_JSON, FAMILY_SPLIT, DELTA_MEAN_FEATURE
     )
 
     print("\n=== Across-seed interpretation (family-split) ===")
-    print(f"  MLP delta_mean floor (from aggregate.json): {floor:.3f}")
-    # NaN makes > False, which would silently report "no signal" — check explicitly.
-    if not all(np.isfinite(value) for value in (cont_f1, raw_f1, floor)):
+    floor_text = "unavailable" if floor is None else f"{floor:.3f}"
+    print(f"  MLP delta_mean floor (from aggregate.json): {floor_text}")
+    values = (cont_f1, raw_f1, floor)
+    if any(value is None for value in values) or not all(
+        np.isfinite(value) for value in values if value is not None
+    ):
         print(
             "  ? Verdict undefined — a required value is missing/NaN: "
             f"contrastive_f1={cont_f1}, raw_f1={raw_f1}, floor={floor}."

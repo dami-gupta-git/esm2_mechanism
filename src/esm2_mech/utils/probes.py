@@ -6,16 +6,15 @@ import functools
 
 import numpy as np
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import roc_auc_score, f1_score
+from sklearn.metrics import roc_auc_score
 from sklearn.preprocessing import StandardScaler
 
-from esm2_mech.utils.constants import MECHANISM_CLASSES
+from esm2_mech.utils.classification import validate_classes, validate_observed_labels
 from esm2_mech.utils.metrics import (
-    add_flat_class_metrics,
     aggregate_folds,
     align_proba,
     compute_metrics,
-    imbalance_metrics,
+    empty_aggregate_metrics,
     mean_std_n,
     standardize,
 )
@@ -27,7 +26,7 @@ def _per_gene_f1(
     y_true: np.ndarray,
     proba: np.ndarray,
     genes: np.ndarray,
-    classes: list[str] = MECHANISM_CLASSES,
+    classes: list[str],
 ) -> float:
     """Aggregate per-variant probabilities to per-gene predictions and compute macro-F1.
 
@@ -35,17 +34,27 @@ def _per_gene_f1(
     caller's, not MECHANISM_CLASSES, since the multiclass runners accept an
     arbitrary class list (e.g. the 4-class GOF/DN/HI/AR probe).
     """
-    unique = list(set(genes.tolist()))
+    declared = validate_classes(classes)
+    validate_observed_labels(y_true, declared, "gene-level y_true")
+    unique = sorted(set(genes.tolist()), key=str)
     y_g, p_g = [], []
-    for g in unique:
-        mask = genes == g
+    for gene in unique:
+        mask = genes == gene
         gene_labels = y_true[mask]
-        counts = {cls: int((gene_labels == cls).sum()) for cls in classes}
-        true_label = max(counts, key=counts.__getitem__)
-        pred_label = classes[int(proba[mask].mean(0).argmax())]
+        observed = np.unique(gene_labels)
+        if len(observed) != 1:
+            raise ValueError(
+                f"gene {gene!r} has inconsistent mechanism labels: {observed.tolist()!r}"
+            )
+        true_label = observed[0]
+        pred_label = declared[int(proba[mask].mean(0).argmax())]
         y_g.append(true_label)
         p_g.append(pred_label)
-    return float(f1_score(y_g, p_g, average="macro", zero_division=0))
+    identity = np.eye(len(declared), dtype=float)
+    predicted_proba = identity[[declared.index(value) for value in p_g]]
+    return compute_metrics(
+        np.asarray(y_g), np.asarray(p_g), predicted_proba, declared
+    )["macro_f1"]
 
 
 def _record_per_gene_f1(
@@ -53,7 +62,7 @@ def _record_per_gene_f1(
     y_true: np.ndarray,
     proba: np.ndarray,
     genes_sub: np.ndarray,
-    classes: list[str] = MECHANISM_CLASSES,
+    classes: list[str],
 ) -> str:
     """Compute the fold's per-gene macro-F1, append it to pg_f1s, return the log suffix.
 
@@ -103,7 +112,15 @@ class _OofCollector:
     they can only do that if the fold survives collection.
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        classes: list[object],
+        eligible_rows: np.ndarray,
+        requested_folds: int,
+    ) -> None:
+        self._classes = validate_classes(classes)
+        self._eligible_rows = np.asarray(eligible_rows, dtype=int)
+        self._requested_folds = int(requested_folds)
         self._y: list = []
         self._proba: list = []
         self._genes: list = []
@@ -114,26 +131,56 @@ class _OofCollector:
         self,
         y_te: np.ndarray,
         proba: np.ndarray,
-        genes_te: np.ndarray,
+        genes_te: np.ndarray | None,
         te: np.ndarray,
         fold_i: int,
     ) -> None:
         te = np.asarray(te)
+        if proba.shape != (len(te), len(self._classes)):
+            raise ValueError(
+                f"OOF probability shape {proba.shape} does not match "
+                f"({len(te)}, {len(self._classes)})"
+            )
+        if not np.isfinite(proba).all():
+            raise ValueError(f"OOF probabilities contain non-finite values in fold {fold_i}")
+        validate_observed_labels(y_te, self._classes, "OOF y_true")
         self._y.append(y_te)
         self._proba.append(proba)
-        self._genes.append(genes_te)
+        if genes_te is not None:
+            self._genes.append(genes_te)
         self._rows.append(te)
         self._folds.append(np.full(len(te), int(fold_i), dtype=int))
 
     def finalize(self) -> dict | None:
         if not self._y:
-            return None
+            raise ValueError("cannot finalize an empty OOF record")
+        row_ids = np.concatenate(self._rows)
+        if len(np.unique(row_ids)) != len(row_ids):
+            unique_rows, row_counts = np.unique(row_ids, return_counts=True)
+            duplicates = unique_rows[row_counts > 1]
+            raise ValueError(f"OOF record contains duplicate rows: {duplicates[:20].tolist()}")
+        missing = sorted(set(self._eligible_rows.tolist()) - set(row_ids.tolist()))
+        unexpected = sorted(set(row_ids.tolist()) - set(self._eligible_rows.tolist()))
+        if missing or unexpected:
+            raise ValueError(
+                "OOF row coverage mismatch: "
+                f"missing={missing[:20]!r}, unexpected={unexpected[:20]!r}"
+            )
+        folds = np.concatenate(self._folds)
+        observed_folds = sorted(np.unique(folds).tolist())
+        expected_folds = list(range(self._requested_folds))
+        if observed_folds != expected_folds:
+            raise ValueError(
+                f"OOF fold labels {observed_folds!r} do not match {expected_folds!r}"
+            )
+        order = np.argsort(row_ids, kind="stable")
         return {
-            "y_true": np.concatenate(self._y),
-            "proba": np.concatenate(self._proba),
-            "genes": np.concatenate(self._genes),
-            "row_ids": np.concatenate(self._rows),
-            "folds": np.concatenate(self._folds),
+            "y_true": np.concatenate(self._y)[order],
+            "proba": np.concatenate(self._proba)[order],
+            "genes": np.concatenate(self._genes)[order] if self._genes else None,
+            "row_ids": row_ids[order],
+            "folds": folds[order],
+            "classes": list(self._classes),
         }
 
 
@@ -168,17 +215,68 @@ def require_no_nan(X: np.ndarray, caller: str) -> None:
     )
 
 
+def _unscorable_result(split_contract: dict, classes: list[object]) -> dict:
+    result = empty_aggregate_metrics(
+        classes,
+        split_contract["requested_folds"],
+        "split_validation_failed",
+    )
+    result.update(
+        {
+            "status": "unscorable",
+            "classes": list(classes),
+            "eligible_rows": split_contract["eligible_rows"],
+            "out_of_fold_rows": 0,
+            "held_out_unit": split_contract.get("held_out_unit"),
+            "group_count": split_contract.get("group_count"),
+            "split_validation": split_contract,
+        }
+    )
+    return result
+
+
+def _failed_result(
+    split_contract: dict,
+    classes: list[object],
+    completed_folds: int,
+    failed_fold: int,
+    error: Exception,
+) -> dict:
+    result = empty_aggregate_metrics(
+        classes,
+        split_contract["requested_folds"],
+        "runtime_failure",
+    )
+    result.update(
+        {
+            "status": "failed",
+            "classes": list(classes),
+            "eligible_rows": split_contract["eligible_rows"],
+            "out_of_fold_rows": 0,
+            "held_out_unit": split_contract.get("held_out_unit"),
+            "group_count": split_contract.get("group_count"),
+            "completed_folds": int(completed_folds),
+            "failed_fold": int(failed_fold),
+            "error_type": type(error).__name__,
+            "error_message": str(error),
+            "split_validation": split_contract,
+        }
+    )
+    return result
+
+
 def _run_multiclass_cv(
     fit_proba_fn,
     X: np.ndarray,
     y: np.ndarray,
     splits: list[tuple],
     classes: list[str],
+    split_contract: dict,
     seed: int,
     genes: np.ndarray | None,
     label: str,
-    min_train_classes: int | None,
     return_oof: bool,
+    compute_per_gene: bool = True,
 ):
     """Shared multiclass CV body: guard folds → fit → align proba → aggregate.
 
@@ -187,35 +285,63 @@ def _run_multiclass_cv(
     run_logreg_cv (per-fold StandardScaler + LogReg) and run_histgb_cv
     (NaN-native gradient boosting, unscaled), which differ only in that step.
     """
-    min_train_classes = len(classes) if min_train_classes is None else min_train_classes
+    declared = validate_classes(classes)
+    if return_oof and genes is None:
+        raise ValueError("genes are required when return_oof=True")
+    if split_contract.get("classes") != declared:
+        raise ValueError("runner classes do not match the split contract")
+    if split_contract.get("status") != "valid":
+        result = _unscorable_result(split_contract, declared)
+        return (result, None) if return_oof else result
     fold_results, pg_f1s = [], []
-    oof = _OofCollector()
+    oof = _OofCollector(
+        declared,
+        np.asarray(split_contract["eligible_row_ids"], dtype=int),
+        split_contract["requested_folds"],
+    )
     for fold_i, (tr, te) in enumerate(splits):
-        X_tr, X_te = X[tr], X[te]
-        y_tr, y_te = y[tr], y[te]
-        if len(set(y_tr.tolist())) < min_train_classes:
-            print(f"    [{label}] Fold {fold_i+1}: skipped (< {min_train_classes} classes in train)")
-            continue
-        if len(set(y_te.tolist())) < 2:
-            print(f"    [{label}] Fold {fold_i+1}: skipped (< 2 classes in test)")
-            continue
-        raw_proba, clf_classes = fit_proba_fn(X_tr, y_tr, X_te, seed)
-        proba = align_proba(raw_proba, clf_classes, classes)
-        pred = np.array([classes[idx] for idx in proba.argmax(axis=1)])
-        fm = compute_metrics(y_te, pred, proba, classes)
+        try:
+            X_tr, X_te = X[tr], X[te]
+            y_tr, y_te = y[tr], y[te]
+            raw_proba, clf_classes = fit_proba_fn(X_tr, y_tr, X_te, seed)
+            proba = align_proba(
+                raw_proba,
+                clf_classes,
+                declared,
+                allow_missing_classes=split_contract["allow_missing_classifier_classes"],
+            )
+            pred = np.array([declared[idx] for idx in proba.argmax(axis=1)])
+            fm = compute_metrics(y_te, pred, proba, declared)
+        except Exception as error:
+            result = _failed_result(
+                split_contract, declared, len(fold_results), fold_i, error
+            )
+            return (result, None) if return_oof else result
         fold_results.append(fm)
-        if return_oof and genes is not None:
-            oof.add(y_te, proba, genes[te], te, fold_i)
+        oof.add(y_te, proba, None if genes is None else genes[te], te, fold_i)
 
         pg_str = ""
-        if genes is not None:
+        if genes is not None and compute_per_gene:
             # `classes` (not the MECHANISM_CLASSES default) — proba's columns are
             # aligned to the caller's class list, which may not be the 3-class one.
-            pg_str = _record_per_gene_f1(pg_f1s, y_te, proba, genes[te], classes)
+            pg_str = _record_per_gene_f1(pg_f1s, y_te, proba, genes[te], declared)
 
-        _log_fold(label, fold_i, fm, classes, pg_str)
+        _log_fold(label, fold_i, fm, declared, pg_str)
 
-    agg = aggregate_folds(fold_results, classes)
+    agg = aggregate_folds(
+        fold_results, declared, split_contract["requested_folds"]
+    )
+    agg.update(
+        {
+            "status": "success",
+            "classes": declared,
+            "eligible_rows": split_contract["eligible_rows"],
+            "out_of_fold_rows": split_contract["eligible_rows"],
+            "held_out_unit": split_contract.get("held_out_unit"),
+            "group_count": split_contract.get("group_count"),
+            "split_validation": split_contract,
+        }
+    )
     _add_per_gene_f1(agg, pg_f1s)
     if return_oof:
         return agg, oof.finalize()
@@ -226,13 +352,14 @@ def run_logreg_cv(
     X: np.ndarray,
     y: np.ndarray,
     splits: list[tuple],
-    classes: list[str] = MECHANISM_CLASSES,
+    classes: list[str],
+    split_contract: dict,
     seed: int = 42,
     genes: np.ndarray | None = None,
     label: str = "",
-    min_train_classes: int | None = None,
     return_oof: bool = False,
     prescaled: bool = False,
+    compute_per_gene: bool = True,
 ):
     """Run LogReg + StandardScaler over pre-computed splits, return aggregated metrics.
 
@@ -275,7 +402,17 @@ def run_logreg_cv(
         return clf.predict_proba(X_te_s), clf.classes_
 
     return _run_multiclass_cv(
-        _fit, X, y, splits, classes, seed, genes, label, min_train_classes, return_oof,
+        _fit,
+        X,
+        y,
+        splits,
+        classes,
+        split_contract,
+        seed,
+        genes,
+        label,
+        return_oof,
+        compute_per_gene,
     )
 
 
@@ -283,12 +420,12 @@ def run_logreg_pca_cv(
     X: np.ndarray,
     y: np.ndarray,
     splits: list[tuple],
-    classes: list[str] = MECHANISM_CLASSES,
+    classes: list[str],
+    split_contract: dict,
     seed: int = 42,
     genes: np.ndarray | None = None,
     label: str = "",
     n_pca: int | None = None,
-    min_train_classes: int | None = 2,
     return_oof: bool = False,
 ):
     """Unscaled per-fold PCA then plain multinomial LogReg, over the shared CV body.
@@ -316,7 +453,7 @@ def run_logreg_pca_cv(
         return clf.predict_proba(X_te), clf.classes_
 
     return _run_multiclass_cv(
-        _fit, X, y, splits, classes, seed, genes, label, min_train_classes, return_oof,
+        _fit, X, y, splits, classes, split_contract, seed, genes, label, return_oof,
     )
 
 
@@ -324,13 +461,14 @@ def run_histgb_cv(
     X: np.ndarray,
     y: np.ndarray,
     splits: list[tuple],
-    classes: list[str] = MECHANISM_CLASSES,
+    classes: list[str],
+    split_contract: dict,
     seed: int = 42,
     genes: np.ndarray | None = None,
     label: str = "",
-    min_train_classes: int | None = None,
     return_oof: bool = False,
     max_iter: int = 200,
+    compute_per_gene: bool = True,
 ):
     """NaN-native multiclass CV (HistGradientBoosting), same return shape as run_logreg_cv.
 
@@ -355,7 +493,8 @@ def run_histgb_cv(
         return clf.predict_proba(X_te), clf.classes_
 
     return _run_multiclass_cv(
-        _fit, X, y, splits, classes, seed, genes, label, min_train_classes, return_oof,
+        _fit, X, y, splits, classes, split_contract, seed, genes, label, return_oof,
+        compute_per_gene,
     )
 
 
@@ -388,80 +527,88 @@ def _run_binary_cv(
     X: np.ndarray,
     y: np.ndarray,
     splits: list[tuple],
+    classes: list[object],
+    split_contract: dict,
     seed: int,
     pos_label,
     genes: np.ndarray | None = None, return_oof: bool = False,
 ):
-    """Binary CV body: obtain per-fold probabilities, then aggregate metrics.
-
-    `fold_predict_fn` owns fold-local preprocessing and fitting. It receives the
-    full arrays plus one fold's indices and returns positive-class probabilities,
-    or None when the fold cannot be fitted. Returns {} when no fold had both
-    classes in train and test.
-    return_oof : if True, return (agg, oof) with out-of-fold test predictions
-        {"y_true", "proba" (positive-class probability, 1-D), "genes", "row_ids",
-        "folds"}
-        for dependency-aware inference, or None if no fold was scorable. `genes`
-        must be provided for oof to carry gene ids. Default False keeps the
-        bare-`agg` return for existing callers.
-    """
+    """Run binary folds through the shared scorer and complete-fold aggregator."""
     require_no_nan(X, "binary probe CV")
-    aurocs = []
-    # AUPRC and its prevalence baseline, plus PPV/NPV at the prevalence-matched
-    # operating point — AUROC alone reads the same at 9% prevalence as at 50%.
-    imbalance_folds: dict[str, list[float]] = {
-        "auprc": [], "prevalence": [], "ppv": [], "npv": []
-    }
-    oof_y, oof_proba, oof_genes, oof_rows, oof_folds = [], [], [], [], []
+    declared = validate_classes(classes)
+    if return_oof and genes is None:
+        raise ValueError("genes are required when return_oof=True")
+    if len(declared) != 2:
+        raise ValueError(f"binary runner requires two declared classes, got {declared!r}")
+    if pos_label not in declared:
+        raise ValueError(f"positive label {pos_label!r} is not in {declared!r}")
+    if split_contract.get("classes") != declared:
+        raise ValueError("runner classes do not match the split contract")
+    if split_contract.get("status") != "valid":
+        result = _unscorable_result(split_contract, declared)
+        return (result, None) if return_oof else result
+    fold_results = []
+    oof = _OofCollector(
+        declared,
+        np.asarray(split_contract["eligible_row_ids"], dtype=int),
+        split_contract["requested_folds"],
+    )
+    positive_column = declared.index(pos_label)
+    negative_column = 1 - positive_column
     for fold_i, (tr, te) in enumerate(splits):
-        if len(set(y[tr])) < 2 or len(set(y[te])) < 2:
-            continue
-        proba = fold_predict_fn(X, y, tr, te, seed, fold_i, pos_label)
-        if proba is None:
-            continue
-        aurocs.append(float(roc_auc_score(y[te], proba)))
-        imbalance = imbalance_metrics((y[te] == pos_label).astype(int), proba)
-        if imbalance is not None:
-            for name, vals in imbalance_folds.items():
-                if imbalance[name] is not None:
-                    vals.append(imbalance[name])
-        if return_oof and genes is not None:
-            oof_y.append(y[te])
-            oof_proba.append(proba)
-            oof_genes.append(genes[te])
-            oof_rows.append(np.asarray(te))
-            oof_folds.append(np.full(len(te), fold_i, dtype=int))
+        try:
+            positive_probability = fold_predict_fn(
+                X, y, tr, te, seed, fold_i, pos_label
+            )
+            if positive_probability is None:
+                raise RuntimeError("binary fold predictor returned no probabilities")
+            probabilities = np.empty((len(te), 2), dtype=float)
+            probabilities[:, positive_column] = positive_probability
+            probabilities[:, negative_column] = 1.0 - positive_probability
+            predictions = np.array(
+                [declared[index] for index in probabilities.argmax(axis=1)]
+            )
+            fold_metrics = compute_metrics(y[te], predictions, probabilities, declared)
+        except Exception as error:
+            result = _failed_result(
+                split_contract, declared, len(fold_results), fold_i, error
+            )
+            return (result, None) if return_oof else result
+        fold_results.append(fold_metrics)
+        oof.add(y[te], probabilities, None if genes is None else genes[te], te, fold_i)
 
-    if not aurocs:
-        agg = {}
-    else:
-        auroc_mean, auroc_std, _ = mean_std_n(aurocs)
-        agg = {
-            "auroc_mean": auroc_mean,
-            "auroc_std": auroc_std,
-            "n_folds": len(aurocs),
+    aggregate = aggregate_folds(
+        fold_results, declared, split_contract["requested_folds"]
+    )
+    aggregate.update(
+        {
+            "status": "success",
+            "classes": declared,
+            "eligible_rows": split_contract["eligible_rows"],
+            "out_of_fold_rows": split_contract["eligible_rows"],
+            "held_out_unit": split_contract.get("held_out_unit"),
+            "group_count": split_contract.get("group_count"),
+            "split_validation": split_contract,
+            "auroc_mean": aggregate[f"auroc_{pos_label}_mean"],
+            "auroc_std": aggregate[f"auroc_{pos_label}_std"],
+            "auprc_mean": aggregate[f"auprc_{pos_label}_mean"],
+            "auprc_std": aggregate[f"auprc_{pos_label}_std"],
+            "prevalence_mean": aggregate[f"prevalence_{pos_label}_mean"],
+            "prevalence_std": aggregate[f"prevalence_{pos_label}_std"],
+            "ppv_mean": aggregate[f"ppv_{pos_label}_mean"],
+            "ppv_std": aggregate[f"ppv_{pos_label}_std"],
+            "npv_mean": aggregate[f"npv_{pos_label}_mean"],
+            "npv_std": aggregate[f"npv_{pos_label}_std"],
         }
-        for name, vals in imbalance_folds.items():
-            mean, std, count = mean_std_n(vals)
-            if count:
-                agg[f"{name}_mean"] = mean
-                agg[f"{name}_std"] = std
-    if not return_oof:
-        return agg
-    oof = None
-    if oof_y:
-        oof = {
-            "y_true": np.concatenate(oof_y),
-            "proba": np.concatenate(oof_proba),
-            "genes": np.concatenate(oof_genes),
-            "row_ids": np.concatenate(oof_rows),
-            "folds": np.concatenate(oof_folds),
-        }
-    return agg, oof
+    )
+    if return_oof:
+        return aggregate, oof.finalize()
+    return aggregate
 
 
 def run_logreg_binary_cv(
-    X: np.ndarray, y: np.ndarray, splits: list[tuple], seed: int = 42, pos_label=1,
+    X: np.ndarray, y: np.ndarray, splits: list[tuple], classes: list[object],
+    split_contract: dict, seed: int = 42, pos_label=1,
     genes: np.ndarray | None = None, return_oof: bool = False, max_iter: int = 1000,
 ):
     """Binary LogReg CV returning AUROC mean ± std.
@@ -485,7 +632,8 @@ def run_logreg_binary_cv(
 
     return _run_binary_cv(
         _predict_fold,
-        X, y, splits, seed, pos_label, genes=genes, return_oof=return_oof,
+        X, y, splits, classes, split_contract, seed, pos_label,
+        genes=genes, return_oof=return_oof,
     )
 
 
@@ -493,9 +641,10 @@ def run_mlp_cv(
     X: np.ndarray,
     y: np.ndarray,
     splits: list[tuple],
+    classes: list[str],
+    split_contract: dict,
     hidden: tuple = (256, 64),
     seed: int = 42,
-    classes: list[str] = MECHANISM_CLASSES,
     genes: np.ndarray | None = None,
     label: str = "",
     return_oof: bool = False,
@@ -506,11 +655,14 @@ def run_mlp_cv(
     n_iter_no_change: int = 10,
     oversample: bool = True,
     balanced_sample_weight: bool = False,
+    compute_per_gene: bool = True,
 ):
     """Sklearn MLP CV: scale → optional class balancing → fit → metrics.
 
     splits : pre-computed list of (train_idx, test_idx)
     genes  : if provided, also computes per_gene_f1 per fold
+    compute_per_gene : set False when genes are supplied only for OOF dependency
+        tracking and the cohort does not define one unique label per gene.
     label  : prefix for per-fold log lines
     return_oof : if True, return (agg, oof) with out-of-fold test predictions
         {"y_true", "proba" (aligned to `classes`), "genes", "row_ids", "folds"} for dependency-aware
@@ -529,97 +681,122 @@ def run_mlp_cv(
     require_no_nan(X, "run_mlp_cv")
     if oversample and balanced_sample_weight:
         raise ValueError("run_mlp_cv cannot combine oversampling and balanced sample weights")
-    n_classes = len(classes)
-    cls_to_idx = {cls: idx for idx, cls in enumerate(classes)}
+    declared = validate_classes(classes)
+    if return_oof and genes is None:
+        raise ValueError("genes are required when return_oof=True")
+    if split_contract.get("classes") != declared:
+        raise ValueError("runner classes do not match the split contract")
+    if split_contract.get("status") != "valid":
+        result = _unscorable_result(split_contract, declared)
+        return (result, None) if return_oof else result
+    n_classes = len(declared)
+    cls_to_idx = {cls: idx for idx, cls in enumerate(declared)}
     fold_results, pg_f1s = [], []
-    oof = _OofCollector()
+    oof = _OofCollector(
+        declared,
+        np.asarray(split_contract["eligible_row_ids"], dtype=int),
+        split_contract["requested_folds"],
+    )
 
     for fold_i, (tr, te) in enumerate(splits):
-        X_tr, X_te = X[tr], X[te]
-        y_tr, y_te = y[tr], y[te]
+        try:
+            X_tr, X_te = X[tr], X[te]
+            y_tr, y_te = y[tr], y[te]
+            sc = StandardScaler().fit(X_tr)
+            X_tr_s = sc.transform(X_tr)
+            X_te_s = sc.transform(X_te)
 
-        # A classifier needs only two classes in train to fit; requiring all
-        # n_classes silently drops valid folds where a rare class falls entirely
-        # in the test split. align_proba backfills any class absent from the
-        # fitted model as a zero column.
-        if len(set(y_tr.tolist())) < 2:
-            print(f"    [{label}] Fold {fold_i+1}: skipped (< 2 classes in train)")
-            continue
-        if len(set(y_te.tolist())) < 2:
-            print(f"    [{label}] Fold {fold_i+1}: skipped (< 2 classes in test)")
-            continue
+            fit_idx = np.arange(len(y_tr))
+            if oversample:
+                counts = {cls: int((y_tr == cls).sum()) for cls in declared}
+                max_c = max(counts.values())
+                rng = np.random.RandomState(seed)
+                sampled_idx = []
+                for cls in declared:
+                    class_idx = np.where(y_tr == cls)[0]
+                    if len(class_idx) == 0:
+                        continue
+                    sampled_idx.append(np.tile(class_idx, max_c // len(class_idx)))
+                    remainder = max_c % len(class_idx)
+                    if remainder:
+                        sampled_idx.append(rng.choice(class_idx, remainder, replace=False))
+                fit_idx = np.concatenate(sampled_idx)
+                rng.shuffle(fit_idx)
 
-        sc = StandardScaler().fit(X_tr)
-        X_tr_s = sc.transform(X_tr)
-        X_te_s = sc.transform(X_te)
-
-        fit_idx = np.arange(len(y_tr))
-        if oversample:
-            counts = {cls: int((y_tr == cls).sum()) for cls in classes}
-            max_c = max(counts.values())
-            rng = np.random.RandomState(seed)
-            sampled_idx = []
-            for cls in classes:
-                class_idx = np.where(y_tr == cls)[0]
-                if len(class_idx) == 0:
-                    continue
-                sampled_idx.append(np.tile(class_idx, max_c // len(class_idx)))
-                remainder = max_c % len(class_idx)
-                if remainder:
-                    sampled_idx.append(rng.choice(class_idx, remainder, replace=False))
-            fit_idx = np.concatenate(sampled_idx)
-            rng.shuffle(fit_idx)
-
-        clf = MLPClassifier(
-            hidden_layer_sizes=hidden,
-            activation=activation,
-            alpha=alpha,
-            max_iter=max_iter,
-            early_stopping=True,
-            validation_fraction=validation_fraction,
-            n_iter_no_change=n_iter_no_change,
-            random_state=seed,
-        )
+            clf = MLPClassifier(
+                hidden_layer_sizes=hidden,
+                activation=activation,
+                alpha=alpha,
+                max_iter=max_iter,
+                early_stopping=True,
+                validation_fraction=validation_fraction,
+                n_iter_no_change=n_iter_no_change,
+                random_state=seed,
+            )
         # Fit on integer-encoded labels: sklearn's early_stopping scores an
         # internal validation split with np.isnan(y_pred), which raises on string
         # arrays. clf.classes_ are then mapped back to strings for align_proba so
         # column ordering stays explicit (never positionally assumed).
-        y_tr_enc = np.array([cls_to_idx[lab] for lab in y_tr])
-        if balanced_sample_weight:
-            sample_weight = compute_sample_weight(
-                class_weight="balanced", y=y_tr_enc[fit_idx]
-            )
-            clf.fit(
-                X_tr_s[fit_idx],
-                y_tr_enc[fit_idx],
-                sample_weight=sample_weight,
-            )
-        else:
-            clf.fit(X_tr_s[fit_idx], y_tr_enc[fit_idx])
+            y_tr_enc = np.array([cls_to_idx[lab] for lab in y_tr])
+            if balanced_sample_weight:
+                sample_weight = compute_sample_weight(
+                    class_weight="balanced", y=y_tr_enc[fit_idx]
+                )
+                clf.fit(
+                    X_tr_s[fit_idx],
+                    y_tr_enc[fit_idx],
+                    sample_weight=sample_weight,
+                )
+            else:
+                clf.fit(X_tr_s[fit_idx], y_tr_enc[fit_idx])
 
-        clf_str_classes = np.array([classes[idx] for idx in clf.classes_])
-        proba = align_proba(clf.predict_proba(X_te_s), clf_str_classes, classes)
-        pred = np.array([classes[idx] for idx in proba.argmax(axis=1)])
-        fm = compute_metrics(y_te, pred, proba, classes)
+            clf_str_classes = np.array([declared[idx] for idx in clf.classes_])
+            proba = align_proba(
+                clf.predict_proba(X_te_s),
+                clf_str_classes,
+                declared,
+                allow_missing_classes=split_contract["allow_missing_classifier_classes"],
+            )
+            pred = np.array([declared[idx] for idx in proba.argmax(axis=1)])
+            fm = compute_metrics(y_te, pred, proba, declared)
+        except Exception as error:
+            result = _failed_result(
+                split_contract, declared, len(fold_results), fold_i, error
+            )
+            return (result, None) if return_oof else result
         fold_results.append(fm)
-        if return_oof and genes is not None:
-            oof.add(y_te, proba, genes[te], te, fold_i)
+        oof.add(y_te, proba, None if genes is None else genes[te], te, fold_i)
 
         pg_str = ""
-        if genes is not None:
-            pg_str = _record_per_gene_f1(pg_f1s, y_te, proba, genes[te], classes)
+        if genes is not None and compute_per_gene:
+            pg_str = _record_per_gene_f1(pg_f1s, y_te, proba, genes[te], declared)
 
-        _log_fold(label, fold_i, fm, classes, pg_str)
+        _log_fold(label, fold_i, fm, declared, pg_str)
 
-    agg = aggregate_folds(fold_results, classes)
-    _add_per_gene_f1(agg, pg_f1s)
+    agg = aggregate_folds(
+        fold_results, declared, split_contract["requested_folds"]
+    )
+    agg.update(
+        {
+            "status": "success",
+            "classes": declared,
+            "eligible_rows": split_contract["eligible_rows"],
+            "out_of_fold_rows": split_contract["eligible_rows"],
+            "held_out_unit": split_contract.get("held_out_unit"),
+            "group_count": split_contract.get("group_count"),
+            "split_validation": split_contract,
+        }
+    )
+    if compute_per_gene:
+        _add_per_gene_f1(agg, pg_f1s)
     if return_oof:
         return agg, oof.finalize()
     return agg
 
 
 def run_mlp_binary_cv(
-    X: np.ndarray, y: np.ndarray, splits: list[tuple], validation_groups: np.ndarray,
+    X: np.ndarray, y: np.ndarray, splits: list[tuple], classes: list[object],
+    split_contract: dict, validation_groups: np.ndarray,
     seed: int = 42, pos_label=1,
     genes: np.ndarray | None = None, return_oof: bool = False,
 ):
@@ -637,6 +814,71 @@ def run_mlp_binary_cv(
             f"validation_groups has {len(validation_groups)} rows for {len(X)} samples"
         )
 
+    validation_masks = []
+    internal_failures = []
+    for fold_i, (train_idx, test_idx) in enumerate(splits):
+        training_groups = validation_groups[train_idx]
+        overlap = sorted(
+            set(training_groups.tolist())
+            & set(validation_groups[test_idx].tolist()),
+            key=str,
+        )
+        validation_mask = _validation_group_mask(
+            training_groups, seed + fold_i, validation_fraction=0.1
+        )
+        if overlap:
+            internal_failures.append(
+                {
+                    "scope": "fold",
+                    "fold": fold_i,
+                    "reason": "validation_group_crosses_outer_boundary",
+                    "groups": overlap[:20],
+                }
+            )
+        if validation_mask is None:
+            internal_failures.append(
+                {
+                    "scope": "fold",
+                    "fold": fold_i,
+                    "reason": "insufficient_validation_groups",
+                }
+            )
+            validation_masks.append(None)
+            continue
+        fit_mask = ~validation_mask
+        fit_rows = int(fit_mask.sum())
+        validation_rows = int(validation_mask.sum())
+        if fit_rows < 10 or validation_rows < 5:
+            internal_failures.append(
+                {
+                    "scope": "fold",
+                    "fold": fold_i,
+                    "reason": "insufficient_early_stopping_rows",
+                    "fit_rows": fit_rows,
+                    "validation_rows": validation_rows,
+                }
+            )
+        fit_classes = set(np.asarray(y)[train_idx][fit_mask].tolist())
+        if len(fit_classes) < 2:
+            internal_failures.append(
+                {
+                    "scope": "fold",
+                    "fold": fold_i,
+                    "reason": "insufficient_early_stopping_fit_classes",
+                    "observed_classes": sorted(fit_classes, key=repr),
+                }
+            )
+        validation_masks.append(validation_mask)
+    if internal_failures:
+        internal_contract = dict(split_contract)
+        internal_contract["status"] = "unscorable"
+        internal_contract["failures"] = [
+            *split_contract.get("failures", []),
+            *internal_failures,
+        ]
+        result = _unscorable_result(internal_contract, validate_classes(classes))
+        return (result, None) if return_oof else result
+
     def _predict_fold(
         X_all, y_all, train_idx, test_idx, fold_seed, fold_i, positive_label
     ):
@@ -650,24 +892,12 @@ def run_mlp_binary_cv(
                 f"examples: {examples}"
             )
 
-        validation_mask = _validation_group_mask(
-            training_groups, fold_seed + fold_i, validation_fraction=0.1
-        )
-        if validation_mask is None:
-            return None
+        validation_mask = validation_masks[fold_i]
         fit_mask = ~validation_mask
         X_fit = X_all[train_idx][fit_mask]
         X_validation = X_all[train_idx][validation_mask]
         y_fit = y_all[train_idx][fit_mask]
         y_validation = y_all[train_idx][validation_mask]
-        if len(X_fit) < 10 or len(X_validation) < 5:
-            return None
-        if len(set(y_fit.tolist())) < 2:
-            raise ValueError(
-                "group-disjoint early-stopping split left fewer than two classes "
-                "in the MLP fitting subset"
-            )
-
         X_fit, X_validation, X_test = standardize(
             X_fit, X_validation, X_all[test_idx]
         )
@@ -711,7 +941,8 @@ def run_mlp_binary_cv(
 
     return _run_binary_cv(
         _predict_fold,
-        X, y, splits, seed, pos_label, genes=genes, return_oof=return_oof,
+        X, y, splits, classes, split_contract, seed, pos_label,
+        genes=genes, return_oof=return_oof,
     )
 
 
@@ -722,117 +953,75 @@ def pca_reduce(X_tr: np.ndarray, X_te: np.ndarray, n_components: int = 50):
     return pca.fit_transform(X_tr), pca.transform(X_te)
 
 
-def aggregate_fold_dicts(fold_results: list[dict]) -> dict:
-    """Aggregate flat per-fold metric dicts into {key}_mean / {key}_std.
-
-    Each fold dict maps a metric name to a scalar (e.g. {"macro_f1": .., "auroc_GOF": ..}).
-    Metrics absent from a fold, or NaN on a fold, are skipped for that metric only;
-    a metric present on no fold is omitted entirely. Used by the sklearn/MLP probe
-    runners that emit flat metric dicts (distinct from metrics.aggregate_folds,
-    which aggregates the nested per_class_auroc shape from compute_metrics).
-    """
-    keys = set().union(*[set(f) for f in fold_results]) if fold_results else set()
-    agg: dict = {}
-    for key in keys:
-        vals = [f[key] for f in fold_results if key in f and not np.isnan(f[key])]
-        if vals:
-            agg[f"{key}_mean"] = float(np.mean(vals))
-            agg[f"{key}_std"] = float(np.std(vals))
-    return agg
-
-
 def _run_sklearn_probe_impl(
     clf_fn, X: np.ndarray, labels: np.ndarray, genes: np.ndarray,
-    n_folds: int, seed: int, splits: list | None,
+    classes: list[str], split_contract: dict,
+    n_folds: int, seed: int, splits: list,
     normalize: bool, n_pca: int | None, return_oof: bool,
 ):
-    """Shared gene-split CV body for run_sklearn_probe / run_sklearn_probe_pca.
-
-    normalize : standardize each feature on the train fold (mean 0, std 1).
-    n_pca     : if not None, fit per-fold PCA after normalizing (which is forced
-                on when n_pca is set, matching the original run_sklearn_probe_pca).
-    return_oof : if True, return (agg, oof) with out-of-fold test predictions
-        {"y_true", "proba" (aligned to MECHANISM_CLASSES), "genes", "row_ids",
-        "folds"} for
-        dependency-aware inference (cluster bootstrap), or None if no fold had
-        `predict_proba`. Default False keeps the bare-`agg` return for existing
-        callers.
-    """
-    from sklearn.preprocessing import LabelEncoder
+    """Shared generic sklearn probe using the classification contracts."""
     require_no_nan(X, "run_sklearn_probe")
-    le = LabelEncoder()
-    y = le.fit_transform(labels)
-    classes = le.classes_
-    if splits is None:
-        from esm2_mech.utils.splits import gene_split_cv
-        splits = gene_split_cv(genes, n_folds=n_folds, seed=seed)
+    declared = validate_classes(classes)
+    if return_oof and genes is None:
+        raise ValueError("genes are required when return_oof=True")
+    class_to_index = {class_name: index for index, class_name in enumerate(declared)}
 
-    fold_results = []
-    oof = _OofCollector()
-    for fold_i, (train_idx, test_idx) in enumerate(splits):
-        X_tr, X_te = X[train_idx].astype(np.float32), X[test_idx].astype(np.float32)
-        y_tr, y_te = y[train_idx], y[test_idx]
-        if len(set(y_tr)) < 2:
-            continue
+    def _fit(X_tr, y_tr, X_te, fold_seed):
+        X_tr = X_tr.astype(np.float32)
+        X_te = X_te.astype(np.float32)
         if normalize or n_pca is not None:
             X_tr, X_te = standardize(X_tr, X_te)
         if n_pca is not None:
             from sklearn.decomposition import PCA
             pca = PCA(
                 n_components=min(n_pca, X_tr.shape[1], X_tr.shape[0] - 1),
-                random_state=seed,
+                random_state=fold_seed,
             )
             X_tr, X_te = pca.fit_transform(X_tr), pca.transform(X_te)
-        clf = clf_fn(seed)
-        clf.fit(X_tr, y_tr)
-        pred = clf.predict(X_te)
-        fm = {"macro_f1": float(f1_score(y_te, pred, average="macro", zero_division=0))}
-        if hasattr(clf, "predict_proba"):
-            proba = clf.predict_proba(X_te)
-            # clf.classes_ are the integer-encoded labels actually present in this
-            # fold's train split (a class missing from train is absent here, not
-            # merely a zero column) — map each back to its string label before
-            # scoring, rather than assuming column i of proba is classes[i].
-            clf_classes_str = np.array([classes[idx] for idx in clf.classes_])
-            fitted = [cls for cls in classes if cls in set(clf_classes_str)]
-            if fitted:
-                proba_by_class = align_proba(proba, clf_classes_str, fitted)
-                add_flat_class_metrics(fm, labels[test_idx], proba_by_class, fitted)
-            if return_oof and genes is not None:
-                proba_aligned = align_proba(proba, clf_classes_str, MECHANISM_CLASSES)
-                oof.add(labels[test_idx], proba_aligned, genes[test_idx], test_idx, fold_i)
-        fold_results.append(fm)
-        print(f"  Fold {fold_i+1}: macro_f1={fm['macro_f1']:.3f}")
+        classifier = clf_fn(fold_seed)
+        encoded = np.array([class_to_index[value] for value in y_tr])
+        classifier.fit(X_tr, encoded)
+        if not hasattr(classifier, "predict_proba"):
+            raise ValueError("generic classification probes require predict_proba")
+        fitted_classes = np.array([declared[index] for index in classifier.classes_])
+        return classifier.predict_proba(X_te), fitted_classes
 
-    if not fold_results:
-        agg = {"error": "insufficient data"}
-    else:
-        agg = aggregate_fold_dicts(fold_results)
-    if return_oof:
-        return agg, oof.finalize()
-    return agg
+    return _run_multiclass_cv(
+        _fit,
+        X,
+        labels,
+        splits,
+        declared,
+        split_contract,
+        seed,
+        genes,
+        "sklearn",
+        return_oof,
+    )
 
 
 def run_sklearn_probe(
     clf_fn, X: np.ndarray, labels: np.ndarray, genes: np.ndarray,
+    classes: list[str], split_contract: dict, splits: list,
     n_folds: int = 5, seed: int = 42, normalize: bool = False,
-    splits: list | None = None, return_oof: bool = False,
+    return_oof: bool = False,
 ):
     """Generic gene-split CV runner for any sklearn classifier."""
     return _run_sklearn_probe_impl(
-        clf_fn, X, labels, genes, n_folds, seed, splits,
+        clf_fn, X, labels, genes, classes, split_contract, n_folds, seed, splits,
         normalize=normalize, n_pca=None, return_oof=return_oof,
     )
 
 
 def run_sklearn_probe_pca(
     clf_fn, X: np.ndarray, labels: np.ndarray, genes: np.ndarray,
+    classes: list[str], split_contract: dict, splits: list,
     n_folds: int = 5, seed: int = 42, n_pca: int = 50,
-    splits: list | None = None, return_oof: bool = False,
+    return_oof: bool = False,
 ):
     """Gene-split CV with per-fold PCA reduction and normalization."""
     return _run_sklearn_probe_impl(
-        clf_fn, X, labels, genes, n_folds, seed, splits,
+        clf_fn, X, labels, genes, classes, split_contract, n_folds, seed, splits,
         normalize=True, n_pca=n_pca, return_oof=return_oof,
     )
 
@@ -859,6 +1048,8 @@ def run_mlp_probe_cv(
     X: np.ndarray,
     labels: np.ndarray,
     splits: list[tuple],
+    classes: list[str],
+    split_contract: dict,
     validation_groups: np.ndarray,
     seed: int = 42,
     hidden: tuple = (256, 64),
@@ -871,142 +1062,240 @@ def run_mlp_probe_cv(
     label: str = "",
     return_oof: bool = False,
 ):
-    """PyTorch MLP multi-class CV returning macro-F1 and per-class AUROC mean ± std.
-
-    validation_groups : dependency unit for the 15% early-stopping holdout.
-        Pass genes for gene-split CV and Pfam-family IDs for family-split CV.
-        The function rejects a group that spans the outer train/test boundary.
-    genes : row-aligned gene IDs used for per-gene metrics and OOF metadata.
-    label : prefix for per-fold log lines.
-    return_oof : if True, return (agg, oof) with out-of-fold test predictions
-        {"y_true", "proba" (aligned to MECHANISM_CLASSES), "genes", "row_ids",
-        "folds"} for
-        dependency-aware inference, or None if no fold was scorable. `genes` must
-        be provided for oof to carry gene ids. Default False keeps the bare-`agg`
-        return for existing callers.
-    """
+    """Run the PyTorch multiclass probe under a validated complete split set."""
     import torch
     import torch.nn as nn
     from torch.utils.data import DataLoader, TensorDataset
-    from sklearn.metrics import roc_auc_score, f1_score
 
     require_no_nan(X, "run_mlp_probe_cv")
-    classes = MECHANISM_CLASSES
-    n_classes = len(classes)
-    cls_to_idx = {cls: idx for idx, cls in enumerate(classes)}
+    declared = validate_classes(classes)
+    if return_oof and genes is None:
+        raise ValueError("genes are required when return_oof=True")
+    if split_contract.get("classes") != declared:
+        raise ValueError("runner classes do not match the split contract")
+    if split_contract.get("status") != "valid":
+        result = _unscorable_result(split_contract, declared)
+        return (result, None) if return_oof else result
+    n_classes = len(declared)
+    cls_to_idx = {cls: idx for idx, cls in enumerate(declared)}
     y = np.array([cls_to_idx[lab] for lab in labels])
     validation_groups = np.asarray(validation_groups)
     if len(validation_groups) != len(X):
         raise ValueError(
             f"validation_groups has {len(validation_groups)} rows for {len(X)} samples"
         )
+    validation_masks = []
+    internal_failures = []
+    for fold_i, (train_idx, test_idx) in enumerate(splits):
+        training_groups = validation_groups[train_idx]
+        overlap = sorted(
+            set(training_groups.tolist())
+            & set(validation_groups[test_idx].tolist()),
+            key=str,
+        )
+        validation_mask = _validation_group_mask(training_groups, seed + fold_i)
+        if overlap:
+            internal_failures.append(
+                {
+                    "scope": "fold",
+                    "fold": fold_i,
+                    "reason": "validation_group_crosses_outer_boundary",
+                    "groups": overlap[:20],
+                }
+            )
+        if validation_mask is None:
+            internal_failures.append(
+                {
+                    "scope": "fold",
+                    "fold": fold_i,
+                    "reason": "insufficient_validation_groups",
+                }
+            )
+            validation_masks.append(None)
+            continue
+        fit_mask = ~validation_mask
+        if int(fit_mask.sum()) < 10 or int(validation_mask.sum()) < 5:
+            internal_failures.append(
+                {
+                    "scope": "fold",
+                    "fold": fold_i,
+                    "reason": "insufficient_early_stopping_rows",
+                    "fit_rows": int(fit_mask.sum()),
+                    "validation_rows": int(validation_mask.sum()),
+                }
+            )
+        fit_labels = np.asarray(labels)[train_idx][fit_mask]
+        fit_present = set(fit_labels.tolist())
+        required_fit = split_contract.get("required_train_classes") or []
+        missing_fit = [
+            class_name for class_name in required_fit if class_name not in fit_present
+        ]
+        minimum_fit = split_contract.get("minimum_train_classes")
+        if missing_fit:
+            internal_failures.append(
+                {
+                    "scope": "fold",
+                    "fold": fold_i,
+                    "reason": "early_stopping_fit_missing_required_classes",
+                    "classes": missing_fit,
+                }
+            )
+        elif minimum_fit is not None and len(fit_present) < minimum_fit:
+            internal_failures.append(
+                {
+                    "scope": "fold",
+                    "fold": fold_i,
+                    "reason": "early_stopping_fit_insufficient_classes",
+                    "required": int(minimum_fit),
+                    "observed": int(len(fit_present)),
+                }
+            )
+        validation_masks.append(validation_mask)
+    if internal_failures:
+        internal_contract = dict(split_contract)
+        internal_contract["status"] = "unscorable"
+        internal_contract["failures"] = [
+            *split_contract.get("failures", []),
+            *internal_failures,
+        ]
+        result = _unscorable_result(internal_contract, declared)
+        return (result, None) if return_oof else result
+
     fold_results, pg_f1s = [], []
-    oof = _OofCollector()
+    oof = _OofCollector(
+        declared,
+        np.asarray(split_contract["eligible_row_ids"], dtype=int),
+        split_contract["requested_folds"],
+    )
 
     for fold_i, (train_idx, test_idx) in enumerate(splits):
-        X_tr = X[train_idx].astype(np.float32)
-        X_te = X[test_idx].astype(np.float32)
-        y_tr, y_te = y[train_idx], y[test_idx]
-        labels_te = labels[test_idx]
+        try:
+            X_tr = X[train_idx].astype(np.float32)
+            X_te = X[test_idx].astype(np.float32)
+            y_tr = y[train_idx]
+            labels_te = labels[test_idx]
+            validation_mask = validation_masks[fold_i]
+            fit_mask = ~validation_mask
+            X_fit, y_fit = X_tr[fit_mask], y_tr[fit_mask]
+            X_val, y_val = X_tr[validation_mask], y_tr[validation_mask]
+            X_fit, X_val, X_te_normalized = standardize(X_fit, X_val, X_te)
 
-        if len(set(y_tr.tolist())) < 2:
-            print(f"    [{label}] Fold {fold_i+1}: skipped (< 2 classes in train)")
-            continue
+            class_counts = np.bincount(y_tr, minlength=n_classes).astype(np.float32)
+            class_weights = np.zeros(n_classes, dtype=np.float32)
+            present_indices = np.where(class_counts > 0)[0]
+            class_weights[present_indices] = 1.0 / class_counts[present_indices]
+            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            weights_tensor = torch.tensor(class_weights).to(device)
+            torch.manual_seed(seed + fold_i)
 
-        training_groups = validation_groups[train_idx]
-        test_groups = set(validation_groups[test_idx].tolist())
-        outer_overlap = set(training_groups.tolist()) & test_groups
-        if outer_overlap:
-            examples = sorted(outer_overlap, key=str)[:5]
-            raise ValueError(
-                "validation group spans the outer CV train/test boundary; "
-                f"examples: {examples}"
+            layers: list = []
+            previous_width = X_fit.shape[1]
+            for hidden_width in hidden:
+                layers += [
+                    nn.Linear(previous_width, hidden_width),
+                    nn.ReLU(),
+                    nn.Dropout(dropout),
+                ]
+                previous_width = hidden_width
+            layers.append(nn.Linear(previous_width, n_classes))
+            model = nn.Sequential(*layers).to(device)
+            optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=1e-3)
+            criterion = nn.CrossEntropyLoss(weight=weights_tensor)
+            dataset = TensorDataset(
+                torch.tensor(X_fit), torch.tensor(y_fit, dtype=torch.long)
             )
-        val_mask = _validation_group_mask(training_groups, seed + fold_i)
-        if val_mask is None:
-            print(f"    [{label}] Fold {fold_i+1}: skipped (< 2 validation groups)")
-            continue
-        fit_mask = ~val_mask
-
-        X_fit, y_fit = X_tr[fit_mask], y_tr[fit_mask]
-        X_val, y_val = X_tr[val_mask], y_tr[val_mask]
-        if len(X_fit) < 10 or len(X_val) < 5:
-            continue
-
-        X_fit, X_val, X_te_n = standardize(X_fit, X_val, X_te)
-
-        # Class weights from full training fold to avoid weight explosion when a
-        # rare class is absent from the fit subset.
-        class_counts = np.bincount(y_tr, minlength=n_classes).astype(np.float32)
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        cw = torch.tensor(1.0 / (class_counts + 1e-8)).to(device)
-
-        # Seed torch's global RNG before the model is built: weight init and
-        # dropout masks draw from it, so without this the same seed gives a
-        # different result on every run and the across-seed std understates the
-        # true spread.
-        torch.manual_seed(seed + fold_i)
-
-        layers: list = []
-        prev = X_fit.shape[1]
-        for h in hidden:
-            layers += [nn.Linear(prev, h), nn.ReLU(), nn.Dropout(dropout)]
-            prev = h
-        layers.append(nn.Linear(prev, n_classes))
-        model = nn.Sequential(*layers).to(device)
-        opt = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=1e-3)
-        crit = nn.CrossEntropyLoss(weight=cw)
-
-        ds = TensorDataset(torch.tensor(X_fit), torch.tensor(y_fit, dtype=torch.long))
-        # Explicit generator: DataLoader shuffling otherwise uses the global RNG,
-        # whose state depends on how much training ran before this fold.
-        shuffle_gen = torch.Generator().manual_seed(seed + fold_i)
-        loader = DataLoader(
-            ds, batch_size=batch_size, shuffle=True, generator=shuffle_gen
-        )
-        best_val, patience_cnt, best_state = float("inf"), 0, None
-        for _epoch in range(max_epochs):
-            model.train()
-            for xb, yb in loader:
-                opt.zero_grad()
-                crit(model(xb.to(device)), yb.to(device)).backward()
-                opt.step()
+            shuffle_generator = torch.Generator().manual_seed(seed + fold_i)
+            loader = DataLoader(
+                dataset,
+                batch_size=batch_size,
+                shuffle=True,
+                generator=shuffle_generator,
+            )
+            best_validation_loss = float("inf")
+            patience_count = 0
+            best_state = None
+            for _epoch in range(max_epochs):
+                model.train()
+                for features_batch, labels_batch in loader:
+                    optimizer.zero_grad()
+                    criterion(
+                        model(features_batch.to(device)), labels_batch.to(device)
+                    ).backward()
+                    optimizer.step()
+                model.eval()
+                with torch.no_grad():
+                    validation_loss = criterion(
+                        model(torch.tensor(X_val).to(device)),
+                        torch.tensor(y_val, dtype=torch.long).to(device),
+                    ).item()
+                if validation_loss < best_validation_loss - 1e-4:
+                    best_validation_loss = validation_loss
+                    patience_count = 0
+                    best_state = {
+                        key: value.clone() for key, value in model.state_dict().items()
+                    }
+                else:
+                    patience_count += 1
+                    if patience_count >= patience:
+                        break
+            if best_state is None:
+                raise RuntimeError("MLP early stopping produced no fitted checkpoint")
+            model.load_state_dict(best_state)
             model.eval()
             with torch.no_grad():
-                vl = crit(
-                    model(torch.tensor(X_val).to(device)),
-                    torch.tensor(y_val, dtype=torch.long).to(device),
-                ).item()
-            if vl < best_val - 1e-4:
-                best_val, patience_cnt = vl, 0
-                best_state = {k: v.clone() for k, v in model.state_dict().items()}
-            else:
-                patience_cnt += 1
-                if patience_cnt >= patience:
-                    break
-        if best_state:
-            model.load_state_dict(best_state)
-
-        model.eval()
-        with torch.no_grad():
-            proba = torch.softmax(model(torch.tensor(X_te_n).to(device)), 1).cpu().numpy()
-        pred_labels = np.array([classes[idx] for idx in proba.argmax(1)])
-        fm = {"macro_f1": float(f1_score(labels_te, pred_labels, average="macro", zero_division=0))}
-        add_flat_class_metrics(fm, labels_te, proba, classes)
-        fold_results.append(fm)
-        if return_oof and genes is not None:
-            oof.add(labels_te, proba, genes[test_idx], test_idx, fold_i)
+                proba = torch.softmax(
+                    model(torch.tensor(X_te_normalized).to(device)), 1
+                ).cpu().numpy()
+            missing_indices = np.where(class_counts == 0)[0]
+            if len(missing_indices):
+                if not split_contract["allow_missing_classifier_classes"]:
+                    missing_classes = [declared[index] for index in missing_indices]
+                    raise ValueError(
+                        f"training fold is missing required classes: {missing_classes!r}"
+                    )
+                proba[:, missing_indices] = 0.0
+                row_sums = proba.sum(axis=1, keepdims=True)
+                if np.any(row_sums == 0):
+                    raise RuntimeError("MLP produced no probability mass on fitted classes")
+                proba = proba / row_sums
+            pred_labels = np.array([declared[index] for index in proba.argmax(1)])
+            fold_metrics = compute_metrics(labels_te, pred_labels, proba, declared)
+        except Exception as error:
+            result = _failed_result(
+                split_contract, declared, len(fold_results), fold_i, error
+            )
+            return (result, None) if return_oof else result
+        fold_results.append(fold_metrics)
+        oof.add(
+            labels_te,
+            proba,
+            None if genes is None else genes[test_idx],
+            test_idx,
+            fold_i,
+        )
 
         pg_str = ""
         if genes is not None:
-            pg_str = _record_per_gene_f1(pg_f1s, labels_te, proba, genes[test_idx], classes)
-        print(f"    [{label}] Fold {fold_i+1}: macro_f1={fm['macro_f1']:.3f}{pg_str}")
+            pg_str = _record_per_gene_f1(
+                pg_f1s, labels_te, proba, genes[test_idx], declared
+            )
+        _log_fold(label, fold_i, fold_metrics, declared, pg_str)
 
-    if not fold_results:
-        agg = {}
-    else:
-        agg = aggregate_fold_dicts(fold_results)
-        _add_per_gene_f1(agg, pg_f1s)
+    agg = aggregate_folds(
+        fold_results, declared, split_contract["requested_folds"]
+    )
+    agg.update(
+        {
+            "status": "success",
+            "classes": declared,
+            "eligible_rows": split_contract["eligible_rows"],
+            "out_of_fold_rows": split_contract["eligible_rows"],
+            "held_out_unit": split_contract.get("held_out_unit"),
+            "group_count": split_contract.get("group_count"),
+            "split_validation": split_contract,
+        }
+    )
+    _add_per_gene_f1(agg, pg_f1s)
     if return_oof:
         return agg, oof.finalize()
     return agg

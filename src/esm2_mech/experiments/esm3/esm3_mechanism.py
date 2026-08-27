@@ -48,8 +48,9 @@ from esm2_mech.utils.io import (
     load_json_or_discard,
     save_npy,
 )
-from esm2_mech.utils.metrics import mean_std_n
+from esm2_mech.utils.metrics import aggregate_folds, align_proba, compute_metrics, mean_std_n
 from esm2_mech.utils.probes import run_mlp_probe_cv
+from esm2_mech.utils.classification import validate_complete_classification_splits
 from esm2_mech.utils.sequences import apply_missense, window_sequence
 
 AF2_DIR = CACHE_DIR / "af2_structures"
@@ -547,19 +548,17 @@ def _run_logreg_folds(
     X: np.ndarray,
     y: np.ndarray,
     splits: list,
+    split_contract: dict,
     seed: int,
 ) -> dict | None:
     """Logistic-regression CV over splits, returning per-fold-averaged macro-F1."""
     # Separate from run_logreg_cv because this arm uses C=LOGREG_C (stronger regularisation).
     from sklearn.linear_model import LogisticRegression
     from sklearn.preprocessing import StandardScaler
-    from sklearn.metrics import f1_score
-
-    fold_f1s = []
+    if split_contract["status"] != "valid":
+        return None
+    fold_metrics = []
     for fold_i, (tr, te) in enumerate(splits):
-        if len(set(y[tr].tolist())) < MIN_TRAIN_CLASSES:
-            print(f"    [logreg] Fold {fold_i+1}: skipped (< {MIN_TRAIN_CLASSES} classes in train)")
-            continue
         scaler = StandardScaler()
         X_tr = scaler.fit_transform(X[tr])
         X_te = scaler.transform(X[te])
@@ -570,16 +569,20 @@ def _run_logreg_folds(
             C=LOGREG_C,
         )
         clf.fit(X_tr, y[tr])
-        fold_f1s.append(
-            float(f1_score(y[te], clf.predict(X_te), average="macro", zero_division=0))
+        probabilities = align_proba(
+            clf.predict_proba(X_te),
+            clf.classes_,
+            MECHANISM_CLASSES,
+            allow_missing_classes=False,
         )
-    if not fold_f1s:
-        return None
-    return {
-        "macro_f1_mean": float(np.mean(fold_f1s)),
-        "macro_f1_std": float(np.std(fold_f1s)),
-        "n_folds": len(fold_f1s),
-    }
+        fold_metrics.append(
+            compute_metrics(
+                y[te], clf.predict(X_te), probabilities, MECHANISM_CLASSES
+            )
+        )
+    result = aggregate_folds(fold_metrics, MECHANISM_CLASSES, split_contract["requested_folds"])
+    result["status"] = "success"
+    return result
 
 
 def phase3_probes(
@@ -664,10 +667,6 @@ def phase3_probes(
 
             for seed in seeds:
                 splits = get_splits(seed)
-                if not splits:
-                    print(f"  {cv_name} seed={seed}: no valid splits, skip")
-                    continue
-
                 print(
                     f"  {cond} {cv_name} seed={seed}: training MLP "
                     f"({len(splits)} folds)..."
@@ -684,19 +683,28 @@ def phase3_probes(
                         genes_cond, pfam_map, is_family_split=True
                     )
                 )
+                split_contract = validate_complete_classification_splits(
+                    splits,
+                    requested_folds=N_FOLDS,
+                    eligible_rows=np.concatenate([test for _train, test in splits]),
+                    labels=labels_cond,
+                    classes=MECHANISM_CLASSES,
+                    groups=validation_groups,
+                    held_out_unit="gene" if cv_name == "gene_split" else "family",
+                )
                 agg, oof = run_mlp_probe_cv(
                     delta,
                     labels_cond,
                     splits,
+                    MECHANISM_CLASSES,
+                    split_contract,
                     validation_groups=validation_groups,
                     seed=seed,
                     genes=genes_cond,
                     label=f"{cond}_{cv_name}_seed{seed}",
                     return_oof=True,
                 )
-                if not agg:
-                    continue
-                if compute_ci and oof is not None:
+                if compute_ci:
                     seed_oof_list.append(oof)
                 mlp_f1s.append(agg["macro_f1_mean"])
                 mlp_gof.append(agg.get(f"auroc_{GOF}_mean", float("nan")))
@@ -704,29 +712,43 @@ def phase3_probes(
                 mlp_lof.append(agg.get(f"auroc_{LOF}_mean", float("nan")))
 
                 # Logistic regression, over the same fold set.
-                lr_agg = _run_logreg_folds(delta, y_cond, splits, seed)
-                if lr_agg is not None:
-                    lr_f1s.append(lr_agg["macro_f1_mean"])
+                lr_agg = _run_logreg_folds(
+                    delta, labels_cond, splits, split_contract, seed
+                )
+                lr_f1s.append(
+                    None if lr_agg is None else lr_agg["macro_f1_mean"]
+                )
 
             if not mlp_f1s:
                 continue
 
-            # NaN-safe across seeds: a class absent from a whole seed's test folds
-            # leaves that seed's AUROC undefined, which must not poison the mean.
-            f1_mean, f1_std, n_seeds_scored = mean_std_n(mlp_f1s)
-            lr_mean, lr_std, _ = mean_std_n(lr_f1s)
+            def _seed_summary(values):
+                if len(values) != len(seeds) or any(
+                    value is None or not np.isfinite(value) for value in values
+                ):
+                    return None, None, sum(
+                        value is not None and np.isfinite(value) for value in values
+                    )
+                return float(np.mean(values)), float(np.std(values)), len(values)
+
+            f1_mean, f1_std, n_seeds_scored = _seed_summary(mlp_f1s)
+            lr_mean, lr_std, _ = _seed_summary(lr_f1s)
             r = {
                 "mlp_f1_mean": f1_mean,
                 "mlp_f1_std": f1_std,
-                "mlp_gof_auroc_mean": mean_std_n(mlp_gof)[0],
-                "mlp_dn_auroc_mean": mean_std_n(mlp_dn)[0],
-                "mlp_lof_auroc_mean": mean_std_n(mlp_lof)[0],
+                "mlp_gof_auroc_mean": _seed_summary(mlp_gof)[0],
+                "mlp_dn_auroc_mean": _seed_summary(mlp_dn)[0],
+                "mlp_lof_auroc_mean": _seed_summary(mlp_lof)[0],
                 "lr_f1_mean": lr_mean,
                 "lr_f1_std": lr_std,
                 "n_seeds": n_seeds_scored,
             }
             if compute_ci:
-                combined_oof = stack_oof_over_seeds(seed_oof_list)
+                combined_oof = (
+                    stack_oof_over_seeds(seed_oof_list)
+                    if all(oof is not None for oof in seed_oof_list)
+                    else None
+                )
                 if combined_oof is not None:
                     oof_by_arm[(cond, cv_name)] = combined_oof
                     clusters = family_or_gene_clusters(
@@ -742,12 +764,19 @@ def phase3_probes(
                         seed=0,
                     )
             cond_results[cv_name] = r
-            print(
-                f"  {cv_name}: MLP F1={r['mlp_f1_mean']:.3f}±{r['mlp_f1_std']:.3f}  "
-                f"GOF={r['mlp_gof_auroc_mean']:.3f}  DN={r['mlp_dn_auroc_mean']:.3f}  "
-                f"LOF={r['mlp_lof_auroc_mean']:.3f}  "
-                f"LR F1={r['lr_f1_mean']:.3f}"
-            )
+            if r["mlp_f1_mean"] is None or r["lr_f1_mean"] is None:
+                print(f"  {cv_name}: Unscorable")
+            else:
+                def _metric_text(value):
+                    return "Unavailable" if value is None else f"{value:.3f}"
+
+                print(
+                    f"  {cv_name}: MLP F1={r['mlp_f1_mean']:.3f}±{r['mlp_f1_std']:.3f}  "
+                    f"GOF={_metric_text(r['mlp_gof_auroc_mean'])}  "
+                    f"DN={_metric_text(r['mlp_dn_auroc_mean'])}  "
+                    f"LOF={_metric_text(r['mlp_lof_auroc_mean'])}  "
+                    f"LR F1={r['lr_f1_mean']:.3f}"
+                )
 
         results[cond] = cond_results
 

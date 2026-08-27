@@ -17,6 +17,7 @@ from esm2_mech.utils.constants import (
     N_SEEDS,
     SPLIT_FAMILY,
     SPLIT_GENE,
+    MECHANISM_CLASSES,
     nonlinear_key,
 )
 from esm2_mech.utils.paths import (
@@ -33,6 +34,7 @@ from esm2_mech.utils.data import (
 from esm2_mech.utils.io import load_variants_and_delta, write_result_json
 from esm2_mech.utils.probes import run_mlp_probe_cv, run_sklearn_probe_pca, run_sklearn_probe
 from esm2_mech.utils.splits import gene_split_cv, family_split_cv
+from esm2_mech.utils.classification import validate_complete_classification_splits
 
 print = functools.partial(print, flush=True)
 
@@ -91,6 +93,21 @@ def run_seed(
             genes, pfam_map, is_family_split=True
         ),
     }
+    contracts_by_split = {
+        split_name: validate_complete_classification_splits(
+            splits,
+            requested_folds=5,
+            eligible_rows=np.concatenate([test for _train, test in splits]),
+            labels=labels,
+            classes=MECHANISM_CLASSES,
+            groups=validation_groups_by_split[split_name],
+            held_out_unit="gene" if split_name == SPLIT_GENE else "family",
+        )
+        for split_name, splits in (
+            (SPLIT_GENE, gene_splits),
+            (SPLIT_FAMILY, family_splits),
+        )
+    }
     print(f"Gene-split folds: {len(gene_splits)}  Family-split folds: {len(family_splits)}")
 
     def gbm_fn(random_state):
@@ -117,11 +134,20 @@ def run_seed(
             print(f"\n=== {model_label} {split_name}-split: {feat_name} ===")
             key = nonlinear_key(model_key, feat_name, split_name)
             agg, oof = probe_fn(
-                clf_fn, X, labels, genes, seed=seed, splits=splits, return_oof=True,
+                clf_fn,
+                X,
+                labels,
+                genes,
+                MECHANISM_CLASSES,
+                contracts_by_split[split_name],
+                splits,
+                seed=seed,
+                return_oof=True,
                 **extra_kwargs,
             )
             results[key] = _attach_ci(agg, oof, split_name)
-            print(f"  macro_f1={results[key].get('macro_f1_mean', float('nan')):.3f}")
+            value = results[key].get("macro_f1_mean")
+            print(f"  macro_f1={value:.3f}" if value is not None else "  Unscorable")
 
     out_path = out_dir / f"nonlinear_results_seed{seed}.json"
 
@@ -150,7 +176,8 @@ def run_seed(
         write_result_json(out_path, existing, seeds=[seed])
         print(f"\nMerged {len(new_arms)} family-split arms into {out_path}")
         for key, res in new_arms.items():
-            print(f"  {key}: macro_f1={res.get('macro_f1_mean', float('nan')):.3f}")
+            value = res.get("macro_f1_mean")
+            print(f"  {key}: macro_f1={value:.3f}" if value is not None else f"  {key}: Unscorable")
         return
 
     results = {}
@@ -159,23 +186,32 @@ def run_seed(
             key = nonlinear_key("mlp", feat_name, split_name)
             print(f"\n=== MLP {split_name}-split: {feat_name} ===")
             agg, oof = run_mlp_probe_cv(
-                X, labels, splits,
+                X,
+                labels,
+                splits,
+                MECHANISM_CLASSES,
+                contracts_by_split[split_name],
                 validation_groups=validation_groups_by_split[split_name],
                 seed=seed, genes=genes,
                 max_epochs=args.max_epochs, patience=args.patience, label=key,
                 return_oof=True,
             )
             results[key] = _attach_ci(agg, oof, split_name)
-            print(f"  macro_f1={results[key].get('macro_f1_mean', float('nan')):.3f}")
+            value = results[key].get("macro_f1_mean")
+            print(f"  macro_f1={value:.3f}" if value is not None else "  Unscorable")
 
         for split_name, splits in splits_by_name:
             run_tree_knn(feat_name, X, split_name, splits, results)
 
     print("\n=== Summary ===")
     for feat, res in results.items():
-        mf1 = res.get("macro_f1_mean", float("nan"))
-        auroc_gof = res.get("auroc_GOF_mean", float("nan"))
-        print(f"  {feat}: macro_f1={mf1:.3f}  auroc_GOF={auroc_gof:.3f}")
+        mf1 = res.get("macro_f1_mean")
+        auroc_gof = res.get("auroc_GOF_mean")
+        if mf1 is None:
+            print(f"  {feat}: Unscorable")
+        else:
+            auroc_text = "NA" if auroc_gof is None else f"{auroc_gof:.3f}"
+            print(f"  {feat}: macro_f1={mf1:.3f}  auroc_GOF={auroc_text}")
 
     results["seed"] = seed
     results["input_fingerprints"] = input_fingerprints

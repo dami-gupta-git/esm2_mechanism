@@ -19,6 +19,7 @@ from esm2_mech.utils.data import build_gene_to_row as _build_gene_to_row, load_p
 from esm2_mech.utils.splits import family_split_indices
 from esm2_mech.utils.probes import run_mlp_cv, run_logreg_cv, run_histgb_cv
 from esm2_mech.utils.bootstrap import attach_mechanism_ci, family_or_gene_clusters
+from esm2_mech.utils.classification import validate_complete_classification_splits
 from esm2_mech.utils.paths import (
     RESULTS_DIR,
     VALID_VARIANTS_JSON,
@@ -179,7 +180,15 @@ def run_logreg_family_split(
     X, y, genes, groups, n_folds, seed, label, pfam_map, compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES
 ) -> dict:
     splits = list(family_split_indices(groups, n_folds, seed))
-    agg, oof = run_logreg_cv(X, y, splits, seed=seed, genes=genes, label=label, return_oof=True)
+    contract = validate_complete_classification_splits(
+        splits, requested_folds=n_folds,
+        eligible_rows=np.concatenate([test for _train, test in splits]),
+        labels=y, classes=MECHANISM_CLASSES, groups=groups, held_out_unit="family",
+    )
+    agg, oof = run_logreg_cv(
+        X, y, splits, MECHANISM_CLASSES, contract, seed=seed,
+        genes=genes, label=label, return_oof=True
+    )
     return _attach_family_split_ci(agg, oof, pfam_map, compute_ci, n_boot, seed)
 
 
@@ -187,8 +196,14 @@ def run_mlp_family_split(
     X, y, genes, groups, hidden, n_folds, seed, label, pfam_map, compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES
 ) -> dict:
     splits = list(family_split_indices(groups, n_folds, seed))
+    contract = validate_complete_classification_splits(
+        splits, requested_folds=n_folds,
+        eligible_rows=np.concatenate([test for _train, test in splits]),
+        labels=y, classes=MECHANISM_CLASSES, groups=groups, held_out_unit="family",
+    )
     agg, oof = run_mlp_cv(
-        X, y, splits, hidden=hidden, seed=seed, genes=genes, label=label, return_oof=True
+        X, y, splits, MECHANISM_CLASSES, contract, hidden=hidden, seed=seed,
+        genes=genes, label=label, return_oof=True
     )
     return _attach_family_split_ci(agg, oof, pfam_map, compute_ci, n_boot, seed)
 
@@ -199,7 +214,15 @@ def run_histgb_family_split(
 ) -> dict:
     """NaN-native family-split CV for arms with proteome or Badonyi blocks."""
     splits = list(family_split_indices(groups, n_folds, seed))
-    agg, oof = run_histgb_cv(X, y, splits, seed=seed, genes=genes, label=label, return_oof=True)
+    contract = validate_complete_classification_splits(
+        splits, requested_folds=n_folds,
+        eligible_rows=np.concatenate([test for _train, test in splits]),
+        labels=y, classes=MECHANISM_CLASSES, groups=groups, held_out_unit="family",
+    )
+    agg, oof = run_histgb_cv(
+        X, y, splits, MECHANISM_CLASSES, contract, seed=seed,
+        genes=genes, label=label, return_oof=True
+    )
     return _attach_family_split_ci(agg, oof, pfam_map, compute_ci, n_boot, seed)
 
 

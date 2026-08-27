@@ -28,7 +28,8 @@ from esm2_mech.utils.bootstrap import (
     binary_auroc_cluster_bootstrap_ci,
     family_or_gene_clusters,
 )
-from esm2_mech.utils.constants import BOOTSTRAP_N_RESAMPLES, N_SEEDS
+from esm2_mech.utils.constants import BOOTSTRAP_N_RESAMPLES, N_FOLDS, N_SEEDS
+from esm2_mech.utils.classification import validate_complete_classification_splits
 from esm2_mech.utils.data import (
     embedding_fingerprint,
     load_pfam_map,
@@ -437,6 +438,26 @@ def _build_claim_2c(seed0_inference):
     }
 
 
+def _run_probe_with_contract(
+    probe,
+    features,
+    labels,
+    splits,
+    classes,
+    split_contract,
+    **probe_kwargs,
+):
+    """Call a shared binary probe with its explicit classification contract."""
+    return probe(
+        features,
+        labels,
+        splits,
+        classes=classes,
+        split_contract=split_contract,
+        **probe_kwargs,
+    )
+
+
 def probe_phase(
     variants,
     fetch_metadata,
@@ -493,6 +514,27 @@ def probe_phase(
 
         gs = gene_split_cv(genes, seed=seed)
         fs = family_split_cv(genes, pfam_map, seed=seed)
+        classes = [0, 1]
+        split_contracts = {
+            "gene": validate_complete_classification_splits(
+                gs,
+                requested_folds=N_FOLDS,
+                eligible_rows=np.concatenate([test for _train, test in gs]),
+                labels=y,
+                classes=classes,
+                groups=genes,
+                held_out_unit="gene",
+            ),
+            "family": validate_complete_classification_splits(
+                fs,
+                requested_folds=N_FOLDS,
+                eligible_rows=np.concatenate([test for _train, test in fs]),
+                labels=y,
+                classes=classes,
+                groups=family_validation_groups,
+                held_out_unit="family",
+            ),
+        }
         cells = [
             (fname, pname, split_name, splits)
             for fname in features
@@ -510,8 +552,14 @@ def probe_phase(
                 probe_kwargs["validation_groups"] = (
                     family_validation_groups if split_name == "family" else genes
                 )
-            probe_result, oof = probes[pname](
-                features[fname], y, splits, **probe_kwargs
+            probe_result, oof = _run_probe_with_contract(
+                probes[pname],
+                features[fname],
+                y,
+                splits,
+                classes,
+                split_contracts[split_name],
+                **probe_kwargs,
             )
             if compute_ci and oof is not None and seed == 0:
                 clusters = family_or_gene_clusters(

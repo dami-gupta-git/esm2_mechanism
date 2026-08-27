@@ -198,4 +198,6 @@ def test_family_probe_note_when_smallest_kept_family_too_small():
 
     result = family_probe(gene_emb, gene_families, seed=42, min_family_size=1)
 
-    assert result == {"note": "smallest kept family too small for CV"}
+    assert result["status"] == "unscorable"
+    assert result["requested_folds"] == 3
+    assert result["minimum_family_rows"] == 1

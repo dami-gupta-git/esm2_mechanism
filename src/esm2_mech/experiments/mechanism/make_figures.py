@@ -208,7 +208,7 @@ def fig_within_family():
         delta_mlp = cell["delta"]["mlp"]["macro_f1"]
         mean = delta_mlp["mean"]
         std = delta_mlp["std"]
-        base = cell["majority_baseline_f1"]
+        base = cell["majority_reference"]["macro_f1_mean"]
         if _is_nan(mean) or _is_nan(base):
             continue
         singleton_class = min(cell["gene_class_counts"].values()) <= 1
@@ -266,15 +266,40 @@ def fig_family_clustering():
     ax_pur.set_ylabel("k=5 family purity")
     ax_pur.set_title("Do nearest neighbours share the family?")
 
-    probe = [bv[key]["family_probe"]["accuracy"] for key, _ in views]
-    probe_err = [bv[key]["family_probe"]["accuracy_std"] for key, _ in views]
-    probe_base = float(np.mean([bv[key]["family_probe"]["majority_baseline_acc"]
-                                for key, _ in views]))
-    ax_probe.bar(x, probe, yerr=probe_err, capsize=3, color=FAMILY_COLOR, width=0.6)
-    ax_probe.axhline(probe_base, ls="--", c="grey", lw=1)
-    ax_probe.text(0.02, probe_base, f"majority-family baseline {probe_base:.3f}",
-                  transform=ax_probe.get_yaxis_transform(), va="bottom", ha="left",
-                  fontsize=8, color="grey")
+    probe_blocks = [bv[key]["family_probe"] for key, _ in views]
+    for position, block in zip(x, probe_blocks):
+        accuracy = block.get("accuracy")
+        if accuracy is None:
+            ax_probe.text(position, 0.03, "Unscorable", ha="center", va="bottom", fontsize=8)
+            continue
+        ax_probe.bar(
+            position,
+            accuracy,
+            yerr=block.get("accuracy_std"),
+            capsize=3,
+            color=FAMILY_COLOR,
+            width=0.6,
+        )
+    probe_bases = [
+        block.get("majority_baseline_acc")
+        for block in probe_blocks
+        if block.get("majority_baseline_acc") is not None
+    ]
+    if probe_bases:
+        if not all(np.isclose(value, probe_bases[0]) for value in probe_bases):
+            raise ValueError("Family-probe majority references differ across views")
+        probe_base = probe_bases[0]
+        ax_probe.axhline(probe_base, ls="--", c="grey", lw=1)
+        ax_probe.text(
+            0.02,
+            probe_base,
+            f"majority-family baseline {probe_base:.3f}",
+            transform=ax_probe.get_yaxis_transform(),
+            va="bottom",
+            ha="left",
+            fontsize=8,
+            color="grey",
+        )
     ax_probe.set_xticks(x)
     ax_probe.set_xticklabels([lab for _, lab in views], rotation=15, ha="right")
     ax_probe.set_ylabel("Family-probe accuracy")

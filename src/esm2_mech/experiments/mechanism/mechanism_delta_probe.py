@@ -21,6 +21,7 @@ from esm2_mech.experiments.stability.tsuboyama_loader import load_tsuboyama_vari
 from esm2_mech.utils.constants import MECHANISM_CLASSES
 from esm2_mech.utils.splits import gene_split_cv, family_split_cv
 from esm2_mech.utils.probes import run_logreg_cv
+from esm2_mech.utils.classification import validate_complete_classification_splits
 from esm2_mech.utils.io import (
     atomic_write_json,
     load_json_or_discard,
@@ -61,6 +62,18 @@ SCALE_INVARIANT_THRESHOLD = 0.03
 SCALE_EMERGENT_THRESHOLD = 0.05
 VARIANCE_ASYMMETRY_THRESHOLD = 0.30
 BENIGN_LEAK_THRESHOLD = 0.50
+
+
+def _complete_contract(labels, groups, splits, classes, requested_folds, held_out_unit):
+    return validate_complete_classification_splits(
+        splits,
+        requested_folds=requested_folds,
+        eligible_rows=np.concatenate([test for _train, test in splits]),
+        labels=labels,
+        classes=classes,
+        groups=groups,
+        held_out_unit=held_out_unit,
+    )
 
 
 def stability_subspace_fingerprint(ddg, n_components):
@@ -456,10 +469,11 @@ def run_baselines(
             ddg_feat,
             y[foldx_mask],
             ddg_splits,
+            genes[foldx_mask],
             ddg_feat.std() > 0,
         )
     else:
-        foldx_config = ("foldx_ddg_only", None, None, None, False)
+        foldx_config = ("foldx_ddg_only", None, None, None, None, False)
 
     if alphamissense_scores is not None:
         am_mask = ~np.isnan(alphamissense_scores)
@@ -471,27 +485,31 @@ def run_baselines(
                 am_feat,
                 y[am_mask],
                 am_splits,
+                genes[am_mask],
                 am_feat.std() > 0,
             )
         else:
-            am_config = ("alphamissense", None, None, None, False)
+            am_config = ("alphamissense", None, None, None, None, False)
     else:
-        am_config = ("alphamissense", None, None, None, False)
+        am_config = ("alphamissense", None, None, None, None, False)
 
     # Full-data baselines use the shared splits computed above
     full_configs = [
-        ("wt_only", embeddings_wt, y, splits, True),
-        ("onehot_aa", onehot, y, splits, True),
+        ("wt_only", embeddings_wt, y, splits, genes, True),
+        ("onehot_aa", onehot, y, splits, genes, True),
     ]
 
     results = {}
-    for name, X_bl, y_bl, spl, runnable in full_configs + [foldx_config, am_config]:
+    for name, X_bl, y_bl, spl, split_groups, runnable in full_configs + [foldx_config, am_config]:
         if not runnable or X_bl is None:
             results[name] = {"note": f"{name} unavailable or zero-variance"}
             continue
         print(f"  Baseline: {name} (n={len(y_bl)})")
+        contract = _complete_contract(
+            y_bl, split_groups, spl, CLASSES_3, 5, "gene"
+        )
         results[name] = run_logreg_cv(
-            X_bl, y_bl, spl, classes=CLASSES_3, seed=seed, label=name
+            X_bl, y_bl, spl, CLASSES_3, contract, seed=seed, label=name
         )
     return results
 
@@ -502,12 +520,14 @@ def run_negative_controls(deltas_mean, y, genes, seed=42):
     splits = gene_split_cv(genes, seed=seed)
     deltas_shuffled = deltas_mean[rng.permutation(len(deltas_mean))]
     print("  Negative control: shuffled deltas")
+    contract = _complete_contract(y, genes, splits, CLASSES_3, 5, "gene")
     return {
         "shuffled_delta": run_logreg_cv(
             deltas_shuffled,
             y,
             splits,
-            classes=CLASSES_3,
+            CLASSES_3,
+            contract,
             seed=seed,
             label="shuffled_delta",
             prescaled=True,
@@ -637,10 +657,13 @@ def _run_primary_probes(
         ("per_residue_unprojected", deltas_pos),
     ]
     results = {}
+    contract = _complete_contract(
+        y, genes, splits, CLASSES_3, n_cv_folds, "gene"
+    )
     for name, X in probe_configs:
         print(f"  {name}:")
         results[name] = run_logreg_cv(
-            X, y, splits, classes=CLASSES_3, seed=seed, label=name, prescaled=True
+            X, y, splits, CLASSES_3, contract, seed=seed, label=name, prescaled=True
         )
     return results
 
@@ -655,9 +678,12 @@ def _run_secondary_probes(
     # y4/y2 stay string labels — run_logreg_cv keys on `classes` (strings).
     y4 = np.asarray(labels_4class)
     splits4 = gene_split_cv(genes, n_folds=n_cv_folds, seed=seed)
+    contract4 = _complete_contract(
+        y4, genes, splits4, classes_4, n_cv_folds, "gene"
+    )
     print("  4-class (GOF/DN/HI/AR):")
     results["four_class"] = run_logreg_cv(
-        deltas_mean_proj, y4, splits4, classes=classes_4, seed=seed, label="4class",
+        deltas_mean_proj, y4, splits4, classes_4, contract4, seed=seed, label="4class",
         prescaled=True,
     )
 
@@ -665,12 +691,21 @@ def _run_secondary_probes(
     if hi_ar_mask.sum() >= 20:
         y2 = np.asarray(labels_4class[hi_ar_mask])
         splits2 = gene_split_cv(genes[hi_ar_mask], n_folds=n_cv_folds, seed=seed)
+        contract2 = _complete_contract(
+            y2,
+            genes[hi_ar_mask],
+            splits2,
+            ["AR", "HI"],
+            n_cv_folds,
+            "gene",
+        )
         print("  HI vs AR (2-class):")
         results["hi_vs_ar"] = run_logreg_cv(
             deltas_mean_proj[hi_ar_mask],
             y2,
             splits2,
-            classes=["AR", "HI"],
+            ["AR", "HI"],
+            contract2,
             seed=seed,
             label="hi_vs_ar",
             prescaled=True,
@@ -689,16 +724,19 @@ def _run_family_cv(
     n_families = len(set(v for v in pfam_map.values() if v is not None))
 
     splits = family_split_cv(genes, pfam_map, n_folds=n_cv_folds, seed=seed)
-    if not splits:
-        print("  Family-split CV infeasible — skipping")
-        return {}, pfam_map, n_families
-
     print(f"  Running family-split CV with {len(splits)} folds")
+    family_groups = np.array([pfam_map.get(gene) for gene in genes], dtype=object)
+    contract = _complete_contract(
+        y, family_groups, splits, CLASSES_3, n_cv_folds, "family"
+    )
     results = run_logreg_cv(
-        deltas_mean_proj, y, splits, classes=CLASSES_3, seed=seed, label="family_cv",
+        deltas_mean_proj, y, splits, CLASSES_3, contract, seed=seed, label="family_cv",
         prescaled=True,
     )
-    print(f"  Family-split macro-F1: {results.get('macro_f1_mean', float('nan')):.3f}")
+    if results["status"] == "success":
+        print(f"  Family-split macro-F1: {results['macro_f1_mean']:.3f}")
+    else:
+        print(f"  Family-split: {results['status']}")
     return results, pfam_map, n_families
 
 

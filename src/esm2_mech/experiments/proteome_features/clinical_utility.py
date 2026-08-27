@@ -43,6 +43,7 @@ from esm2_mech.utils.paths import (
 from esm2_mech.utils.constants import MECHANISM_CLASSES, N_FOLDS
 from esm2_mech.utils.data import observed_rows_mask
 from esm2_mech.utils.bootstrap import binary_auroc_cluster_bootstrap_ci
+from esm2_mech.utils.classification import validate_complete_classification_splits
 from esm2_mech.utils.probes import run_mlp_cv as _shared_run_mlp_cv
 
 OUT_DIR = RESULTS_DIR
@@ -111,6 +112,19 @@ def build_family_folds(
         test_indices[fold].append(gene_idx)
 
     return [np.array(idx) for idx in test_indices]
+
+
+def _family_validation_groups(families: np.ndarray) -> np.ndarray:
+    """Represent each missing family as its own held-out singleton group."""
+    groups = []
+    singleton_counter = 0
+    for family in families:
+        if pd.isna(family) or family == "":
+            groups.append(f"__singleton_{singleton_counter}")
+            singleton_counter += 1
+        else:
+            groups.append(family)
+    return np.asarray(groups, dtype=object)
 
 
 def _scatter_aligned_proba(
@@ -207,11 +221,21 @@ def run_mlp_cv(
     test_fold_indices = build_family_folds(families[obs_rows], N_FOLDS, rng)
     splits = []
     for test_idx in test_fold_indices:
-        if len(test_idx) == 0:
-            continue
         train_mask = np.ones(len(obs_rows), dtype=bool)
         train_mask[test_idx] = False
         splits.append((np.where(train_mask)[0], test_idx))
+
+    classes = list(le.classes_)
+    family_groups = _family_validation_groups(families[obs_rows])
+    split_contract = validate_complete_classification_splits(
+        splits,
+        requested_folds=N_FOLDS,
+        eligible_rows=np.arange(len(obs_rows)),
+        labels=y_obs_str,
+        classes=classes,
+        groups=family_groups,
+        held_out_unit="family",
+    )
 
     # classes must be le.classes_ (alphabetical), not CLASSES (declaration order):
     # every downstream read of this arm's probs (hi3_analysis, unannotated_analysis)
@@ -219,7 +243,8 @@ def run_mlp_cv(
     # ("DN","GOF","LOF"), which differs from CLASSES = MECHANISM_CLASSES = ["GOF","DN","LOF"].
     _, oof = _shared_run_mlp_cv(
         X_obs, y_obs_str, splits, hidden=(64, 32), seed=RANDOM_STATE,
-        classes=list(le.classes_), genes=genes_obs, label="MLP", return_oof=True,
+        classes=classes, split_contract=split_contract, genes=genes_obs,
+        label="MLP", return_oof=True,
     )
     if oof is not None:
         probs[obs_rows[oof["row_ids"]]] = oof["proba"]

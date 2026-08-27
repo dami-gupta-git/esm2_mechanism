@@ -107,7 +107,7 @@ def test_mlp_metrics_come_from_shared_runner(phase3, monkeypatch):
         "n_folds": 5,
     }
 
-    def stub(X, labels, splits, **kwargs):
+    def stub(X, labels, splits, *args, **kwargs):
         return (agg, None) if kwargs.get("return_oof") else agg
 
     monkeypatch.setattr(mod, "run_mlp_probe_cv", stub)
@@ -126,7 +126,7 @@ def test_every_fold_is_handed_to_the_runner(phase3, monkeypatch):
     mod, _delta = phase3
     seen = []
 
-    def stub(X, labels, splits, **kwargs):
+    def stub(X, labels, splits, *args, **kwargs):
         seen.append(len(splits))
         agg = {"macro_f1_mean": 0.5, "macro_f1_std": 0.0, "n_folds": len(splits)}
         return (agg, None) if kwargs.get("return_oof") else agg
@@ -138,28 +138,30 @@ def test_every_fold_is_handed_to_the_runner(phase3, monkeypatch):
     assert all(n_folds == mod.N_FOLDS for n_folds in seen)
 
 
-def test_logistic_arm_keeps_fold_with_rare_class_only_in_test():
-    # A family fold where one class falls entirely in test is still fittable —
-    # a classifier needs two classes, not all three. Only a < 2 train-class fold
-    # is unfittable and must be skipped.
+def test_logistic_arm_rejects_a_class_incomplete_split_before_fitting():
     import importlib
 
     mod = importlib.import_module(MODULE)
     rng = np.random.RandomState(0)
     n = 180
     labels = np.array([GOF, DN] * 80 + [LOF] * 20)
-    y = np.array([MECHANISM_CLASSES.index(lab) for lab in labels])
-    X = rng.randn(n, 8) + y[:, None] * 2.0
+    X = rng.randn(n, 8)
 
-    lof_rows = np.where(y == MECHANISM_CLASSES.index(LOF))[0]
-    extra = np.where(y != MECHANISM_CLASSES.index(LOF))[0][:20]
+    lof_rows = np.where(labels == LOF)[0]
+    extra = np.where(labels != LOF)[0][:20]
     test_idx = np.concatenate([lof_rows, extra])
     train_idx = np.setdiff1d(np.arange(n), test_idx)
-    assert len(set(y[train_idx].tolist())) == 2  # rare class only in test
+    from esm2_mech.utils.classification import validate_complete_classification_splits
 
-    single = np.where(y == MECHANISM_CLASSES.index(GOF))[0]
-    one_class_split = (single[:40], np.setdiff1d(np.arange(n), single[:40]))
-
-    kept = mod._run_logreg_folds(X, y, [(train_idx, test_idx), one_class_split], seed=0)
-    assert kept is not None
-    assert kept["n_folds"] == 1  # two-class fold kept, one-class fold skipped
+    splits = [(train_idx, test_idx)]
+    contract = validate_complete_classification_splits(
+        splits,
+        requested_folds=1,
+        eligible_rows=test_idx,
+        labels=labels,
+        classes=MECHANISM_CLASSES,
+        groups=np.arange(n),
+        held_out_unit="gene",
+    )
+    assert contract["status"] == "unscorable"
+    assert mod._run_logreg_folds(X, labels, splits, contract, seed=0) is None

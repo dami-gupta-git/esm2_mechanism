@@ -20,6 +20,7 @@ from esm2_mech.utils.data import build_gene_to_row as _build_gene_to_row
 from esm2_mech.utils.metrics import mean_std_n
 from esm2_mech.utils.io import load_variants_and_delta, write_result_json
 from esm2_mech.utils.probes import run_mlp_cv, run_histgb_cv
+from esm2_mech.utils.classification import validate_complete_classification_splits
 from esm2_mech.utils.paths import (
     RESULTS_DIR,
     VALID_VARIANTS_JSON,
@@ -103,18 +104,50 @@ def cluster_split_indices(groups, n_folds, seed):
         yield train, test
 
 
-def run_mlp(X, y, genes, groups, hidden, n_folds, seed, label, return_oof=False):
+def run_mlp(
+    X,
+    y,
+    genes,
+    groups,
+    hidden,
+    n_folds,
+    seed,
+    label,
+    return_oof=False,
+    compute_per_gene=True,
+):
     splits = list(cluster_split_indices(groups, n_folds, seed))
+    contract = validate_complete_classification_splits(
+        splits,
+        requested_folds=n_folds,
+        eligible_rows=np.concatenate([test for _train, test in splits]),
+        labels=y,
+        classes=CLASSES,
+        groups=groups,
+        held_out_unit="sequence_cluster",
+    )
     return run_mlp_cv(
-        X, y, splits, hidden=hidden, seed=seed, genes=genes, label=label, return_oof=return_oof
+        X, y, splits, CLASSES, contract, hidden=hidden, seed=seed,
+        genes=genes, label=label, return_oof=return_oof,
+        compute_per_gene=compute_per_gene,
     )
 
 
 def run_histgb(X, y, genes, groups, n_folds, seed, label, return_oof=False):
     """NaN-native cluster-split CV for feature blocks with missing values."""
     splits = list(cluster_split_indices(groups, n_folds, seed))
+    contract = validate_complete_classification_splits(
+        splits,
+        requested_folds=n_folds,
+        eligible_rows=np.concatenate([test for _train, test in splits]),
+        labels=y,
+        classes=CLASSES,
+        groups=groups,
+        held_out_unit="sequence_cluster",
+    )
     return run_histgb_cv(
-        X, y, splits, seed=seed, genes=genes, label=label, return_oof=return_oof
+        X, y, splits, CLASSES, contract, seed=seed, genes=genes,
+        label=label, return_oof=return_oof
     )
 
 
@@ -250,16 +283,22 @@ def aggregate_seeds(all_res):
         for metric in ["macro_f1_mean", "per_gene_f1_mean"]:
             vals = [r[key].get(metric) for r in all_res if key in r]
             stem = f"{key}_{metric.replace('_mean','')}"
-            mean, std, n = mean_std_n(vals)
-            if n:
-                out[f"{stem}_mean"] = mean
-                out[f"{stem}_std"] = std
+            unavailable = len(vals) != len(all_res) or any(
+                value is None or not np.isfinite(value) for value in vals
+            )
+            out[f"{stem}_mean"] = None if unavailable else float(np.mean(vals))
+            out[f"{stem}_std"] = None if unavailable else float(np.std(vals))
         for cls in CLASSES:
             vals = [r[key].get(f"auroc_{cls}_mean") for r in all_res if key in r]
-            mean, std, n = mean_std_n(vals)
-            if n:
-                out[f"{key}_auroc_{cls}_mean"] = mean
-                out[f"{key}_auroc_{cls}_std"] = std
+            unavailable = len(vals) != len(all_res) or any(
+                value is None or not np.isfinite(value) for value in vals
+            )
+            out[f"{key}_auroc_{cls}_mean"] = (
+                None if unavailable else float(np.mean(vals))
+            )
+            out[f"{key}_auroc_{cls}_std"] = (
+                None if unavailable else float(np.std(vals))
+            )
     return out
 
 

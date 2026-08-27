@@ -30,9 +30,68 @@ from esm2_mech.utils.metrics import (
     aggregate_folds,
     align_proba,
     auroc_at_median,
+    family_frequency_reference,
+    featureless_reference,
+    training_frequency_reference,
 )
 from esm2_mech.utils.probes import _per_gene_f1 as per_gene_f1
 from esm2_mech.utils.constants import MECHANISM_CLASSES, GOF, DN, LOF
+
+
+def test_family_frequency_reference_uses_training_families_and_global_unseen_rule():
+    y_train = np.array([GOF, GOF, DN, LOF, LOF, LOF])
+    train_families = np.array(["A", "A", "A", "B", "B", "B"])
+    test_families = np.array(["A", "B", "unseen"])
+    predictions, probabilities = family_frequency_reference(
+        y_train, train_families, test_families, MECHANISM_CLASSES
+    )
+
+    assert predictions.tolist() == [GOF, LOF, LOF]
+    np.testing.assert_allclose(probabilities[0], [2 / 3, 1 / 3, 0])
+    np.testing.assert_allclose(probabilities[1], [0, 0, 1])
+    np.testing.assert_allclose(probabilities[2], [2 / 6, 1 / 6, 3 / 6])
+
+
+def test_family_frequency_reference_rejects_a_training_family_tie():
+    with pytest.raises(ValueError, match="tied majority classes"):
+        family_frequency_reference(
+            np.array([GOF, DN, LOF, LOF]),
+            np.array(["A", "A", "B", "B"]),
+            np.array(["A"]),
+            MECHANISM_CLASSES,
+        )
+
+
+def test_stratified_reference_allows_a_tied_training_fold():
+    predictions, probabilities = featureless_reference(
+        np.array([GOF, DN]),
+        n_test=20,
+        classes=[GOF, DN],
+        strategy="stratified",
+        seed=0,
+    )
+
+    assert len(predictions) == 20
+    assert probabilities.shape == (20, 2)
+    assert set(predictions.tolist()) == {GOF, DN}
+
+
+def test_prior_reference_still_requires_a_declared_tie_rule():
+    with pytest.raises(ValueError, match="majority class is tied"):
+        featureless_reference(
+            np.array([GOF, DN]),
+            n_test=2,
+            classes=[GOF, DN],
+            strategy="prior",
+            seed=0,
+        )
+
+
+def test_training_frequency_reference_rejects_a_majority_tie():
+    with pytest.raises(ValueError, match="majority class is tied"):
+        training_frequency_reference(
+            np.array([GOF, DN]), n_test=2, classes=[GOF, DN]
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -51,17 +110,19 @@ class TestComputeMetrics:
 
     def test_perfect_macro_f1(self):
         y_true, y_pred, y_proba = self._perfect()
-        r = compute_metrics(y_true, y_pred, y_proba)
+        r = compute_metrics(y_true, y_pred, y_proba, MECHANISM_CLASSES)
         assert r["macro_f1"] == pytest.approx(1.0)
 
     def test_perfect_auroc(self):
         y_true, y_pred, y_proba = self._perfect()
-        r = compute_metrics(y_true, y_pred, y_proba)
+        r = compute_metrics(y_true, y_pred, y_proba, MECHANISM_CLASSES)
         for cls in MECHANISM_CLASSES:
             assert r["per_class_auroc"][cls] == pytest.approx(1.0)
 
     def test_empty_returns_none(self):
-        r = compute_metrics(np.array([]), np.array([]), np.zeros((0, 3)))
+        r = compute_metrics(
+            np.array([]), np.array([]), np.zeros((0, 3)), MECHANISM_CLASSES
+        )
         assert r["macro_f1"] is None
         assert all(v is None for v in r["per_class_auroc"].values())
 
@@ -69,17 +130,17 @@ class TestComputeMetrics:
         y = np.array([GOF] * 20)
         proba = np.zeros((20, 3))
         proba[:, MECHANISM_CLASSES.index(GOF)] = 1.0
-        r = compute_metrics(y, y, proba)
+        r = compute_metrics(y, y, proba, MECHANISM_CLASSES)
         assert r["per_class_auroc"][GOF] is None
 
     def test_n_field(self):
         y_true, y_pred, y_proba = self._perfect()
-        r = compute_metrics(y_true, y_pred, y_proba)
+        r = compute_metrics(y_true, y_pred, y_proba, MECHANISM_CLASSES)
         assert r["n"] == 30
 
     def test_all_classes_present_in_output(self):
         y_true, y_pred, y_proba = self._perfect()
-        r = compute_metrics(y_true, y_pred, y_proba)
+        r = compute_metrics(y_true, y_pred, y_proba, MECHANISM_CLASSES)
         for cls in MECHANISM_CLASSES:
             assert cls in r["per_class_auroc"]
 
@@ -88,8 +149,37 @@ class TestComputeMetrics:
         y_true = np.array([GOF, DN, LOF] * 30)
         y_pred = rng.choice([GOF, DN, LOF], 90)
         y_proba = rng.dirichlet([1, 1, 1], 90)
-        r = compute_metrics(y_true, y_pred, y_proba)
+        r = compute_metrics(y_true, y_pred, y_proba, MECHANISM_CLASSES)
         assert r["macro_f1"] < 0.5
+
+    def test_missing_test_class_makes_recall_based_metrics_unavailable(self):
+        y_true = np.array([GOF, DN, GOF, DN])
+        y_pred = np.array([GOF, DN, GOF, DN])
+        proba = np.array(
+            [[0.9, 0.1, 0.0], [0.1, 0.9, 0.0], [0.8, 0.2, 0.0], [0.2, 0.8, 0.0]]
+        )
+        result = compute_metrics(y_true, y_pred, proba, MECHANISM_CLASSES)
+        assert result["macro_f1"] == pytest.approx(2 / 3)
+        assert result["per_class_f1"][LOF] == 0.0
+        assert result["balanced_accuracy"] is None
+        assert result["availability"]["balanced_accuracy"] == {
+            "available": False,
+            "missing": True,
+            "reason": "declared class absent from test block",
+            "unavailable_classes": [LOF],
+        }
+        assert result["confusion_matrix"][2] == [0, 0, 0]
+        assert result["per_class_auroc"][LOF] is None
+        assert result["macro_auroc"] is None
+
+    def test_unexpected_label_raises(self):
+        with pytest.raises(ValueError, match="outside declared classes"):
+            compute_metrics(
+                np.array([GOF, "OTHER"]),
+                np.array([GOF, GOF]),
+                np.array([[1.0, 0.0, 0.0], [1.0, 0.0, 0.0]]),
+                MECHANISM_CLASSES,
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -99,32 +189,57 @@ class TestComputeMetrics:
 class TestAggregateFolds:
 
     def _fold(self, f1, auroc_val):
-        return {"macro_f1": f1, "per_class_auroc": {c: auroc_val for c in MECHANISM_CLASSES}}
-
-    def test_empty_returns_error(self):
-        assert "error" in aggregate_folds([])
+        return {
+            "macro_f1": f1,
+            "balanced_accuracy": f1,
+            "macro_auroc": auroc_val,
+            "confusion_matrix": np.eye(3, dtype=int).tolist(),
+            "per_class_f1": {c: f1 for c in MECHANISM_CLASSES},
+            "per_class_auroc": {c: auroc_val for c in MECHANISM_CLASSES},
+            "per_class_auprc": {c: auroc_val for c in MECHANISM_CLASSES},
+            "per_class_prevalence": {c: 1 / 3 for c in MECHANISM_CLASSES},
+            "per_class_ppv": {c: auroc_val for c in MECHANISM_CLASSES},
+            "per_class_npv": {c: auroc_val for c in MECHANISM_CLASSES},
+        }
 
     def test_mean_and_std(self):
         folds = [self._fold(0.4, 0.7), self._fold(0.6, 0.9)]
-        r = aggregate_folds(folds)
+        r = aggregate_folds(folds, MECHANISM_CLASSES, requested_folds=2)
         assert r["macro_f1_mean"] == pytest.approx(0.5)
         assert r["macro_f1_std"] == pytest.approx(0.1)
 
     def test_n_folds(self):
         folds = [self._fold(0.5, 0.8)] * 4
-        assert aggregate_folds(folds)["n_folds"] == 4
+        assert aggregate_folds(
+            folds, MECHANISM_CLASSES, requested_folds=4
+        )["n_folds"] == 4
 
     def test_none_auroc_excluded(self):
-        folds = [
-            {"macro_f1": 0.5, "per_class_auroc": {"GOF": 0.8, "DN": None, "LOF": 0.7}},
-            {"macro_f1": 0.6, "per_class_auroc": {"GOF": 0.9, "DN": 0.75, "LOF": 0.8}},
-        ]
-        r = aggregate_folds(folds)
+        folds = [self._fold(0.5, 0.8), self._fold(0.6, 0.9)]
+        folds[0]["per_class_auroc"][DN] = None
+        r = aggregate_folds(folds, MECHANISM_CLASSES, requested_folds=2)
         assert r["auroc_GOF_mean"] == pytest.approx(0.85)
-        assert r["auroc_DN_mean"] == pytest.approx(0.75)
+        assert r["auroc_DN_mean"] is None
+        assert r["metric_availability"]["auroc_DN"]["contributing_folds"] == 1
+
+    def test_unavailable_balanced_accuracy_is_not_averaged_over_fewer_folds(self):
+        folds = [self._fold(0.5, 0.8), self._fold(0.6, 0.9)]
+        folds[0]["balanced_accuracy"] = None
+
+        result = aggregate_folds(folds, MECHANISM_CLASSES, requested_folds=2)
+
+        assert result["balanced_accuracy_mean"] is None
+        assert result["metric_availability"]["balanced_accuracy"][
+            "contributing_folds"
+        ] == 1
+        assert result["metric_availability"]["balanced_accuracy"][
+            "unavailable_folds"
+        ] == [0]
 
     def test_single_fold(self):
-        r = aggregate_folds([self._fold(0.6, 0.8)])
+        r = aggregate_folds(
+            [self._fold(0.6, 0.8)], MECHANISM_CLASSES, requested_folds=1
+        )
         assert r["macro_f1_mean"] == pytest.approx(0.6)
         assert r["macro_f1_std"] == pytest.approx(0.0)
 
@@ -137,33 +252,65 @@ class TestAlignProba:
 
     def test_identity(self):
         proba = np.array([[0.1, 0.5, 0.4], [0.3, 0.3, 0.4]])
-        result = align_proba(proba, np.array([GOF, DN, LOF]), MECHANISM_CLASSES)
+        result = align_proba(
+            proba, np.array([GOF, DN, LOF]), MECHANISM_CLASSES,
+            allow_missing_classes=False,
+        )
         np.testing.assert_array_almost_equal(result, proba)
 
     def test_reorder_columns(self):
         # clf saw [LOF, GOF], canonical order is [GOF, DN, LOF]
         proba = np.array([[0.6, 0.4]])
-        result = align_proba(proba, np.array([LOF, GOF]), MECHANISM_CLASSES)
+        result = align_proba(
+            proba, np.array([LOF, GOF]), MECHANISM_CLASSES,
+            allow_missing_classes=True,
+        )
         assert result[0, MECHANISM_CLASSES.index(LOF)] == pytest.approx(0.6)
         assert result[0, MECHANISM_CLASSES.index(GOF)] == pytest.approx(0.4)
         assert result[0, MECHANISM_CLASSES.index(DN)] == pytest.approx(0.0)
 
     def test_output_shape(self):
         proba = np.random.rand(10, 2)
-        result = align_proba(proba, np.array([GOF, LOF]), MECHANISM_CLASSES)
+        result = align_proba(
+            proba, np.array([GOF, LOF]), MECHANISM_CLASSES,
+            allow_missing_classes=True,
+        )
         assert result.shape == (10, 3)
 
     def test_missing_class_filled_with_zero(self):
         proba = np.array([[1.0]])
-        result = align_proba(proba, np.array([DN]), MECHANISM_CLASSES)
+        result = align_proba(
+            proba, np.array([DN]), MECHANISM_CLASSES,
+            allow_missing_classes=True,
+        )
         assert result[0, MECHANISM_CLASSES.index(GOF)] == pytest.approx(0.0)
         assert result[0, MECHANISM_CLASSES.index(DN)] == pytest.approx(1.0)
         assert result[0, MECHANISM_CLASSES.index(LOF)] == pytest.approx(0.0)
 
     def test_output_dtype_float32(self):
         proba = np.array([[0.5, 0.5]])
-        result = align_proba(proba, np.array([GOF, DN]), [GOF, DN])
+        result = align_proba(
+            proba, np.array([GOF, DN]), [GOF, DN], allow_missing_classes=False
+        )
         assert result.dtype == np.float32
+
+    def test_missing_required_class_raises(self):
+        with pytest.raises(ValueError, match="missing required classes"):
+            align_proba(
+                np.array([[0.5, 0.5]]),
+                np.array([GOF, DN]),
+                MECHANISM_CLASSES,
+                allow_missing_classes=False,
+            )
+
+    def test_unexpected_classifier_class_raises(self):
+        with pytest.raises(ValueError, match="undeclared classes"):
+            align_proba(
+                np.array([[0.5, 0.5]]),
+                np.array([GOF, "OTHER"]),
+                MECHANISM_CLASSES,
+                allow_missing_classes=True,
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -179,8 +326,8 @@ class TestPerGeneF1:
         proba = np.zeros((10, 3))
         proba[:5, MECHANISM_CLASSES.index(GOF)] = 1.0
         proba[5:, MECHANISM_CLASSES.index(DN)] = 1.0
-        score = per_gene_f1(y_true, proba, genes)
-        assert score == pytest.approx(1.0)
+        score = per_gene_f1(y_true, proba, genes, MECHANISM_CLASSES)
+        assert score == pytest.approx(2 / 3)
 
     def test_all_wrong_predictions(self):
         genes = np.array(["A"] * 5 + ["B"] * 5)
@@ -188,7 +335,7 @@ class TestPerGeneF1:
         proba = np.zeros((10, 3))
         proba[:5, MECHANISM_CLASSES.index(DN)] = 1.0   # gene A predicted as DN (wrong)
         proba[5:, MECHANISM_CLASSES.index(GOF)] = 1.0  # gene B predicted as GOF (wrong)
-        score = per_gene_f1(y_true, proba, genes)
+        score = per_gene_f1(y_true, proba, genes, MECHANISM_CLASSES)
         assert score == pytest.approx(0.0)
 
     def test_single_gene(self):
@@ -196,8 +343,15 @@ class TestPerGeneF1:
         y_true = np.array([LOF] * 10)
         proba = np.zeros((10, 3))
         proba[:, MECHANISM_CLASSES.index(LOF)] = 1.0
-        score = per_gene_f1(y_true, proba, genes)
-        assert score == pytest.approx(1.0)
+        score = per_gene_f1(y_true, proba, genes, MECHANISM_CLASSES)
+        assert score == pytest.approx(1 / 3)
+
+    def test_inconsistent_gene_label_raises(self):
+        genes = np.array(["A", "A"])
+        labels = np.array([GOF, DN])
+        proba = np.array([[0.8, 0.2, 0.0], [0.8, 0.2, 0.0]])
+        with pytest.raises(ValueError, match="inconsistent mechanism labels"):
+            per_gene_f1(labels, proba, genes, MECHANISM_CLASSES)
 
 
 # ---------------------------------------------------------------------------

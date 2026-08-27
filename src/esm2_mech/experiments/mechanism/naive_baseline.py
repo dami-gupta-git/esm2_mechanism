@@ -9,7 +9,7 @@ To stay consistent with the experiment, this reuses the project's own
 cross-validation split functions (gene_split_cv / family_split_cv), the same
 3-class labels (label_3class), and the same metrics (macro-F1 via f1_score,
 per-class one-vs-rest AUROC via roc_auc_score), averaged over the same 5 seeds.
-Only the estimator differs: sklearn's DummyClassifier in place of the probe.
+Only the estimator differs: each rule is fitted from the corresponding training fold.
 
 Three dummy strategies are reported:
   - most_frequent : always predict the majority class (LOF). This is the
@@ -36,10 +36,7 @@ import json
 from collections import Counter
 
 import numpy as np
-from sklearn.dummy import DummyClassifier
-from sklearn.metrics import f1_score, roc_auc_score
 
-from esm2_mech.utils.bootstrap import cluster_bootstrap_ci
 from esm2_mech.utils.constants import (
     BOOTSTRAP_N_RESAMPLES,
     MECHANISM_CLASSES,
@@ -50,91 +47,144 @@ from esm2_mech.utils.data import labeled_variant_fingerprint, load_pfam_map, pfa
 from esm2_mech.utils.io import write_result_json
 from esm2_mech.utils.paths import NAIVE_BASELINE_JSON, PFAM_JSON, VALID_VARIANTS_JSON
 from esm2_mech.utils.splits import family_split_cv, gene_split_cv
+from esm2_mech.utils.classification import validate_complete_classification_splits
+from esm2_mech.utils.metrics import (
+    aggregate_folds,
+    compute_metrics,
+    empty_aggregate_metrics,
+    family_frequency_reference,
+    featureless_reference,
+)
 
 print = functools.partial(print, flush=True)
 
-STRATEGIES = ["most_frequent", "prior", "stratified"]
+STRATEGIES = ["most_frequent", "prior", "stratified", "family_frequency"]
 
 
-def _eval_dummy_one_seed(strategy, labels, splits, seed):
-    """Run a DummyClassifier across one seed's (train, test) folds.
+def _unscorable_reference(contract, reason):
+    result = empty_aggregate_metrics(
+        MECHANISM_CLASSES, contract["requested_folds"], reason
+    )
+    result.update(
+        {
+            "status": "unscorable",
+            "classes": list(MECHANISM_CLASSES),
+            "eligible_rows": contract["eligible_rows"],
+            "out_of_fold_rows": 0,
+            "held_out_unit": contract.get("held_out_unit"),
+            "group_count": contract.get("group_count"),
+            "unscorable_reason": reason,
+            "split_validation": contract,
+        }
+    )
+    return result
 
-    Returns (mean macro-F1 over folds, dict class -> mean AUROC over folds).
-    DummyClassifier ignores X, so a zero placeholder is passed. NaN is returned
-    for a metric with no contributing fold.
-    """
-    placeholder_x = np.zeros((len(labels), 1))
-    macro_f1_folds: list[float] = []
-    auroc_folds: dict[str, list[float]] = {cls: [] for cls in MECHANISM_CLASSES}
 
-    for train_idx, test_idx in splits:
-        y_train, y_test = labels[train_idx], labels[test_idx]
-        if set(y_train.tolist()) != set(MECHANISM_CLASSES):
-            continue
-        if set(y_test.tolist()) != set(MECHANISM_CLASSES):
-            continue
-        clf = DummyClassifier(strategy=strategy, random_state=seed)
-        clf.fit(placeholder_x[train_idx], y_train)
-        pred = clf.predict(placeholder_x[test_idx])
-        proba = clf.predict_proba(placeholder_x[test_idx])
-
-        macro_f1_folds.append(
-            float(
-                f1_score(
-                    y_test,
-                    pred,
-                    labels=list(MECHANISM_CLASSES),
-                    average="macro",
-                    zero_division=0,
+def _eval_reference_one_seed(strategy, labels, families, splits, contract, seed):
+    """Score one training-fold reference through the shared metric contract."""
+    if contract["status"] != "valid":
+        return _unscorable_reference(contract, "split_validation_failed")
+    fold_predictions = []
+    try:
+        for fold_index, (train_idx, test_idx) in enumerate(splits):
+            if strategy == "family_frequency":
+                predictions, probabilities = family_frequency_reference(
+                    labels[train_idx],
+                    families[train_idx],
+                    families[test_idx],
+                    MECHANISM_CLASSES,
                 )
+            else:
+                predictions, probabilities = featureless_reference(
+                    labels[train_idx],
+                    len(test_idx),
+                    MECHANISM_CLASSES,
+                    strategy,
+                    seed + fold_index,
+                )
+            fold_predictions.append((predictions, probabilities))
+    except ValueError as error:
+        return _unscorable_reference(contract, str(error))
+
+    fold_results = []
+    for (_train_idx, test_idx), (predictions, probabilities) in zip(
+        splits, fold_predictions
+    ):
+        fold_results.append(
+            compute_metrics(
+                labels[test_idx], predictions, probabilities, MECHANISM_CLASSES
             )
         )
-        for class_idx, cls in enumerate(clf.classes_):
-            y_bin = (y_test == cls).astype(int)
-            if y_bin.sum() > 0 and (1 - y_bin).sum() > 0:
-                auroc_folds[cls].append(
-                    float(roc_auc_score(y_bin, proba[:, class_idx]))
-                )
-
-    macro_mean = float(np.mean(macro_f1_folds)) if macro_f1_folds else float("nan")
-    auroc_means = {
-        cls: (float(np.mean(auroc_folds[cls])) if auroc_folds[cls] else float("nan"))
-        for cls in MECHANISM_CLASSES
-    }
-    return macro_mean, auroc_means
-
-
-def _mean_std(values):
-    vals = [v for v in values if not np.isnan(v)]
-    if not vals:
-        return float("nan"), float("nan")
-    return float(np.mean(vals)), float(np.std(vals))
+    aggregate = aggregate_folds(fold_results, MECHANISM_CLASSES, contract["requested_folds"])
+    aggregate.update(
+        {
+            "status": "success",
+            "classes": list(MECHANISM_CLASSES),
+            "eligible_rows": contract["eligible_rows"],
+            "out_of_fold_rows": contract["eligible_rows"],
+            "held_out_unit": contract.get("held_out_unit"),
+            "group_count": contract.get("group_count"),
+            "split_validation": contract,
+        }
+    )
+    return aggregate
 
 
 def evaluate(strategy, split_name, labels, genes, pfam_map, n_seeds=N_SEEDS, n_folds=N_FOLDS):
     """Mean ± std across n_seeds for one (strategy, split) cell."""
-    per_seed_macro: list[float] = []
-    per_seed_auroc: dict[str, list[float]] = {c: [] for c in MECHANISM_CLASSES}
+    per_seed = []
     for seed in range(n_seeds):
         if split_name == "gene":
             splits = gene_split_cv(genes, n_folds=n_folds, seed=seed)
         else:
             splits = family_split_cv(genes, pfam_map, n_folds=n_folds, seed=seed)
-        macro, auroc = _eval_dummy_one_seed(strategy, labels, splits, seed)
-        per_seed_macro.append(macro)
-        for cls in MECHANISM_CLASSES:
-            per_seed_auroc[cls].append(auroc[cls])
+        groups = (
+            genes
+            if split_name == "gene"
+            else np.array([pfam_map.get(gene) for gene in genes], dtype=object)
+        )
+        families = np.array([pfam_map.get(gene) for gene in genes], dtype=object)
+        contract = validate_complete_classification_splits(
+            splits,
+            requested_folds=n_folds,
+            eligible_rows=np.concatenate([test for _train, test in splits]),
+            labels=labels,
+            classes=MECHANISM_CLASSES,
+            groups=groups,
+            held_out_unit=split_name,
+        )
+        per_seed.append(
+            _eval_reference_one_seed(
+                strategy, labels, families, splits, contract, seed
+            )
+        )
 
-    macro_mean, macro_std = _mean_std(per_seed_macro)
+    unavailable_seeds = [
+        seed for seed, value in enumerate(per_seed) if value["status"] != "success"
+    ]
     result = {
-        "macro_f1_mean": macro_mean,
-        "macro_f1_std": macro_std,
+        "status": "unavailable" if unavailable_seeds else "success",
+        "classes": list(MECHANISM_CLASSES),
         "n_seeds": n_seeds,
+        "per_seed": per_seed,
+        "unavailable_seeds": unavailable_seeds,
     }
-    for cls in MECHANISM_CLASSES:
-        mean, std = _mean_std(per_seed_auroc[cls])
-        result[f"auroc_{cls}_mean"] = mean
-        result[f"auroc_{cls}_std"] = std
+    metric_names = [
+        "macro_f1",
+        "balanced_accuracy",
+        "macro_auroc",
+        *[f"f1_{class_name}" for class_name in MECHANISM_CLASSES],
+        *[f"auroc_{class_name}" for class_name in MECHANISM_CLASSES],
+        *[f"auprc_{class_name}" for class_name in MECHANISM_CLASSES],
+    ]
+    for metric_name in metric_names:
+        values = [value.get(f"{metric_name}_mean") for value in per_seed]
+        if unavailable_seeds or any(value is None for value in values):
+            result[f"{metric_name}_mean"] = None
+            result[f"{metric_name}_std"] = None
+        else:
+            result[f"{metric_name}_mean"] = float(np.mean(values))
+            result[f"{metric_name}_std"] = float(np.std(values))
     return result
 
 
@@ -146,68 +196,33 @@ def floor_macro_f1_ci(labels, genes, pfam_map, seed=0, n_boot=BOOTSTRAP_N_RESAMP
     genes excluded, matching family-split CV). Both metrics are scored within fold
     and discard a draw when a fold loses a mechanism class.
     """
-    classes = list(MECHANISM_CLASSES)
-
-    def _one_split(split_name):
-        splits = (
-            gene_split_cv(genes, n_folds=N_FOLDS, seed=seed)
-            if split_name == "gene"
-            else family_split_cv(genes, pfam_map, n_folds=N_FOLDS, seed=seed)
-        )
-        if len(splits) != N_FOLDS:
-            raise ValueError(
-                f"{split_name} majority-floor CI has {len(splits)} folds, expected {N_FOLDS}"
-            )
-        row_ids = np.concatenate([test_idx for _train_idx, test_idx in splits])
-        oof_labels = labels[row_ids]
-        oof_genes = genes[row_ids]
-        oof_folds = np.concatenate([
-            np.full(len(test_idx), fold_index, dtype=int)
-            for fold_index, (_train_idx, test_idx) in enumerate(splits)
-        ])
-        clusters = (
-            oof_genes
-            if split_name == "gene"
-            else np.array([pfam_map[gene] for gene in oof_genes], dtype=object)
-        )
-
-        def _fold_mean_floor(resampled_rows):
-            resampled_rows = np.asarray(resampled_rows, dtype=int)
-            sampled_folds = oof_folds[resampled_rows]
-            values = []
-            for fold_index in range(N_FOLDS):
-                test_rows = resampled_rows[sampled_folds == fold_index]
-                train_rows = resampled_rows[sampled_folds != fold_index]
-                if len(test_rows) == 0 or len(train_rows) == 0:
-                    return None
-                y_test = oof_labels[test_rows]
-                if set(y_test.tolist()) != set(classes):
-                    return None
-                y_train = oof_labels[train_rows]
-                train_classes, counts = np.unique(y_train, return_counts=True)
-                if set(train_classes.tolist()) != set(classes):
-                    return None
-                majority = train_classes[int(np.argmax(counts))]
-                pred = np.full(len(test_rows), majority)
-                values.append(float(f1_score(
-                    y_test,
-                    pred,
-                    labels=classes,
-                    average="macro",
-                    zero_division=0,
-                )))
-            return float(np.mean(values))
-
-        return cluster_bootstrap_ci(
-            clusters,
-            _fold_mean_floor,
-            n_resamples=n_boot,
-            seed=seed,
-            discard_reason="a fold's resampled rows lost a mechanism class",
-            metric_name=f"{split_name}_majority_floor_macro_f1",
-        )
-
-    return {"gene": _one_split("gene"), "family": _one_split("family")}
+    output = {}
+    for split_name in ("gene", "family"):
+        point = evaluate(
+            "most_frequent",
+            split_name,
+            labels,
+            genes,
+            pfam_map,
+            n_seeds=1,
+            n_folds=N_FOLDS,
+        )["macro_f1_mean"]
+        output[split_name] = {
+            "point": point,
+            "ci_low": None,
+            "ci_high": None,
+            "ci_suppressed": True,
+            "missing": True,
+            "reason": "blocked_by_audit_1_4",
+            "n_resamples": 0,
+            "n_resamples_total": 0,
+            "n_clusters": (
+                len(set(genes.tolist()))
+                if split_name == "gene"
+                else len({pfam_map.get(gene) for gene in genes} - {None})
+            ),
+        }
+    return output
 
 
 def main() -> None:
@@ -249,9 +264,17 @@ def main() -> None:
         for split_name in ("gene", "family"):
             cell = evaluate(strategy, split_name, labels, genes, pfam_map)
             results["by_strategy"][strategy][split_name] = cell
+            if cell["status"] != "success":
+                print(f"{strategy:14} {split_name:7} {'Unscorable':>15}")
+                continue
             macro = f"{cell['macro_f1_mean']:.3f} ± {cell['macro_f1_std']:.3f}"
             auroc_str = "  ".join(
-                f"{cell[f'auroc_{c}_mean']:.3f}" for c in MECHANISM_CLASSES
+                (
+                    "NA"
+                    if cell[f"auroc_{class_name}_mean"] is None
+                    else f"{cell[f'auroc_{class_name}_mean']:.3f}"
+                )
+                for class_name in MECHANISM_CLASSES
             )
             print(f"{strategy:14} {split_name:7} {macro:>15}  {auroc_str}")
 
@@ -267,7 +290,7 @@ def main() -> None:
             ci_str = "95% CI suppressed (too few valid resamples)"
         print(
             f"  {split_name:7} point {point_str}  {ci_str}  "
-            f"(n_clusters {cell['n_clusters']})"
+            f"({cell['reason']})"
         )
 
     NAIVE_BASELINE_JSON.parent.mkdir(parents=True, exist_ok=True)

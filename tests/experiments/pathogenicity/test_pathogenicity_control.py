@@ -12,6 +12,7 @@ from esm2_mech.experiments.pathogenicity.pathogenicity_control import (
     _build_claim_2c,
     _rebalance_after_filter,
     _seed_params,
+    _run_probe_with_contract,
     _validate_embedding_cache,
 )
 from esm2_mech.utils.data import embedding_fingerprint, pfam_fingerprint
@@ -26,6 +27,28 @@ def _variant(gene, label, pos=1, wt="A", mut="V", uid="P00000"):
         "aa_mut": mut,
         "uniprot_id": uid,
     }
+
+
+def test_shared_probe_receives_classes_and_split_contract():
+    captured = {}
+
+    def fake_probe(features, labels, splits, **kwargs):
+        captured.update(kwargs)
+        return {"status": "success"}, None
+
+    split_contract = {"status": "valid", "classes": [0, 1]}
+    _run_probe_with_contract(
+        fake_probe,
+        np.ones((2, 1)),
+        np.array([0, 1]),
+        [(np.array([0]), np.array([1]))],
+        [0, 1],
+        split_contract,
+        seed=0,
+    )
+
+    assert captured["classes"] == [0, 1]
+    assert captured["split_contract"] is split_contract
 
 
 class TestRebalanceAfterFilter:

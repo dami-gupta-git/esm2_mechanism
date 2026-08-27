@@ -10,6 +10,7 @@ floor without crashing.
 """
 
 import numpy as np
+import pytest
 
 from esm2_mech.experiments.mechanism.naive_baseline import floor_macro_f1_ci
 from esm2_mech.utils.constants import GOF, DN, LOF
@@ -19,12 +20,11 @@ def _make_dataset():
     labels = []
     genes = []
     pfam_map = {}
-    # Every annotated gene supplies every class, so every deterministic test
-    # fold can score the same three-class macro-F1 statistic.
+    # Every annotated gene supplies every class with LOF as the unique majority.
     for gene_index in range(15):
         gene = f"g{gene_index}"
-        genes.extend([gene] * 3)
-        labels.extend([GOF, DN, LOF])
+        genes.extend([gene] * 4)
+        labels.extend([GOF, DN, LOF, LOF])
         pfam_map[gene] = f"PF{gene_index:03d}"
     # One unannotated LOF-only gene changes the full-cohort floor and is excluded
     # from the family-split floor.
@@ -54,9 +54,9 @@ def test_family_point_matches_macro_f1_on_annotated_subset_only():
     labels, genes, pfam_map = _make_dataset()
     out = floor_macro_f1_ci(labels, genes, pfam_map, seed=0, n_boot=50)
 
-    # The family folds are balanced, so always predicting one tied majority class
-    # gives macro-F1 1/6. The unannotated LOF-only gene changes the gene-split point.
-    assert out["family"]["point"] == 1.0 / 6.0
+    # LOF has prevalence one half in the annotated cohort, so its F1 is two thirds;
+    # fixed-class macro-F1 divides that by three.
+    assert out["family"]["point"] == pytest.approx(2.0 / 9.0)
     assert out["family"]["point"] != out["gene"]["point"]
 
 

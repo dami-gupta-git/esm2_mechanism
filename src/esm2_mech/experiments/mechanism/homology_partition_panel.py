@@ -18,13 +18,11 @@ used by clan_holdout.py/mmseqs_cluster_holdout.py would make the "increasing
 strictness" comparison confounded by a model change. mlp.py's number is still
 cited alongside as a cross-check, never as the row's own CI source.
 
-Per pre-registration §1.2, each row's CI resamples the unit that row's split actually holds
-out: family-split resamples Pfam families, clan-split resamples Pfam clans,
-MMseqs2-split resamples MMseqs2 clusters. The leakage fraction for each row is
-LF = (gene_split_f1 - partition_split_f1) / (gene_split_f1 - chance), jointly
-resampled at the partition's own unit per replicate (mirrors
-leakage_fraction.py's leakage_fraction_ci, generalised from family to
-clan/cluster) rather than combined from two separately-computed CIs.
+The analysis plan assigns each row the unit held out by that split: Pfam families,
+Pfam clans, or MMseqs2 clusters. The leakage-fraction point is
+LF = (gene_split_f1 - partition_split_f1) / (gene_split_f1 - chance) on rows
+shared by both arms. Classification intervals remain unavailable until audit
+item 1.4 defines the resampling procedure.
 
 Output: results/<RUN_NAME>/homology_partition_panel/panel.json
 
@@ -40,12 +38,10 @@ import functools
 import json
 
 import numpy as np
-from sklearn.metrics import f1_score
 from sklearn.preprocessing import LabelEncoder
 
 from esm2_mech.experiments.mechanism.clan_holdout import (
     load_clan_map,
-    load_pfam,
     run_clan_holdout,
 )
 from esm2_mech.experiments.mechanism.leakage_fraction import MIN_ABOVE_CHANCE
@@ -56,11 +52,11 @@ from esm2_mech.experiments.mechanism.mmseqs_cluster_holdout import (
 )
 from esm2_mech.utils.bootstrap import (
     attach_mechanism_ci,
-    cluster_bootstrap_ci,
     family_or_gene_clusters,
 )
 from esm2_mech.utils.constants import BOOTSTRAP_N_RESAMPLES, MECHANISM_CLASSES
-from esm2_mech.utils.metrics import majority_baseline_f1
+from esm2_mech.utils.data import load_pfam_map
+from esm2_mech.utils.metrics import fold_macro_f1
 from esm2_mech.utils.io import load_variants_and_delta, write_result_json
 from esm2_mech.utils.paths import (
     EMB_MUT_MEAN,
@@ -70,10 +66,12 @@ from esm2_mech.utils.paths import (
     HOMOLOGY_PARTITION_PANEL_JSON,
     NAIVE_BASELINE_JSON,
     NONLINEAR_RESULTS_SEED_JSON,
+    PFAM_JSON,
     VALID_VARIANTS_JSON,
 )
 from esm2_mech.utils.probes import run_mlp_cv
 from esm2_mech.utils.splits import family_split_cv, gene_split_cv
+from esm2_mech.utils.classification import validate_complete_classification_splits
 
 print = functools.partial(print, flush=True)
 
@@ -123,13 +121,23 @@ def _pred_from_proba(proba):
     return np.array([MECHANISM_CLASSES[col] for col in proba.argmax(axis=1)])
 
 
-def leakage_fraction_ci_for_partition(oof_gene, oof_partition, partition_clusters, n_boot, seed):
-    """CI on LF = (gene_f1 - partition_f1) / (gene_f1 - chance), jointly
-    resampled at the partition's own held-out unit per replicate (pre-registration §1.2).
+def _oof_macro_f1(oof):
+    predictions = _pred_from_proba(np.asarray(oof["proba"]))
+    fold_values = []
+    for fold in sorted(np.unique(oof["folds"]).tolist()):
+        rows = np.where(np.asarray(oof["folds"]) == fold)[0]
+        fold_values.append(
+            fold_macro_f1(
+                np.asarray(oof["y_true"]), rows, predictions, MECHANISM_CLASSES
+            )
+        )
+    return float(np.mean(fold_values))
 
-    The chance floor (majority-class macro-F1) is recomputed from the resampled
-    gene-split labels on every bootstrap replicate, because resampling clusters
-    changes the class balance and therefore the majority-class baseline.
+
+def leakage_fraction_ci_for_partition(
+    oof_gene, oof_partition, partition_clusters, gene_chance, n_boot, seed
+):
+    """Return the shared-cohort leakage-fraction point with its interval gated.
 
     `oof_gene`/`oof_partition` are {"y_true", "proba", "row_ids"} with row_ids
     in a SHARED global row space (the same indexing the caller used for both
@@ -143,27 +151,44 @@ def leakage_fraction_ci_for_partition(oof_gene, oof_partition, partition_cluster
     if not shared_rows:
         return None
 
-    gene_y = np.asarray(oof_gene["y_true"])
-    gene_pred = _pred_from_proba(np.asarray(oof_gene["proba"]))
-    part_y = np.asarray(oof_partition["y_true"])
-    part_pred = _pred_from_proba(np.asarray(oof_partition["proba"]))
+    gene_positions = np.array([gene_pos[row] for row in shared_rows], dtype=int)
+    partition_positions = np.array([part_pos[row] for row in shared_rows], dtype=int)
 
-    gene_idx_all = np.array([gene_pos[row] for row in shared_rows])
-    part_idx_all = np.array([part_pos[row] for row in shared_rows])
-    clusters = np.asarray(partition_clusters)[part_idx_all]
+    def _shared_oof(oof, positions):
+        return {
+            "y_true": np.asarray(oof["y_true"])[positions],
+            "proba": np.asarray(oof["proba"])[positions],
+            "row_ids": np.asarray(oof["row_ids"])[positions],
+            "folds": np.asarray(oof["folds"])[positions],
+        }
 
-    def _ratio(rows):
-        g_idx = gene_idx_all[rows]
-        p_idx = part_idx_all[rows]
-        gene_f1 = float(f1_score(gene_y[g_idx], gene_pred[g_idx], average="macro", zero_division=0))
-        part_f1 = float(f1_score(part_y[p_idx], part_pred[p_idx], average="macro", zero_division=0))
-        resample_chance, _ = majority_baseline_f1(gene_y[g_idx], gene_y[g_idx])
-        denom = gene_f1 - resample_chance
-        if denom <= MIN_ABOVE_CHANCE:
-            return None
-        return (gene_f1 - part_f1) / denom
+    gene_shared = _shared_oof(oof_gene, gene_positions)
+    partition_shared = _shared_oof(oof_partition, partition_positions)
+    if not np.array_equal(gene_shared["y_true"], partition_shared["y_true"]):
+        raise ValueError("shared homology-panel rows have inconsistent observed labels")
 
-    return cluster_bootstrap_ci(clusters, _ratio, n_resamples=n_boot, seed=seed)
+    gene_f1 = _oof_macro_f1(gene_shared)
+    partition_f1 = _oof_macro_f1(partition_shared)
+    denominator = gene_f1 - gene_chance
+    point = (
+        None
+        if denominator <= MIN_ABOVE_CHANCE
+        else float((gene_f1 - partition_f1) / denominator)
+    )
+    return {
+        "point": point,
+        "ci_low": None,
+        "ci_high": None,
+        "ci_suppressed": True,
+        "missing": True,
+        "reason": "blocked_by_audit_1_4",
+        "n_clusters": int(
+            len(np.unique(np.asarray(partition_clusters)[partition_positions]))
+        ),
+        "n_shared_rows": int(len(shared_rows)),
+        "n_resamples": 0,
+        "n_resamples_total": 0,
+    }
 
 
 def _partition_row(
@@ -182,27 +207,71 @@ def _partition_row(
     )
     null_ci = ci_container["ci"]
     lf_ci = leakage_fraction_ci_for_partition(
-        oof_gene, oof_partition, partition_clusters, n_boot, seed
+        oof_gene, oof_partition, partition_clusters, gene_chance, n_boot, seed
     )
     return {
         "partition": name,
-        "n_clusters": null_ci["macro_f1"]["n_clusters"],
+        "status": "success",
+        "n_clusters": int(len(np.unique(partition_clusters))),
         "measured_floor": family_chance,
         "mechanism_null_macro_f1": null_ci["macro_f1"],
         "leakage_fraction_ci": lf_ci,
     }
 
 
+def _print_partition_summary(row, unit_name):
+    """Print one panel row without presenting a suppressed interval as a CI."""
+    if row["status"] != "success":
+        print(f"  {row['partition']}: {row['status'].capitalize()}")
+        return
+    interval = row["mechanism_null_macro_f1"]
+    point_text = "NA" if interval["point"] is None else f"{interval['point']:.4f}"
+    if interval["ci_suppressed"]:
+        print(
+            f"  mechanism_null macro_f1={point_text}; interval unavailable "
+            f"({interval['reason']}); n_clusters({unit_name})={row['n_clusters']}"
+        )
+        return
+    print(
+        f"  mechanism_null macro_f1={point_text} "
+        f"[{interval['ci_low']}, {interval['ci_high']}] "
+        f"n_clusters({unit_name})={row['n_clusters']}"
+    )
+
+
 def run_family_row(labels, genes, delta, pfam_map, seed, n_boot, n_folds=5):
     gene_splits = gene_split_cv(genes, n_folds=n_folds, seed=seed)
     family_splits = family_split_cv(genes, pfam_map, n_folds=n_folds, seed=seed)
+    gene_contract = validate_complete_classification_splits(
+        gene_splits,
+        requested_folds=n_folds,
+        eligible_rows=np.concatenate([test for _train, test in gene_splits]),
+        labels=labels,
+        classes=MECHANISM_CLASSES,
+        groups=genes,
+        held_out_unit="gene",
+    )
+    family_groups = family_or_gene_clusters(
+        genes, pfam_map, is_family_split=True
+    )
+    family_contract = validate_complete_classification_splits(
+        family_splits,
+        requested_folds=n_folds,
+        eligible_rows=np.concatenate([test for _train, test in family_splits]),
+        labels=labels,
+        classes=MECHANISM_CLASSES,
+        groups=family_groups,
+        held_out_unit="family",
+    )
     _, oof_gene = run_mlp_cv(
-        delta, labels, gene_splits, hidden=MLP_HIDDEN, seed=seed, genes=genes,
-        label="panel-gene", return_oof=True,
+        delta, labels, gene_splits, MECHANISM_CLASSES, gene_contract,
+        hidden=MLP_HIDDEN, seed=seed, genes=genes,
+        label="panel-gene", return_oof=True, compute_per_gene=False,
     )
     _, oof_family = run_mlp_cv(
-        delta, labels, family_splits, hidden=MLP_HIDDEN, seed=seed, genes=genes,
-        label="panel-family", return_oof=True,
+        delta, labels, family_splits, MECHANISM_CLASSES, family_contract,
+        hidden=MLP_HIDDEN, seed=seed, genes=genes,
+        label="panel-family", return_oof=True, compute_per_gene=False,
     )
     if oof_gene is None or oof_family is None:
         raise RuntimeError("family/gene-split MLP produced no scorable fold")
@@ -218,7 +287,7 @@ def run_family_row(labels, genes, delta, pfam_map, seed, n_boot, n_folds=5):
 def run_clan_row(labels, genes, delta, gene_clan, clan_names, oof_gene, gene_chance, family_chance, seed, n_boot):
     le = LabelEncoder()
     le.fit(MECHANISM_CLASSES)
-    _clan_results, _qualifying, _ci, oof_clan = run_clan_holdout(
+    _clan_results, _qualifying, _ci, oof_clan, _split_contract = run_clan_holdout(
         delta, labels, genes, gene_clan, clan_names, le, seed=seed, n_boot=n_boot
     )
     if oof_clan is None:
@@ -240,7 +309,7 @@ def run_mmseqs_row(labels, genes, delta, gene_to_cluster, oof_gene, gene_chance,
 
     _agg, oof_local = run_mmseqs_mlp(
         delta_f, labels_f, genes_f, groups, MLP_HIDDEN, n_folds, seed, "panel-mmseqs",
-        return_oof=True,
+        return_oof=True, compute_per_gene=False,
     )
     if oof_local is None:
         return None
@@ -252,6 +321,7 @@ def run_mmseqs_row(labels, genes, delta, gene_to_cluster, oof_gene, gene_chance,
         "y_true": oof_local["y_true"],
         "proba": oof_local["proba"],
         "row_ids": idx[oof_local["row_ids"]],
+        "folds": oof_local["folds"],
     }
     partition_clusters = groups[oof_local["row_ids"]]
     return _partition_row(
@@ -271,7 +341,7 @@ def main():
 
     print("=== Loading data ===")
     labels, genes, delta = load_data()
-    pfam_map = load_pfam()
+    pfam_map = load_pfam_map(PFAM_JSON)
     clan_map, clan_names = load_clan_map(args.clan_file)
     gene_clan = {g: clan_map[acc] for g, acc in pfam_map.items() if acc in clan_map}
     print(f"Genes with clan assignment: {len(gene_clan)}/{len(pfam_map)}")
@@ -282,12 +352,7 @@ def main():
 
     print("\n=== Family row (Pfam family, current default) ===")
     oof_gene, family_row = run_family_row(labels, genes, delta, pfam_map, args.seed, args.n_boot)
-    print(
-        f"  mechanism_null macro_f1={family_row['mechanism_null_macro_f1']['point']:.4f} "
-        f"[{family_row['mechanism_null_macro_f1']['ci_low']}, "
-        f"{family_row['mechanism_null_macro_f1']['ci_high']}] "
-        f"n_clusters(families)={family_row['n_clusters']}"
-    )
+    _print_partition_summary(family_row, "families")
 
     print("\n=== Clan row (Pfam clan, stricter) ===")
     clan_row = run_clan_row(
@@ -295,12 +360,7 @@ def main():
         args.seed, args.n_boot,
     )
     if clan_row is not None:
-        print(
-            f"  mechanism_null macro_f1={clan_row['mechanism_null_macro_f1']['point']:.4f} "
-            f"[{clan_row['mechanism_null_macro_f1']['ci_low']}, "
-            f"{clan_row['mechanism_null_macro_f1']['ci_high']}] "
-            f"n_clusters(clans)={clan_row['n_clusters']}"
-        )
+        _print_partition_summary(clan_row, "clans")
     else:
         print("  No qualifying clans produced OOF — clan row omitted.")
 
@@ -310,12 +370,7 @@ def main():
         args.seed, args.n_boot,
     )
     if mmseqs_row is not None:
-        print(
-            f"  mechanism_null macro_f1={mmseqs_row['mechanism_null_macro_f1']['point']:.4f} "
-            f"[{mmseqs_row['mechanism_null_macro_f1']['ci_low']}, "
-            f"{mmseqs_row['mechanism_null_macro_f1']['ci_high']}] "
-            f"n_clusters(mmseqs)={mmseqs_row['n_clusters']}"
-        )
+        _print_partition_summary(mmseqs_row, "mmseqs")
     else:
         print("  No scorable MMseqs2 fold produced OOF — MMseqs2 row omitted.")
 

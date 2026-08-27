@@ -20,7 +20,14 @@ from typing import Optional
 import numpy as np
 
 print = functools.partial(print, flush=True)
-from esm2_mech.utils.metrics import majority_baseline_f1
+from esm2_mech.utils.classification import validate_complete_classification_splits
+from esm2_mech.utils.metrics import (
+    aggregate_folds,
+    align_proba,
+    compute_metrics,
+    empty_aggregate_metrics,
+    training_frequency_reference,
+)
 from esm2_mech.utils.splits import family_split_indices
 from esm2_mech.utils.paths import DATA_DIR, GENE_LIST_TSV, PROTEOME_PILOT_CACHE_DIR, RESULTS_DIR as _PROJECT_RESULTS_DIR
 from esm2_mech.utils.constants import MECHANISM_CLASSES
@@ -330,7 +337,7 @@ def build_feature_table(
         X_raw[np.isnan(X_raw[:, j]), j] = col_medians[j]
     X = np.hstack([X_raw, miss])
 
-    y = np.array([CLASSES.index(r["label"]) for r in rows], dtype=int)
+    y = np.array([r["label"] for r in rows], dtype=object)
     groups = np.array([r["family"] for r in rows])
     print(
         f"Feature matrix: X={X.shape}, y={y.shape}, "
@@ -338,7 +345,7 @@ def build_feature_table(
     )
     print(
         "Class distribution: "
-        + ", ".join(f"{c}={int((y==i).sum())}" for i, c in enumerate(CLASSES))
+        + ", ".join(f"{class_name}={int((y == class_name).sum())}" for class_name in CLASSES)
     )
     return rows, X, y, groups
 
@@ -352,71 +359,114 @@ def evaluate_model(
     seed: int = 0,
 ) -> dict:
     """5-fold family-split CV returning a dict of metrics."""
-    from sklearn.metrics import f1_score, roc_auc_score
     from sklearn.preprocessing import StandardScaler
     from sklearn.base import clone
 
-    y_true_all = []
-    y_pred_all = []
-    y_proba_all = []
+    splits = list(family_split_indices(groups, n_folds, seed))
+    contract = validate_complete_classification_splits(
+        splits,
+        requested_folds=n_folds,
+        eligible_rows=np.arange(len(y)),
+        labels=y,
+        classes=CLASSES,
+        groups=groups,
+        held_out_unit="family",
+    )
+    if contract["status"] != "valid":
+        result = empty_aggregate_metrics(CLASSES, n_folds, "split_validation_failed")
+        result.update({"status": "unscorable", "split_validation": contract})
+        return result
 
-    for train_idx, test_idx in family_split_indices(groups, n_folds, seed):
-        Xtr, Xte = X[train_idx], X[test_idx]
-        ytr, yte = y[train_idx], y[test_idx]
-        # Per-fold scaler (no leakage across folds)
-        scaler = StandardScaler().fit(Xtr)
-        Xtr_s = scaler.transform(Xtr)
-        Xte_s = scaler.transform(Xte)
-        m = clone(model)
-        m.fit(Xtr_s, ytr)
-        raw_proba = m.predict_proba(Xte_s)
-        # Align to canonical CLASSES order in case a class is absent from training fold
-        proba = np.zeros((len(Xte_s), len(CLASSES)), dtype=np.float32)
-        for ci, c in enumerate(m.classes_):
-            proba[:, c] = raw_proba[:, ci]
-        pred = m.predict(Xte_s)
-        y_true_all.append(yte)
-        y_pred_all.append(pred)
-        y_proba_all.append(proba)
+    fold_metrics = []
+    for fold_index, (train_idx, test_idx) in enumerate(splits):
+        try:
+            Xtr, Xte = X[train_idx], X[test_idx]
+            ytr, yte = y[train_idx], y[test_idx]
+            # Per-fold scaler (no leakage across folds)
+            scaler = StandardScaler().fit(Xtr)
+            Xtr_s = scaler.transform(Xtr)
+            Xte_s = scaler.transform(Xte)
+            fitted_model = clone(model)
+            fitted_model.fit(Xtr_s, ytr)
+            raw_proba = fitted_model.predict_proba(Xte_s)
+            proba = align_proba(
+                raw_proba,
+                fitted_model.classes_,
+                CLASSES,
+                allow_missing_classes=False,
+            )
+            pred = fitted_model.predict(Xte_s)
+            fold_metrics.append(compute_metrics(yte, pred, proba, CLASSES))
+        except Exception as error:
+            result = empty_aggregate_metrics(CLASSES, n_folds, "runtime_failure")
+            result.update(
+                {
+                    "status": "failed",
+                    "completed_folds": len(fold_metrics),
+                    "failed_fold": fold_index,
+                    "error_type": type(error).__name__,
+                    "error_message": str(error),
+                    "split_validation": contract,
+                }
+            )
+            return result
 
-    y_true = np.concatenate(y_true_all)
-    y_pred = np.concatenate(y_pred_all)
-    y_proba = np.concatenate(y_proba_all, axis=0)
-
-    macro_f1 = f1_score(y_true, y_pred, average="macro")
-
-    per_class_auroc = {}
-    for i, cls in enumerate(CLASSES):
-        y_bin = (y_true == i).astype(int)
-        if y_bin.sum() == 0 or y_bin.sum() == len(y_bin):
-            per_class_auroc[cls] = None
-        else:
-            per_class_auroc[cls] = float(roc_auc_score(y_bin, y_proba[:, i]))
-
+    aggregate = aggregate_folds(fold_metrics, CLASSES, n_folds)
     return {
-        "macro_f1": float(macro_f1),
-        "per_class_auroc": per_class_auroc,
-        "n_test": int(len(y_true)),
-        "class_distribution_test": {
-            c: int((y_true == i).sum()) for i, c in enumerate(CLASSES)
+        **aggregate,
+        "status": "success",
+        "macro_f1": aggregate["macro_f1_mean"],
+        "per_class_auroc": {
+            class_name: aggregate[f"auroc_{class_name}_mean"]
+            for class_name in CLASSES
         },
+        "n_test": int(len(y)),
+        "class_distribution_test": {
+            class_name: int((y == class_name).sum()) for class_name in CLASSES
+        },
+        "split_validation": contract,
     }
 
 
 def majority_baseline(
     y: np.ndarray, groups: np.ndarray, n_folds: int = 5, seed: int = 0
 ) -> dict:
-    from sklearn.metrics import f1_score
-
-    y_true_all, y_pred_all = [], []
-    for train_idx, test_idx in family_split_indices(groups, n_folds, seed):
-        ytr, yte = y[train_idx], y[test_idx]
-        _, maj = majority_baseline_f1(ytr, yte)
-        y_true_all.append(yte)
-        y_pred_all.append(np.full_like(yte, maj))
-    y_true = np.concatenate(y_true_all)
-    y_pred = np.concatenate(y_pred_all)
-    return {"macro_f1": float(f1_score(y_true, y_pred, average="macro"))}
+    splits = list(family_split_indices(groups, n_folds, seed))
+    contract = validate_complete_classification_splits(
+        splits,
+        requested_folds=n_folds,
+        eligible_rows=np.arange(len(y)),
+        labels=y,
+        classes=CLASSES,
+        groups=groups,
+        held_out_unit="family",
+    )
+    if contract["status"] != "valid":
+        result = empty_aggregate_metrics(CLASSES, n_folds, "split_validation_failed")
+        result.update({"status": "unscorable", "split_validation": contract})
+        return result
+    references = []
+    try:
+        for train_idx, test_idx in splits:
+            predictions, probabilities, _majority = training_frequency_reference(
+                y[train_idx], len(test_idx), CLASSES
+            )
+            references.append(
+                compute_metrics(y[test_idx], predictions, probabilities, CLASSES)
+            )
+    except ValueError as error:
+        result = empty_aggregate_metrics(CLASSES, n_folds, str(error))
+        result.update(
+            {
+                "status": "unscorable",
+                "unscorable_reason": str(error),
+                "split_validation": contract,
+            }
+        )
+        return result
+    aggregate = aggregate_folds(references, CLASSES, n_folds)
+    aggregate.update({"status": "success", "macro_f1": aggregate["macro_f1_mean"]})
+    return aggregate
 
 
 def save_feature_table(rows: list[dict], path: Path):
@@ -494,13 +544,18 @@ def main():
             "seed": args.seed,
             "label_collapse": "GOF / DN / LOF (HI→LOF, AR dropped)",
         },
-        "class_distribution": {c: int((y == i).sum()) for i, c in enumerate(CLASSES)},
+        "class_distribution": {
+            class_name: int((y == class_name).sum()) for class_name in CLASSES
+        },
         "models": {},
     }
 
     # Majority baseline
     maj = majority_baseline(y, groups, args.n_folds, args.seed)
-    print(f"Majority baseline:  macro_f1 = {maj['macro_f1']:.4f}")
+    if maj["status"] == "success":
+        print(f"Majority baseline:  macro_f1 = {maj['macro_f1']:.4f}")
+    else:
+        print("Majority baseline:  Unscorable")
     results["models"]["majority"] = maj
 
     # Logistic regression
@@ -508,18 +563,21 @@ def main():
         max_iter=2000, class_weight="balanced", random_state=args.seed
     )
     lr_res = evaluate_model(lr, X, y, groups, args.n_folds, args.seed)
-    print(
-        f"Logistic regression: macro_f1 = {lr_res['macro_f1']:.4f}  "
-        "AUROC: "
-        + ", ".join(
-            (
-                f"{c}={lr_res['per_class_auroc'][c]:.3f}"
-                if lr_res["per_class_auroc"][c] is not None
-                else f"{c}=NA"
+    if lr_res["status"] == "success":
+        print(
+            f"Logistic regression: macro_f1 = {lr_res['macro_f1']:.4f}  "
+            "AUROC: "
+            + ", ".join(
+                (
+                    f"{c}={lr_res['per_class_auroc'][c]:.3f}"
+                    if lr_res["per_class_auroc"][c] is not None
+                    else f"{c}=NA"
+                )
+                for c in CLASSES
             )
-            for c in CLASSES
         )
-    )
+    else:
+        print("Logistic regression: Unscorable")
     results["models"]["logreg"] = lr_res
 
     # Tiny MLP
@@ -531,37 +589,51 @@ def main():
         random_state=args.seed,
     )
     mlp_res = evaluate_model(mlp, X, y, groups, args.n_folds, args.seed)
-    print(
-        f"Tiny MLP (16,8):     macro_f1 = {mlp_res['macro_f1']:.4f}  "
-        "AUROC: "
-        + ", ".join(
-            (
-                f"{c}={mlp_res['per_class_auroc'][c]:.3f}"
-                if mlp_res["per_class_auroc"][c] is not None
-                else f"{c}=NA"
+    if mlp_res["status"] == "success":
+        print(
+            f"Tiny MLP (16,8):     macro_f1 = {mlp_res['macro_f1']:.4f}  "
+            "AUROC: "
+            + ", ".join(
+                (
+                    f"{c}={mlp_res['per_class_auroc'][c]:.3f}"
+                    if mlp_res["per_class_auroc"][c] is not None
+                    else f"{c}=NA"
+                )
+                for c in CLASSES
             )
-            for c in CLASSES
         )
-    )
+    else:
+        print("Tiny MLP (16,8): Unscorable")
     results["models"]["mlp"] = mlp_res
 
     # 7. Decision flag
     # BUG check fires first: any model below majority signals a real problem (label bug, leakage, etc.).
-    best_f1 = max(lr_res["macro_f1"], mlp_res["macro_f1"])
-    maj_f1 = maj["macro_f1"]
-    if best_f1 < maj_f1:
-        decision = "PIPELINE_BUG: best model is below majority baseline — debug"
-    elif best_f1 >= 0.40:
-        decision = "STRONG_SIGNAL: proceed to full Phase 1"
-    elif best_f1 >= maj_f1 + 0.02:
-        decision = "WEAK_SIGNAL: proceed but expectations lowered"
+    result_statuses = [maj["status"], lr_res["status"], mlp_res["status"]]
+    if any(status != "success" for status in result_statuses):
+        decision = None
+        results["decision_missing"] = True
+        results["decision_reason"] = "one or more required model arms are unscorable"
     else:
-        decision = "NULL: at majority baseline — proceed to full Phase 1 cautiously"
+        best_f1 = max(lr_res["macro_f1"], mlp_res["macro_f1"])
+        maj_f1 = maj["macro_f1"]
+        if best_f1 < maj_f1:
+            decision = "PIPELINE_BUG: best model is below majority baseline — debug"
+        elif best_f1 >= 0.40:
+            decision = "STRONG_SIGNAL: proceed to full Phase 1"
+        elif best_f1 >= maj_f1 + 0.02:
+            decision = "WEAK_SIGNAL: proceed but expectations lowered"
+        else:
+            decision = "NULL: at majority baseline — proceed to full Phase 1 cautiously"
+        results["decision_missing"] = False
+        results["decision_reason"] = None
     results["decision"] = decision
     print("=" * 60)
-    print(f"DECISION: {decision}")
-    print(f"  best model macro_f1 = {best_f1:.4f}")
-    print(f"  majority baseline   = {maj['macro_f1']:.4f}")
+    if decision is None:
+        print("DECISION: Unscorable")
+    else:
+        print(f"DECISION: {decision}")
+        print(f"  best model macro_f1 = {best_f1:.4f}")
+        print(f"  majority baseline   = {maj['macro_f1']:.4f}")
 
     out_path = results_json_path(args.seed)
     out_path.write_text(json.dumps(results, indent=2))

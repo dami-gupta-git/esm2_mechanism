@@ -8,9 +8,10 @@ from collections import defaultdict
 from pathlib import Path
 
 from esm2_mech.utils.paths import EMB_MUT_MEAN, EMB_WT_MEAN, LL_CKPT_JSON, RESULTS_DIR as _RESULTS_DIR, SCAN_FEATURES_META_JSON, SCAN_FEATURES_NPY, SCAN_PROBE_CACHE_JSON, SEQUENCES_EXTENDED_JSON, SEQUENCES_JSON, VALID_VARIANTS_JSON
-from esm2_mech.utils.constants import AA_ORDER
+from esm2_mech.utils.constants import AA_ORDER, MECHANISM_CLASSES
 from esm2_mech.utils.embed import load_esm2_model, load_gene_delta, masked_aa_log_probs
 from esm2_mech.utils.probes import run_logreg_cv
+from esm2_mech.utils.classification import validate_complete_classification_splits
 
 print = functools.partial(print, flush=True)
 from esm2_mech.embeddings.embed_variants import ESM2_MODEL_650M
@@ -290,8 +291,16 @@ def run_probe_analysis():
     with open(DATA / "pfam_families.json") as f:
         pfam_map = json.load(f)
 
-    def run_probe(X, labels, splits, seed):
-        return run_logreg_cv(X, labels, splits, seed=seed)
+    def run_probe(X, labels, splits, groups, held_out_unit, seed):
+        contract = validate_complete_classification_splits(
+            splits, requested_folds=5,
+            eligible_rows=np.concatenate([test for _train, test in splits]),
+            labels=labels, classes=MECHANISM_CLASSES, groups=groups,
+            held_out_unit=held_out_unit,
+        )
+        return run_logreg_cv(
+            X, labels, splits, MECHANISM_CLASSES, contract, seed=seed
+        )
 
     all_results = {}
     for seed in range(5):
@@ -300,9 +309,17 @@ def run_probe_analysis():
         fs = family_split_cv(gene_list, pfam_map, seed=seed)
         seed_res = {}
         for combo_name, X in combos.items():
-            for split_name, splits in [("gene_split", gs), ("family_split", fs)]:
+            split_specs = [
+                ("gene_split", gs, gene_list, "gene"),
+                (
+                    "family_split", fs,
+                    np.array([pfam_map.get(gene) for gene in gene_list], dtype=object),
+                    "family",
+                ),
+            ]
+            for split_name, splits, groups, held_out_unit in split_specs:
                 key = f"{combo_name}_{split_name}"
-                r = run_probe(X, labels, splits, seed=seed)
+                r = run_probe(X, labels, splits, groups, held_out_unit, seed=seed)
                 seed_res[key] = r
                 f1 = r.get("macro_f1_mean", float("nan"))
                 gof = r.get("auroc_GOF_mean", float("nan"))
@@ -313,17 +330,22 @@ def run_probe_analysis():
     summary = {}
     for key in all_results[0].keys():
         f1_vals = [
-            all_results[s][key].get("macro_f1_mean", float("nan")) for s in range(5)
+            all_results[s][key].get("macro_f1_mean") for s in range(5)
         ]
         gof_vals = [
-            all_results[s][key].get("auroc_GOF_mean", float("nan")) for s in range(5)
+            all_results[s][key].get("auroc_GOF_mean") for s in range(5)
         ]
+        unavailable = any(value is None for value in f1_vals + gof_vals)
         summary[key] = {
-            "macro_f1_mean": float(np.nanmean(f1_vals)),
-            "macro_f1_std": float(np.nanstd(f1_vals)),
-            "auroc_GOF_mean": float(np.nanmean(gof_vals)),
-            "auroc_GOF_std": float(np.nanstd(gof_vals)),
+            "status": "unavailable" if unavailable else "success",
+            "macro_f1_mean": None if unavailable else float(np.mean(f1_vals)),
+            "macro_f1_std": None if unavailable else float(np.std(f1_vals)),
+            "auroc_GOF_mean": None if unavailable else float(np.mean(gof_vals)),
+            "auroc_GOF_std": None if unavailable else float(np.std(gof_vals)),
         }
+        if unavailable:
+            print(f"  {key}: Unscorable")
+            continue
         print(
             f"  {key}: F1={summary[key]['macro_f1_mean']:.3f}±{summary[key]['macro_f1_std']:.3f}"
             f"  GOF={summary[key]['auroc_GOF_mean']:.3f}±{summary[key]['auroc_GOF_std']:.3f}"
@@ -332,9 +354,12 @@ def run_probe_analysis():
     print("\n=== DECISION RULES ===")
     gate_results = {}
     for gate, (key, metric, threshold) in DECISION_RULES.items():
-        val = summary.get(key, {}).get(metric, float("nan"))
-        passed = val > threshold
+        val = summary.get(key, {}).get(metric)
+        passed = None if val is None else val > threshold
         gate_results[gate] = {"value": val, "threshold": threshold, "passed": passed}
+        if passed is None:
+            print(f"  {gate}: {key} {metric} = Unscorable")
+            continue
         status = "PASS ✓" if passed else "FAIL ✗"
         print(
             f"  {gate}: {key} {metric} = {val:.3f} (threshold {threshold:.3f}) → {status}"
@@ -342,23 +367,28 @@ def run_probe_analysis():
 
     # G3: complementarity
     ll_only_f1 = summary.get("ll_only_family_split", {}).get(
-        "macro_f1_mean", float("nan")
+        "macro_f1_mean"
     )
-    scan_only_f1 = 0.272  # from result_20
-    g3_threshold = max(ll_only_f1, scan_only_f1) + 0.02
+    scan_only_f1 = None
+    g3_threshold = None
     ll_scan_f1 = summary.get("ll_scan_family_split", {}).get(
-        "macro_f1_mean", float("nan")
+        "macro_f1_mean"
     )
-    g3_passed = ll_scan_f1 > g3_threshold
+    g3_passed = None
     gate_results["G3"] = {
         "value": ll_scan_f1,
         "threshold": g3_threshold,
         "passed": g3_passed,
+        "reason": "current run has no scan-only comparator arm",
     }
-    status = "PASS ✓" if g3_passed else "FAIL ✗"
-    print(
-        f"  G3: ll_scan_family_split macro_f1_mean = {ll_scan_f1:.3f} (threshold {g3_threshold:.3f}) → {status}"
-    )
+    if g3_passed is None:
+        print("  G3: ll_scan_family_split macro_f1_mean = Unscorable")
+    else:
+        status = "PASS ✓" if g3_passed else "FAIL ✗"
+        print(
+            f"  G3: ll_scan_family_split macro_f1_mean = {ll_scan_f1:.3f} "
+            f"(threshold {g3_threshold:.3f}) → {status}"
+        )
 
     out = {
         "summary": summary,

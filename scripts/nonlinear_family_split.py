@@ -29,6 +29,9 @@ import numpy as np
 from esm2_mech.experiments.mechanism.mlp import load_data
 from esm2_mech.utils.probes import run_sklearn_probe, run_sklearn_probe_pca
 from esm2_mech.utils.splits import family_split_cv
+from esm2_mech.utils.constants import MECHANISM_CLASSES
+from esm2_mech.utils.bootstrap import family_or_gene_clusters
+from esm2_mech.utils.classification import validate_complete_classification_splits
 
 print = functools.partial(print, flush=True)
 
@@ -66,17 +69,20 @@ def _mean_std(per_seed_macro_f1):
 
 
 def main() -> None:
-    labels, genes, delta_mean, delta_pos, pfam_map = load_data()
+    labels, genes, delta_mean, delta_pos, pfam_map, _input_fingerprints = load_data()
 
     feature_sets = [("delta_mean", delta_mean), ("delta_pos", delta_pos)]
     # (label, runner, extra-kwargs) — mirrors how mlp.py invokes each on gene-split.
     models = [
-        ("gbm", lambda X, splits, seed: run_sklearn_probe_pca(
-            gbm_fn, X, labels, genes, seed=seed, splits=splits)),
-        ("rf", lambda X, splits, seed: run_sklearn_probe_pca(
-            rf_fn, X, labels, genes, seed=seed, splits=splits)),
-        ("knn", lambda X, splits, seed: run_sklearn_probe(
-            knn_fn, X, labels, genes, seed=seed, normalize=True, splits=splits)),
+        ("gbm", lambda X, splits, contract, seed: run_sklearn_probe_pca(
+            gbm_fn, X, labels, genes, MECHANISM_CLASSES, contract, splits,
+            seed=seed)),
+        ("rf", lambda X, splits, contract, seed: run_sklearn_probe_pca(
+            rf_fn, X, labels, genes, MECHANISM_CLASSES, contract, splits,
+            seed=seed)),
+        ("knn", lambda X, splits, contract, seed: run_sklearn_probe(
+            knn_fn, X, labels, genes, MECHANISM_CLASSES, contract, splits,
+            seed=seed, normalize=True)),
     ]
 
     print(f"n = {len(labels)}  averaging over {N_SEEDS} seeds, {N_FOLDS}-fold FAMILY-split CV\n")
@@ -87,7 +93,16 @@ def main() -> None:
             per_seed = []
             for seed in range(N_SEEDS):
                 splits = family_split_cv(genes, pfam_map, n_folds=N_FOLDS, seed=seed)
-                res = runner(X, splits, seed)
+                family_groups = family_or_gene_clusters(
+                    genes, pfam_map, is_family_split=True
+                )
+                contract = validate_complete_classification_splits(
+                    splits, requested_folds=N_FOLDS,
+                    eligible_rows=np.concatenate([test for _train, test in splits]),
+                    labels=labels, classes=MECHANISM_CLASSES,
+                    groups=family_groups, held_out_unit="family",
+                )
+                res = runner(X, splits, contract, seed)
                 per_seed.append(res.get("macro_f1_mean", float("nan")))
             mean, std = _mean_std(per_seed)
             print(f"{model_name + '_' + feat_name:22} {mean:8.3f} ± {std:.3f}")

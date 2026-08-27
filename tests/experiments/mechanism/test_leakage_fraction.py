@@ -90,7 +90,9 @@ class TestLeakageFractionCi:
         pfam_map = {f"gene_{i}": f"PF{i % 3}" for i in range(6)}
         ci = leakage_fraction_ci(entries, pfam_map, chance=0.28, n_resamples=50, seed=0)
         assert ci is not None
-        assert "point" in ci
+        assert ci["point"] is not None
+        assert ci["ci_low"] is None
+        assert ci["reason"] == "blocked_by_audit_1_4"
 
     def test_at_floor_point_does_not_start_bootstrap(self, monkeypatch):
         """An undefined leakage fraction is not a failed bootstrap interval."""
@@ -201,6 +203,8 @@ class TestLeakageFractionCi:
 
         assert ci is not None
         assert ci["point"] == pytest.approx(ci_hand["point"], abs=1e-9)
+        assert ci["ci_low"] is None
+        assert ci["reason"] == "blocked_by_audit_1_4"
 
     def test_discard_reason_counts_survive_multiprocess_workers(self, monkeypatch):
         """discard_reason_counts is a dict closed over by `_ratio` and mutated inside
@@ -249,6 +253,6 @@ class TestLeakageFractionCi:
         )
 
         assert ci is not None
-        n_discarded = ci["n_resamples_total"] - ci["n_resamples"]
-        assert n_discarded > 0  # the AA/BB draws must actually happen
-        assert sum(ci["discard_reason_counts"].values()) == n_discarded
+        assert ci["n_resamples_total"] == 0
+        assert ci["n_resamples"] == 0
+        assert ci["reason"] == "blocked_by_audit_1_4"

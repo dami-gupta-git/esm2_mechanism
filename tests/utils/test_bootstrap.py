@@ -548,14 +548,16 @@ class TestBootstrapMechanismMetrics:
         assert lift["point"] == pytest.approx(
             out["auprc_GOF"]["point"] - out["prevalence_GOF"]["point"], abs=1e-9
         )
-        assert lift["ci_low"] > 0  # planted signal beats its own prevalence baseline
+        assert lift["ci_low"] is None
+        assert lift["reason"] == "blocked_by_audit_1_4"
 
     def test_recovers_gof_signal_above_chance(self):
         y, proba, genes, folds = self._signal_data()
         out = bootstrap_mechanism_metrics(y, proba, genes, folds, n_resamples=300)
         gof = out["auroc_GOF"]
         assert gof["point"] > 0.9
-        assert gof["ci_low"] > 0.5  # CI excludes chance
+        assert gof["ci_low"] is None
+        assert gof["reason"] == "blocked_by_audit_1_4"
 
     def test_clusters_are_genes(self):
         y, proba, genes, folds = self._signal_data()
@@ -578,8 +580,8 @@ class TestBootstrapMechanismMetrics:
         assert returned is result
         assert result["ci"]["macro_f1"]["n_clusters"] == len(set(genes.tolist()))
 
-    def test_attach_helper_leaves_result_unchanged_when_disabled(self):
-        result = {"macro_f1_mean": 1.0}
+    def test_attach_helper_omits_intervals_when_disabled(self):
+        result = {"macro_f1_mean": 1.0, "ci": {"stale": True}}
 
         returned = attach_mechanism_ci(
             result,
@@ -1268,8 +1270,9 @@ class TestFoldScalesAreNotPooled:
 
     def test_mechanism_metrics_point_estimate_scores_within_fold(self):
         labels, proba, folds, genes = _offset_fold_scales()
+        two_class_proba = np.column_stack([proba[:, 0], 1.0 - proba[:, 0]])
         out = bootstrap_mechanism_metrics(
-            labels, proba, genes, folds, classes=[GOF], n_resamples=50
+            labels, two_class_proba, genes, folds, classes=[GOF, LOF], n_resamples=50
         )
         assert out["auroc_GOF"]["point"] == pytest.approx(1.0)
 
@@ -1278,13 +1281,14 @@ class TestFoldScalesAreNotPooled:
         # most exposed of the three. Both arms rank perfectly within fold, so their
         # difference is zero; pooling either side would move it off zero.
         labels, proba, folds, genes = _offset_fold_scales()
+        two_class_proba = np.column_stack([proba[:, 0], 1.0 - proba[:, 0]])
         arm = {
-            "y_true": labels, "proba": proba, "folds": folds,
+            "y_true": labels, "proba": two_class_proba, "folds": folds,
             "genes": genes, "row_ids": np.arange(len(labels)),
         }
         out = paired_oof_diff(
             arm, arm, {gene: gene for gene in genes}, "same-arm",
-            classes=[GOF], metric="auroc_one_vs_rest", pos_class=GOF,
+            classes=[GOF, LOF], metric="auroc_one_vs_rest", pos_class=GOF,
             n_resamples=50,
         )
         assert out["point_a"] == pytest.approx(1.0)
@@ -1518,7 +1522,8 @@ class TestPairedOofDiff:
             arm_a, arm_b, pfam_map, "planted", classes=classes, n_resamples=200
         )
         assert out["point_diff"] > 0
-        assert out["ci_low"] > 0, "a large planted difference must exclude zero"
+        assert out["ci_low"] is None
+        assert out["reason"] == "blocked_by_audit_1_4"
         assert out["n_shared"] == 120
 
     def test_identical_arms_give_exactly_zero_difference(self):
@@ -1529,8 +1534,8 @@ class TestPairedOofDiff:
         # The pairing is what makes this exact: both arms see the same drawn rows on
         # every replicate, so an identical arm cancels to zero in each one.
         assert out["point_diff"] == pytest.approx(0.0)
-        assert out["ci_low"] == pytest.approx(0.0)
-        assert out["ci_high"] == pytest.approx(0.0)
+        assert out["ci_low"] is None
+        assert out["ci_high"] is None
 
     def test_family_split_resamples_families_not_genes(self):
         arm_a, arm_b, pfam_map, classes = self._arms(n_genes=20, n_families=5)
@@ -1616,7 +1621,8 @@ class TestPairedOofDiff:
             metric="auroc_one_vs_rest", pos_class=DN, n_resamples=200,
         )
         assert dn["point_a"] > 0.95
-        assert dn["ci_low"] > 0
+        assert dn["ci_low"] is None
+        assert dn["reason"] == "blocked_by_audit_1_4"
 
     def test_one_vs_rest_requires_a_pos_class_in_classes(self):
         arm_a, arm_b, pfam_map, classes = self._arms()
@@ -1676,7 +1682,7 @@ class TestPairedOofDiff:
         )
         assert out["point_a"] == pytest.approx(1.0)
         assert out["point_diff"] > 0
-        assert out["ci_low"] > 0
+        assert out["ci_low"] is None
 
     def test_cross_partition_resamples_families_and_adds_gene_sensitivity(self):
         arm_a, arm_b, pfam_map, classes = self._arms(n_genes=20, n_families=5)
@@ -1698,13 +1704,11 @@ class TestPairedOofDiff:
             arm_a, arm_b, pfam_map, "gap", classes=classes,
             cross_partition=True, n_resamples=400,
         )
-        family_width = out["ci_high"] - out["ci_low"]
+        assert out["ci_low"] is None
+        assert out["ci_high"] is None
         gene = out["gene_resampled_sensitivity"]
-        gene_width = gene["ci_high"] - gene["ci_low"]
-        # Fewer effective clusters means a wider interval. A gene-resampled gap
-        # understates the family-split arm's variance, which is why it is only ever
-        # reported as a sensitivity check.
-        assert family_width > gene_width
+        assert gene["ci_low"] is None
+        assert gene["reason"] == "blocked_by_audit_1_4"
 
 
 # ---------------------------------------------------------------------------

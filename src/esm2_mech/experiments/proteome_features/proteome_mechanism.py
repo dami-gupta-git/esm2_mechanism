@@ -20,9 +20,15 @@ from sklearn.neighbors import KNeighborsClassifier
 from sklearn.preprocessing import StandardScaler
 from esm2_mech.utils.splits import family_split_indices
 from esm2_mech.utils.constants import MECHANISM_CLASSES, BOOTSTRAP_N_RESAMPLES
-from esm2_mech.utils.metrics import compute_metrics, mean_std_n, align_proba
+from esm2_mech.utils.metrics import (
+    aggregate_folds,
+    align_proba,
+    compute_metrics,
+    empty_aggregate_metrics,
+)
 from esm2_mech.utils.probes import run_mlp_cv, run_logreg_cv, run_histgb_cv
 from esm2_mech.utils.bootstrap import attach_mechanism_ci
+from esm2_mech.utils.classification import validate_complete_classification_splits
 from esm2_mech.utils.data import build_gene_to_row, observed_rows_mask, load_pfam_map
 from esm2_mech.utils.io import load_variants_and_delta
 from esm2_mech.utils.paths import (
@@ -158,35 +164,6 @@ def load_proteome_features(genes: np.ndarray) -> np.ndarray:
     return X_prot
 
 
-def aggregate_fold_results(fold_list: list[dict]) -> dict:
-    """Aggregate a list of per-fold metric dicts into mean ± std."""
-    if not fold_list:
-        return {"error": "no folds"}
-
-    out: dict = {}
-    # NaN-filtered so a single degenerate fold does not poison the mean.
-    macro_mean, macro_std, _ = mean_std_n([f["macro_f1"] for f in fold_list])
-    out["macro_f1_mean"] = macro_mean
-    out["macro_f1_std"] = macro_std
-
-    # per-class AUROC
-    for cls in CLASSES:
-        vals_cls = [
-            f["per_class_auroc"][cls]
-            for f in fold_list
-            if f.get("per_class_auroc", {}).get(cls) is not None
-        ]
-        if vals_cls:
-            out[f"auroc_{cls}_mean"] = float(np.mean(vals_cls))
-            out[f"auroc_{cls}_std"] = float(np.std(vals_cls))
-        else:
-            out[f"auroc_{cls}_mean"] = None
-            out[f"auroc_{cls}_std"] = None
-
-    out["n_folds"] = len(fold_list)
-    return out
-
-
 def _attach_ci(agg: dict, oof: dict | None, compute_ci: bool, n_boot: int, seed: int) -> dict:
     """Attach a cluster-bootstrap CI, resampling whatever unit oof["genes"] holds.
 
@@ -214,9 +191,15 @@ def run_family_split_mlp(
     n_boot: int = BOOTSTRAP_N_RESAMPLES,
 ) -> dict:
     splits = list(family_split_indices(groups, n_folds, seed))
+    contract = validate_complete_classification_splits(
+        splits, requested_folds=n_folds,
+        eligible_rows=np.concatenate([test for _train, test in splits]),
+        labels=y, classes=CLASSES, groups=groups, held_out_unit="family",
+    )
     agg, oof = run_mlp_cv(
-        X, y, splits, hidden=hidden_layer_sizes, seed=seed, genes=groups, label=label,
-        return_oof=True,
+        X, y, splits, CLASSES, contract, hidden=hidden_layer_sizes,
+        seed=seed, genes=groups, label=label,
+        return_oof=True, compute_per_gene=False,
     )
     return _attach_ci(agg, oof, compute_ci, n_boot, seed)
 
@@ -232,7 +215,15 @@ def run_family_split_logreg(
     n_boot: int = BOOTSTRAP_N_RESAMPLES,
 ) -> dict:
     splits = list(family_split_indices(groups, n_folds, seed))
-    agg, oof = run_logreg_cv(X, y, splits, seed=seed, genes=groups, label=label, return_oof=True)
+    contract = validate_complete_classification_splits(
+        splits, requested_folds=n_folds,
+        eligible_rows=np.concatenate([test for _train, test in splits]),
+        labels=y, classes=CLASSES, groups=groups, held_out_unit="family",
+    )
+    agg, oof = run_logreg_cv(
+        X, y, splits, CLASSES, contract, seed=seed, genes=groups,
+        label=label, return_oof=True, compute_per_gene=False,
+    )
     return _attach_ci(agg, oof, compute_ci, n_boot, seed)
 
 
@@ -248,7 +239,15 @@ def run_family_split_histgb(
 ) -> dict:
     """NaN-native family-split CV for arms that include the proteome block."""
     splits = list(family_split_indices(groups, n_folds, seed))
-    agg, oof = run_histgb_cv(X, y, splits, seed=seed, genes=groups, label=label, return_oof=True)
+    contract = validate_complete_classification_splits(
+        splits, requested_folds=n_folds,
+        eligible_rows=np.concatenate([test for _train, test in splits]),
+        labels=y, classes=CLASSES, groups=groups, held_out_unit="family",
+    )
+    agg, oof = run_histgb_cv(
+        X, y, splits, CLASSES, contract, seed=seed, genes=groups,
+        label=label, return_oof=True, compute_per_gene=False,
+    )
     return _attach_ci(agg, oof, compute_ci, n_boot, seed)
 
 
@@ -278,9 +277,16 @@ def run_observed_subset_arm(
         }
     groups_obs = groups[observed]
     splits = list(family_split_indices(groups_obs, n_folds, seed))
+    contract = validate_complete_classification_splits(
+        splits, requested_folds=n_folds,
+        eligible_rows=np.concatenate([test for _train, test in splits]),
+        labels=y[observed], classes=CLASSES, groups=groups_obs,
+        held_out_unit="family",
+    )
     agg, oof = runner(
-        X[observed], y[observed], splits, seed=seed, genes=groups_obs, label=label,
-        return_oof=True, **runner_kwargs,
+        X[observed], y[observed], splits, CLASSES, contract,
+        seed=seed, genes=groups_obs, label=label,
+        return_oof=True, compute_per_gene=False, **runner_kwargs,
     )
     agg = _attach_ci(agg, oof, compute_ci, n_boot, seed)
     agg["n_observed"] = n_obs
@@ -302,24 +308,36 @@ def run_family_split_lgbm(
     """Family-split CV with LightGBM multiclass classifier."""
     import lightgbm as lgb
 
-    fold_results = []
-    oof_y, oof_proba, oof_groups = [], [], []
+    splits = list(family_split_indices(groups, n_folds, seed))
+    contract = validate_complete_classification_splits(
+        splits, requested_folds=n_folds,
+        eligible_rows=np.concatenate([test for _train, test in splits]),
+        labels=y, classes=CLASSES, groups=groups, held_out_unit="family",
+    )
+    if contract["status"] != "valid":
+        result = empty_aggregate_metrics(
+            CLASSES, n_folds, "split_validation_failed"
+        )
+        result.update(
+            {
+                "status": "unscorable",
+                "classes": list(CLASSES),
+                "eligible_rows": contract["eligible_rows"],
+                "out_of_fold_rows": 0,
+                "split_validation": contract,
+            }
+        )
+        return _attach_ci(result, None, compute_ci, n_boot, seed)
 
-    for fold_i, (train_idx, test_idx) in enumerate(
-        family_split_indices(groups, n_folds, seed)
-    ):
+    fold_results = []
+    oof_y, oof_proba, oof_groups, oof_rows, oof_folds = [], [], [], [], []
+
+    for fold_i, (train_idx, test_idx) in enumerate(splits):
         X_tr, X_te = X[train_idx].astype(np.float32), X[test_idx].astype(np.float32)
         y_tr, y_te = y[train_idx], y[test_idx]
 
-        if len(set(y_tr.tolist())) < len(CLASSES):
-            print(f"    [{label}] Fold {fold_i+1}: skipped (missing class in train)")
-            continue
-        if len(set(y_te.tolist())) < 2:
-            print(f"    [{label}] Fold {fold_i+1}: skipped (< 2 test classes)")
-            continue
-
         counts = {c: int((y_tr == c).sum()) for c in CLASSES}
-        class_weight = {c: 1.0 / max(counts[c], 1) for c in CLASSES}
+        class_weight = {c: 1.0 / counts[c] for c in CLASSES}
         sample_weight = np.array([class_weight[yi] for yi in y_tr], dtype=np.float32)
 
         clf = lgb.LGBMClassifier(
@@ -336,13 +354,20 @@ def run_family_split_lgbm(
         clf.fit(X_tr, y_tr, sample_weight=sample_weight)
 
         pred = clf.predict(X_te)
-        proba_aligned = align_proba(clf.predict_proba(X_te), clf.classes_, CLASSES)
+        proba_aligned = align_proba(
+            clf.predict_proba(X_te),
+            clf.classes_,
+            CLASSES,
+            allow_missing_classes=False,
+        )
 
-        fm = compute_metrics(y_te, pred, proba_aligned)
+        fm = compute_metrics(y_te, pred, proba_aligned, CLASSES)
         fold_results.append(fm)
         oof_y.append(y_te)
         oof_proba.append(proba_aligned)
         oof_groups.append(groups[test_idx])
+        oof_rows.append(test_idx)
+        oof_folds.append(np.full(len(test_idx), fold_i, dtype=int))
         print(
             f"    [{label}] Fold {fold_i+1}: macro_f1={fm['macro_f1']:.3f}  "
             + "  ".join(
@@ -355,11 +380,24 @@ def run_family_split_lgbm(
             )
         )
 
-    agg = aggregate_fold_results(fold_results)
-    oof = (
-        {"y_true": np.concatenate(oof_y), "proba": np.concatenate(oof_proba), "genes": np.concatenate(oof_groups)}
-        if oof_y else None
+    agg = aggregate_folds(fold_results, CLASSES, n_folds)
+    agg.update(
+        {
+            "status": "success",
+            "classes": list(CLASSES),
+            "eligible_rows": contract["eligible_rows"],
+            "out_of_fold_rows": contract["eligible_rows"],
+            "split_validation": contract,
+        }
     )
+    oof = {
+        "y_true": np.concatenate(oof_y),
+        "proba": np.concatenate(oof_proba),
+        "genes": np.concatenate(oof_groups),
+        "row_ids": np.concatenate(oof_rows),
+        "folds": np.concatenate(oof_folds),
+        "classes": list(CLASSES),
+    }
     return _attach_ci(agg, oof, compute_ci, n_boot, seed)
 
 
@@ -376,7 +414,15 @@ def run_gene_split_histgb(
 ) -> dict:
     """NaN-native gene-split CV for leakage diagnostics; CI resamples genes."""
     splits = list(gene_split_indices(genes, n_folds, seed, pfam_map=pfam_map))
-    agg, oof = run_histgb_cv(X, y, splits, seed=seed, genes=genes, label=label, return_oof=True)
+    contract = validate_complete_classification_splits(
+        splits, requested_folds=n_folds,
+        eligible_rows=np.concatenate([test for _train, test in splits]),
+        labels=y, classes=CLASSES, groups=genes, held_out_unit="gene",
+    )
+    agg, oof = run_histgb_cv(
+        X, y, splits, CLASSES, contract, seed=seed, genes=genes,
+        label=label, return_oof=True
+    )
     return _attach_ci(agg, oof, compute_ci, n_boot, seed)
 
 
@@ -550,9 +596,14 @@ def run_knn_v4(
     knn.fit(Z_train, y_train)
     pred = knn.predict(Z_test)
 
-    proba_aligned = align_proba(knn.predict_proba(Z_test), knn.classes_, CLASSES)
+    proba_aligned = align_proba(
+        knn.predict_proba(Z_test),
+        knn.classes_,
+        CLASSES,
+        allow_missing_classes=False,
+    )
 
-    return compute_metrics(y_test, pred, proba_aligned), proba_aligned
+    return compute_metrics(y_test, pred, proba_aligned, CLASSES), proba_aligned
 
 
 def run_v4_family_split(
@@ -570,22 +621,33 @@ def run_v4_family_split(
     n_boot: int = BOOTSTRAP_N_RESAMPLES,
 ) -> dict:
     """V4 contrastive projection head + kNN under family-split CV."""
+    splits = list(family_split_indices(groups, n_folds, seed))
+    contract = validate_complete_classification_splits(
+        splits, requested_folds=n_folds,
+        eligible_rows=np.concatenate([test for _train, test in splits]),
+        labels=y, classes=CLASSES, groups=groups, held_out_unit="family",
+    )
+    if contract["status"] != "valid":
+        result = empty_aggregate_metrics(
+            CLASSES, n_folds, "split_validation_failed"
+        )
+        result.update(
+            {
+                "status": "unscorable",
+                "classes": list(CLASSES),
+                "eligible_rows": contract["eligible_rows"],
+                "out_of_fold_rows": 0,
+                "split_validation": contract,
+            }
+        )
+        return _attach_ci(result, None, compute_ci, n_boot, seed)
     fold_results = []
-    oof_y, oof_proba, oof_groups = [], [], []
+    oof_y, oof_proba, oof_groups, oof_rows, oof_folds = [], [], [], [], []
 
-    for fold_i, (train_idx, test_idx) in enumerate(
-        family_split_indices(groups, n_folds, seed)
-    ):
+    for fold_i, (train_idx, test_idx) in enumerate(splits):
         X_tr, X_te = X[train_idx], X[test_idx]
         y_tr, y_te = y[train_idx], y[test_idx]
         gene_pfam_tr = gene_pfam[train_idx]
-
-        if len(set(y_tr.tolist())) < len(CLASSES):
-            print(f"    [V4] Fold {fold_i+1}: skipped (missing class in train)")
-            continue
-        if len(set(y_te.tolist())) < 2:
-            print(f"    [V4] Fold {fold_i+1}: skipped (< 2 test classes)")
-            continue
 
         print(f"    [V4] Fold {fold_i+1}: training projection head ...")
         proj, mu, std, Z_tr = train_projection_head_v4(
@@ -604,6 +666,8 @@ def run_v4_family_split(
         oof_y.append(y_te)
         oof_proba.append(proba_aligned)
         oof_groups.append(groups[test_idx])
+        oof_rows.append(test_idx)
+        oof_folds.append(np.full(len(test_idx), fold_i, dtype=int))
         print(
             f"    [V4] Fold {fold_i+1}: macro_f1={fm['macro_f1']:.3f}  "
             + "  ".join(
@@ -616,11 +680,24 @@ def run_v4_family_split(
             )
         )
 
-    agg = aggregate_fold_results(fold_results)
-    oof = (
-        {"y_true": np.concatenate(oof_y), "proba": np.concatenate(oof_proba), "genes": np.concatenate(oof_groups)}
-        if oof_y else None
+    agg = aggregate_folds(fold_results, CLASSES, n_folds)
+    agg.update(
+        {
+            "status": "success",
+            "classes": list(CLASSES),
+            "eligible_rows": contract["eligible_rows"],
+            "out_of_fold_rows": contract["eligible_rows"],
+            "split_validation": contract,
+        }
     )
+    oof = {
+        "y_true": np.concatenate(oof_y),
+        "proba": np.concatenate(oof_proba),
+        "genes": np.concatenate(oof_groups),
+        "row_ids": np.concatenate(oof_rows),
+        "folds": np.concatenate(oof_folds),
+        "classes": list(CLASSES),
+    }
     return _attach_ci(agg, oof, compute_ci, n_boot, seed)
 
 

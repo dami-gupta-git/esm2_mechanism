@@ -48,6 +48,10 @@ from esm2_mech.utils.probes import (
     _pos_class_col,
 )
 from esm2_mech.utils.splits import gene_split_cv
+from esm2_mech.utils.classification import (
+    validate_classification_splits,
+    validate_complete_classification_splits,
+)
 from esm2_mech.utils.constants import MECHANISM_CLASSES, GOF, DN, LOF
 
 
@@ -57,22 +61,62 @@ from esm2_mech.utils.constants import MECHANISM_CLASSES, GOF, DN, LOF
 
 def _multiclass_data(seed=0):
     rng = np.random.RandomState(seed)
-    n = 300
-    y = np.array([GOF, DN, LOF] * 100)
-    X = rng.randn(n, 20) + np.array([MECHANISM_CLASSES.index(c) for c in y])[:, None] * 2.0
-    genes = np.array([f"G{i % 30}" for i in range(n)])
+    n_genes = 90
+    variants_per_gene = 3
+    n = n_genes * variants_per_gene
+    genes = np.repeat(np.array([f"G{index}" for index in range(n_genes)]), variants_per_gene)
+    gene_labels = np.array([MECHANISM_CLASSES[index % 3] for index in range(n_genes)])
+    y = np.repeat(gene_labels, variants_per_gene)
+    X = rng.randn(n, 20) + np.array(
+        [MECHANISM_CLASSES.index(c) for c in y]
+    )[:, None] * 5.0
     splits = gene_split_cv(genes, n_folds=5, seed=seed)
     return X, y, splits, genes
 
 
 def _binary_data(seed=0):
     rng = np.random.RandomState(seed)
-    n = 200
-    y = rng.randint(0, 2, n)
+    n_genes = 40
+    variants_per_gene = 5
+    n = n_genes * variants_per_gene
+    genes = np.repeat(np.array([f"G{index}" for index in range(n_genes)]), variants_per_gene)
+    y = np.repeat(np.arange(n_genes) % 2, variants_per_gene)
     X = rng.randn(n, 10) + y[:, None] * 2.0
-    genes = np.array([f"G{i % 20}" for i in range(n)])
     splits = gene_split_cv(genes, n_folds=5, seed=seed)
     return X, y, splits, genes
+
+
+def _complete_contract(
+    labels, splits, groups, classes, requested_folds=5, eligible_rows=None
+):
+    if eligible_rows is None:
+        eligible_rows = np.arange(len(labels))
+    return validate_complete_classification_splits(
+        splits,
+        requested_folds=requested_folds,
+        eligible_rows=eligible_rows,
+        labels=labels,
+        classes=classes,
+        groups=groups,
+        held_out_unit="gene",
+    )
+
+
+def _within_family_contract(labels, splits, classes, requested_folds):
+    eligible_rows = np.concatenate([test_rows for _, test_rows in splits])
+    return validate_classification_splits(
+        splits,
+        requested_folds=requested_folds,
+        eligible_rows=eligible_rows,
+        labels=labels,
+        classes=classes,
+        required_train_classes=None,
+        required_test_classes=None,
+        allow_missing_classifier_classes=True,
+        minimum_train_classes=2,
+        groups=None,
+        held_out_unit=None,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -82,35 +126,46 @@ def _binary_data(seed=0):
 class TestRunLogregCv:
 
     def test_returns_macro_f1_mean(self):
-        X, y, splits, _ = _multiclass_data()
-        r = run_logreg_cv(X, y, splits)
+        X, y, splits, genes = _multiclass_data()
+        contract = _complete_contract(y, splits, genes, MECHANISM_CLASSES)
+        r = run_logreg_cv(X, y, splits, MECHANISM_CLASSES, contract)
         assert "macro_f1_mean" in r
 
     def test_auroc_keys_present(self):
-        X, y, splits, _ = _multiclass_data()
-        r = run_logreg_cv(X, y, splits)
+        X, y, splits, genes = _multiclass_data()
+        contract = _complete_contract(y, splits, genes, MECHANISM_CLASSES)
+        r = run_logreg_cv(X, y, splits, MECHANISM_CLASSES, contract)
         for cls in MECHANISM_CLASSES:
             assert f"auroc_{cls}_mean" in r
 
     def test_recovers_signal_on_separable_data(self):
-        X, y, splits, _ = _multiclass_data()
-        r = run_logreg_cv(X, y, splits)
+        X, y, splits, genes = _multiclass_data()
+        contract = _complete_contract(y, splits, genes, MECHANISM_CLASSES)
+        r = run_logreg_cv(X, y, splits, MECHANISM_CLASSES, contract)
         assert r["macro_f1_mean"] > 0.5
 
-    def test_empty_splits_returns_error(self):
+    def test_empty_splits_returns_unscorable(self):
         X = np.random.randn(10, 5)
         y = np.array([GOF] * 10)
-        assert "error" in run_logreg_cv(X, y, [])
+        genes = np.array([f"G{index}" for index in range(10)])
+        contract = _complete_contract(y, [], genes, MECHANISM_CLASSES)
+        result = run_logreg_cv(X, y, [], MECHANISM_CLASSES, contract)
+        assert result["status"] == "unscorable"
+        assert result["macro_f1_mean"] is None
 
     def test_per_gene_f1_keys_when_genes_provided(self):
         X, y, splits, genes = _multiclass_data()
-        r = run_logreg_cv(X, y, splits, genes=genes)
+        contract = _complete_contract(y, splits, genes, MECHANISM_CLASSES)
+        r = run_logreg_cv(
+            X, y, splits, MECHANISM_CLASSES, contract, genes=genes
+        )
         assert "per_gene_f1_mean" in r
         assert "per_gene_f1_std" in r
 
     def test_no_per_gene_keys_without_genes(self):
-        X, y, splits, _ = _multiclass_data()
-        r = run_logreg_cv(X, y, splits)
+        X, y, splits, genes = _multiclass_data()
+        contract = _complete_contract(y, splits, genes, MECHANISM_CLASSES)
+        r = run_logreg_cv(X, y, splits, MECHANISM_CLASSES, contract)
         assert "per_gene_f1_mean" not in r
 
 
@@ -121,22 +176,31 @@ class TestRunLogregCv:
 class TestRunLogregBinaryCv:
 
     def test_returns_auroc_mean(self):
-        X, y, splits, _ = _binary_data()
-        r = run_logreg_binary_cv(X, y, splits)
+        X, y, splits, genes = _binary_data()
+        contract = _complete_contract(y, splits, genes, [0, 1])
+        r = run_logreg_binary_cv(X, y, splits, [0, 1], contract)
         assert "auroc_mean" in r
         assert "auroc_std" in r
 
     def test_above_chance_on_separable(self):
-        X, y, splits, _ = _binary_data()
-        r = run_logreg_binary_cv(X, y, splits)
+        X, y, splits, genes = _binary_data()
+        contract = _complete_contract(y, splits, genes, [0, 1])
+        r = run_logreg_binary_cv(X, y, splits, [0, 1], contract)
         assert r["auroc_mean"] > 0.5
 
-    def test_empty_splits_returns_empty(self):
-        assert run_logreg_binary_cv(np.zeros((10, 5)), np.zeros(10, dtype=int), []) == {}
+    def test_empty_splits_returns_unscorable(self):
+        labels = np.zeros(10, dtype=int)
+        groups = np.arange(10)
+        contract = _complete_contract(labels, [], groups, [0, 1])
+        result = run_logreg_binary_cv(
+            np.zeros((10, 5)), labels, [], [0, 1], contract
+        )
+        assert result["status"] == "unscorable"
 
     def test_n_folds_present(self):
-        X, y, splits, _ = _binary_data()
-        r = run_logreg_binary_cv(X, y, splits)
+        X, y, splits, genes = _binary_data()
+        contract = _complete_contract(y, splits, genes, [0, 1])
+        r = run_logreg_binary_cv(X, y, splits, [0, 1], contract)
         assert "n_folds" in r
 
 
@@ -148,23 +212,35 @@ class TestRunMlpBinaryCv:
 
     def test_returns_auroc(self):
         X, y, splits, genes = _binary_data()
-        r = run_mlp_binary_cv(X, y, splits, validation_groups=genes)
+        contract = _complete_contract(y, splits, genes, [0, 1])
+        r = run_mlp_binary_cv(
+            X, y, splits, [0, 1], contract, validation_groups=genes
+        )
         assert "auroc_mean" in r
 
     def test_above_chance_on_separable(self):
         X, y, splits, genes = _binary_data()
-        r = run_mlp_binary_cv(X, y, splits, validation_groups=genes)
+        contract = _complete_contract(y, splits, genes, [0, 1])
+        r = run_mlp_binary_cv(
+            X, y, splits, [0, 1], contract, validation_groups=genes
+        )
         assert r["auroc_mean"] > 0.5
 
-    def test_empty_splits_returns_empty(self):
-        assert run_mlp_binary_cv(
+    def test_empty_splits_returns_unscorable(self):
+        labels = np.zeros(10, dtype=int)
+        groups = np.arange(10)
+        contract = _complete_contract(labels, [], groups, [0, 1])
+        result = run_mlp_binary_cv(
             np.zeros((10, 5)),
-            np.zeros(10, dtype=int),
+            labels,
             [],
+            [0, 1],
+            contract,
             validation_groups=np.arange(10),
-        ) == {}
+        )
+        assert result["status"] == "unscorable"
 
-    def test_group_crossing_outer_boundary_raises(self):
+    def test_group_crossing_outer_boundary_is_unscorable(self):
         rng = np.random.RandomState(0)
         X = rng.randn(20, 4)
         y = np.array([0, 1] * 10)
@@ -181,13 +257,19 @@ class TestRunMlpBinaryCv:
             ]
         )
 
-        with pytest.raises(ValueError, match="spans the outer CV train/test"):
-            run_mlp_binary_cv(
-                X,
-                y,
-                [(train_idx, test_idx)],
-                validation_groups=validation_groups,
-            )
+        splits = [(train_idx, test_idx)]
+        contract = _complete_contract(
+            y, splits, validation_groups, [0, 1], requested_folds=1
+        )
+        result = run_mlp_binary_cv(
+            X,
+            y,
+            splits,
+            [0, 1],
+            contract,
+            validation_groups=validation_groups,
+        )
+        assert result["status"] == "unscorable"
 
     def test_early_stopping_resets_patience_on_meaningful_improvement(
         self, monkeypatch
@@ -226,12 +308,24 @@ class TestRunMlpBinaryCv:
         y = np.tile(np.array([0, 1]), 40)
         train_idx = np.arange(60)
         test_idx = np.arange(60, 80)
+        groups = np.array([f"G{i}" for i in range(len(X))])
+        splits = [(train_idx, test_idx)]
+        contract = _complete_contract(
+            y,
+            splits,
+            groups,
+            [0, 1],
+            requested_folds=1,
+            eligible_rows=test_idx,
+        )
 
         run_mlp_binary_cv(
             X,
             y,
-            [(train_idx, test_idx)],
-            validation_groups=np.array([f"G{i}" for i in range(len(X))]),
+            splits,
+            [0, 1],
+            contract,
+            validation_groups=groups,
         )
 
         assert instances[0].partial_fit_calls == 6
@@ -245,37 +339,60 @@ class TestRunMlpBinaryCv:
 class TestRunMlpCv:
 
     def test_balancing_modes_are_mutually_exclusive(self):
-        X, y, splits, _ = _multiclass_data()
+        X, y, splits, genes = _multiclass_data()
+        contract = _complete_contract(y, splits, genes, MECHANISM_CLASSES)
         with pytest.raises(ValueError, match="cannot combine"):
             run_mlp_cv(
                 X,
                 y,
                 splits,
+                MECHANISM_CLASSES,
+                contract,
                 hidden=(16,),
                 oversample=True,
                 balanced_sample_weight=True,
             )
 
     def test_returns_macro_f1_mean(self):
-        X, y, splits, _ = _multiclass_data()
-        r = run_mlp_cv(X, y, splits, hidden=(16,))
+        X, y, splits, genes = _multiclass_data()
+        contract = _complete_contract(y, splits, genes, MECHANISM_CLASSES)
+        r = run_mlp_cv(
+            X, y, splits, MECHANISM_CLASSES, contract, hidden=(16,)
+        )
         assert "macro_f1_mean" in r
 
     def test_recovers_signal_on_separable_data(self):
-        X, y, splits, _ = _multiclass_data()
-        r = run_mlp_cv(X, y, splits, hidden=(16,))
+        X, y, splits, genes = _multiclass_data()
+        contract = _complete_contract(y, splits, genes, MECHANISM_CLASSES)
+        r = run_mlp_cv(
+            X,
+            y,
+            splits,
+            MECHANISM_CLASSES,
+            contract,
+            hidden=(16,),
+            n_iter_no_change=30,
+        )
         assert r["macro_f1_mean"] > 0.5
 
     def test_per_gene_f1_keys_when_genes_provided(self):
         X, y, splits, genes = _multiclass_data()
-        r = run_mlp_cv(X, y, splits, hidden=(16,), genes=genes)
+        contract = _complete_contract(y, splits, genes, MECHANISM_CLASSES)
+        r = run_mlp_cv(
+            X, y, splits, MECHANISM_CLASSES, contract, hidden=(16,), genes=genes
+        )
         assert "per_gene_f1_mean" in r
         assert "per_gene_f1_std" in r
 
-    def test_empty_splits_returns_error(self):
+    def test_empty_splits_returns_unscorable(self):
         X = np.random.randn(10, 5)
         y = np.array([GOF] * 10)
-        assert "error" in run_mlp_cv(X, y, [], hidden=(16,))
+        groups = np.arange(10)
+        contract = _complete_contract(y, [], groups, MECHANISM_CLASSES)
+        result = run_mlp_cv(
+            X, y, [], MECHANISM_CLASSES, contract, hidden=(16,)
+        )
+        assert result["status"] == "unscorable"
 
     def test_fold_with_rare_class_only_in_test_is_kept(self):
         # A fold whose train split has exactly 2 of 3 classes (the rare class
@@ -294,7 +411,11 @@ class TestRunMlpCv:
         test_idx = np.concatenate([lof_idx, extra])
         train_idx = np.setdiff1d(np.arange(n), test_idx)
         assert len(set(y[train_idx].tolist())) == 2  # rare class only in test
-        r = run_mlp_cv(X, y, [(train_idx, test_idx)], hidden=(16,))
+        splits = [(train_idx, test_idx)]
+        contract = _within_family_contract(y, splits, MECHANISM_CLASSES, 1)
+        r = run_mlp_cv(
+            X, y, splits, MECHANISM_CLASSES, contract, hidden=(16,)
+        )
         assert r.get("n_folds") == 1  # fold kept, not skipped
 
 
@@ -330,15 +451,19 @@ class TestRunMlpProbeCv:
             ]
         )
 
-        with pytest.raises(ValueError, match="spans the outer CV train/test"):
-            run_mlp_probe_cv(
-                X,
-                y,
-                [(train_idx, test_idx)],
-                validation_groups=validation_groups,
-                hidden=(8,),
-                max_epochs=1,
-            )
+        splits = [(train_idx, test_idx)]
+        contract = _within_family_contract(y, splits, [GOF, DN], 1)
+        result = run_mlp_probe_cv(
+            X,
+            y,
+            splits,
+            [GOF, DN],
+            contract,
+            validation_groups=validation_groups,
+            hidden=(8,),
+            max_epochs=1,
+        )
+        assert result["status"] == "unscorable"
 
     def test_fold_with_rare_class_only_in_test_is_kept(self):
         # Train has 2 of 3 classes — fittable, so the fold must be scored.
@@ -353,25 +478,31 @@ class TestRunMlpProbeCv:
         test_idx = np.concatenate([lof_idx, extra])
         train_idx = np.setdiff1d(np.arange(n), test_idx)
         assert len(set(y[train_idx].tolist())) == 2  # rare class only in test
+        splits = [(train_idx, test_idx)]
+        contract = _within_family_contract(y, splits, MECHANISM_CLASSES, 1)
         r = run_mlp_probe_cv(
-            X, y, [(train_idx, test_idx)], validation_groups=np.arange(n),
+            X, y, splits, MECHANISM_CLASSES, contract,
+            validation_groups=np.arange(n),
             hidden=(16,), max_epochs=3,
         )
         assert "macro_f1_mean" in r  # fold kept and scored, not skipped
 
-    def test_single_class_train_fold_is_skipped(self):
-        # Train has 1 class — unfittable, so the fold must be dropped.
+    def test_single_class_train_fold_makes_arm_unscorable(self):
         rng = np.random.RandomState(0)
         n = 120
         y = np.array([GOF] * 60 + [DN] * 40 + [LOF] * 20)
         X = rng.randn(n, 8)
         train_idx = np.arange(60)  # GOF only
         test_idx = np.arange(60, n)
+        splits = [(train_idx, test_idx)]
+        contract = _within_family_contract(y, splits, MECHANISM_CLASSES, 1)
         r = run_mlp_probe_cv(
-            X, y, [(train_idx, test_idx)], validation_groups=np.arange(n),
+            X, y, splits, MECHANISM_CLASSES, contract,
+            validation_groups=np.arange(n),
             hidden=(16,), max_epochs=3,
         )
-        assert r == {}  # no scorable fold
+        assert r["status"] == "unscorable"
+        assert r["completed_folds"] == 0
 
 
 # ---------------------------------------------------------------------------
@@ -383,19 +514,21 @@ class TestFoldSkipping:
     def test_valid_fold_not_dropped(self):
         # All three classes present in every train fold → no fold should be skipped,
         # so the runner must produce a real result rather than an error.
-        X, y, splits, _ = _multiclass_data()
-        r = run_logreg_cv(X, y, splits)
+        X, y, splits, genes = _multiclass_data()
+        contract = _complete_contract(y, splits, genes, MECHANISM_CLASSES)
+        r = run_logreg_cv(X, y, splits, MECHANISM_CLASSES, contract)
         assert "macro_f1_mean" in r
         assert r["n_folds"] >= 1
 
-    def test_single_class_train_yields_no_folds(self):
-        # Every fold has only one class in train → all folds skipped → error.
+    def test_single_class_train_makes_arm_unscorable(self):
         X = np.random.RandomState(0).randn(60, 5)
         y = np.array([GOF] * 60)
         genes = np.array([f"G{i % 12}" for i in range(60)])
         splits = gene_split_cv(genes, n_folds=5, seed=0)
-        r = run_logreg_cv(X, y, splits)
-        assert "error" in r
+        contract = _complete_contract(y, splits, genes, MECHANISM_CLASSES)
+        r = run_logreg_cv(X, y, splits, MECHANISM_CLASSES, contract)
+        assert r["status"] == "unscorable"
+        assert r["completed_folds"] == 0
 
 
 # ---------------------------------------------------------------------------
@@ -410,30 +543,46 @@ class TestRunSklearnProbe:
 
     def test_returns_macro_f1_mean(self):
         X, y, splits, genes = _multiclass_data()
-        r = run_sklearn_probe(_logreg_fn, X, y, genes, splits=splits)
+        contract = _complete_contract(y, splits, genes, MECHANISM_CLASSES)
+        r = run_sklearn_probe(
+            _logreg_fn, X, y, genes, MECHANISM_CLASSES, contract, splits
+        )
         assert "macro_f1_mean" in r
 
     def test_recovers_signal(self):
         X, y, splits, genes = _multiclass_data()
-        r = run_sklearn_probe(_logreg_fn, X, y, genes, splits=splits)
+        contract = _complete_contract(y, splits, genes, MECHANISM_CLASSES)
+        r = run_sklearn_probe(
+            _logreg_fn, X, y, genes, MECHANISM_CLASSES, contract, splits
+        )
         assert r["macro_f1_mean"] > 0.5
 
     def test_auroc_keys_present(self):
         X, y, splits, genes = _multiclass_data()
-        r = run_sklearn_probe(_logreg_fn, X, y, genes, splits=splits)
+        contract = _complete_contract(y, splits, genes, MECHANISM_CLASSES)
+        r = run_sklearn_probe(
+            _logreg_fn, X, y, genes, MECHANISM_CLASSES, contract, splits
+        )
         # per-class AUROC keys are emitted as auroc_<encoded-label>_mean
         assert any(k.startswith("auroc_") and k.endswith("_mean") for k in r)
 
-    def test_insufficient_data_returns_error(self):
+    def test_insufficient_data_returns_unscorable(self):
         X = np.random.randn(10, 5)
         y = np.array([GOF] * 10)
         genes = np.array([f"G{i}" for i in range(10)])
-        r = run_sklearn_probe(_logreg_fn, X, y, genes, splits=[])
-        assert "error" in r
+        contract = _complete_contract(y, [], genes, MECHANISM_CLASSES)
+        r = run_sklearn_probe(
+            _logreg_fn, X, y, genes, MECHANISM_CLASSES, contract, []
+        )
+        assert r["status"] == "unscorable"
 
     def test_normalize_flag_runs(self):
         X, y, splits, genes = _multiclass_data()
-        r = run_sklearn_probe(_logreg_fn, X, y, genes, splits=splits, normalize=True)
+        contract = _complete_contract(y, splits, genes, MECHANISM_CLASSES)
+        r = run_sklearn_probe(
+            _logreg_fn, X, y, genes, MECHANISM_CLASSES, contract, splits,
+            normalize=True,
+        )
         assert "macro_f1_mean" in r
 
 
@@ -441,20 +590,29 @@ class TestRunSklearnProbePca:
 
     def test_returns_macro_f1_mean(self):
         X, y, splits, genes = _multiclass_data()
-        r = run_sklearn_probe_pca(_logreg_fn, X, y, genes, splits=splits, n_pca=5)
+        contract = _complete_contract(y, splits, genes, MECHANISM_CLASSES)
+        r = run_sklearn_probe_pca(
+            _logreg_fn, X, y, genes, MECHANISM_CLASSES, contract, splits, n_pca=5
+        )
         assert "macro_f1_mean" in r
 
     def test_recovers_signal(self):
         X, y, splits, genes = _multiclass_data()
-        r = run_sklearn_probe_pca(_logreg_fn, X, y, genes, splits=splits, n_pca=10)
+        contract = _complete_contract(y, splits, genes, MECHANISM_CLASSES)
+        r = run_sklearn_probe_pca(
+            _logreg_fn, X, y, genes, MECHANISM_CLASSES, contract, splits, n_pca=10
+        )
         assert r["macro_f1_mean"] > 0.5
 
-    def test_insufficient_data_returns_error(self):
+    def test_insufficient_data_returns_unscorable(self):
         X = np.random.randn(10, 5)
         y = np.array([GOF] * 10)
         genes = np.array([f"G{i}" for i in range(10)])
-        r = run_sklearn_probe_pca(_logreg_fn, X, y, genes, splits=[])
-        assert "error" in r
+        contract = _complete_contract(y, [], genes, MECHANISM_CLASSES)
+        r = run_sklearn_probe_pca(
+            _logreg_fn, X, y, genes, MECHANISM_CLASSES, contract, []
+        )
+        assert r["status"] == "unscorable"
 
 
 # ---------------------------------------------------------------------------
@@ -524,9 +682,10 @@ class TestRunHistgbCv:
     def test_fits_on_matrix_containing_nan(self):
         # The error condition: LogReg/MLP raise on NaN input; the NaN-native
         # runner must consume the same matrix without imputing anything.
-        X, y, splits, _ = _multiclass_data_with_nan()
+        X, y, splits, genes = _multiclass_data_with_nan()
         assert np.isnan(X).any(), "fixture must actually contain NaN"
-        r = run_histgb_cv(X, y, splits)
+        contract = _complete_contract(y, splits, genes, MECHANISM_CLASSES)
+        r = run_histgb_cv(X, y, splits, MECHANISM_CLASSES, contract)
         assert "macro_f1_mean" in r
         assert not np.isnan(r["macro_f1_mean"])
 
@@ -534,45 +693,78 @@ class TestRunHistgbCv:
         # Pins why run_histgb_cv exists: the scaler/LogReg path cannot take NaN,
         # so a matrix with missing cells must either be restricted (complete
         # case) or routed to the NaN-native runner — never silently imputed.
-        X, y, splits, _ = _multiclass_data_with_nan()
+        X, y, splits, genes = _multiclass_data_with_nan()
+        contract = _complete_contract(y, splits, genes, MECHANISM_CLASSES)
         with pytest.raises(ValueError):
-            run_logreg_cv(X, y, splits)
+            run_logreg_cv(X, y, splits, MECHANISM_CLASSES, contract)
 
     def test_recovers_signal_happy_path(self):
         # Happy path: fully-observed separable data still classifies well.
-        X, y, splits, _ = _multiclass_data()
-        r = run_histgb_cv(X, y, splits)
+        X, y, splits, genes = _multiclass_data()
+        contract = _complete_contract(y, splits, genes, MECHANISM_CLASSES)
+        r = run_histgb_cv(X, y, splits, MECHANISM_CLASSES, contract)
         assert r["macro_f1_mean"] > 0.8
 
     def test_auroc_keys_present(self):
-        X, y, splits, _ = _multiclass_data()
-        r = run_histgb_cv(X, y, splits)
+        X, y, splits, genes = _multiclass_data()
+        contract = _complete_contract(y, splits, genes, MECHANISM_CLASSES)
+        r = run_histgb_cv(X, y, splits, MECHANISM_CLASSES, contract)
         for cls in MECHANISM_CLASSES:
             assert f"auroc_{cls}_mean" in r
 
     def test_per_gene_f1_when_genes_given(self):
         X, y, splits, genes = _multiclass_data_with_nan()
-        r = run_histgb_cv(X, y, splits, genes=genes)
+        contract = _complete_contract(y, splits, genes, MECHANISM_CLASSES)
+        r = run_histgb_cv(
+            X, y, splits, MECHANISM_CLASSES, contract, genes=genes
+        )
         assert "per_gene_f1_mean" in r
+
+    def test_dependency_groups_can_skip_per_gene_scoring(self):
+        X, y, splits, genes = _multiclass_data_with_nan()
+        contract = _complete_contract(y, splits, genes, MECHANISM_CLASSES)
+        dependency_groups = np.full(len(y), "one-family", dtype=object)
+
+        result, oof = run_histgb_cv(
+            X,
+            y,
+            splits,
+            MECHANISM_CLASSES,
+            contract,
+            genes=dependency_groups,
+            return_oof=True,
+            compute_per_gene=False,
+        )
+
+        assert result["status"] == "success"
+        assert "per_gene_f1_mean" not in result
+        assert np.array_equal(oof["genes"], dependency_groups)
 
     def test_return_oof_shapes_align(self):
         X, y, splits, genes = _multiclass_data_with_nan()
-        agg, oof = run_histgb_cv(X, y, splits, genes=genes, return_oof=True)
+        contract = _complete_contract(y, splits, genes, MECHANISM_CLASSES)
+        agg, oof = run_histgb_cv(
+            X, y, splits, MECHANISM_CLASSES, contract,
+            genes=genes, return_oof=True,
+        )
         assert oof is not None
         assert len(oof["y_true"]) == len(oof["genes"]) == len(oof["row_ids"])
         assert oof["proba"].shape == (len(oof["y_true"]), len(MECHANISM_CLASSES))
 
-    def test_empty_splits_returns_error(self):
-        X, y, _, _ = _multiclass_data()
-        assert "error" in run_histgb_cv(X, y, [])
+    def test_empty_splits_returns_unscorable(self):
+        X, y, _, genes = _multiclass_data()
+        contract = _complete_contract(y, [], genes, MECHANISM_CLASSES)
+        result = run_histgb_cv(X, y, [], MECHANISM_CLASSES, contract)
+        assert result["status"] == "unscorable"
 
     def test_all_nan_column_does_not_crash(self):
         # A source that failed entirely leaves a fully-NaN column. It carries no
         # information, but must not take the whole probe down.
-        X, y, splits, _ = _multiclass_data()
+        X, y, splits, genes = _multiclass_data()
         X = X.copy()
         X[:, 3] = np.nan
-        r = run_histgb_cv(X, y, splits)
+        contract = _complete_contract(y, splits, genes, MECHANISM_CLASSES)
+        r = run_histgb_cv(X, y, splits, MECHANISM_CLASSES, contract)
         assert "macro_f1_mean" in r
 
 
@@ -612,12 +804,16 @@ class TestRequireNoNan:
         # Every runner that standardizes + fits a NaN-intolerant model must
         # fail at the probe boundary, not deep inside sklearn.
         X, y, splits, genes = _multiclass_data_with_nan()
+        contract = _complete_contract(y, splits, genes, MECHANISM_CLASSES)
         for runner in (run_logreg_cv, run_mlp_cv):
             with pytest.raises(ValueError, match="run_histgb_cv"):
-                runner(X, y, splits)
+                runner(X, y, splits, MECHANISM_CLASSES, contract)
 
     def test_histgb_runner_is_not_guarded(self):
         # The NaN-native runner is the sanctioned destination — it must accept
         # exactly the matrix the others reject.
-        X, y, splits, _ = _multiclass_data_with_nan()
-        assert "macro_f1_mean" in run_histgb_cv(X, y, splits)
+        X, y, splits, genes = _multiclass_data_with_nan()
+        contract = _complete_contract(y, splits, genes, MECHANISM_CLASSES)
+        assert "macro_f1_mean" in run_histgb_cv(
+            X, y, splits, MECHANISM_CLASSES, contract
+        )

@@ -11,9 +11,8 @@ Invariants:
 - load_seed_files: expected_seeds catches a missing seed and an unexpected extra seed
 - aggregate_across_seeds: mean/std/n_seeds computed across seeds per split→feature→metric
 - aggregate_across_seeds: only <metric>_mean keys are aggregated (others ignored)
-- aggregate_across_seeds: None and NaN per-seed values are skipped, not fabricated
-- aggregate_across_seeds: n_seeds counts only the seeds that contributed a value
-- aggregate_across_seeds: a feature present in only some seeds still aggregates
+- aggregate_across_seeds: None, NaN, failed seeds, and missing features make the aggregate unavailable
+- aggregate_across_seeds: confusion matrices are row-normalized per seed before averaging
 - print_table: does not crash when a feature is missing from one split
 """
 
@@ -27,6 +26,7 @@ from esm2_mech.utils.seed_aggregation import (
     aggregate_across_seeds,
     load_seed_files,
     print_table,
+    read_across_seed_metric,
 )
 
 
@@ -36,7 +36,15 @@ from esm2_mech.utils.seed_aggregation import (
 
 def _seed_result(macro_f1_mean, *, split="gene_split", feature="esm2"):
     """Build a minimal per-seed result dict for one split/feature."""
-    return {split: {feature: {"macro_f1_mean": macro_f1_mean, "macro_f1_std": 0.01}}}
+    return {
+        split: {
+            feature: {
+                "status": "success",
+                "macro_f1_mean": macro_f1_mean,
+                "macro_f1_std": 0.01,
+            }
+        }
+    }
 
 
 def _write_seed_file(path, data):
@@ -147,25 +155,25 @@ class TestAggregateAcrossSeeds:
         assert "macro_f1_seed_mean" in feature
         assert "macro_f1_std_seed_mean" not in feature
 
-    def test_none_value_skipped(self):
+    def test_none_value_makes_metric_unavailable(self):
         seed_results = [
             ("seed0.json", _seed_result(0.6)),
             ("seed1.json", _seed_result(None)),
         ]
         agg = aggregate_across_seeds(_with_seeds(seed_results))
         feature = agg["gene_split"]["esm2"]
-        # Only the one real value contributes; None is not fabricated to 0.
-        assert feature["macro_f1_seed_mean"] == pytest.approx(0.6)
+        assert feature["macro_f1_seed_mean"] is None
         assert feature["macro_f1_n_seeds"] == 1
+        assert feature["macro_f1_missing_seeds"] == [1]
 
-    def test_nan_value_skipped(self):
+    def test_nan_value_makes_metric_unavailable(self):
         seed_results = [
             ("seed0.json", _seed_result(0.6)),
             ("seed1.json", _seed_result(float("nan"))),
         ]
         agg = aggregate_across_seeds(_with_seeds(seed_results))
         feature = agg["gene_split"]["esm2"]
-        assert feature["macro_f1_seed_mean"] == pytest.approx(0.6)
+        assert feature["macro_f1_seed_mean"] is None
         assert feature["macro_f1_n_seeds"] == 1
 
     def test_n_seeds_counts_contributors_only(self):
@@ -177,7 +185,7 @@ class TestAggregateAcrossSeeds:
         agg = aggregate_across_seeds(_with_seeds(seed_results))
         assert agg["gene_split"]["esm2"]["macro_f1_n_seeds"] == 2
 
-    def test_feature_present_in_some_seeds(self):
+    def test_feature_present_in_some_seeds_is_unavailable(self):
         # esm2 in both seeds, esm3 only in seed1.
         seed_results = [
             ("seed0.json", _seed_result(0.5, feature="esm2")),
@@ -185,8 +193,8 @@ class TestAggregateAcrossSeeds:
                 "seed1.json",
                 {
                     "gene_split": {
-                        "esm2": {"macro_f1_mean": 0.7},
-                        "esm3": {"macro_f1_mean": 0.9},
+                        "esm2": {"status": "success", "macro_f1_mean": 0.7},
+                        "esm3": {"status": "success", "macro_f1_mean": 0.9},
                     }
                 },
             ),
@@ -194,7 +202,8 @@ class TestAggregateAcrossSeeds:
         agg = aggregate_across_seeds(_with_seeds(seed_results))
         assert agg["gene_split"]["esm2"]["macro_f1_n_seeds"] == 2
         assert agg["gene_split"]["esm3"]["macro_f1_n_seeds"] == 1
-        assert agg["gene_split"]["esm3"]["macro_f1_seed_mean"] == pytest.approx(0.9)
+        assert agg["gene_split"]["esm3"]["macro_f1_seed_mean"] is None
+        assert agg["gene_split"]["esm3"]["status"] == "unavailable"
 
     def test_both_splits_in_output(self):
         seed_results = [("seed0.json", _seed_result(0.5))]
@@ -211,17 +220,54 @@ class TestAggregateAcrossSeeds:
         seed_results = [
             (
                 "seed0.json",
-                {"gene_split": {"esm2": {"macro_f1_mean": 0.4, "auroc_GOF_mean": 0.8}}},
+                {"gene_split": {"esm2": {"status": "success", "macro_f1_mean": 0.4, "auroc_GOF_mean": 0.8}}},
             ),
             (
                 "seed1.json",
-                {"gene_split": {"esm2": {"macro_f1_mean": 0.6, "auroc_GOF_mean": 0.9}}},
+                {"gene_split": {"esm2": {"status": "success", "macro_f1_mean": 0.6, "auroc_GOF_mean": 0.9}}},
             ),
         ]
         agg = aggregate_across_seeds(_with_seeds(seed_results))
         feature = agg["gene_split"]["esm2"]
         assert feature["macro_f1_seed_mean"] == pytest.approx(0.5)
         assert feature["auroc_GOF_seed_mean"] == pytest.approx(0.85)
+
+    def test_failed_seed_prevents_reduced_seed_aggregate(self):
+        successful = _seed_result(0.6)
+        failed = _seed_result(None)
+        failed["gene_split"]["esm2"]["status"] = "unscorable"
+        aggregate = aggregate_across_seeds(
+            _with_seeds([("seed0.json", successful), ("seed1.json", failed)])
+        )
+        feature = aggregate["gene_split"]["esm2"]
+        assert feature["status"] == "unavailable"
+        assert feature["macro_f1_seed_mean"] is None
+        assert feature["unavailable_seeds"] == [1]
+
+    def test_confusion_matrix_is_normalized_per_seed_before_average(self):
+        first = _seed_result(0.5)
+        second = _seed_result(0.5)
+        first_block = first["gene_split"]["esm2"]
+        second_block = second["gene_split"]["esm2"]
+        first_block.update(
+            {
+                "confusion_matrix": [[8, 2], [1, 9]],
+                "confusion_matrix_class_order": ["A", "B"],
+            }
+        )
+        second_block.update(
+            {
+                "confusion_matrix": [[1, 9], [4, 6]],
+                "confusion_matrix_class_order": ["A", "B"],
+            }
+        )
+        aggregate = aggregate_across_seeds(
+            _with_seeds([("seed0.json", first), ("seed1.json", second)])
+        )["gene_split"]["esm2"]
+        assert np.allclose(
+            aggregate["confusion_matrix_seed_mean"],
+            [[0.45, 0.55], [0.25, 0.75]],
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -252,3 +298,22 @@ class TestPrintTable:
 
     def test_does_not_crash_on_empty_aggregate(self):
         print_table({"gene_split": {}, "family_split": {}})
+
+
+def test_read_across_seed_metric_preserves_unavailable_value(tmp_path):
+    aggregate_path = tmp_path / "aggregate.json"
+    aggregate_path.write_text(
+        json.dumps(
+            {
+                "across_seed": {
+                    "family_split": {
+                        "delta_mean": {"macro_f1_seed_mean": None}
+                    }
+                }
+            }
+        )
+    )
+
+    assert read_across_seed_metric(
+        str(aggregate_path), "family_split", "delta_mean"
+    ) is None

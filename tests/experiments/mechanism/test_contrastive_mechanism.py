@@ -65,22 +65,18 @@ class TestRunKnn:
         assert fm["macro_f1"] == pytest.approx(1.0)
 
     def test_perfectly_separable_auroc_is_one(self, le):
-        # Two classes only (LOF absent everywhere). GOF and DN are linearly
-        # separable, so per-class AUROC must be 1.0.
-        labels = np.array([GOF] * 10 + [DN] * 10)
+        labels = np.array([GOF] * 10 + [DN] * 10 + [LOF] * 10)
         X = np.vstack([
             np.tile([10.0, 0.0], (10, 1)),
             np.tile([0.0, 10.0], (10, 1)),
+            np.tile([-10.0, -10.0], (10, 1)),
         ]).astype(float)
         y = le.transform(labels)
         fm, _proba = run_knn(X, X, y, y, le, k=3)
         assert fm[f"auroc_{GOF}"] == pytest.approx(1.0)
         assert fm[f"auroc_{DN}"] == pytest.approx(1.0)
 
-    def test_proba_columns_aligned_when_train_class_absent(self, le):
-        # LOF appears only in the TEST set, never in training. knn.classes_ is
-        # therefore {GOF, DN} (a subset), and the proba matrix must still be laid
-        # out in canonical le.classes_ order with a zero column for LOF.
+    def test_missing_training_class_is_rejected(self, le):
         train_labels = np.array([GOF] * 8 + [DN] * 8)
         X_train = np.vstack([
             np.tile([10.0, 0.0], (8, 1)),
@@ -92,13 +88,8 @@ class TestRunKnn:
         X_test = np.array([[10.0, 0.0], [0.0, 10.0], [-10.0, -10.0]], dtype=float)
         y_test = le.transform(test_labels)
 
-        fm, _proba = run_knn(X_train, X_test, y_train, y_test, le, k=3)
-        # LOF is never a training class, so knn never votes for it: its proba
-        # column is all zeros (constant). The AUROC is therefore undefined and
-        # must be recorded by name, never silently emitted as a number.
-        assert "auroc_skipped" in fm
-        assert fm["auroc_skipped"].get(LOF) == "constant_proba"
-        assert f"auroc_{LOF}" not in fm
+        with pytest.raises(ValueError, match="missing required classes"):
+            run_knn(X_train, X_test, y_train, y_test, le, k=3)
 
     def test_class_absent_in_test_is_recorded(self, le):
         # LOF is in the TRAINING set but has no TEST examples → its binary

@@ -48,6 +48,7 @@ from esm2_mech.utils.metrics import mean_std_n
 from esm2_mech.utils.probes import run_logreg_binary_cv
 from esm2_mech.utils.sequences import window_sequence
 from esm2_mech.utils.splits import family_split_cv
+from esm2_mech.utils.classification import validate_complete_classification_splits
 from esm2_mech.experiments.geometry.axis_analysis import (
     family_held_out_axis_analysis,
     format_axis_summary,
@@ -254,10 +255,20 @@ def extract_conservation(variants, seqs, batch_size=64, ckpt_every=2000):
 def _oof_one_seed(X, y, genes, pfam, seed):
     """Family-split out-of-fold positive-class probabilities for one seed."""
     splits = list(family_split_cv(genes, pfam, seed=seed))
+    family_groups = family_or_gene_clusters(
+        genes, pfam, is_family_split=True
+    )
+    contract = validate_complete_classification_splits(
+        splits, requested_folds=5,
+        eligible_rows=np.concatenate([test for _train, test in splits]),
+        labels=y, classes=[0, 1], groups=family_groups, held_out_unit="family",
+    )
     aggregate, oof = run_logreg_binary_cv(
         X,
         y,
         splits,
+        [0, 1],
+        contract,
         seed=seed,
         pos_label=PATHOGENIC,
         genes=genes,
@@ -294,7 +305,10 @@ def auroc_family_split(X, y, genes, pfam, seeds=range(5), n_jobs=-1):
         )
 
     per_seed_values = [run["fold_mean"] for run in seed_runs]
-    mean, std, count = mean_std_n(per_seed_values)
+    unavailable = any(value is None for value in per_seed_values)
+    mean = None if unavailable else float(np.mean(per_seed_values))
+    std = None if unavailable else float(np.std(per_seed_values))
+    count = 0 if unavailable else len(per_seed_values)
     descriptive = {
         "across_seed_mean": mean,
         "across_seed_std": std,

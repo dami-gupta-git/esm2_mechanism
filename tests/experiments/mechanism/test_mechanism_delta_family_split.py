@@ -18,6 +18,20 @@ import pytest
 from esm2_mech.experiments.mechanism import mechanism_delta_family_split as family_probe
 from esm2_mech.experiments.mechanism.mechanism_delta_family_split import run
 from esm2_mech.utils.probes import run_logreg_pca_cv
+from esm2_mech.utils.constants import MECHANISM_CLASSES
+from esm2_mech.utils.classification import validate_complete_classification_splits
+
+
+def _contract(labels, genes, splits):
+    return validate_complete_classification_splits(
+        splits,
+        requested_folds=len(splits),
+        eligible_rows=np.concatenate([test for _train, test in splits]),
+        labels=labels,
+        classes=MECHANISM_CLASSES,
+        groups=np.arange(len(labels)),
+        held_out_unit="row",
+    )
 
 
 def _make_data(n=120, dim=50, n_classes=3, n_genes=6, seed=42):
@@ -54,7 +68,10 @@ class TestPcaPerFold:
         X, labels, genes = _make_data(n=100, dim=40)
         splits = [(np.arange(0, 80), np.arange(80, 100))]
         counts = _count_pca_fits(
-            lambda: run_logreg_pca_cv(X, labels, splits, genes=genes, n_pca=10)
+            lambda: run_logreg_pca_cv(
+                X, labels, splits, MECHANISM_CLASSES, _contract(labels, genes, splits),
+                genes=genes, n_pca=10
+            )
         )
         assert counts == [80]
 
@@ -62,7 +79,10 @@ class TestPcaPerFold:
         X, labels, genes = _make_data(n=60, dim=5)
         splits = [(np.arange(0, 40), np.arange(40, 60))]
         counts = _count_pca_fits(
-            lambda: run_logreg_pca_cv(X, labels, splits, genes=genes, n_pca=10)
+            lambda: run_logreg_pca_cv(
+                X, labels, splits, MECHANISM_CLASSES, _contract(labels, genes, splits),
+                genes=genes, n_pca=10
+            )
         )
         assert counts == []
 
@@ -70,7 +90,10 @@ class TestPcaPerFold:
         X, labels, genes = _make_data(n=60, dim=40)
         splits = [(np.arange(0, 40), np.arange(40, 60))]
         counts = _count_pca_fits(
-            lambda: run_logreg_pca_cv(X, labels, splits, genes=genes, n_pca=None)
+            lambda: run_logreg_pca_cv(
+                X, labels, splits, MECHANISM_CLASSES, _contract(labels, genes, splits),
+                genes=genes, n_pca=None
+            )
         )
         assert counts == []
 
@@ -84,7 +107,8 @@ class TestOutOfFoldCarriesItsFold:
             (np.arange(30, 90), np.arange(0, 30)),
         ]
         return run_logreg_pca_cv(
-            X, labels, splits, genes=genes, return_oof=True
+            X, labels, splits, MECHANISM_CLASSES, _contract(labels, genes, splits),
+            genes=genes, return_oof=True
         )
 
     def test_every_oof_row_records_its_fold(self):
@@ -104,12 +128,15 @@ class TestOutOfFoldCarriesItsFold:
         assert "macro_f1_mean" in agg
         assert "macro_f1_pooled" not in agg
 
-    def test_no_oof_when_genes_are_absent(self):
+    def test_oof_requires_genes(self):
         X, labels, _ = _make_data(n=60, dim=5)
         splits = [(np.arange(0, 40), np.arange(40, 60))]
-        agg, oof = run_logreg_pca_cv(X, labels, splits, genes=None, return_oof=True)
-        assert oof is None
-        assert "macro_f1_mean" in agg
+        with pytest.raises(ValueError, match="genes are required"):
+            run_logreg_pca_cv(
+                X, labels, splits, MECHANISM_CLASSES,
+                _contract(labels, np.arange(len(labels)), splits),
+                genes=None, return_oof=True
+            )
 
 
 def test_run_rejects_unknown_feature_before_fitting():
@@ -163,14 +190,17 @@ def test_run_fits_only_requested_feature(tmp_path, monkeypatch):
     splits = [(np.array([0, 1, 2]), np.array([3, 4, 5]))]
     calls = []
 
-    def fake_probe(X, y, cv_splits, **kwargs):
+    def fake_probe(X, y, cv_splits, *args, **kwargs):
         calls.append(kwargs["label"])
-        return {"macro_f1_mean": 0.4, "macro_f1_std": 0.0}, None
+        return {"status": "success", "macro_f1_mean": 0.4, "macro_f1_std": 0.0,
+                "auroc_GOF_mean": 0.5, "auroc_DN_mean": 0.5, "auroc_LOF_mean": 0.5}, None
 
     pfam_path = tmp_path / "pfam.json"
     pfam_path.write_text("{}")
     monkeypatch.setattr(family_probe, "PFAM_JSON", pfam_path)
-    monkeypatch.setattr(family_probe, "load_pfam_map", lambda _path: {})
+    monkeypatch.setattr(
+        family_probe, "load_pfam_map", lambda _path: {gene: f"F{index}" for index, gene in enumerate(genes)}
+    )
     monkeypatch.setattr(family_probe, "gene_split_cv", lambda *args, **kwargs: splits)
     monkeypatch.setattr(family_probe, "family_split_cv", lambda *args, **kwargs: splits)
     monkeypatch.setattr(family_probe, "run_logreg_pca_cv", fake_probe)
@@ -180,6 +210,7 @@ def test_run_fits_only_requested_feature(tmp_path, monkeypatch):
         data,
         out_dir=str(tmp_path),
         compute_ci=False,
+        n_folds=1,
         feature_names=("wt_only_mean",),
     )
 
@@ -223,13 +254,22 @@ def test_result_and_oof_cache_share_exact_execution_binding(tmp_path, monkeypatc
 
     monkeypatch.setattr(family_probe, "PFAM_JSON", tmp_path / "pfam.json")
     (tmp_path / "pfam.json").write_text("{}")
-    monkeypatch.setattr(family_probe, "load_pfam_map", lambda _path: {})
+    monkeypatch.setattr(
+        family_probe, "load_pfam_map", lambda _path: {gene: f"F{index}" for index, gene in enumerate(genes)}
+    )
     monkeypatch.setattr(family_probe, "gene_split_cv", lambda *args, **kwargs: splits)
     monkeypatch.setattr(family_probe, "family_split_cv", lambda *args, **kwargs: splits)
     monkeypatch.setattr(
         family_probe,
         "run_logreg_pca_cv",
-        lambda *args, **kwargs: ({"macro_f1_mean": 1.0, "macro_f1_std": 0.0}, oof),
+        lambda *args, **kwargs: ({
+            "status": "success",
+            "macro_f1_mean": 1.0,
+            "macro_f1_std": 0.0,
+            "auroc_GOF_mean": 1.0,
+            "auroc_DN_mean": 1.0,
+            "auroc_LOF_mean": 1.0,
+        }, oof),
     )
     monkeypatch.setattr(family_probe, "attach_mechanism_ci", lambda *args, **kwargs: None)
     monkeypatch.setattr(family_probe, "paired_oof_diff", lambda *args, **kwargs: None)
@@ -238,6 +278,7 @@ def test_result_and_oof_cache_share_exact_execution_binding(tmp_path, monkeypatc
         data,
         out_dir=str(tmp_path),
         compute_ci=True,
+        n_folds=1,
         n_boot=10,
         feature_names=("wt_only_mean",),
     )

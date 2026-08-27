@@ -23,8 +23,28 @@ from esm2_mech.utils.constants import (
 
 print = functools.partial(print, flush=True)
 
+INTERVAL_GATE_REASON = "blocked_by_audit_1_4"
+
 # Cannot collide with a real Pfam accession ("PF" + digits).
 UNANNOTATED_CLUSTER_PREFIX = "__no_pfam__:"
+
+
+def _blocked_classification_interval(
+    point: float | None, n_clusters: int | None
+) -> dict:
+    """Represent a classification interval withheld pending audit item 1.4."""
+    return {
+        "point": point,
+        "ci_low": None,
+        "ci_high": None,
+        "ci_suppressed": True,
+        "missing": True,
+        "reason": INTERVAL_GATE_REASON,
+        "n_resamples": 0,
+        "n_resamples_total": 0,
+        "valid_frac": None,
+        "n_clusters": n_clusters,
+    }
 
 
 @dataclass(frozen=True)
@@ -922,35 +942,16 @@ def bootstrap_mechanism_metrics_from_oof(
         functools.partial(_class_metrics, _col=col_idx, _cls=cls)
         for col_idx, cls in enumerate(classes)
     ]
-    class_metric_reason = (
-        "a fold's resampled rows lost the one-vs-rest positive or negative class"
-    )
-    discard_reasons = {"macro_f1": "a fold's resampled rows lost a mechanism class"}
-    for cls in classes:
-        discard_reasons.update({
-            f"auroc_{cls}": class_metric_reason,
-            f"auprc_{cls}": class_metric_reason,
-            f"prevalence_{cls}": class_metric_reason,
-            f"auprc_lift_{cls}": class_metric_reason,
-        })
-    out = cluster_bootstrap_ci_multi(
-        clusters,
-        metric_fns,
-        n_resamples=n_resamples,
-        ci_level=ci_level,
-        seed=seed,
-        discard_reasons=discard_reasons,
-    )
-
-    for metric_name, ci in out.items():
-        if ci.get("ci_suppressed"):
-            print(
-                f"  [bootstrap] {metric_name}: CI suppressed — only "
-                f"{ci['n_resamples']}/{ci['n_resamples_total']} resamples valid "
-                f"({ci['valid_frac']:.0%}); the metric was undefined on the rest "
-                f"(a fold lost the class on that resample). No CI reported."
-            )
-    return out
+    all_rows = np.arange(len(y_true), dtype=int)
+    points: dict[str, float | None] = {}
+    for metric_fn in metric_fns:
+        points.update(metric_fn(all_rows))
+    return {
+        metric_name: _blocked_classification_interval(
+            point, len(np.unique(clusters))
+        )
+        for metric_name, point in points.items()
+    }
 
 
 def attach_mechanism_ci(
@@ -970,18 +971,27 @@ def attach_mechanism_ci(
     unit, such as gene, Pfam family, clan, or sequence cluster. The OOF dict remains
     intact so the bootstrap scorer always receives its fold assignments.
     """
-    if not compute_ci or oof is None:
+    if not compute_ci:
+        result.pop("ci", None)
         return result
-    if clusters is None:
-        raise ValueError("attach_mechanism_ci: clusters are required when CI is enabled")
-    if len(clusters) != len(oof["y_true"]):
+    if oof is None:
+        points = {"macro_f1": result.get("macro_f1_mean")}
+        for class_name in classes:
+            points[f"auroc_{class_name}"] = result.get(f"auroc_{class_name}_mean")
+            points[f"auprc_{class_name}"] = result.get(f"auprc_{class_name}_mean")
+        result["ci"] = {
+            metric_name: _blocked_classification_interval(point, None)
+            for metric_name, point in points.items()
+        }
+        return result
+    if clusters is not None and len(clusters) != len(oof["y_true"]):
         raise ValueError(
             "attach_mechanism_ci: clusters and OOF rows are not aligned: "
             f"{len(clusters)} clusters for {len(oof['y_true'])} rows"
         )
     result["ci"] = bootstrap_mechanism_metrics_from_oof(
         oof,
-        np.asarray(clusters),
+        np.asarray(oof["genes"] if clusters is None else clusters),
         classes=classes,
         n_resamples=n_resamples,
         ci_level=ci_level,
@@ -1123,36 +1133,31 @@ def paired_oof_diff(
             return score_within_folds(rows, column_arms, _fold_auroc)
         return _auroc
 
-    shared_genes = np.asarray(oof_a["genes"], dtype=object)[idx_a]
     fn_a, fn_b = _metric_fn(oof_a, idx_a), _metric_fn(oof_b, idx_b)
-    if metric == "macro_f1":
-        discard_reason = (
-            "at least one arm's fold lost a mechanism class on the shared resample"
-        )
-    else:
-        discard_reason = (
-            "at least one arm's fold lost the one-vs-rest positive or negative "
-            "class on the shared resample"
-        )
+    all_rows = np.arange(len(idx_a), dtype=int)
+    point_a = fn_a(all_rows)
+    point_b = fn_b(all_rows)
+    point_diff = (
+        None if point_a is None or point_b is None else float(point_a - point_b)
+    )
+    cluster_values = family_or_gene_clusters(
+        np.asarray(oof_a["genes"], dtype=object)[idx_a],
+        pfam_map,
+        is_family_split=True if cross_partition else is_family_split,
+    )
+    out = _blocked_classification_interval(
+        point_diff, len(np.unique(cluster_values))
+    )
+    out.update({"point_a": point_a, "point_b": point_b, "point_diff": point_diff})
     if cross_partition:
-        out = paired_cluster_bootstrap_diff_cross_partition(
-            family_or_gene_clusters(shared_genes, pfam_map, is_family_split=True),
-            fn_a,
-            fn_b,
-            sensitivity_clusters=shared_genes,
-            n_resamples=n_resamples,
-            seed=seed,
-            discard_reason=discard_reason,
+        shared_genes = np.asarray(oof_a["genes"], dtype=object)[idx_a]
+        sensitivity = _blocked_classification_interval(
+            point_diff, len(np.unique(shared_genes))
         )
-    else:
-        out = paired_cluster_bootstrap_diff(
-            family_or_gene_clusters(shared_genes, pfam_map, is_family_split),
-            fn_a,
-            fn_b,
-            n_resamples=n_resamples,
-            seed=seed,
-            discard_reason=discard_reason,
+        sensitivity.update(
+            {"point_a": point_a, "point_b": point_b, "point_diff": point_diff}
         )
+        out["gene_resampled_sensitivity"] = sensitivity
     out["n_shared"] = len(idx_a)
     return out
 
@@ -1161,6 +1166,8 @@ def adjudicate_diff(passed: bool | None, diff_ci: dict | None, threshold: float)
     """Pre-registration §1.1 verdict for a difference."""
     if passed is None:
         return "not adjudicated (no point estimate)"
+    if diff_ci is not None and diff_ci.get("reason") == INTERVAL_GATE_REASON:
+        return "not adjudicated (interval blocked by audit item 1.4)"
     if diff_ci is None or diff_ci.get("ci_suppressed") or diff_ci.get("ci_low") is None:
         return f"{'pass' if passed else 'fail'}, no CI"
     ci_low, ci_high = diff_ci["ci_low"], diff_ci["ci_high"]
@@ -1185,6 +1192,8 @@ def adjudicate_equivalence(
     """
     if passed is None:
         return "not adjudicated (no point estimate)"
+    if diff_ci is not None and diff_ci.get("reason") == INTERVAL_GATE_REASON:
+        return "not adjudicated (interval blocked by audit item 1.4)"
     if diff_ci is None or diff_ci.get("ci_suppressed") or diff_ci.get("ci_low") is None:
         return f"{'pass' if passed else 'fail'}, no CI"
     ci_low, ci_high = diff_ci["ci_low"], diff_ci["ci_high"]
@@ -1203,6 +1212,8 @@ def adjudicate_level(value: float | None, ci: dict | None, threshold: float) -> 
     """Pre-registration §1.1 verdict for a level claim."""
     if value is None or not np.isfinite(value):
         return "not adjudicated (no point estimate)"
+    if ci is not None and ci.get("reason") == INTERVAL_GATE_REASON:
+        return "not adjudicated (interval blocked by audit item 1.4)"
     passed = value >= threshold
     if ci is None or ci.get("ci_suppressed") or ci.get("ci_low") is None:
         return f"{'pass' if passed else 'fail'}, no CI"
@@ -1239,15 +1250,10 @@ def binary_auroc_cluster_bootstrap_ci(
     def _auroc(rows: np.ndarray) -> float | None:
         return score_within_folds(rows, arms, _fold_auroc)
 
+    point = _auroc(np.arange(len(y_true), dtype=int))
     resample_unit = oof["genes"] if clusters is None else clusters
-    return cluster_bootstrap_ci(
-        resample_unit,
-        _auroc,
-        n_resamples=n_resamples,
-        ci_level=ci_level,
-        seed=seed,
-        discard_reason="a fold's resampled rows lost the positive or the negative class",
-        metric_name="binary_auroc",
+    return _blocked_classification_interval(
+        point, len(np.unique(resample_unit))
     )
 
 

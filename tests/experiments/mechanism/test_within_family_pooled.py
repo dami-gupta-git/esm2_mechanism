@@ -37,12 +37,18 @@ from esm2_mech.utils.constants import MECHANISM_CLASSES, GOF, DN, LOF
 # helpers — hand-built OOF (no probe fitting)
 # ---------------------------------------------------------------------------
 
-def _oof(row_ids, y, genes, proba):
+def _oof(row_ids, y, genes, proba, folds=None):
+    row_ids = np.asarray(row_ids)
     return {
-        "row_ids": np.asarray(row_ids),
+        "row_ids": row_ids,
         "y_true": np.asarray(y),
         "genes": np.asarray(genes, dtype=object),
         "proba": np.asarray(proba, dtype=float),
+        "folds": (
+            np.zeros(len(row_ids), dtype=int)
+            if folds is None
+            else np.asarray(folds, dtype=int)
+        ),
     }
 
 
@@ -171,7 +177,7 @@ class TestPooledGofTest:
         assert out["chance_auroc"] == 0.5
         assert out["logreg"]["n_genes"] == 12 + 9
 
-    def test_recovers_planted_signal_ci_excludes_chance(self):
+    def test_recovers_planted_signal_with_interval_gated(self):
         rng = np.random.RandomState(2)
         delta_oof = {
             "FAMA": _synthetic_family_oof("FAMA", 12, gof_signal=2.5, rng=rng),
@@ -179,15 +185,18 @@ class TestPooledGofTest:
         }
         out = wf.pooled_gof_test(delta_oof, {}, n_seeds=3, n_folds=5, compute_ci=True)
         assert out["logreg"]["point"] > 0.5
-        assert out["logreg"]["ci"]["ci_low"] > 0.5  # CI excludes chance
+        assert out["logreg"]["ci"]["ci_low"] is None
+        assert out["logreg"]["ci"]["reason"] == "blocked_by_audit_1_4"
 
-    def test_no_signal_ci_includes_chance(self):
+    def test_no_signal_interval_is_also_gated(self):
         # gof_signal=0 -> GOF proba is pure noise -> AUROC ~0.5, CI straddles it.
         rng = np.random.RandomState(4)
         delta_oof = {"FAMA": _synthetic_family_oof("FAMA", 15, gof_signal=0.0, rng=rng)}
         out = wf.pooled_gof_test(delta_oof, {}, n_seeds=3, n_folds=5, compute_ci=True)
         ci = out["logreg"]["ci"]
-        assert ci["ci_low"] < 0.5 < ci["ci_high"]
+        assert ci["ci_low"] is None
+        assert ci["ci_high"] is None
+        assert ci["reason"] == "blocked_by_audit_1_4"
 
     def test_compute_ci_false_omits_ci_block(self):
         rng = np.random.RandomState(4)
@@ -203,16 +212,6 @@ class TestPooledGofTest:
 
 @pytest.mark.slow
 class TestPooledPermutation:
-    @pytest.mark.xfail(
-        raises=TypeError,
-        strict=True,
-        reason=(
-            "mechanism_within_family.py is deferred out of scope (see TODO.md): it still "
-            "calls the shared helpers without a fold index, which now refuse rather than "
-            "silently ranking pooled probabilities. Strict, so that fixing the script turns "
-            "this into an unexpected pass and forces the marker off."
-        ),
-    )
     def test_permutation_null_centers_on_chance(self):
         rng = np.random.RandomState(5)
         family_inputs = {
@@ -239,9 +238,9 @@ class TestPooledPermutation:
             mlp_hidden=(16,), mlp_max_iter=50,
         )
         perm = out["permutation_mlp"]
-        assert perm["observed"] is not None
-        assert perm["null_mean"] == pytest.approx(0.5, abs=0.15)
-        assert 0.0 < perm["p_value"] <= 1.0
+        assert perm["observed"] is None
+        assert perm["p_value"] is None
+        assert perm["reason"] == "observed_fold_aware_gof_auroc_unavailable"
 
 
 # ---------------------------------------------------------------------------
@@ -267,7 +266,7 @@ class TestProbeOneFamilyRealProbes:
         rows = oof["row_ids"].tolist()
         assert len(rows) == len(set(rows))
 
-    def test_compute_ci_false_omits_ci(self):
+    def test_compute_ci_false_omits_intervals(self):
         rng = np.random.RandomState(1)
         inp = _family_input("F", 12, rng=rng)
         present = [c for c in MECHANISM_CLASSES if (inp["y"] == c).sum() > 0]
@@ -277,3 +276,4 @@ class TestProbeOneFamilyRealProbes:
             mlp_kwargs={"hidden": (16,), "max_iter": 50},
         )
         assert "ci" not in results[wf.VIEW_DELTA]["logreg"]
+        assert "ci" not in results[wf.VIEW_DELTA]["mlp"]

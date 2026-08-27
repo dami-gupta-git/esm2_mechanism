@@ -16,6 +16,8 @@ from esm2_mech.utils.bootstrap import family_or_gene_clusters
 from esm2_mech.utils.data import validate_embedding_variant_identity
 from esm2_mech.utils.splits import gene_split_cv, family_split_cv
 from esm2_mech.utils.probes import run_mlp_probe_cv
+from esm2_mech.utils.classification import validate_complete_classification_splits
+from esm2_mech.utils.constants import MECHANISM_CLASSES
 from esm2_mech.utils.io import write_result_json
 from esm2_mech.utils.paths import (
     EMB_MUT_MEAN,
@@ -109,12 +111,34 @@ def main():
 
     # CV splits — identical to mlp.py
     gene_splits = gene_split_cv(genes, seed=args.seed)
+    gene_contract = validate_complete_classification_splits(
+        gene_splits,
+        requested_folds=5,
+        eligible_rows=np.concatenate([test for _train, test in gene_splits]),
+        labels=labels,
+        classes=MECHANISM_CLASSES,
+        groups=genes,
+        held_out_unit="gene",
+    )
     family_splits = None
+    family_contract = None
     if args.family_split:
         pfam_path = args.pfam_map or PFAM_JSON
         with open(pfam_path) as f:
             pfam_map = json.load(f)
         family_splits = family_split_cv(genes, pfam_map, seed=args.seed)
+        family_groups = family_or_gene_clusters(
+            genes, pfam_map, is_family_split=True
+        )
+        family_contract = validate_complete_classification_splits(
+            family_splits,
+            requested_folds=5,
+            eligible_rows=np.concatenate([test for _train, test in family_splits]),
+            labels=labels,
+            classes=MECHANISM_CLASSES,
+            groups=family_groups,
+            held_out_unit="family",
+        )
         n_fams = len(set(pfam_map.get(g) for g in set(genes) if pfam_map.get(g)))
         print(
             f"\nFamily-split: {len(family_splits)} folds, {n_fams} unique annotated families"
@@ -143,6 +167,8 @@ def main():
             X,
             labels,
             gene_splits,
+            MECHANISM_CLASSES,
+            gene_contract,
             validation_groups=genes,
             seed=args.seed,
             genes=genes,
@@ -151,12 +177,19 @@ def main():
             label=f"{feat_name}_gene",
         )
         results[f"mlp_{feat_name}_gene"] = gs
-        print(
-            f"  macro_f1 = {gs.get('macro_f1_mean', float('nan')):.3f}  "
-            f"GOF AUROC = {gs.get('auroc_GOF_mean', float('nan')):.3f}  "
-            f"DN AUROC = {gs.get('auroc_DN_mean', float('nan')):.3f}  "
-            f"LOF AUROC = {gs.get('auroc_LOF_mean', float('nan')):.3f}"
-        )
+        if gs["status"] == "success":
+            ranking = "  ".join(
+                f"{class_name} AUROC = "
+                + (
+                    "NA"
+                    if gs[f"auroc_{class_name}_mean"] is None
+                    else f"{gs[f'auroc_{class_name}_mean']:.3f}"
+                )
+                for class_name in MECHANISM_CLASSES
+            )
+            print(f"  macro_f1 = {gs['macro_f1_mean']:.3f}  {ranking}")
+        else:
+            print(f"  {gs['status']}")
 
         if family_splits:
             print(f"\n=== MLP family-split: {feat_name} ===")
@@ -164,6 +197,8 @@ def main():
                 X,
                 labels,
                 family_splits,
+                MECHANISM_CLASSES,
+                family_contract,
                 validation_groups=family_or_gene_clusters(
                     genes, pfam_map, is_family_split=True
                 ),
@@ -174,19 +209,27 @@ def main():
                 label=f"{feat_name}_family",
             )
             results[f"mlp_{feat_name}_family"] = fs
-            print(
-                f"  macro_f1 = {fs.get('macro_f1_mean', float('nan')):.3f}  "
-                f"GOF AUROC = {fs.get('auroc_GOF_mean', float('nan')):.3f}  "
-                f"DN AUROC = {fs.get('auroc_DN_mean', float('nan')):.3f}  "
-                f"LOF AUROC = {fs.get('auroc_LOF_mean', float('nan')):.3f}"
-            )
-            delta_macro = gs.get("macro_f1_mean", float("nan")) - fs.get(
-                "macro_f1_mean", float("nan")
-            )
-            print(
-                f"  Δ(gene − family) macro-F1 = {delta_macro:+.3f}  "
-                f"← positive ⇒ homology leakage"
-            )
+            if fs["status"] == "success":
+                ranking = "  ".join(
+                    f"{class_name} AUROC = "
+                    + (
+                        "NA"
+                        if fs[f"auroc_{class_name}_mean"] is None
+                        else f"{fs[f'auroc_{class_name}_mean']:.3f}"
+                    )
+                    for class_name in MECHANISM_CLASSES
+                )
+                print(f"  macro_f1 = {fs['macro_f1_mean']:.3f}  {ranking}")
+            else:
+                print(f"  {fs['status']}")
+            if gs["macro_f1_mean"] is not None and fs["macro_f1_mean"] is not None:
+                delta_macro = gs["macro_f1_mean"] - fs["macro_f1_mean"]
+                print(
+                    f"  Δ(gene − family) macro-F1 = {delta_macro:+.3f}  "
+                    f"← positive ⇒ homology leakage"
+                )
+            else:
+                print("  Δ(gene − family) macro-F1 = Unscorable")
 
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
     write_result_json(args.out, results, seeds=[args.seed], indent=2)

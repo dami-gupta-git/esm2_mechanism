@@ -168,6 +168,17 @@ def test_prescaled_probe_preserves_projection_and_default_scaler_destroys_it():
     seen = {}
     labels = np.array(["GOF", "LOF"] * 40)
     splits = [(np.arange(0, 60), np.arange(60, 80))]
+    from esm2_mech.utils.classification import validate_complete_classification_splits
+
+    contract = validate_complete_classification_splits(
+        splits,
+        requested_folds=1,
+        eligible_rows=splits[0][1],
+        labels=labels,
+        classes=["GOF", "LOF"],
+        groups=np.arange(len(labels)),
+        held_out_unit="gene",
+    )
 
     import esm2_mech.utils.probes as probes_mod
 
@@ -180,14 +191,14 @@ def test_prescaled_probe_preserves_projection_and_default_scaler_destroys_it():
     probes_mod.LogisticRegression.fit = recording_fit
     try:
         run_logreg_cv(
-            projected, labels, splits, classes=["GOF", "LOF"], seed=0,
+            projected, labels, splits, ["GOF", "LOF"], contract, seed=0,
             label="prescaled", prescaled=True,
         )
         assert np.allclose(seen["X"], projected[splits[0][0]])
         assert np.var(seen["X"].dot(direction)) < 1e-20
 
         run_logreg_cv(
-            projected, labels, splits, classes=["GOF", "LOF"], seed=0,
+            projected, labels, splits, ["GOF", "LOF"], contract, seed=0,
             label="scaled",
         )
         assert np.var(seen["X"].dot(direction)) > 1e-3

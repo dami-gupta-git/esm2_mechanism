@@ -19,7 +19,13 @@ from sklearn.neural_network import MLPClassifier
 from sklearn.preprocessing import StandardScaler
 from esm2_mech.utils.data import build_gene_to_row
 from esm2_mech.utils.splits import family_split_indices
-from esm2_mech.utils.metrics import compute_metrics, aggregate_folds, align_proba
+from esm2_mech.utils.metrics import (
+    aggregate_folds,
+    align_proba,
+    compute_metrics,
+    empty_aggregate_metrics,
+)
+from esm2_mech.utils.classification import validate_complete_classification_splits
 from esm2_mech.utils.paths import (
     RESULTS_DIR,
     VALID_VARIANTS_JSON,
@@ -189,25 +195,50 @@ def run_per_gene_cv(
     groups_g = gene_pfam_g[has_fam_g]
 
     v1_folds, v2_folds, v3_folds = [], [], []
+    splits = list(family_split_indices(groups_g, N_FOLDS, seed))
+    contract = validate_complete_classification_splits(
+        splits, requested_folds=N_FOLDS,
+        eligible_rows=np.concatenate([test for _train, test in splits]),
+        labels=y_g_f, classes=CLASSES, groups=groups_g, held_out_unit="family",
+    )
+    preflight_failures = []
+    for fold_index, (train_rows, test_rows) in enumerate(splits):
+        train_genes = set(gene_df_f.iloc[train_rows]["gene"].values)
+        test_genes = set(gene_df_f.iloc[test_rows]["gene"].values)
+        train_variant_rows = sum(gene in train_genes for gene in genes_f)
+        test_variant_rows = sum(gene in test_genes for gene in genes_f)
+        if train_variant_rows < 10 or test_variant_rows < 5:
+            preflight_failures.append(
+                {
+                    "fold": fold_index,
+                    "reason": "insufficient_variant_rows",
+                    "train_rows": int(train_variant_rows),
+                    "test_rows": int(test_variant_rows),
+                }
+            )
+    if contract["status"] != "valid" or preflight_failures:
+        reason = "split_validation_failed"
+        unavailable = empty_aggregate_metrics(CLASSES, N_FOLDS, reason)
+        unavailable.update(
+            {
+                "status": "unscorable",
+                "split_validation": contract,
+                "preflight_failures": preflight_failures,
+            }
+        )
+        return {
+            "V1_per_gene": dict(unavailable),
+            "V2_per_gene": dict(unavailable),
+            "V3_per_gene": dict(unavailable),
+        }
 
-    for fold_i, (tr_g, te_g) in enumerate(
-        family_split_indices(groups_g, N_FOLDS, seed)
-    ):
+    for fold_i, (tr_g, te_g) in enumerate(splits):
         train_genes_set = set(gene_df_f.iloc[tr_g]["gene"].values)
         test_genes_set = set(gene_df_f.iloc[te_g]["gene"].values)
-
-        if not test_genes_set:
-            continue
 
         # --- V2: proteome features, gene-level ---
         X_tr_g, y_tr_g = X_prot_g_f[tr_g], y_g_f[tr_g]
         X_te_g, y_te_g = X_prot_g_f[te_g], y_g_f[te_g]
-
-        if (
-            len(set(y_tr_g.tolist())) < MIN_TRAIN_CLASSES
-            or len(set(y_te_g.tolist())) < 2
-        ):
-            continue
 
         # NaN-native: proteome block has real missing cells, nothing is imputed.
         lr2 = HistGradientBoostingClassifier(
@@ -215,17 +246,19 @@ def run_per_gene_cv(
         )
         lr2.fit(X_tr_g, y_tr_g)
         # String labels; align by class NAME so absent classes become zero columns.
-        pr2_al = align_proba(lr2.predict_proba(X_te_g), lr2.classes_, CLASSES)
+        pr2_al = align_proba(
+            lr2.predict_proba(X_te_g),
+            lr2.classes_,
+            CLASSES,
+            allow_missing_classes=False,
+        )
         pd2 = np.array([CLASSES[idx] for idx in pr2_al.argmax(axis=1)])
         # Train: all variants from train genes
         tr_var_mask = np.array([g in train_genes_set for g in genes_f])
         # Test: variants from test genes — aggregate per gene
         te_var_mask = np.array([g in test_genes_set for g in genes_f])
 
-        if tr_var_mask.sum() < 10 or te_var_mask.sum() < 5:
-            continue
-
-        v2_folds.append(compute_metrics(y_te_g, pd2, pr2_al))
+        v2_folds.append(compute_metrics(y_te_g, pd2, pr2_al, CLASSES))
 
         # MLPClassifier cannot take string targets; fit on CLASSES indices, decode for align_proba.
         X_tr_d, y_tr_d = delta_f[tr_var_mask], _encode(y_f[tr_var_mask])
@@ -239,7 +272,9 @@ def run_per_gene_cv(
             for c in range(len(CLASSES)):
                 ci = np.where(y == c)[0]
                 if len(ci) == 0:
-                    continue
+                    raise ValueError(
+                        f"training fold is missing declared class {CLASSES[c]!r}"
+                    )
                 rep = mc // len(ci)
                 rem = mc % len(ci)
                 idx.append(np.tile(ci, rep))
@@ -275,7 +310,9 @@ def run_per_gene_cv(
         for gene in test_genes_list:
             gene_mask = genes_f[te_var_mask] == gene
             if gene_mask.sum() == 0:
-                continue
+                raise RuntimeError(
+                    f"validated test gene {gene!r} has no variant rows"
+                )
             # True label: gene-level (take first, all same within gene)
             gene_var_idx = np.where(te_var_mask)[0][gene_mask]
             y_gene_true.append(y_f[gene_var_idx[0]])
@@ -283,7 +320,10 @@ def run_per_gene_cv(
             # V1
             X_g_d = sc1.transform(delta_f[gene_var_idx])
             pr1_g = align_proba(
-                mlp1.predict_proba(X_g_d), _decode(mlp1.classes_), CLASSES
+                mlp1.predict_proba(X_g_d),
+                _decode(mlp1.classes_),
+                CLASSES,
+                allow_missing_classes=False,
             ).mean(0)
             pr_gene1.append(pr1_g)
             y_gene_pred1.append(CLASSES[int(pr1_g.argmax())])
@@ -293,6 +333,7 @@ def run_per_gene_cv(
                 mlp3.predict_proba(X_concat_f[gene_var_idx]),
                 _decode(mlp3.classes_),
                 CLASSES,
+                allow_missing_classes=False,
             ).mean(0)
             pr_gene3.append(pr3_g)
             y_gene_pred3.append(CLASSES[int(pr3_g.argmax())])
@@ -303,11 +344,8 @@ def run_per_gene_cv(
         pr_gene1 = np.array(pr_gene1)
         pr_gene3 = np.array(pr_gene3)
 
-        if len(set(y_gene_true.tolist())) < 2:
-            continue
-
-        v1_folds.append(compute_metrics(y_gene_true, y_gene_pred1, pr_gene1))
-        v3_folds.append(compute_metrics(y_gene_true, y_gene_pred3, pr_gene3))
+        v1_folds.append(compute_metrics(y_gene_true, y_gene_pred1, pr_gene1, CLASSES))
+        v3_folds.append(compute_metrics(y_gene_true, y_gene_pred3, pr_gene3, CLASSES))
 
         print(
             f"  [T2 seed={seed}] Fold {fold_i+1}: "
@@ -317,9 +355,9 @@ def run_per_gene_cv(
         )
 
     return {
-        "V1_per_gene": aggregate_folds(v1_folds) if v1_folds else {},
-        "V2_per_gene": aggregate_folds(v2_folds) if v2_folds else {},
-        "V3_per_gene": aggregate_folds(v3_folds) if v3_folds else {},
+        "V1_per_gene": aggregate_folds(v1_folds, CLASSES, N_FOLDS),
+        "V2_per_gene": aggregate_folds(v2_folds, CLASSES, N_FOLDS),
+        "V3_per_gene": aggregate_folds(v3_folds, CLASSES, N_FOLDS),
     }
 
 
@@ -338,22 +376,37 @@ def run_v2_ablation(
         Imputing would leak test-fold statistics; trees consume NaN directly.
         """
         folds = []
-        for tr, te in family_split_indices(groups, N_FOLDS, seed):
+        splits = list(family_split_indices(groups, N_FOLDS, seed))
+        contract = validate_complete_classification_splits(
+            splits, requested_folds=N_FOLDS,
+            eligible_rows=np.concatenate([test for _train, test in splits]),
+            labels=y, classes=CLASSES, groups=groups, held_out_unit="family",
+        )
+        if contract["status"] != "valid":
+            result = empty_aggregate_metrics(
+                CLASSES, N_FOLDS, "split_validation_failed"
+            )
+            result.update({"status": "unscorable", "split_validation": contract})
+            return result
+        for tr, te in splits:
             X_tr, y_tr = X[tr], y[tr]
             X_te, y_te = X[te], y[te]
-            if (
-                len(set(y_tr.tolist())) < MIN_TRAIN_CLASSES
-                or len(set(y_te.tolist())) < 2
-            ):
-                continue
             clf = HistGradientBoostingClassifier(
                 max_iter=200, class_weight="balanced", random_state=seed
             )
             clf.fit(X_tr, y_tr)
-            pr_al = align_proba(clf.predict_proba(X_te), clf.classes_, CLASSES)
+            pr_al = align_proba(
+                clf.predict_proba(X_te),
+                clf.classes_,
+                CLASSES,
+                allow_missing_classes=False,
+            )
             pd_ = np.array([CLASSES[idx] for idx in pr_al.argmax(axis=1)])
-            folds.append(compute_metrics(y_te, pd_, pr_al))
-        return aggregate_folds(folds) if folds else {"macro_f1_mean": float("nan")}
+            folds.append(compute_metrics(y_te, pd_, pr_al, CLASSES))
+        result = aggregate_folds(folds, CLASSES, N_FOLDS)
+        result["status"] = "success"
+        result["split_validation"] = contract
+        return result
 
     full_result = run_ablation_cv(X_prot_gene, y_gene, groups_gene)
     full_f1 = full_result["macro_f1_mean"]

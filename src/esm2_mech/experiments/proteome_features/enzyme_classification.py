@@ -36,6 +36,7 @@ from esm2_mech.utils.data import (
 )
 from esm2_mech.utils.io import write_result_json
 from esm2_mech.utils.probes import run_logreg_cv, run_mlp_cv
+from esm2_mech.utils.classification import validate_complete_classification_splits
 from esm2_mech.utils.bootstrap import (
     attach_mechanism_ci,
     folds_to_arms,
@@ -45,7 +46,6 @@ from esm2_mech.utils.bootstrap import (
     adjudicate_level,
     family_or_gene_clusters,
     oof_permutation_pvalue,
-    paired_cluster_bootstrap_diff_shared_clusters,
     paired_oof_diff,
 )
 from esm2_mech.utils.paths import (
@@ -388,6 +388,7 @@ def run_multiseed(
     print(f"Class distribution: {dict(Counter(y.tolist()))}")
 
     gs_f1s, fs_f1s, mlp_f1s = [], [], []
+    gs_reference_f1s, fs_reference_f1s = [], []
     gs_aurocs = {c: [] for c in classes}
     fs_aurocs = {c: [] for c in classes}
     mlp_aurocs = {c: [] for c in classes}
@@ -399,49 +400,87 @@ def run_multiseed(
         print(f"\n  Seed {seed}:")
 
         gs_splits = gene_split_cv(genes_arr, n_folds=n_folds, seed=seed)
+        gs_contract = validate_complete_classification_splits(
+            gs_splits, requested_folds=n_folds,
+            eligible_rows=np.concatenate([test for _train, test in gs_splits]),
+            labels=y, classes=classes, groups=genes_arr, held_out_unit="gene",
+        )
         gs, _ = run_logreg_cv(
             X,
             y,
             gs_splits,
-            classes=classes,
+            classes,
+            gs_contract,
             genes=genes_arr,
             seed=seed,
             label="enzyme logreg gene",
-            min_train_classes=2,
             return_oof=True,
         )
+        try:
+            gs_reference = (
+                float(np.mean([
+                    majority_baseline_f1(y[train], y[test], classes)[0]
+                    for train, test in gs_splits
+                ]))
+                if gs_contract["status"] == "valid"
+                else None
+            )
+        except ValueError:
+            gs_reference = None
+        gs_reference_f1s.append(gs_reference)
         gs_f1s.append(gs["macro_f1_mean"])
         for c in classes:
             v = gs.get(f"auroc_{c}_mean")
-            if v is not None:
-                gs_aurocs[c].append(v)
-        print(f"    LogReg gene-split  F1={gs['macro_f1_mean']:.3f}")
+            gs_aurocs[c].append(v)
+        print(
+            f"    LogReg gene-split  F1={gs['macro_f1_mean']:.3f}"
+            if gs["status"] == "success"
+            else f"    LogReg gene-split  {gs['status']}"
+        )
 
         fs_splits = family_split_cv(genes_arr, pfam_map, n_folds=n_folds, seed=seed)
+        family_groups = family_or_gene_clusters(
+            genes_arr, pfam_map, is_family_split=True
+        )
+        fs_contract = validate_complete_classification_splits(
+            fs_splits, requested_folds=n_folds,
+            eligible_rows=np.concatenate([test for _train, test in fs_splits]),
+            labels=y, classes=classes, groups=family_groups, held_out_unit="family",
+        )
         fs, fs_oof = run_logreg_cv(
             X,
             y,
             fs_splits,
-            classes=classes,
+            classes,
+            fs_contract,
             genes=genes_arr,
             seed=seed,
             label="enzyme logreg family",
-            min_train_classes=2,
             return_oof=True,
         )
+        try:
+            fs_reference = (
+                float(np.mean([
+                    majority_baseline_f1(y[train], y[test], classes)[0]
+                    for train, test in fs_splits
+                ]))
+                if fs_contract["status"] == "valid"
+                else None
+            )
+        except ValueError:
+            fs_reference = None
+        fs_reference_f1s.append(fs_reference)
         fs_f1s.append(fs["macro_f1_mean"])
         for c in classes:
             v = fs.get(f"auroc_{c}_mean")
-            if v is not None:
-                fs_aurocs[c].append(v)
-        print(
-            f"    LogReg family-split F1={fs['macro_f1_mean']:.3f}  "
-            f"AUROC: "
-            + " ".join(
-                f"{c}={fs.get(f'auroc_{c}_mean', float('nan')):.3f}"
-                for c in classes
+            fs_aurocs[c].append(v)
+        if fs["status"] == "success":
+            print(
+                f"    LogReg family-split F1={fs['macro_f1_mean']:.3f}  AUROC: "
+                + " ".join(f"{c}={fs[f'auroc_{c}_mean']:.3f}" for c in classes)
             )
-        )
+        else:
+            print(f"    LogReg family-split {fs['status']}")
 
         if seed == seeds[0]:
             seed0_fs_oof = fs_oof
@@ -450,8 +489,9 @@ def run_multiseed(
             X,
             y,
             fs_splits,
+            classes,
+            fs_contract,
             hidden=(256, 64),
-            classes=classes,
             genes=genes_arr,
             seed=seed,
             label="enzyme mlp family",
@@ -467,36 +507,51 @@ def run_multiseed(
         mlp_f1s.append(mlp["macro_f1_mean"])
         for c in classes:
             v = mlp.get(f"auroc_{c}_mean")
-            if v is not None:
-                mlp_aurocs[c].append(v)
-        print(f"    MLP    family-split F1={mlp['macro_f1_mean']:.3f}")
+            mlp_aurocs[c].append(v)
+        print(
+            f"    MLP    family-split F1={mlp['macro_f1_mean']:.3f}"
+            if mlp["status"] == "success"
+            else f"    MLP    family-split {mlp['status']}"
+        )
 
         if seed == seeds[0]:
             seed0_mlp_fs_oof = mlp_oof
 
-    maj_f1, _ = majority_baseline_f1(y, y)
-
     def _agg(vals):
-        arr = np.array([v for v in vals if v is not None], dtype=float)
-        if len(arr) == 0:
+        if len(vals) != len(seeds) or any(value is None for value in vals):
             return None, None
-        return float(np.nanmean(arr)), float(np.nanstd(arr))
+        arr = np.asarray(vals, dtype=float)
+        return float(np.mean(arr)), float(np.std(arr))
 
     gs_mean, gs_std = _agg(gs_f1s)
     fs_mean, fs_std = _agg(fs_f1s)
     mlp_mean, mlp_std = _agg(mlp_f1s)
+    gs_reference_mean, gs_reference_std = _agg(gs_reference_f1s)
+    fs_reference_mean, fs_reference_std = _agg(fs_reference_f1s)
 
     leakage_pct = None
-    if gs_mean is not None and fs_mean is not None and gs_mean > maj_f1:
-        leakage_pct = round(100.0 * (gs_mean - fs_mean) / (gs_mean - maj_f1), 1)
+    if (
+        gs_mean is not None
+        and fs_mean is not None
+        and gs_reference_mean is not None
+        and gs_mean > gs_reference_mean
+    ):
+        leakage_pct = round(
+            100.0 * (gs_mean - fs_mean) / (gs_mean - gs_reference_mean), 1
+        )
 
     print(f"\n  Results ({len(seeds)} seeds):")
-    print(f"    Majority baseline:       F1={maj_f1:.3f}")
-    print(f"    LogReg gene-split:       F1={gs_mean:.3f} +/- {gs_std:.3f}")
-    print(
-        f"    LogReg family-split:     F1={fs_mean:.3f} +/- {fs_std:.3f}  <- primary metric"
-    )
-    print(f"    MLP    family-split:     F1={mlp_mean:.3f} +/- {mlp_std:.3f}")
+    for summary_label, mean, std in (
+        ("Gene-split reference", gs_reference_mean, gs_reference_std),
+        ("Family-split reference", fs_reference_mean, fs_reference_std),
+        ("LogReg gene-split", gs_mean, gs_std),
+        ("LogReg family-split", fs_mean, fs_std),
+        ("MLP family-split", mlp_mean, mlp_std),
+    ):
+        if mean is None:
+            print(f"    {summary_label}: Unscorable")
+        else:
+            print(f"    {summary_label}: F1={mean:.3f} +/- {std:.3f}")
     if leakage_pct is not None:
         print(f"    Leakage fraction:        {leakage_pct:.1f}%")
 
@@ -580,13 +635,6 @@ def run_multiseed(
             mechanism_arms = folds_to_arms(
                 mechanism_pred, mechanism_family_oof["folds"]
             )
-            enzyme_clusters = family_or_gene_clusters(
-                seed0_fs_oof["genes"], pfam_map, is_family_split=True
-            )
-            mechanism_clusters = family_or_gene_clusters(
-                np.asarray(mechanism_family_oof["genes"]), pfam_map, is_family_split=True
-            )
-
             def _enzyme_f1(rows):
                 return score_within_folds(
                     rows,
@@ -605,14 +653,20 @@ def run_multiseed(
                     ),
                 )
 
-            paired_logreg_vs_mechanism = paired_cluster_bootstrap_diff_shared_clusters(
-                enzyme_clusters,
-                mechanism_clusters,
-                _enzyme_f1,
-                _mechanism_f1,
-                n_resamples=n_boot,
-                seed=0,
-            )
+            enzyme_point = _enzyme_f1(np.arange(len(oof_y_str)))
+            mechanism_point = _mechanism_f1(np.arange(len(mechanism_y)))
+            point_difference = enzyme_point - mechanism_point
+            paired_logreg_vs_mechanism = {
+                "point_a": enzyme_point,
+                "point_b": mechanism_point,
+                "point_diff": point_difference,
+                "point": point_difference,
+                "ci_low": None,
+                "ci_high": None,
+                "ci_suppressed": True,
+                "missing": True,
+                "reason": "blocked_by_audit_1_4",
+            }
             lo = paired_logreg_vs_mechanism.get("ci_low")
             hi = paired_logreg_vs_mechanism.get("ci_high")
             point = paired_logreg_vs_mechanism.get("point_diff")
@@ -643,12 +697,23 @@ def run_multiseed(
             print(f"    permutation p-value: {p_value_text}{immovable_text}")
 
     result = {
-        "majority_f1": maj_f1,
+        "majority_reference": {
+            "gene_split": {
+                "macro_f1_mean": gs_reference_mean,
+                "macro_f1_std": gs_reference_std,
+                "per_seed": gs_reference_f1s,
+            },
+            "family_split": {
+                "macro_f1_mean": fs_reference_mean,
+                "macro_f1_std": fs_reference_std,
+                "per_seed": fs_reference_f1s,
+            },
+        },
         "logreg_gene_split": {
             "macro_f1_mean": gs_mean,
             "macro_f1_std": gs_std,
             "per_class_auroc_mean": {
-                c: float(np.nanmean(v)) if v else None for c, v in gs_aurocs.items()
+                c: _agg(v)[0] for c, v in gs_aurocs.items()
             },
             "n_seeds": len(seeds),
         },
@@ -656,7 +721,7 @@ def run_multiseed(
             "macro_f1_mean": fs_mean,
             "macro_f1_std": fs_std,
             "per_class_auroc_mean": {
-                c: float(np.nanmean(v)) if v else None for c, v in fs_aurocs.items()
+                c: _agg(v)[0] for c, v in fs_aurocs.items()
             },
             "n_seeds": len(seeds),
         },
@@ -664,7 +729,7 @@ def run_multiseed(
             "macro_f1_mean": mlp_mean,
             "macro_f1_std": mlp_std,
             "per_class_auroc_mean": {
-                c: float(np.nanmean(v)) if v else None for c, v in mlp_aurocs.items()
+                c: _agg(v)[0] for c, v in mlp_aurocs.items()
             },
             "n_seeds": len(seeds),
         },

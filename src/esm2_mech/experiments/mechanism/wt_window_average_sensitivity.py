@@ -38,6 +38,7 @@ from esm2_mech.experiments.mechanism.mechanism_delta_family_split import (
     run as run_family_split,
 )
 from esm2_mech.utils.bootstrap import (
+    INTERVAL_GATE_REASON,
     family_or_gene_clusters,
     folds_to_arms,
     paired_cluster_bootstrap_diff,
@@ -256,6 +257,16 @@ def compare_conditions_for_seed(
     n_jobs: int = -1,
 ) -> dict:
     """Paired OOF comparisons for score levels and the split-gap change."""
+    def _gate_interval(result):
+        result["ci_low"] = None
+        result["ci_high"] = None
+        result["ci_suppressed"] = True
+        result["missing"] = True
+        result["reason"] = INTERVAL_GATE_REASON
+        result["n_resamples"] = 0
+        result["n_resamples_total"] = 0
+        return result
+
     output = {}
     for split, is_family_split in (("gene_split", False), ("family_split", True)):
         aligned = _align_cached_arms(
@@ -264,14 +275,18 @@ def compare_conditions_for_seed(
         )
         genes = np.asarray(aligned["averaged"]["genes"], dtype=object)
         clusters = family_or_gene_clusters(genes, pfam_map, is_family_split)
-        comparison = paired_cluster_bootstrap_diff(
-            clusters,
-            _macro_f1_scorer(aligned["averaged"]),
-            _macro_f1_scorer(aligned["original"]),
-            n_resamples=n_resamples,
-            seed=seed,
-            n_jobs=n_jobs,
-            discard_reason="a fold lost a mechanism class in either representation",
+        all_rows = np.arange(len(genes))
+        averaged_point = _macro_f1_scorer(aligned["averaged"])(all_rows)
+        original_point = _macro_f1_scorer(aligned["original"])(all_rows)
+        comparison = _gate_interval(
+            {
+                "point_diff": (
+                    None
+                    if averaged_point is None or original_point is None
+                    else averaged_point - original_point
+                ),
+                "n_clusters": int(len(np.unique(clusters))),
+            }
         )
         comparison["n_shared"] = len(genes)
         comparison["contrast"] = "protein_window_average_minus_variant_centered"
@@ -303,17 +318,21 @@ def compare_conditions_for_seed(
             return None
         return gene_value - family_value
 
-    gap_comparison = paired_cluster_bootstrap_diff_cross_partition(
-        family_or_gene_clusters(genes, pfam_map, is_family_split=True),
-        _averaged_gap,
-        _original_gap,
-        sensitivity_clusters=genes,
-        n_resamples=n_resamples,
-        seed=seed,
-        n_jobs=n_jobs,
-        discard_reason=(
-            "a gene- or family-split fold lost a mechanism class in either representation"
-        ),
+    all_rows = np.arange(len(genes))
+    averaged_gap_point = _averaged_gap(all_rows)
+    original_gap_point = _original_gap(all_rows)
+    partition_clusters = family_or_gene_clusters(
+        genes, pfam_map, is_family_split=True
+    )
+    gap_comparison = _gate_interval(
+        {
+            "point_diff": (
+                None
+                if averaged_gap_point is None or original_gap_point is None
+                else averaged_gap_point - original_gap_point
+            ),
+            "n_clusters": int(len(np.unique(partition_clusters))),
+        }
     )
     gap_comparison["n_shared"] = len(genes)
     gap_comparison["contrast"] = (

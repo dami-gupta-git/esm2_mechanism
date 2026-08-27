@@ -22,12 +22,14 @@ from esm2_mech.experiments.stability.stability_data import (
     stability_splits,
 )
 from esm2_mech.utils.bootstrap import (
+    INTERVAL_GATE_REASON,
     cluster_bootstrap_ci,
     folds_to_arms,
     paired_cluster_bootstrap_diff,
     paired_cluster_bootstrap_diff_cross_partition,
     score_within_folds,
 )
+from esm2_mech.utils.classification import validate_complete_classification_splits
 from esm2_mech.utils.constants import (
     BOOTSTRAP_N_RESAMPLES,
     MECHANISM_CLASSES,
@@ -42,6 +44,7 @@ from esm2_mech.utils.data import (
 )
 from esm2_mech.utils.io import write_result_json
 from esm2_mech.utils.metrics import auroc_at_median, fold_macro_f1, mean_std_n, standardize
+from esm2_mech.utils.probes import run_logreg_cv
 from esm2_mech.utils.splits import family_split_cv
 from esm2_mech.utils.paths import (
     DATA_DIR as _DATA_DIR,
@@ -328,9 +331,6 @@ def run_stability_projection_3c(
     compute_ci=True,
 ):
     """Project stability out of mechanism delta_mean; compare family-split F1."""
-    from sklearn.linear_model import LogisticRegression
-    from sklearn.metrics import f1_score
-
     # Fit stability Ridge on the stability (Tsuboyama) set
     sc_s = StandardScaler()
     X_s = sc_s.fit_transform(stability_delta_mean)
@@ -363,40 +363,46 @@ def run_stability_projection_3c(
 
     def _run_3c_seed(seed, collect_oof):
         splits = family_split_cv(merged_proteins, pfam_map, n_folds=n_folds, seed=seed)
+        family_groups = np.array(
+            [pfam_map.get(gene) for gene in merged_proteins], dtype=object
+        )
+        split_contract = validate_complete_classification_splits(
+            splits,
+            requested_folds=n_folds,
+            eligible_rows=np.concatenate([test for _train, test in splits]),
+            labels=y,
+            classes=MECHANISM_CLASSES,
+            groups=family_groups,
+            held_out_unit="family",
+        )
         seed_oof = {}
         seed_baseline_f1 = None
         seed_projected_f1 = None
         for X, tag in [(merged_scaled, "baseline"), (residuals, "projected")]:
-            fold_f1s = []
-            oof_y, oof_pred, oof_genes, oof_folds = [], [], [], []
-            for fold_i, (tr, te) in enumerate(splits):
-                clf = LogisticRegression(
-                    max_iter=1000,
-                    C=1.0,
-                    class_weight="balanced",
-                    random_state=seed,
-                )
-                clf.fit(X[tr], y[tr])
-                pred = clf.predict(X[te])
-                fold_f1s.append(
-                    float(f1_score(y[te], pred, average="macro", zero_division=0))
-                )
-                if collect_oof:
-                    oof_y.append(y[te])
-                    oof_pred.append(pred)
-                    oof_genes.append(merged_proteins[te])
-                    oof_folds.append(np.full(len(te), fold_i, dtype=int))
-            seed_f1_mean, _, _ = mean_std_n(fold_f1s)
+            result, oof = run_logreg_cv(
+                X,
+                y,
+                splits,
+                MECHANISM_CLASSES,
+                split_contract,
+                seed=seed,
+                genes=merged_proteins,
+                return_oof=True,
+                prescaled=True,
+                compute_per_gene=False,
+                label=f"control_3c_{tag}",
+            )
+            seed_f1_mean = result["macro_f1_mean"]
             if tag == "baseline":
                 seed_baseline_f1 = seed_f1_mean
             else:
                 seed_projected_f1 = seed_f1_mean
-            if collect_oof and oof_y:
+            if collect_oof and oof is not None:
                 seed_oof[tag] = {
-                    "y_true": np.concatenate(oof_y),
-                    "pred": np.concatenate(oof_pred),
-                    "genes": np.concatenate(oof_genes),
-                    "folds": np.concatenate(oof_folds),
+                    **oof,
+                    "pred": np.array(
+                        [MECHANISM_CLASSES[column] for column in oof["proba"].argmax(1)]
+                    ),
                 }
         return seed_baseline_f1, seed_projected_f1, seed_oof
 
@@ -410,8 +416,14 @@ def run_stability_projection_3c(
     baseline_f1s = [seed0_bl] + [r[0] for r in rest]
     projected_f1s = [seed0_pr] + [r[1] for r in rest]
 
-    baseline_f1_mean, baseline_f1_std, _ = mean_std_n(baseline_f1s)
-    projected_f1_mean, projected_f1_std, _ = mean_std_n(projected_f1s)
+    if any(value is None for value in baseline_f1s + projected_f1s):
+        baseline_f1_mean = baseline_f1_std = None
+        projected_f1_mean = projected_f1_std = None
+    else:
+        baseline_f1_mean = float(np.mean(baseline_f1s))
+        baseline_f1_std = float(np.std(baseline_f1s))
+        projected_f1_mean = float(np.mean(projected_f1s))
+        projected_f1_std = float(np.std(projected_f1s))
     difference_ci = None
     if compute_ci and "baseline" in seed0_oof and "projected" in seed0_oof:
         baseline_oof = seed0_oof["baseline"]
@@ -435,17 +447,25 @@ def run_stability_projection_3c(
         _projected_f1 = _fold_f1(projected_oof)
         _baseline_f1 = _fold_f1(baseline_oof)
 
-        difference_ci = paired_cluster_bootstrap_diff(
-            clusters,
-            _projected_f1,
-            _baseline_f1,
-            n_resamples=n_boot,
-            seed=0,
-            discard_reason=(
-                "at least one arm's fold lost a mechanism class on the shared "
-                "resample"
-            ),
+        all_rows = np.arange(len(baseline_oof["y_true"]))
+        projected_point = _projected_f1(all_rows)
+        baseline_point = _baseline_f1(all_rows)
+        point_diff = (
+            None
+            if projected_point is None or baseline_point is None
+            else projected_point - baseline_point
         )
+        difference_ci = {
+            "point_diff": point_diff,
+            "ci_low": None,
+            "ci_high": None,
+            "ci_suppressed": True,
+            "missing": True,
+            "reason": INTERVAL_GATE_REASON,
+            "n_resamples": 0,
+            "n_resamples_total": 0,
+            "n_clusters": int(len(np.unique(clusters))),
+        }
     inferential_point = (
         None if difference_ci is None else difference_ci.get("point_diff")
     )
@@ -457,7 +477,11 @@ def run_stability_projection_3c(
         "baseline_f1_std": baseline_f1_std,
         "projected_f1_mean": projected_f1_mean,
         "projected_f1_std": projected_f1_std,
-        "delta_f1": projected_f1_mean - baseline_f1_mean,
+        "delta_f1": (
+            None
+            if projected_f1_mean is None or baseline_f1_mean is None
+            else projected_f1_mean - baseline_f1_mean
+        ),
         "inferential_point_estimate": inferential_point,
         "difference_ci": difference_ci,
         "3C_passes": control_3c_verdict == "affirmed",

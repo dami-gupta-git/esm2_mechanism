@@ -37,6 +37,7 @@ from esm2_mech.utils.splits import (
 from esm2_mech.utils.embed import unpack_run_data
 from esm2_mech.utils.io import atomic_write_json, write_result_json
 from esm2_mech.utils.probes import run_logreg_pca_cv
+from esm2_mech.utils.classification import validate_complete_classification_splits
 from esm2_mech.utils.bootstrap import (
     adjudicate_diff,
     attach_mechanism_ci,
@@ -206,8 +207,29 @@ def run(
             continue
         print(f"\n--- {name} (dim={X.shape[1]}, n={len(feat_labels)}) ---")
 
+        gene_contract = validate_complete_classification_splits(
+            feat_gene_splits,
+            requested_folds=n_folds,
+            eligible_rows=np.concatenate([test for _train, test in feat_gene_splits]),
+            labels=feat_labels,
+            classes=MECHANISM_CLASSES,
+            groups=feat_genes,
+            held_out_unit="gene",
+        )
+        family_groups = np.array([pfam_map.get(gene) for gene in feat_genes], dtype=object)
+        family_contract = validate_complete_classification_splits(
+            feat_family_splits,
+            requested_folds=n_folds,
+            eligible_rows=np.concatenate([test for _train, test in feat_family_splits]),
+            labels=feat_labels,
+            classes=MECHANISM_CLASSES,
+            groups=family_groups,
+            held_out_unit="family",
+        )
+
         gs, gs_oof = run_logreg_pca_cv(
-            X, feat_labels, feat_gene_splits, seed=seed, genes=feat_genes,
+            X, feat_labels, feat_gene_splits, MECHANISM_CLASSES, gene_contract,
+            seed=seed, genes=feat_genes,
             label=f"{name} gene", n_pca=PCA_COMPONENTS, return_oof=True,
         )
         attach_mechanism_ci(
@@ -219,18 +241,23 @@ def run(
             seed=seed,
         )
         results["gene_split"][name] = gs
-        gs_f1 = gs.get("macro_f1_mean", float("nan"))
-        print(
-            f"  gene-split   macro-F1 = {gs_f1:.3f} "
-            f"± {gs.get('macro_f1_std', float('nan')):.3f}  "
-            f"(GOF AUROC {gs.get('auroc_GOF_mean', float('nan')):.3f}, "
-            f"DN {gs.get('auroc_DN_mean', float('nan')):.3f}, "
-            f"LOF {gs.get('auroc_LOF_mean', float('nan')):.3f})"
-        )
+        if gs["status"] == "success":
+            gs_f1 = gs["macro_f1_mean"]
+            print(
+                f"  gene-split   macro-F1 = {gs['macro_f1_mean']:.3f} "
+                f"± {gs['macro_f1_std']:.3f}  "
+                f"(GOF AUROC {gs['auroc_GOF_mean']:.3f}, "
+                f"DN {gs['auroc_DN_mean']:.3f}, "
+                f"LOF {gs['auroc_LOF_mean']:.3f})"
+            )
+        else:
+            gs_f1 = None
+            print(f"  gene-split   {gs['status']}")
 
         if feat_family_splits:
             fs, fs_oof = run_logreg_pca_cv(
-                X, feat_labels, feat_family_splits, seed=seed, genes=feat_genes,
+                X, feat_labels, feat_family_splits, MECHANISM_CLASSES, family_contract,
+                seed=seed, genes=feat_genes,
                 label=f"{name} family", n_pca=PCA_COMPONENTS, return_oof=True,
             )
             fs_clusters = (
@@ -270,8 +297,23 @@ def run(
                 ]
 
                 def _family_macro_f1(perm_labels, _X=X_ann, _splits=family_splits_ann, _genes=genes_ann):
+                    perm_groups = np.array(
+                        [pfam_map.get(gene) for gene in _genes], dtype=object
+                    )
+                    perm_contract = validate_complete_classification_splits(
+                        _splits,
+                        requested_folds=n_folds,
+                        eligible_rows=np.concatenate(
+                            [test for _train, test in _splits]
+                        ),
+                        labels=perm_labels,
+                        classes=MECHANISM_CLASSES,
+                        groups=perm_groups,
+                        held_out_unit="family",
+                    )
                     agg_perm, _ = run_logreg_pca_cv(
-                        _X, perm_labels, _splits, seed=seed, genes=_genes,
+                        _X, perm_labels, _splits, MECHANISM_CLASSES, perm_contract,
+                        seed=seed, genes=_genes,
                         n_pca=PCA_COMPONENTS, return_oof=True,
                     )
                     return agg_perm.get("macro_f1_mean")
@@ -344,19 +386,25 @@ def run(
                 }
 
             results["family_split"][name] = fs
-            fs_f1 = fs.get("macro_f1_mean", float("nan"))
-            delta_macro = gs_f1 - fs_f1
-            print(
-                f"  family-split macro-F1 = {fs_f1:.3f} "
-                f"± {fs.get('macro_f1_std', float('nan')):.3f}  "
-                f"(GOF AUROC {fs.get('auroc_GOF_mean', float('nan')):.3f}, "
-                f"DN {fs.get('auroc_DN_mean', float('nan')):.3f}, "
-                f"LOF {fs.get('auroc_LOF_mean', float('nan')):.3f})"
-            )
-            print(
-                f"  Δ(gene − family) macro-F1 = {delta_macro:+.3f}  "
-                f"← positive ⇒ homology leakage"
-            )
+            fs_f1 = fs.get("macro_f1_mean")
+            if fs.get("status") == "success" and fs_f1 is not None:
+                print(
+                    f"  family-split macro-F1 = {fs_f1:.3f} "
+                    f"± {fs['macro_f1_std']:.3f}  "
+                    f"(GOF AUROC {fs['auroc_GOF_mean']:.3f}, "
+                    f"DN {fs['auroc_DN_mean']:.3f}, "
+                    f"LOF {fs['auroc_LOF_mean']:.3f})"
+                )
+            else:
+                print(f"  family-split {fs.get('status', 'unscorable')}")
+            if gs_f1 is not None and fs_f1 is not None:
+                delta_macro = gs_f1 - fs_f1
+                print(
+                    f"  Δ(gene − family) macro-F1 = {delta_macro:+.3f}  "
+                    f"← positive ⇒ homology leakage"
+                )
+            else:
+                print("  Δ(gene − family) macro-F1 = Unscorable")
 
             if (
                 compute_ci and not isinstance(entry, tuple)

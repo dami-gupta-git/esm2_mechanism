@@ -659,26 +659,43 @@ def figure3_family_information() -> None:
 
     accuracy_axis = axes[0, 0]
     positions = np.arange(len(view_keys))
-    accuracies = [views[key]["family_probe"]["accuracy"] for key in view_keys]
-    accuracy_std = [views[key]["family_probe"]["accuracy_std"] for key in view_keys]
+    probe_blocks = [views[key]["family_probe"] for key in view_keys]
+    for position, block, color in zip(
+        positions, probe_blocks, (BLUE, CYAN, PURPLE)
+    ):
+        accuracy = block.get("accuracy")
+        if accuracy is None:
+            accuracy_axis.text(
+                position, 0.03, "Unscorable", ha="center", va="bottom", fontsize=8
+            )
+            continue
+        accuracy_axis.bar(
+            position,
+            accuracy,
+            yerr=block.get("accuracy_std"),
+            color=color,
+            capsize=3,
+        )
     baselines = [
-        views[key]["family_probe"]["majority_baseline_acc"] for key in view_keys
+        block.get("majority_baseline_acc")
+        for block in probe_blocks
+        if block.get("majority_baseline_acc") is not None
     ]
-    if not all(math.isclose(baseline, baselines[0]) for baseline in baselines):
-        raise ValueError("Family-probe majority references differ across views")
-    accuracy_axis.bar(
-        positions, accuracies, yerr=accuracy_std, color=(BLUE, CYAN, PURPLE), capsize=3
-    )
-    accuracy_axis.axhline(baselines[0], color=GREY, linestyle="--", linewidth=1)
-    accuracy_axis.text(
-        2.45,
-        baselines[0],
-        f"reference {baselines[0]:.3f}",
-        ha="right",
-        va="bottom",
-        fontsize=8,
-        color=GREY,
-    )
+    if baselines:
+        if not all(math.isclose(baseline, baselines[0]) for baseline in baselines):
+            raise ValueError("Family-probe majority references differ across views")
+        accuracy_axis.axhline(
+            baselines[0], color=GREY, linestyle="--", linewidth=1
+        )
+        accuracy_axis.text(
+            2.45,
+            baselines[0],
+            f"reference {baselines[0]:.3f}",
+            ha="right",
+            va="bottom",
+            fontsize=8,
+            color=GREY,
+        )
     accuracy_axis.set_xticks(positions)
     accuracy_axis.set_xticklabels(view_labels)
     accuracy_axis.set_ylim(0, 0.68)
@@ -963,7 +980,13 @@ def figure5_enzyme_classification() -> None:
         s=55,
         label="Family holdout",
     )
-    transfer_axis.axhline(esm["majority_f1"], color=GREY, linestyle="--", linewidth=1)
+    family_reference = _finite(
+        esm["majority_reference"]["family_split"]["macro_f1_mean"],
+        "enzyme family-split majority reference",
+    )
+    transfer_axis.axhline(
+        family_reference, color=GREY, linestyle="--", linewidth=1
+    )
     transfer_axis.set_xticks(positions)
     transfer_axis.set_xticklabels(representation_labels)
     transfer_axis.set_ylim(0.18, 0.88)

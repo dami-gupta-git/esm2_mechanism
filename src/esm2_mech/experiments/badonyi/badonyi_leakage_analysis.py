@@ -15,6 +15,7 @@ from esm2_mech.utils.data import build_gene_to_row as _build_gene_to_row, load_p
 from esm2_mech.utils.splits import family_split_indices
 from esm2_mech.utils.probes import run_histgb_cv
 from esm2_mech.utils.bootstrap import attach_mechanism_ci, family_or_gene_clusters
+from esm2_mech.utils.classification import validate_complete_classification_splits
 from esm2_mech.utils.paths import (
     BADONYI_CACHE_DIR,
     GENE_UNIVERSE,
@@ -112,7 +113,15 @@ def run_probe(
 ):
     """NaN-native family-split CV."""
     splits = list(family_split_indices(groups, n_folds, seed))
-    agg, oof = run_histgb_cv(X, y, splits, seed=seed, genes=genes, label=label, return_oof=True)
+    contract = validate_complete_classification_splits(
+        splits, requested_folds=n_folds,
+        eligible_rows=np.concatenate([test for _train, test in splits]),
+        labels=y, classes=MECHANISM_CLASSES, groups=groups, held_out_unit="family",
+    )
+    agg, oof = run_histgb_cv(
+        X, y, splits, MECHANISM_CLASSES, contract, seed=seed,
+        genes=genes, label=label, return_oof=True
+    )
     clusters = (
         family_or_gene_clusters(oof["genes"], pfam_map, is_family_split=True)
         if oof is not None

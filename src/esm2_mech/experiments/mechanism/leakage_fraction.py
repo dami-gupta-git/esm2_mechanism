@@ -76,8 +76,22 @@ def leakage_fraction_per_feature(feature, chance, oof_cache_entries=None):
     gene_f1 = [_arm_macro_f1(seed_arms["gene"], rows) for seed_arms in per_seed]
     family_f1 = [_arm_macro_f1(seed_arms["family"], rows) for seed_arms in per_seed]
 
-    gene_mean, gene_std, gene_n = mean_std_n(gene_f1)
-    family_mean, family_std, _ = mean_std_n(family_f1)
+    if any(value is None for value in gene_f1 + family_f1):
+        return {
+            "gene_macro_f1_mean": None,
+            "gene_macro_f1_std": None,
+            "family_macro_f1_mean": None,
+            "family_macro_f1_std": None,
+            "drop_mean": None,
+            "n_excluded_unannotated": n_excluded,
+            "chance_macro_f1": chance,
+            "status": "unscorable",
+        }
+    gene_mean = float(np.mean(gene_f1))
+    gene_std = float(np.std(gene_f1))
+    gene_n = len(gene_f1)
+    family_mean = float(np.mean(family_f1))
+    family_std = float(np.std(family_f1))
 
     result = {
         "gene_macro_f1_mean": gene_mean,
@@ -85,6 +99,7 @@ def leakage_fraction_per_feature(feature, chance, oof_cache_entries=None):
         "family_macro_f1_mean": family_mean,
         "family_macro_f1_std": family_std,
         "drop_mean": gene_mean - family_mean,
+        "status": "success",
     }
     result["n_excluded_unannotated"] = n_excluded
     result["chance_macro_f1"] = chance
@@ -298,32 +313,17 @@ def leakage_fraction_ci(
             "in every seed/fold"
         )
 
-    ci = cluster_bootstrap_ci(
-        clusters,
-        _ratio,
-        n_resamples=n_resamples,
-        seed=seed,
-        metric_name=metric_name,
-    )
-
-    # A denominator-driven discard is not exchangeable noise: it removes exactly
-    # the resamples whose gene-split score dipped near the floor, so the draws
-    # that survive are a biased-upward subset and any interval built only from
-    # them misstates its own uncertainty. A fold-losing-a-class discard has no
-    # such direction (exp4_fixes.md's own rare-class-rule analysis), so it alone
-    # does not force suppression.
-    reason_counts = ci.get("discard_reason_counts") or {}
-    denom_discard_frac = reason_counts.get("denominator_below_threshold", 0) / n_resamples
-    if denom_discard_frac > BOOTSTRAP_MAX_DISCARD_FRAC and not ci["ci_suppressed"]:
-        ci["ci_low"] = None
-        ci["ci_high"] = None
-        ci["ci_suppressed"] = True
-        ci["ci_suppressed_reason"] = (
-            f"{denom_discard_frac:.1%} of resamples were discarded for a "
-            "collapsed denominator, which biases the surviving draws rather than "
-            "just narrowing them"
-        )
-    return ci
+    return {
+        "point": point.value,
+        "ci_low": None,
+        "ci_high": None,
+        "ci_suppressed": True,
+        "missing": True,
+        "reason": "blocked_by_audit_1_4",
+        "n_resamples": 0,
+        "n_resamples_total": 0,
+        "n_clusters": int(len(np.unique(clusters))),
+    }
 
 
 def main(compute_ci: bool = True, n_boot: int = BOOTSTRAP_N_RESAMPLES) -> None:

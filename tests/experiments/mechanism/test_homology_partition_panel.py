@@ -3,8 +3,8 @@ Tests for esm2_mech.experiments.mechanism.homology_partition_panel (Task 2b).
 
 Covers:
 - leakage_fraction_ci_for_partition: the LF ratio formula matches a hand-computed
-  value, resamples the PARTITION's own cluster id (not gene, not row count), and
-  returns None (undefined) when the gene-split arm is not meaningfully above chance.
+  value on shared rows, records the partition's own cluster count, and returns
+  None when the two arms have no shared rows.
 - _partition_row: n_clusters in the returned mechanism-null CI matches the number
   of distinct partition-unit ids passed in, so a clan row reports the clan count
   and an mmseqs row reports the cluster count, never a gene/family count.
@@ -12,36 +12,26 @@ Covers:
   file rather than a hardcoded literal, and return None (no fallback) when the
   source file is absent.
 - An end-to-end (marked slow) run of the three-row pipeline on a tiny synthetic
-  dataset, asserting all three rows are present with populated (non-suppressed)
-  CIs and the correct effective cluster count per row.
+  dataset, asserting all three rows are present with gated intervals and the
+  correct effective cluster count per row.
 
 Also: a regression test for the pre-existing mmseqs_cluster_holdout.py bug this
 task fixed (int-encoded y fed to run_mlp_cv, which expects labels matching the
 MECHANISM_CLASSES strings — crashed with "need at least one array to concatenate"
 the moment run_mlp_cv tried to build the oversampling index).
 
-Two tests here are marked as expected failures. The script under test is deferred
-out of scope in TODO.md and still calls the shared multiclass bootstrap without a
-fold index, which the helper now refuses rather than ranking pooled probabilities.
-The marks are strict, so if the script is ever fixed those tests pass unexpectedly
-and the suite fails until the marks are removed, which is what brings the coverage
-back rather than leaving it silently disabled.
+Classification intervals remain suppressed under audit item 1.4.
 """
 
 import json
 
 import numpy as np
 import pytest
-
-pytest.importorskip(
-    "esm2_mech.experiments.mechanism.homology_partition_panel",
-    reason="homology_partition_panel.py is not part of the current pipeline (imports load_pfam, "
-    "removed from clan_holdout.py)",
-    exc_type=ImportError,
-)
+from sklearn.metrics import f1_score
 
 from esm2_mech.experiments.mechanism import clan_holdout, homology_partition_panel as panel
 from esm2_mech.utils.constants import DN, GOF, LOF, MECHANISM_CLASSES
+from esm2_mech.utils.metrics import majority_baseline_f1
 
 
 def _one_hot_proba(labels, classes=MECHANISM_CLASSES):
@@ -60,7 +50,13 @@ class TestLeakageFractionCiForPartition:
         # arm gets the last 4 rows wrong (predicts LOF for a GOF/DN true label).
         y_true = np.array([LOF] * 6 + [GOF, GOF, DN, DN])
         row_ids = np.arange(10)
-        oof_gene = {"y_true": y_true, "proba": _one_hot_proba(y_true), "row_ids": row_ids}
+        folds = np.zeros(len(y_true), dtype=int)
+        oof_gene = {
+            "y_true": y_true,
+            "proba": _one_hot_proba(y_true),
+            "row_ids": row_ids,
+            "folds": folds,
+        }
 
         part_pred_labels = y_true.copy()
         part_pred_labels[6:] = LOF  # last 4 rows wrong
@@ -68,19 +64,22 @@ class TestLeakageFractionCiForPartition:
             "y_true": y_true,
             "proba": _one_hot_proba(part_pred_labels),
             "row_ids": row_ids,
+            "folds": folds,
         }
         partition_clusters = np.array(["clanA"] * 5 + ["clanB"] * 5)
 
+        chance, _ = majority_baseline_f1(y_true, y_true, MECHANISM_CLASSES)
         ci = panel.leakage_fraction_ci_for_partition(
-            oof_gene, oof_partition, partition_clusters, n_boot=30, seed=0
+            oof_gene,
+            oof_partition,
+            partition_clusters,
+            gene_chance=chance,
+            n_boot=30,
+            seed=0,
         )
-
-        from sklearn.metrics import f1_score
-        from esm2_mech.utils.metrics import majority_baseline_f1
 
         gene_f1 = f1_score(y_true, y_true, average="macro", zero_division=0)  # 1.0
         part_f1 = f1_score(y_true, part_pred_labels, average="macro", zero_division=0)
-        chance, _ = majority_baseline_f1(y_true, y_true)
         expected = (gene_f1 - part_f1) / (gene_f1 - chance)
 
         assert ci is not None
@@ -92,12 +91,14 @@ class TestLeakageFractionCiForPartition:
         # whatever a gene id count would have been.
         y_true = np.array([LOF, GOF, DN] * 4)
         row_ids = np.arange(12)
-        oof_gene = {"y_true": y_true, "proba": _one_hot_proba(y_true), "row_ids": row_ids}
-        oof_partition = {"y_true": y_true, "proba": _one_hot_proba(y_true), "row_ids": row_ids}
+        folds = np.zeros(len(y_true), dtype=int)
+        oof_gene = {"y_true": y_true, "proba": _one_hot_proba(y_true), "row_ids": row_ids, "folds": folds}
+        oof_partition = {"y_true": y_true, "proba": _one_hot_proba(y_true), "row_ids": row_ids, "folds": folds}
         partition_clusters = np.array(["c0", "c1", "c2"] * 4)
 
         ci = panel.leakage_fraction_ci_for_partition(
-            oof_gene, oof_partition, partition_clusters, n_boot=20, seed=0
+            oof_gene, oof_partition, partition_clusters,
+            gene_chance=0.30, n_boot=20, seed=0
         )
         # gene_f1 == part_f1 == 1.0 here so LF is 0 everywhere but n_clusters
         # must still reflect the distinct partition ids, not the row count.
@@ -108,14 +109,16 @@ class TestLeakageFractionCiForPartition:
         row_ids = np.arange(10)
         # Gene arm predicts everything as LOF -> low macro-F1, at/near chance.
         gene_pred = np.full(10, LOF)
-        oof_gene = {"y_true": y_true, "proba": _one_hot_proba(gene_pred), "row_ids": row_ids}
-        oof_partition = {"y_true": y_true, "proba": _one_hot_proba(y_true), "row_ids": row_ids}
+        folds = np.zeros(len(y_true), dtype=int)
+        oof_gene = {"y_true": y_true, "proba": _one_hot_proba(gene_pred), "row_ids": row_ids, "folds": folds}
+        oof_partition = {"y_true": y_true, "proba": _one_hot_proba(y_true), "row_ids": row_ids, "folds": folds}
         partition_clusters = np.array(["c0"] * 5 + ["c1"] * 5)
 
         # Gene arm predicts everything as LOF. The majority class IS LOF (8/10),
         # so gene_f1 equals the chance floor and denom <= MIN_ABOVE_CHANCE.
         ci = panel.leakage_fraction_ci_for_partition(
-            oof_gene, oof_partition, partition_clusters, n_boot=20, seed=0
+            oof_gene, oof_partition, partition_clusters,
+            gene_chance=0.2962962962962963, n_boot=20, seed=0
         )
         assert ci["ci_suppressed"] is True
 
@@ -124,23 +127,14 @@ class TestLeakageFractionCiForPartition:
         oof_gene = {"y_true": y_true, "proba": _one_hot_proba(y_true), "row_ids": np.array([0, 1, 2])}
         oof_partition = {"y_true": y_true, "proba": _one_hot_proba(y_true), "row_ids": np.array([10, 11, 12])}
         result = panel.leakage_fraction_ci_for_partition(
-            oof_gene, oof_partition, np.array(["c0"] * 3), n_boot=10, seed=0
+            oof_gene, oof_partition, np.array(["c0"] * 3),
+            gene_chance=0.2, n_boot=10, seed=0
         )
         assert result is None
 
 
 class TestPartitionRow:
 
-    @pytest.mark.xfail(
-        raises=TypeError,
-        strict=True,
-        reason=(
-            "homology_partition_panel.py is deferred out of scope (see TODO.md): it still "
-            "calls the shared multiclass bootstrap without a fold index, which now refuses "
-            "rather than silently ranking pooled probabilities. Strict, so that fixing the "
-            "script turns this into an unexpected pass and forces the marker off."
-        ),
-    )
     def test_n_clusters_matches_distinct_partition_units(self):
         # 20 rows spread over 4 distinct clan ids (5 rows each) — the row's own
         # n_clusters must be 4 (clans), regardless of the fact there are 20 rows.
@@ -148,8 +142,9 @@ class TestPartitionRow:
         y_true = np.array(rng.choice(MECHANISM_CLASSES, size=20))
         row_ids = np.arange(20)
         proba = _one_hot_proba(y_true)
-        oof_gene = {"y_true": y_true, "proba": proba, "row_ids": row_ids}
-        oof_partition = {"y_true": y_true, "proba": proba, "row_ids": row_ids}
+        folds = np.zeros(len(y_true), dtype=int)
+        oof_gene = {"y_true": y_true, "proba": proba, "row_ids": row_ids, "folds": folds}
+        oof_partition = {"y_true": y_true, "proba": proba, "row_ids": row_ids, "folds": folds}
         clan_ids = np.array([f"clan{i % 4}" for i in range(20)])
 
         row = panel._partition_row(
@@ -159,7 +154,8 @@ class TestPartitionRow:
         assert row["partition"] == "pfam_clan"
         assert row["n_clusters"] == 4
         assert row["measured_floor"] == 0.288
-        assert row["mechanism_null_macro_f1"]["ci_suppressed"] is False
+        assert row["mechanism_null_macro_f1"]["ci_suppressed"] is True
+        assert row["mechanism_null_macro_f1"]["reason"] == "blocked_by_audit_1_4"
 
 
 class TestMeasuredChanceFloors:
@@ -330,16 +326,6 @@ class TestPanelEndToEnd:
 
         return labels, genes, delta, pfam_map, gene_clan, clan_names, gene_to_cluster
 
-    @pytest.mark.xfail(
-        raises=TypeError,
-        strict=True,
-        reason=(
-            "homology_partition_panel.py is deferred out of scope (see TODO.md): it still "
-            "calls the shared multiclass bootstrap without a fold index, which now refuses "
-            "rather than silently ranking pooled probabilities. Strict, so that fixing the "
-            "script turns this into an unexpected pass and forces the marker off."
-        ),
-    )
     def test_all_three_rows_present_with_correct_cluster_counts(self, tmp_path, monkeypatch):
         (labels, genes, delta, pfam_map, gene_clan, clan_names, gene_to_cluster) = self._build_dataset()
 
@@ -391,8 +377,9 @@ class TestPanelEndToEnd:
 
         for name, row in rows.items():
             null_ci = row["mechanism_null_macro_f1"]
-            assert null_ci["ci_suppressed"] is False, f"{name} CI suppressed"
-            assert null_ci["ci_low"] is not None and null_ci["ci_high"] is not None
+            assert null_ci["ci_suppressed"] is True, f"{name} CI was not gated"
+            assert null_ci["ci_low"] is None and null_ci["ci_high"] is None
+            assert null_ci["reason"] == "blocked_by_audit_1_4"
 
         # Write and reload the consolidated JSON, matching main()'s shape.
         from esm2_mech.utils.io import atomic_write_json

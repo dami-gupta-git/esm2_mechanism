@@ -132,7 +132,7 @@ def _merged_set(rng, n_features):
     return delta, labels, genes, pfam_map
 
 
-def test_3c_returns_paired_family_bootstrap_ci():
+def test_3c_returns_point_with_interval_gate():
     rng = np.random.RandomState(3)
     n_features = 6
     stability_delta = rng.normal(size=(60, n_features))
@@ -156,17 +156,13 @@ def test_3c_returns_paired_family_bootstrap_ci():
     assert ci is not None
     assert ci["n_clusters"] == N_FAMILIES
     assert ci["point_diff"] is not None
-    point = ci["point_diff"]
-    if point <= 0.01:
-        expected_verdict = (
-            "affirmed" if ci["ci_high"] < 0.01 else "not distinguishable"
-        )
-    else:
-        expected_verdict = "underpowered" if ci["ci_low"] <= 0.01 else "failed"
-    assert result["3C_verdict"] == expected_verdict
+    assert ci["ci_low"] is None
+    assert ci["ci_high"] is None
+    assert ci["reason"] == "blocked_by_audit_1_4"
+    assert result["3C_verdict"] == "not adjudicated (CI unavailable)"
 
 
-def test_3c_discards_few_resamples_when_every_fold_holds_many_families():
+def test_3c_does_not_run_resamples_while_interval_gate_is_active():
     # A high discard rate means folds are losing whole classes, which makes the
     # surviving draws a different statistic from the point estimate. With ten
     # families per fold it should be near zero, so a regression that empties or
@@ -190,4 +186,5 @@ def test_3c_discards_few_resamples_when_every_fold_holds_many_families():
         n_boot=200,
     )
 
-    assert result["difference_ci"]["discard_frac"] <= BOOTSTRAP_MAX_DISCARD_FRAC
+    assert result["difference_ci"]["n_resamples"] == 0
+    assert result["difference_ci"]["n_resamples_total"] == 0

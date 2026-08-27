@@ -64,9 +64,11 @@ from esm2_mech.utils.data import (
     pfam_fingerprint,
 )
 from esm2_mech.utils.io import load_variants_and_delta, write_result_json
+from esm2_mech.utils.classification import validate_complete_classification_splits
 from esm2_mech.utils.metrics import (
     aggregate_folds,
     compute_metrics,
+    empty_aggregate_metrics,
     imbalance_metrics,
     majority_baseline_f1,
     mean_std_n,
@@ -82,7 +84,7 @@ from esm2_mech.utils.paths import (
     PFAM_JSON,
     VALID_VARIANTS_JSON,
 )
-from esm2_mech.utils.probes import aggregate_fold_dicts, require_no_nan
+from esm2_mech.utils.probes import require_no_nan
 from esm2_mech.utils.probes import _validation_group_mask
 from esm2_mech.utils.splits import family_split_cv, gene_split_cv
 
@@ -505,17 +507,11 @@ def fit_stage(
     (probabilities, None) or (None, reason) — a stage that cannot be fitted is
     reported as unfitted rather than scored on a stand-in probability.
     """
-    validation_mask = _validation_group_mask(groups[fit_pool], seed, validation_fraction=0.15)
-    if validation_mask is None:
-        return None, SKIP_NO_VALIDATION_GROUPS
-    fit_rows = fit_pool[~validation_mask]
-    validation_rows = fit_pool[validation_mask]
-    if len(fit_rows) < 10 or len(validation_rows) < 5:
-        return None, SKIP_TOO_FEW_ROWS
-    if len(set(y_binary[fit_rows].tolist())) < 2:
-        return None, SKIP_ONE_CLASS_IN_FIT
-    if len(set(y_binary[validation_rows].tolist())) < 2:
-        return None, SKIP_ONE_CLASS_IN_FIT
+    fit_rows, validation_rows, failure = _stage_partitions(
+        y_binary, fit_pool, groups, seed
+    )
+    if failure is not None:
+        return None, failure
 
     proba = fit_focal_mlp(
         X[fit_rows].astype(np.float32),
@@ -535,25 +531,44 @@ def fit_stage(
     return proba, None
 
 
+def _stage_partitions(
+    y_binary: np.ndarray,
+    fit_pool: np.ndarray,
+    groups: np.ndarray,
+    seed: int,
+) -> tuple[np.ndarray | None, np.ndarray | None, str | None]:
+    """Preflight one stage's group-disjoint fitting and validation partitions."""
+    validation_mask = _validation_group_mask(
+        groups[fit_pool], seed, validation_fraction=0.15
+    )
+    if validation_mask is None:
+        return None, None, SKIP_NO_VALIDATION_GROUPS
+    fit_rows = fit_pool[~validation_mask]
+    validation_rows = fit_pool[validation_mask]
+    if len(fit_rows) < 10 or len(validation_rows) < 5:
+        return None, None, SKIP_TOO_FEW_ROWS
+    if len(set(y_binary[fit_rows].tolist())) < 2:
+        return None, None, SKIP_ONE_CLASS_IN_FIT
+    if len(set(y_binary[validation_rows].tolist())) < 2:
+        return None, None, SKIP_ONE_CLASS_IN_FIT
+    return fit_rows, validation_rows, None
+
+
 # ── Fold and seed drivers ────────────────────────────────────────────────────
 
 
 def _binary_fold_metrics(y_binary: np.ndarray, proba: np.ndarray) -> dict:
     """AUROC plus the imbalance metrics for one stage on one fold."""
-    from sklearn.metrics import f1_score, roc_auc_score
-
-    metrics: dict = {"n": int(len(y_binary))}
-    if len(set(y_binary.tolist())) < 2:
-        return metrics
-    metrics["auroc"] = float(roc_auc_score(y_binary, proba))
-    metrics["macro_f1"] = float(
-        f1_score(y_binary, (proba >= 0.5).astype(int), average="macro", zero_division=0)
+    probabilities = np.column_stack([1.0 - proba, proba])
+    predictions = (proba >= 0.5).astype(int)
+    metrics = compute_metrics(
+        y_binary.astype(int), predictions, probabilities, [0, 1]
     )
-    imbalance = imbalance_metrics(y_binary.astype(int), proba)
-    if imbalance is not None:
-        for name in ("auprc", "prevalence", "ppv", "npv"):
-            if imbalance[name] is not None:
-                metrics[name] = float(imbalance[name])
+    metrics["auroc"] = metrics["per_class_auroc"][1]
+    metrics["auprc"] = metrics["per_class_auprc"][1]
+    metrics["prevalence"] = metrics["per_class_prevalence"][1]
+    metrics["ppv"] = metrics["per_class_ppv"][1]
+    metrics["npv"] = metrics["per_class_npv"][1]
     return metrics
 
 
@@ -568,6 +583,7 @@ def run_fold(
     arm: str,
     seed: int,
     args,
+    preflight_only: bool = False,
 ) -> dict:
     """Run both stages on one fold and combine them into a three-class posterior.
 
@@ -622,6 +638,30 @@ def run_fold(
         fold["skipped_reason"] = "the stage-A training pool was empty after resampling"
         return fold
 
+    stage_b_pool = train_rows[~is_lof[train_rows]]
+    fold["stage_b_n_training_rows"] = int(len(stage_b_pool))
+    is_gof = labels == GOF
+    if preflight_only:
+        _fit_rows, _validation_rows, stage_a_failure = _stage_partitions(
+            is_lof.astype(int), stage_a_pool, validation_groups, fold_seed
+        )
+        if stage_a_failure is not None:
+            fold["skipped_reason"] = f"stage A was not fitted: {stage_a_failure}"
+            return fold
+        _fit_rows, _validation_rows, stage_b_failure = _stage_partitions(
+            is_gof.astype(int), stage_b_pool, validation_groups, fold_seed + 1
+        )
+        if stage_b_failure is not None:
+            fold["skipped_reason"] = f"stage B was not fitted: {stage_b_failure}"
+            return fold
+        try:
+            majority_baseline_f1(
+                labels[train_rows], labels[test_rows], MECHANISM_CLASSES
+            )
+        except ValueError as error:
+            fold["skipped_reason"] = str(error)
+        return fold
+
     stage_a_proba, stage_a_skip = fit_stage(
         delta, is_lof.astype(int), stage_a_pool, test_rows, validation_groups,
         fold_seed, args,
@@ -635,9 +675,6 @@ def run_fold(
     # them. The resampling exists to strip the LOF class imbalance out of stage A;
     # GOF versus DN does not have that imbalance, and passing the reduced pool on
     # would discard the scarcest data in the study for no reason.
-    stage_b_pool = train_rows[~is_lof[train_rows]]
-    fold["stage_b_n_training_rows"] = int(len(stage_b_pool))
-    is_gof = labels == GOF
     stage_b_proba, stage_b_skip = fit_stage(
         delta, is_gof.astype(int), stage_b_pool, test_rows, validation_groups,
         fold_seed + 1, args,
@@ -661,7 +698,9 @@ def run_fold(
         [MECHANISM_CLASSES[column] for column in proba_three_class.argmax(axis=1)]
     )
     cascade = compute_metrics(y_test, predictions, proba_three_class, MECHANISM_CLASSES)
-    baseline_f1, majority_class = majority_baseline_f1(labels[train_rows], y_test)
+    baseline_f1, majority_class = majority_baseline_f1(
+        labels[train_rows], y_test, MECHANISM_CLASSES
+    )
     cascade["majority_baseline_macro_f1"] = baseline_f1
     cascade["majority_class"] = majority_class
     fold["cascade"] = cascade
@@ -681,6 +720,7 @@ def run_arm(
     matching_groups: np.ndarray,
     seed: int,
     args,
+    split_contract: dict,
 ) -> dict:
     """Run every fold of one split under one sampling arm and aggregate."""
     # Two different units. The resampling matches within the homology group the
@@ -692,7 +732,61 @@ def run_arm(
     )
     print(f"\n=== {arm} / {split_name}-split / seed {seed} ===")
 
-    fold_records, skipped = [], []
+    if split_contract["status"] != "valid":
+        cascade = empty_aggregate_metrics(
+            MECHANISM_CLASSES,
+            split_contract["requested_folds"],
+            "split_validation_failed",
+        )
+        cascade.update({"status": "unscorable", "split_validation": split_contract})
+        return {
+            "status": "unscorable",
+            "arm": arm,
+            "split": split_name,
+            "cascade": cascade,
+            "split_validation": split_contract,
+        }
+
+    preflight_failures = []
+    for fold_index, (train_rows, test_rows) in enumerate(splits):
+        preflight = run_fold(
+            fold_index,
+            np.asarray(train_rows),
+            np.asarray(test_rows),
+            labels,
+            delta,
+            matching_groups,
+            validation_groups,
+            arm,
+            seed,
+            args,
+            preflight_only=True,
+        )
+        if "skipped_reason" in preflight:
+            preflight_failures.append(
+                {"fold": fold_index, "reason": preflight["skipped_reason"]}
+            )
+    if preflight_failures:
+        internal_contract = dict(split_contract)
+        internal_contract["status"] = "unscorable"
+        internal_contract["failures"] = [
+            *split_contract.get("failures", []), *preflight_failures
+        ]
+        cascade = empty_aggregate_metrics(
+            MECHANISM_CLASSES,
+            split_contract["requested_folds"],
+            "cascade_preflight_failed",
+        )
+        cascade.update({"status": "unscorable", "split_validation": internal_contract})
+        return {
+            "status": "unscorable",
+            "arm": arm,
+            "split": split_name,
+            "cascade": cascade,
+            "split_validation": internal_contract,
+        }
+
+    fold_records = []
     cascade_folds, stage_a_folds, stage_b_folds = [], [], []
     oof_y, oof_proba, oof_genes, oof_rows, oof_folds = [], [], [], [], []
     for fold_index, (train_rows, test_rows) in enumerate(splits):
@@ -706,9 +800,27 @@ def run_arm(
         y_true = fold.pop("y_true", None)
         fold_records.append(fold)
         if "skipped_reason" in fold:
-            skipped.append({"fold": fold_index, "reason": fold["skipped_reason"]})
-            print(f"  Fold {fold_index + 1}: skipped — {fold['skipped_reason']}")
-            continue
+            cascade = empty_aggregate_metrics(
+                MECHANISM_CLASSES,
+                split_contract["requested_folds"],
+                "runtime_failure",
+            )
+            cascade.update(
+                {
+                    "status": "failed",
+                    "completed_folds": len(cascade_folds),
+                    "failed_fold": fold_index,
+                    "error_message": fold["skipped_reason"],
+                }
+            )
+            return {
+                "status": "failed",
+                "arm": arm,
+                "split": split_name,
+                "cascade": cascade,
+                "per_fold": fold_records,
+                "split_validation": split_contract,
+            }
         cascade_folds.append(fold["cascade"])
         stage_a_folds.append(fold[CASCADE_STAGE_A])
         stage_b_folds.append(fold[CASCADE_STAGE_B])
@@ -717,12 +829,16 @@ def run_arm(
         oof_genes.append(genes[test_rows])
         oof_rows.append(test_rows)
         oof_folds.append(np.full(len(test_rows), fold_index, dtype=int))
+        stage_a_auroc = fold[CASCADE_STAGE_A]["auroc"]
+        stage_b_auroc = fold[CASCADE_STAGE_B]["auroc"]
+        stage_a_text = "NA" if stage_a_auroc is None else f"{stage_a_auroc:.3f}"
+        stage_b_text = "NA" if stage_b_auroc is None else f"{stage_b_auroc:.3f}"
         print(
             f"  Fold {fold_index + 1}: cascade macro_f1="
             f"{fold['cascade']['macro_f1']:.3f} "
             f"(majority baseline {fold['cascade']['majority_baseline_macro_f1']:.3f}), "
-            f"stage A auroc={fold[CASCADE_STAGE_A].get('auroc', float('nan')):.3f}, "
-            f"stage B auroc={fold[CASCADE_STAGE_B].get('auroc', float('nan')):.3f}"
+            f"stage A auroc={stage_a_text}, "
+            f"stage B auroc={stage_b_text}"
         )
 
     result: dict = {
@@ -730,15 +846,14 @@ def run_arm(
         "split": split_name,
         "n_folds_requested": len(splits),
         "n_folds_scored": len(cascade_folds),
-        "skipped_folds": skipped,
+        "status": "success",
+        "split_validation": split_contract,
         "per_fold": fold_records,
     }
-    if not cascade_folds:
-        result["cascade"] = None
-        result["unscorable_reason"] = "no fold produced both stages"
-        return result
-
-    result["cascade"] = aggregate_folds(cascade_folds, MECHANISM_CLASSES)
+    result["cascade"] = aggregate_folds(
+        cascade_folds, MECHANISM_CLASSES, split_contract["requested_folds"]
+    )
+    result["cascade"]["status"] = "success"
     baseline_mean, baseline_std, baseline_n = mean_std_n(
         [fold["majority_baseline_macro_f1"] for fold in cascade_folds]
     )
@@ -748,8 +863,14 @@ def run_arm(
     result["cascade"]["majority_baseline_macro_f1_std"] = (
         baseline_std if baseline_n else None
     )
-    result[CASCADE_STAGE_A] = aggregate_fold_dicts(stage_a_folds)
-    result[CASCADE_STAGE_B] = aggregate_fold_dicts(stage_b_folds)
+    result[CASCADE_STAGE_A] = aggregate_folds(
+        stage_a_folds, [0, 1], split_contract["requested_folds"]
+    )
+    result[CASCADE_STAGE_B] = aggregate_folds(
+        stage_b_folds, [0, 1], split_contract["requested_folds"]
+    )
+    for stage_name in (CASCADE_STAGE_A, CASCADE_STAGE_B):
+        _add_binary_metric_aliases(result[stage_name])
 
     oof = {
         "y_true": np.concatenate(oof_y),
@@ -773,24 +894,52 @@ def run_arm(
     return result
 
 
+def _add_binary_metric_aliases(metrics: dict) -> None:
+    """Expose positive-class binary aggregates under their public field names."""
+    for metric_name in ("auroc", "auprc", "prevalence", "ppv", "npv"):
+        metrics[f"{metric_name}_mean"] = metrics[f"{metric_name}_1_mean"]
+
+
 def run_seed(
     seed: int, labels, genes, delta, pfam_map, matching_groups,
     input_fingerprints, args,
 ) -> dict:
     gene_splits = gene_split_cv(genes, n_folds=args.n_folds, seed=seed)
     family_splits = family_split_cv(genes, pfam_map, n_folds=args.n_folds, seed=seed)
+    gene_contract = validate_complete_classification_splits(
+        gene_splits,
+        requested_folds=args.n_folds,
+        eligible_rows=np.concatenate([test for _train, test in gene_splits]),
+        labels=labels,
+        classes=MECHANISM_CLASSES,
+        groups=genes,
+        held_out_unit="gene",
+    )
+    family_groups = family_or_gene_clusters(genes, pfam_map, is_family_split=True)
+    family_contract = validate_complete_classification_splits(
+        family_splits,
+        requested_folds=args.n_folds,
+        eligible_rows=np.concatenate([test for _train, test in family_splits]),
+        labels=labels,
+        classes=MECHANISM_CLASSES,
+        groups=family_groups,
+        held_out_unit="family",
+    )
     print(
         f"\nSeed {seed}: {len(gene_splits)} gene-split folds, "
         f"{len(family_splits)} family-split folds"
     )
-    splits_by_name = [(SPLIT_GENE, gene_splits), (SPLIT_FAMILY, family_splits)]
+    splits_by_name = [
+        (SPLIT_GENE, gene_splits, gene_contract),
+        (SPLIT_FAMILY, family_splits, family_contract),
+    ]
 
     arms: dict[str, dict] = {}
     for arm in args.arms:
-        for split_name, splits in splits_by_name:
+        for split_name, splits, split_contract in splits_by_name:
             arms[f"{arm}_{split_name}"] = run_arm(
                 arm, split_name, splits, labels, delta, genes, pfam_map,
-                matching_groups, seed, args,
+                matching_groups, seed, args, split_contract,
             )
 
     result = {
@@ -854,11 +1003,13 @@ def aggregate_seeds(seed_results: list[dict]) -> dict:
         seeds_present = [
             result["seed"] for result in seed_results if arm_key in result["arms"]
         ]
-        if not arm_results:
+        if len(arm_results) != len(seeds_present) or any(
+            arm.get("status") != "success" for arm in arm_results
+        ):
             across[arm_key] = {
                 "n_seeds_scored": 0,
                 "seeds_requested": seeds_present,
-                "unscorable_reason": "no seed produced a scorable cascade for this arm",
+                "unscorable_reason": "one or more required seeds were unavailable",
             }
             continue
         summary: dict = {
@@ -882,13 +1033,12 @@ def aggregate_seeds(seed_results: list[dict]) -> dict:
             values = [
                 arm[section][metric]
                 for arm in arm_results
-                if arm.get(section) is not None and arm[section].get(metric) is not None
             ]
-            mean, std, count = mean_std_n(values)
+            unavailable = any(value is None for value in values)
             summary[f"{section}.{metric}"] = {
-                "mean": mean if count else None,
-                "std": std if count else None,
-                "n_seeds": count,
+                "mean": None if unavailable else float(np.mean(values)),
+                "std": None if unavailable else float(np.std(values)),
+                "n_seeds": 0 if unavailable else len(values),
             }
         across[arm_key] = summary
     return across

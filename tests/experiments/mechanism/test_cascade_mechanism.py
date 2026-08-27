@@ -20,12 +20,28 @@ import numpy as np
 import pytest
 
 from esm2_mech.experiments.mechanism.cascade_mechanism import (
+    _add_binary_metric_aliases,
     _round_robin_by_key,
     family_matched_training_rows,
     lof_cluster_assignment,
     size_matched_training_rows,
 )
 from esm2_mech.utils.constants import DN, GOF, LOF
+
+
+def test_binary_stage_aliases_include_prevalence():
+    metrics = {
+        "auroc_1_mean": 0.8,
+        "auprc_1_mean": 0.7,
+        "prevalence_1_mean": 0.3,
+        "ppv_1_mean": 0.6,
+        "npv_1_mean": 0.9,
+    }
+
+    _add_binary_metric_aliases(metrics)
+
+    assert metrics["prevalence_mean"] == 0.3
+    assert metrics["auroc_mean"] == 0.8
 
 
 # ---------------------------------------------------------------------------

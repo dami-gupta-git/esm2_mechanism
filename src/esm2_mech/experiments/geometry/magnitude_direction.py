@@ -18,7 +18,7 @@ from esm2_mech.utils.bootstrap import (
     stack_oof_over_seeds,
     family_or_gene_clusters,
 )
-from esm2_mech.utils.constants import BOOTSTRAP_N_RESAMPLES, MIN_TRAIN_CLASSES, N_SEEDS
+from esm2_mech.utils.constants import BOOTSTRAP_N_RESAMPLES, MECHANISM_CLASSES, N_SEEDS
 from esm2_mech.utils.data import load_pfam_map
 from esm2_mech.utils.io import write_result_json
 from esm2_mech.utils.paths import (
@@ -33,6 +33,7 @@ from esm2_mech.utils.splits import gene_split_cv, family_split_cv
 from esm2_mech.utils.probes import run_mlp_binary_cv, run_mlp_probe_cv, run_logreg_cv
 from esm2_mech.utils.probes import run_logreg_binary_cv
 from esm2_mech.utils.data import embedding_fingerprint
+from esm2_mech.utils.classification import validate_complete_classification_splits
 from esm2_mech.experiments.geometry.data import (
     load_pathogenicity_geometry_inputs,
     mechanism_geometry_provenance,
@@ -72,13 +73,22 @@ def decompose(delta):
     return {"full": delta.astype(np.float32), "mag": mag, "dir": direction}
 
 
-def run_logreg_multi(X, labels, splits, seed=42, genes=None, return_oof=False):
+def run_logreg_multi(
+    X, labels, splits, groups, held_out_unit, seed=42, genes=None, return_oof=False
+):
+    contract = validate_complete_classification_splits(
+        splits, requested_folds=5,
+        eligible_rows=np.concatenate([test for _train, test in splits]),
+        labels=labels, classes=MECHANISM_CLASSES, groups=groups,
+        held_out_unit=held_out_unit,
+    )
     return run_logreg_cv(
         X,
         labels,
         splits,
+        MECHANISM_CLASSES,
+        contract,
         seed=seed,
-        min_train_classes=MIN_TRAIN_CLASSES,
         genes=genes,
         return_oof=return_oof,
     )
@@ -102,6 +112,8 @@ def _read_chance_floor(strategy="most_frequent"):
 
 
 def agg_seeds(per_seed_vals):
+    if any(value is None or not np.isfinite(value) for value in per_seed_vals):
+        return {"mean": None, "std": None, "n": len([v for v in per_seed_vals if v is not None])}
     mean, std, n = mean_std_n(per_seed_vals)
     return {"mean": mean, "std": std, "n": n}
 
@@ -116,8 +128,18 @@ def _pathogenicity_one_seed(seed, feats, y, genes, pfam_map):
     res = {}
     for fname, X in feats.items():
         for split_name, splits in [("gene_split", gs), ("family_split", fs)]:
+            validation_groups = (
+                genes if split_name == "gene_split" else family_validation_groups
+            )
+            contract = validate_complete_classification_splits(
+                splits, requested_folds=5,
+                eligible_rows=np.concatenate([test for _train, test in splits]),
+                labels=y, classes=[0, 1], groups=validation_groups,
+                held_out_unit="gene" if split_name == "gene_split" else "family",
+            )
             lr_agg, lr_oof = run_logreg_binary_cv(
-                X, y, splits, seed=seed, genes=genes, return_oof=True
+                X, y, splits, [0, 1], contract,
+                seed=seed, genes=genes, return_oof=True
             )
             lr = lr_agg.get("auroc_mean")
             res[(fname, split_name, "logreg")] = (lr, lr_oof)
@@ -125,6 +147,8 @@ def _pathogenicity_one_seed(seed, feats, y, genes, pfam_map):
                 X,
                 y,
                 splits,
+                [0, 1],
+                contract,
                 validation_groups=(
                     family_validation_groups if split_name == "family_split" else genes
                 ),
@@ -214,12 +238,28 @@ def _mechanism_one_seed(seed, feats, labels, genes, pfam_map):
                 else family_or_gene_clusters(genes, pfam_map, is_family_split=True)
             )
             lr, lr_oof = run_logreg_multi(
-                X, labels, splits, seed=seed, genes=genes, return_oof=True
+                X,
+                labels,
+                splits,
+                validation_groups,
+                "gene" if split_name == "gene_split" else "family",
+                seed=seed,
+                genes=genes,
+                return_oof=True,
+            )
+            contract = validate_complete_classification_splits(
+                splits, requested_folds=5,
+                eligible_rows=np.concatenate([test for _train, test in splits]),
+                labels=labels, classes=MECHANISM_CLASSES,
+                groups=validation_groups,
+                held_out_unit="gene" if split_name == "gene_split" else "family",
             )
             mlp, mlp_oof = run_mlp_probe_cv(
                 X,
                 labels,
                 splits,
+                MECHANISM_CLASSES,
+                contract,
                 validation_groups=validation_groups,
                 seed=seed,
                 genes=genes,
@@ -347,7 +387,15 @@ def run_biophysical_direction(seeds, stability_dataset=DEFAULT_STABILITY_DATASET
         per_seed = []
         for seed in seeds:
             splits = gene_split_cv(proteins, seed=seed)  # group-holdout by protein
-            r = run_logreg_binary_cv(feats[fname], y_sign, splits, seed=seed)
+            contract = validate_complete_classification_splits(
+                splits, requested_folds=5,
+                eligible_rows=np.concatenate([test for _train, test in splits]),
+                labels=y_sign, classes=[0, 1], groups=proteins,
+                held_out_unit="protein",
+            )
+            r = run_logreg_binary_cv(
+                feats[fname], y_sign, splits, [0, 1], contract, seed=seed
+            )
             per_seed.append(r.get("auroc_mean"))
         c2[fname] = agg_seeds(per_seed)
 

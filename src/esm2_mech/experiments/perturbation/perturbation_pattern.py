@@ -19,6 +19,8 @@ from esm2_mech.utils.paths import (
 print = functools.partial(print, flush=True)
 from esm2_mech.utils.splits import family_split_cv, gene_split_cv
 from esm2_mech.utils.probes import run_logreg_cv
+from esm2_mech.utils.constants import MECHANISM_CLASSES
+from esm2_mech.utils.classification import validate_complete_classification_splits
 
 DATA = str(_DATA_DIR)
 OUT = str(_RESULTS_DIR / "perturbation_pattern")
@@ -134,8 +136,16 @@ def build_gene_features(variants, delta_pos, delta_mean):
     return gene_list, X, labels, len(scalar_feats)
 
 
-def run_probe(X, labels, splits, seed=42):
-    return run_logreg_cv(X, labels, splits, seed=seed)
+def run_probe(X, labels, splits, groups, held_out_unit, seed=42):
+    contract = validate_complete_classification_splits(
+        splits, requested_folds=5,
+        eligible_rows=np.concatenate([test for _train, test in splits]),
+        labels=labels, classes=MECHANISM_CLASSES, groups=groups,
+        held_out_unit=held_out_unit,
+    )
+    return run_logreg_cv(
+        X, labels, splits, MECHANISM_CLASSES, contract, seed=seed
+    )
 
 
 def main():
@@ -162,18 +172,33 @@ def main():
         fs = family_split_cv(gene_list, pfam_map, seed=seed)
 
         seed_res = {}
-        for split_name, splits in [("gene_split", gs), ("family_split", fs)]:
+        split_specs = [
+            ("gene_split", gs, gene_list, "gene"),
+            (
+                "family_split",
+                fs,
+                np.array([pfam_map.get(gene) for gene in gene_list], dtype=object),
+                "family",
+            ),
+        ]
+        for split_name, splits, groups, held_out_unit in split_specs:
             for feat_name, X in [
                 ("baseline_delta_mean", X_baseline),
                 ("scalar_pattern", X_scalar),
                 ("combined", X_combined),
             ]:
                 key = f"{feat_name}_{split_name}"
-                r = run_probe(X, labels, splits, seed=seed)
+                r = run_probe(
+                    X, labels, splits, groups, held_out_unit, seed=seed
+                )
                 seed_res[key] = r
-                f1 = r.get("macro_f1_mean", float("nan"))
-                gof = r.get("auroc_GOF_mean", float("nan"))
-                print(f"  {key}: F1={f1:.3f}  GOF={gof:.3f}")
+                f1 = r.get("macro_f1_mean")
+                gof = r.get("auroc_GOF_mean")
+                if f1 is None:
+                    print(f"  {key}: Unscorable")
+                else:
+                    gof_text = "NA" if gof is None else f"{gof:.3f}"
+                    print(f"  {key}: F1={f1:.3f}  GOF={gof_text}")
         all_results[seed] = seed_res
 
     print("\n=== 5-SEED SUMMARY ===")
@@ -181,17 +206,22 @@ def main():
     keys = list(all_results[0].keys())
     for key in keys:
         f1_vals = [
-            all_results[s][key].get("macro_f1_mean", float("nan")) for s in range(5)
+            all_results[s][key].get("macro_f1_mean") for s in range(5)
         ]
         gof_vals = [
-            all_results[s][key].get("auroc_GOF_mean", float("nan")) for s in range(5)
+            all_results[s][key].get("auroc_GOF_mean") for s in range(5)
         ]
+        unavailable = any(value is None for value in f1_vals + gof_vals)
         summary[key] = {
-            "macro_f1_mean": float(np.nanmean(f1_vals)),
-            "macro_f1_std": float(np.nanstd(f1_vals)),
-            "auroc_GOF_mean": float(np.nanmean(gof_vals)),
-            "auroc_GOF_std": float(np.nanstd(gof_vals)),
+            "status": "unavailable" if unavailable else "success",
+            "macro_f1_mean": None if unavailable else float(np.mean(f1_vals)),
+            "macro_f1_std": None if unavailable else float(np.std(f1_vals)),
+            "auroc_GOF_mean": None if unavailable else float(np.mean(gof_vals)),
+            "auroc_GOF_std": None if unavailable else float(np.std(gof_vals)),
         }
+        if unavailable:
+            print(f"  {key}: Unscorable")
+            continue
         print(f"  {key}:")
         print(
             f'    F1  = {summary[key]["macro_f1_mean"]:.3f} ± {summary[key]["macro_f1_std"]:.3f}'
@@ -211,6 +241,11 @@ def main():
     baseline = summary["baseline_delta_mean_family_split"]
     scalar = summary["scalar_pattern_family_split"]
     combined = summary["combined_family_split"]
+    if any(
+        cell["status"] != "success" for cell in (baseline, scalar, combined)
+    ):
+        print("  Key comparison: Unscorable")
+        return
     print(
         f'  Baseline (mean-pooled delta): F1={baseline["macro_f1_mean"]:.3f}  GOF={baseline["auroc_GOF_mean"]:.3f}'
     )

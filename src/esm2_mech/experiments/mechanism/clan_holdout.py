@@ -11,7 +11,6 @@ import warnings
 from collections import Counter, defaultdict
 
 import numpy as np
-from sklearn.metrics import roc_auc_score, f1_score
 from sklearn.neural_network import MLPClassifier
 from sklearn.preprocessing import LabelEncoder
 from sklearn.neighbors import KNeighborsClassifier
@@ -21,7 +20,14 @@ from esm2_mech.utils.bootstrap import attach_mechanism_ci
 from esm2_mech.utils.constants import BOOTSTRAP_N_RESAMPLES, MECHANISM_CLASSES
 from esm2_mech.utils.io import load_variants_and_delta, write_result_json
 from esm2_mech.utils.data import load_pfam_map
-from esm2_mech.utils.metrics import align_proba, majority_baseline_f1
+from esm2_mech.utils.classification import validate_classification_splits
+from esm2_mech.utils.metrics import (
+    aggregate_folds,
+    align_proba,
+    compute_metrics,
+    empty_aggregate_metrics,
+    majority_baseline_f1,
+)
 from esm2_mech.utils.paths import (
     CONTRASTIVE_AGGREGATE_JSON,
     EMB_VALID_VARIANTS_JSON,
@@ -83,23 +89,24 @@ def evaluate_probe(clf, X_test, y_test, le):
     proba = clf.predict_proba(X_test)
     classes = list(clf.classes_)
 
-    results = {
-        "macro_f1": float(f1_score(y_test, pred, average="macro", zero_division=0)),
-        "n_test": int(len(y_test)),
-        "class_dist_test": {str(k): int(v) for k, v in Counter(y_test).items()},
-    }
-
-    all_classes = list(le.classes_)
-    for ai, cls in enumerate(all_classes):
-        ci = le.transform([cls])[0]
-        y_bin = (y_test == ci).astype(int)
-        if y_bin.sum() > 0 and (1 - y_bin).sum() > 0 and ci in classes:
-            pi = classes.index(ci)
-            if proba[:, pi].std() > 0:
-                results[f"auroc_{cls}"] = float(roc_auc_score(y_bin, proba[:, pi]))
-
     clf_str_classes = np.array(le.inverse_transform(clf.classes_))
-    proba_aligned = align_proba(proba, clf_str_classes, MECHANISM_CLASSES)
+    proba_aligned = align_proba(
+        proba,
+        clf_str_classes,
+        MECHANISM_CLASSES,
+        allow_missing_classes=False,
+    )
+    true_labels = le.inverse_transform(y_test)
+    predicted_labels = le.inverse_transform(pred)
+    results = compute_metrics(
+        true_labels, predicted_labels, proba_aligned, MECHANISM_CLASSES
+    )
+    results["n_test"] = int(len(y_test))
+    results["class_dist_test"] = {
+        str(key): int(value) for key, value in Counter(true_labels).items()
+    }
+    for class_name in MECHANISM_CLASSES:
+        results[f"auroc_{class_name}"] = results["per_class_auroc"][class_name]
     return results, proba_aligned
 
 
@@ -164,22 +171,67 @@ def run_clan_holdout(delta, labels, genes, gene_clan, clan_names, le, seed=42, n
             f"variants={len(q['idxs']):4d} mechs={q['mechs']}"
         )
 
+    splits = []
+    for item in qualifying:
+        test_idx = np.asarray(item["idxs"], dtype=int)
+        train_idx = np.setdiff1d(np.arange(len(delta)), test_idx)
+        splits.append((train_idx, test_idx))
+    eligible_rows = (
+        np.concatenate([test for _train, test in splits])
+        if splits
+        else np.array([], dtype=int)
+    )
+    clan_groups = np.array([gene_clan.get(gene) for gene in genes], dtype=object)
+    split_contract = validate_classification_splits(
+        splits,
+        requested_folds=len(qualifying),
+        eligible_rows=eligible_rows,
+        labels=labels,
+        classes=MECHANISM_CLASSES,
+        required_train_classes=MECHANISM_CLASSES,
+        required_test_classes=None,
+        minimum_test_classes=2,
+        allow_missing_classifier_classes=False,
+        groups=clan_groups,
+        held_out_unit="clan",
+    ) if qualifying else {
+        "status": "unscorable",
+        "requested_folds": 0,
+        "eligible_rows": 0,
+        "classes": list(MECHANISM_CLASSES),
+        "held_out_unit": "clan",
+        "group_count": 0,
+        "failures": [{"scope": "split_set", "reason": "no_qualifying_clans"}],
+    }
+    if split_contract["status"] != "valid":
+        return [], qualifying, None, None, split_contract
+
+    reference_failures = []
+    for fold_idx, (train_idx, test_idx) in enumerate(splits):
+        try:
+            majority_baseline_f1(
+                labels[train_idx], labels[test_idx], MECHANISM_CLASSES
+            )
+        except ValueError as error:
+            reference_failures.append(
+                {"scope": "fold", "fold": fold_idx, "reason": str(error)}
+            )
+    if reference_failures:
+        split_contract = dict(split_contract)
+        split_contract["status"] = "unscorable"
+        split_contract["failures"] = [
+            *split_contract.get("failures", []), *reference_failures
+        ]
+        return [], qualifying, None, None, split_contract
+
     clan_results = []
     oof_y, oof_proba, oof_clan, oof_rows, oof_folds = [], [], [], [], []
 
-    for fold_idx, q in enumerate(qualifying):
+    for fold_idx, (q, (train_idx, test_idx)) in enumerate(zip(qualifying, splits)):
         clan = q["clan"]
         test_idx = np.array(q["idxs"])
-        train_mask = np.ones(len(delta), dtype=bool)
-        train_mask[test_idx] = False
-        train_idx = np.where(train_mask)[0]
-
         y_tr = y[train_idx]
         y_te = y[test_idx]
-
-        if len(set(y_te)) < 2:
-            print(f"  {clan}: skipped (single class in test)")
-            continue
 
         mu = delta[train_idx].mean(0)
         std = delta[train_idx].std(0) + 1e-8
@@ -200,28 +252,49 @@ def run_clan_holdout(delta, labels, genes, gene_clan, clan_names, le, seed=42, n
             oof_clan.append(np.full(len(test_idx), clan, dtype=object))
             oof_rows.append(test_idx)
             oof_folds.append(np.full(len(test_idx), fold_idx, dtype=int))
-        except Exception as e:
-            print(f"    MLP failed: {e}")
-            mlp_res = {"error": str(e)}
-
-        try:
             k = min(10, len(X_tr) - 1)
             knn = KNeighborsClassifier(n_neighbors=k, metric="cosine")
             knn.fit(X_tr, y_tr)
             pred_knn = knn.predict(X_te)
-            knn_f1 = float(f1_score(y_te, pred_knn, average="macro", zero_division=0))
-        except Exception as e:
-            knn_f1 = float("nan")
+            knn_proba = align_proba(
+                knn.predict_proba(X_te),
+                le.inverse_transform(knn.classes_),
+                MECHANISM_CLASSES,
+                allow_missing_classes=False,
+            )
+            knn_metrics = compute_metrics(
+                labels[test_idx],
+                le.inverse_transform(pred_knn),
+                knn_proba,
+                MECHANISM_CLASSES,
+            )
+            maj_f1, _ = majority_baseline_f1(
+                labels[train_idx], labels[test_idx], MECHANISM_CLASSES
+            )
+        except Exception as error:
+            clan_results.append(
+                {
+                    "clan": clan,
+                    "fold": fold_idx,
+                    "status": "failed",
+                    "error_type": type(error).__name__,
+                    "error_message": str(error),
+                }
+            )
+            return clan_results, qualifying, None, None, split_contract
 
-        maj_f1, _ = majority_baseline_f1(y_tr, y_te)
+        knn_f1 = knn_metrics["macro_f1"]
+
+        def metric_text(value):
+            return "NA" if value is None else f"{value:.3f}"
 
         print(
-            f"    MLP F1={mlp_res.get('macro_f1', float('nan')):.3f}  "
-            f"kNN F1={knn_f1:.3f}  "
-            f"majority F1={maj_f1:.3f}  "
-            f"GOF={mlp_res.get('auroc_GOF', float('nan')):.3f}  "
-            f"DN={mlp_res.get('auroc_DN', float('nan')):.3f}  "
-            f"LOF={mlp_res.get('auroc_LOF', float('nan')):.3f}"
+            f"    MLP F1={metric_text(mlp_res['macro_f1'])}  "
+            f"kNN F1={metric_text(knn_f1)}  "
+            f"majority F1={metric_text(maj_f1)}  "
+            f"GOF={metric_text(mlp_res['auroc_GOF'])}  "
+            f"DN={metric_text(mlp_res['auroc_DN'])}  "
+            f"LOF={metric_text(mlp_res['auroc_LOF'])}"
         )
 
         clan_results.append(
@@ -233,6 +306,7 @@ def run_clan_holdout(delta, labels, genes, gene_clan, clan_names, le, seed=42, n
                 "n_genes_test": int(q["n_genes"]),
                 "test_mechs": {k: int(v) for k, v in Counter(labels[test_idx]).items()},
                 "mlp": mlp_res,
+                "knn": knn_metrics,
                 "knn_macro_f1": knn_f1,
                 "majority_macro_f1": maj_f1,
             }
@@ -258,54 +332,82 @@ def run_clan_holdout(delta, labels, genes, gene_clan, clan_names, le, seed=42, n
             seed=seed,
         )
         ci = ci_container["ci"]
-        print(
-            f"\n  Clan-resampled CI (n_clusters={len(set(oof['clan'].tolist()))}, "
-            f"n_resamples={n_boot}): "
-            f"macro_f1 point={ci['macro_f1']['point']} "
-            f"[{ci['macro_f1']['ci_low']}, {ci['macro_f1']['ci_high']}]"
-        )
+        macro_interval = ci["macro_f1"]
+        if macro_interval["ci_suppressed"]:
+            print(
+                "\n  Clan-resampled CI: unavailable "
+                f"({macro_interval['reason']})"
+            )
+        else:
+            print(
+                f"\n  Clan-resampled CI (n_clusters={len(set(oof['clan'].tolist()))}, "
+                f"n_resamples={n_boot}): "
+                f"macro_f1 point={macro_interval['point']} "
+                f"[{macro_interval['ci_low']}, {macro_interval['ci_high']}]"
+            )
 
-    return clan_results, qualifying, ci, oof
+    return clan_results, qualifying, ci, oof, split_contract
 
 
-def aggregate(clan_results, ci=None):
+def aggregate(clan_results, split_contract, ci=None):
     """Weighted and unweighted aggregates across qualifying clans."""
-    mlp_f1s = [
-        r["mlp"].get("macro_f1", float("nan"))
-        for r in clan_results
-        if "error" not in r["mlp"]
+    requested_folds = split_contract["requested_folds"]
+    failed_results = [
+        result
+        for result in clan_results
+        if result.get("status") == "failed" or "mlp" not in result
     ]
-    knn_f1s = [r["knn_macro_f1"] for r in clan_results if "error" not in r["mlp"]]
-    maj_f1s = [r["majority_macro_f1"] for r in clan_results if "error" not in r["mlp"]]
-    weights = [r["n_test"] for r in clan_results if "error" not in r["mlp"]]
+    if (
+        split_contract["status"] != "valid"
+        or len(clan_results) != requested_folds
+        or failed_results
+    ):
+        result = empty_aggregate_metrics(
+            MECHANISM_CLASSES,
+            requested_folds,
+            "split_validation_failed" if split_contract["status"] != "valid" else "runtime_failure",
+        )
+        result.update(
+            {
+                "status": "unscorable" if split_contract["status"] != "valid" else "failed",
+                "n_clans": requested_folds,
+                "completed_folds": sum("mlp" in result for result in clan_results),
+                "split_validation": split_contract,
+                "ci": ci,
+            }
+        )
+        return result
 
-    per_class = defaultdict(list)
-    for r in clan_results:
-        for cls in ("GOF", "DN", "LOF"):
-            v = r["mlp"].get(f"auroc_{cls}")
-            if v is not None and not np.isnan(v):
-                per_class[cls].append(v)
+    shared = aggregate_folds(
+        [result["mlp"] for result in clan_results],
+        MECHANISM_CLASSES,
+        requested_folds,
+    )
+    mlp_f1s = [result["mlp"]["macro_f1"] for result in clan_results]
+    knn_f1s = [result["knn"]["macro_f1"] for result in clan_results]
+    maj_f1s = [result["majority_macro_f1"] for result in clan_results]
+    weights = [result["n_test"] for result in clan_results]
 
     def wmean(vals, ws):
-        if not vals:
-            return float("nan")
         ws = np.array(ws, dtype=float)
         return float(np.average(vals, weights=ws))
 
-    return {
+    shared.update({
+        "status": "success",
         "n_clans": len(clan_results),
-        "mlp_macro_f1_mean": float(np.nanmean(mlp_f1s)) if mlp_f1s else float("nan"),
-        "mlp_macro_f1_std": float(np.nanstd(mlp_f1s)) if mlp_f1s else float("nan"),
+        "mlp_macro_f1_mean": float(np.mean(mlp_f1s)),
+        "mlp_macro_f1_std": float(np.std(mlp_f1s)),
         "mlp_macro_f1_weighted": wmean(mlp_f1s, weights),
-        "knn_macro_f1_mean": float(np.nanmean(knn_f1s)) if knn_f1s else float("nan"),
-        "majority_macro_f1_mean": (
-            float(np.nanmean(maj_f1s)) if maj_f1s else float("nan")
-        ),
+        "knn_macro_f1_mean": float(np.mean(knn_f1s)),
+        "majority_macro_f1_mean": float(np.mean(maj_f1s)),
         "per_class_auroc_mean": {
-            cls: float(np.nanmean(vs)) for cls, vs in per_class.items() if vs
+            class_name: shared[f"auroc_{class_name}_mean"]
+            for class_name in MECHANISM_CLASSES
         },
         "ci": ci,
-    }
+        "split_validation": split_contract,
+    })
+    return shared
 
 
 def main():
@@ -336,16 +438,44 @@ def main():
     print(f"Classes: {list(le.classes_)}")
 
     print("\n=== Clan-level holdout evaluation ===")
-    clan_results, qualifying, ci, _oof = run_clan_holdout(
+    clan_results, qualifying, ci, _oof, split_contract = run_clan_holdout(
         delta, labels, genes, gene_clan, clan_names, le, seed=args.seed, n_boot=args.n_boot
     )
 
-    agg = aggregate(clan_results, ci=ci)
+    agg = aggregate(clan_results, split_contract, ci=ci)
 
     print("\n" + "=" * 60)
     print("AGGREGATE RESULTS")
     print("=" * 60)
     print(f"  Clans evaluated: {agg['n_clans']}")
+    if agg["status"] != "success":
+        print(f"  Result: {agg['status'].capitalize()}")
+        for failure in split_contract.get("failures", []):
+            print(f"  Reason: {failure}")
+
+        family_split_mlp_f1, family_split_contrastive_f1 = _read_live_family_split_refs()
+        results = {
+            "description": (
+                "Leave-one-clan-out evaluation. Train on all variants except clan X, "
+                "test on clan X. Tests whether ESM-2 delta mechanism signal generalises "
+                "to completely unseen protein clans (lookup vs real signal)."
+            ),
+            "seed": args.seed,
+            "n_boot": args.n_boot,
+            "aggregate": agg,
+            "per_clan": clan_results,
+            "references": {
+                "family_split_mlp_f1": family_split_mlp_f1,
+                "family_split_contrastive_f1": family_split_contrastive_f1,
+            },
+        }
+        os.makedirs(args.out_dir, exist_ok=True)
+        out_path = os.path.join(
+            args.out_dir, f"clan_holdout_results_seed{args.seed}.json"
+        )
+        write_result_json(out_path, results, seeds=[args.seed], indent=2)
+        print(f"\nResults written to {out_path}")
+        return
     print(
         f"  MLP macro-F1 (unweighted mean ± std): "
         f"{agg['mlp_macro_f1_mean']:.3f} ± {agg['mlp_macro_f1_std']:.3f}"
@@ -394,12 +524,14 @@ def main():
         print("    All apparent mechanism signal is clan/family memorisation.")
         print("    This is the definitive negative result.")
 
-    if ci is not None:
+    if ci is not None and not ci["macro_f1"].get("ci_suppressed", False):
         print(
             f"\nClan-resampled CI: macro_f1 = {ci['macro_f1']['point']:.3f} "
             f"[{ci['macro_f1']['ci_low']}, {ci['macro_f1']['ci_high']}] "
             f"(n_clusters={ci['macro_f1']['n_clusters']})"
         )
+    elif ci is not None:
+        print("\nClan-resampled CI: unavailable (blocked_by_audit_1_4)")
 
     results = {
         "description": (

@@ -13,10 +13,11 @@ from collections import Counter, defaultdict
 import numpy as np
 
 from esm2_mech.utils.bootstrap import (
+    INTERVAL_GATE_REASON,
     attach_mechanism_ci,
-    average_oof_over_seeds,
-    cluster_bootstrap_ci,
     label_permutation_pvalue,
+    oof_score_arms,
+    score_within_folds,
     stack_oof_over_seeds,
 )
 from esm2_mech.utils.constants import (
@@ -40,7 +41,8 @@ from esm2_mech.utils.paths import (
     WITHIN_FAMILY_MECHANISM_JSON,
 )
 from esm2_mech.utils.probes import run_logreg_cv, run_mlp_cv
-from esm2_mech.utils.splits import gene_split_cv
+from esm2_mech.utils.splits import fold_index_array, gene_split_cv
+from esm2_mech.utils.classification import validate_classification_splits
 
 from sklearn.metrics import roc_auc_score
 
@@ -50,10 +52,6 @@ print = functools.partial(print, flush=True)
 
 MIN_GENES = 6
 MIN_CLASSES = 2
-
-# gene_split_cv defaults (>=10 train / >=5 test) drop every fold of small families; relax for within-family sizes.
-MIN_TRAIN = 4
-MIN_TEST = 1
 
 VIEW_WT = "wt_only"
 VIEW_DELTA = "delta"
@@ -143,14 +141,24 @@ def _probe_one_family(
     }
 
     for seed in range(n_seeds):
-        splits = gene_split_cv(
-            genes_rows, n_folds=n_folds, seed=seed,
-            min_train=MIN_TRAIN, min_test=MIN_TEST,
+        splits = gene_split_cv(genes_rows, n_folds=n_folds, seed=seed)
+        split_contract = validate_classification_splits(
+            splits,
+            requested_folds=n_folds,
+            eligible_rows=np.concatenate([test for _train, test in splits]),
+            labels=y,
+            classes=classes,
+            required_train_classes=None,
+            required_test_classes=None,
+            allow_missing_classifier_classes=True,
+            minimum_train_classes=2,
+            groups=genes_rows,
+            held_out_unit="gene",
         )
         for view, feature_matrix in features_by_view.items():
             for probe_name, probe_fn in probes.items():
                 res, oof = probe_fn(
-                    feature_matrix, y, splits, classes=classes, seed=seed,
+                    feature_matrix, y, splits, classes, split_contract, seed=seed,
                     label=f"{view}:{probe_name}", genes=genes_rows, return_oof=True,
                     **extra_kwargs[probe_name],
                 )
@@ -166,11 +174,13 @@ def _probe_one_family(
                     )
 
     def summarize(values):
-        clean = [val for val in values if not np.isnan(val)]
+        unavailable = [index for index, value in enumerate(values) if np.isnan(value)]
         return {
-            "mean": float(np.mean(clean)) if clean else float("nan"),
-            "std": float(np.std(clean)) if clean else float("nan"),
+            "mean": None if unavailable else float(np.mean(values)),
+            "std": None if unavailable else float(np.std(values)),
             "per_seed": values,
+            "missing": bool(unavailable),
+            "unavailable_seeds": unavailable,
         }
 
     out = {}
@@ -179,14 +189,22 @@ def _probe_one_family(
         out[view] = {}
         oof_out[view] = {}
         for probe_name in probes:
-            seed_avg_oof = average_oof_over_seeds(oof_by_view_probe[view][probe_name])
+            all_seeds_scorable = all(
+                oof is not None for oof in oof_by_view_probe[view][probe_name]
+            )
+            seed_avg_oof = (
+                stack_oof_over_seeds(oof_by_view_probe[view][probe_name])
+                if all_seeds_scorable
+                else None
+            )
             stacked_oof = (
                 stack_oof_over_seeds(oof_by_view_probe[view][probe_name])
-                if compute_ci
+                if compute_ci and all_seeds_scorable
                 else None
             )
             oof_out[view][probe_name] = seed_avg_oof
             entry = {
+                "status": "success" if all_seeds_scorable else "unavailable",
                 "macro_f1": summarize(per_seed_f1[view][probe_name]),
                 "auroc": {
                     cls: summarize(per_seed_auroc[view][probe_name][cls])
@@ -207,24 +225,60 @@ def _probe_one_family(
 
 
 def _gof_auroc_from_oof(oof, classes=MECHANISM_CLASSES):
-    """Pooled one-vs-rest GOF AUROC from a stacked OOF dict."""
+    """Mean one-vs-rest GOF AUROC across fitted seed/fold blocks."""
     gof_col = classes.index(GOF)
-    y_bin = (np.asarray(oof["y_true"]) == GOF).astype(int)
-    if y_bin.sum() == 0 or y_bin.sum() == len(y_bin):
-        return None
-    return float(roc_auc_score(y_bin, np.asarray(oof["proba"])[:, gof_col]))
+    y_true = np.asarray(oof["y_true"])
+    arms = oof_score_arms(oof, "within-family pooled GOF AUROC")
+
+    def _fold_auroc(block, probabilities):
+        y_binary = (y_true[block] == GOF).astype(int)
+        if y_binary.sum() == 0 or y_binary.sum() == len(y_binary):
+            return None
+        return float(roc_auc_score(y_binary, probabilities[block, gof_col]))
+
+    return score_within_folds(np.arange(len(y_true)), arms, _fold_auroc)
 
 
 def _stack_oof(oof_list):
-    """Concatenate per-family seed-averaged OOF dicts into one pooled OOF dict."""
+    """Concatenate families while preserving each fitted seed/fold block."""
     valid = [oof for oof in oof_list if oof is not None and len(oof["y_true"])]
     if not valid:
         return None
-    return {
+    output = {
         "y_true": np.concatenate([oof["y_true"] for oof in valid]),
-        "proba": np.concatenate([oof["proba"] for oof in valid]),
         "genes": np.concatenate([np.asarray(oof["genes"], dtype=object) for oof in valid]),
+        "row_ids": np.arange(sum(len(oof["y_true"]) for oof in valid)),
     }
+    if all("proba_by_seed" in oof for oof in valid):
+        seed_counts = {len(oof["proba_by_seed"]) for oof in valid}
+        if len(seed_counts) != 1:
+            raise ValueError("families have different numbers of OOF seeds")
+        n_seeds = seed_counts.pop()
+        output["proba_by_seed"] = []
+        output["folds_by_seed"] = []
+        for seed_index in range(n_seeds):
+            output["proba_by_seed"].append(
+                np.concatenate([oof["proba_by_seed"][seed_index] for oof in valid])
+            )
+            fold_blocks = []
+            fold_offset = 0
+            for oof in valid:
+                folds = np.asarray(oof["folds_by_seed"][seed_index], dtype=int)
+                fold_blocks.append(folds + fold_offset)
+                fold_offset += int(folds.max()) + 1
+            output["folds_by_seed"].append(np.concatenate(fold_blocks))
+        return output
+    if not all("proba" in oof and "folds" in oof for oof in valid):
+        raise KeyError("pooled OOF inputs must retain folds and probabilities")
+    output["proba"] = np.concatenate([oof["proba"] for oof in valid])
+    fold_blocks = []
+    fold_offset = 0
+    for oof in valid:
+        folds = np.asarray(oof["folds"], dtype=int)
+        fold_blocks.append(folds + fold_offset)
+        fold_offset += int(folds.max()) + 1
+    output["folds"] = np.concatenate(fold_blocks)
+    return output
 
 
 def _run_delta_gof_auroc_for_labels(
@@ -240,21 +294,34 @@ def _run_delta_gof_auroc_for_labels(
             continue
         seed_oofs = []
         for seed in range(n_seeds):
-            splits = gene_split_cv(
-                inp["genes"], n_folds=n_folds, seed=seed,
-                min_train=MIN_TRAIN, min_test=MIN_TEST,
+            splits = gene_split_cv(inp["genes"], n_folds=n_folds, seed=seed)
+            split_contract = validate_classification_splits(
+                splits,
+                requested_folds=n_folds,
+                eligible_rows=np.concatenate([test for _train, test in splits]),
+                labels=labels_fam,
+                classes=present,
+                required_train_classes=None,
+                required_test_classes=None,
+                allow_missing_classifier_classes=True,
+                minimum_train_classes=2,
+                groups=inp["genes"],
+                held_out_unit="gene",
             )
             _, oof = run_mlp_cv(
-                inp["X"], labels_fam, splits, classes=present, seed=seed,
+                inp["X"], labels_fam, splits, present, split_contract, seed=seed,
                 genes=inp["genes"], return_oof=True, label="perm",
                 hidden=mlp_hidden, max_iter=mlp_max_iter,
             )
             if oof is not None:
                 oof["proba"] = align_proba(
-                    oof["proba"], np.array(present), MECHANISM_CLASSES
+                    oof["proba"],
+                    np.array(present),
+                    MECHANISM_CLASSES,
+                    allow_missing_classes=True,
                 )
             seed_oofs.append(oof)
-        per_family_oof.append(average_oof_over_seeds(seed_oofs))
+        per_family_oof.append(stack_oof_over_seeds(seed_oofs))
     pooled = _stack_oof(per_family_oof)
     if pooled is None:
         return None
@@ -282,7 +349,6 @@ def pooled_gof_test(
         "families": gof_families,
         "chance_auroc": CHANCE_AUROC,
     }
-    gof_col = MECHANISM_CLASSES.index(GOF)
     for probe_name in probes:
         pooled = _stack_oof([delta_oof_by_family[fam][probe_name] for fam in gof_families])
         if pooled is None:
@@ -296,28 +362,42 @@ def pooled_gof_test(
             "n_gof_variants": int((np.asarray(pooled["y_true"]) == GOF).sum()),
         }
         if compute_ci:
-            def _gof_auroc(rows, _pooled=pooled):
-                y_bin = (np.asarray(_pooled["y_true"])[rows] == GOF).astype(int)
-                if y_bin.sum() == 0 or y_bin.sum() == len(y_bin):
-                    return None
-                return float(roc_auc_score(y_bin, np.asarray(_pooled["proba"])[rows, gof_col]))
-
-            probe_res["ci"] = cluster_bootstrap_ci(
-                pooled["genes"], _gof_auroc,
-                n_resamples=BOOTSTRAP_N_RESAMPLES, ci_level=BOOTSTRAP_CI_LEVEL,
-            )
+            probe_res["ci"] = {
+                "point": point,
+                "ci_low": None,
+                "ci_high": None,
+                "missing": True,
+                "reason": INTERVAL_GATE_REASON,
+                "n_resamples": 0,
+                "n_resamples_total": 0,
+                "n_clusters": probe_res["n_genes"],
+            }
         out[probe_name] = probe_res
         ci = probe_res.get("ci", {})
         if ci.get("ci_low") is not None and ci.get("ci_high") is not None:
             ci_str = f"95% CI [{ci['ci_low']:.3f}, {ci['ci_high']:.3f}]"
         else:
             ci_str = "95% CI suppressed (too few valid resamples)"
-        print(
-            f"  {probe_name}: GOF AUROC = {point:.3f}  {ci_str}  "
-            f"(n={probe_res['n_genes']} genes, {probe_res['n_gof_variants']} GOF variants)"
-        )
+        if point is None:
+            print(
+                f"  {probe_name}: GOF AUROC = Unscorable "
+                "(at least one required fold has a constant GOF target)"
+            )
+        else:
+            print(
+                f"  {probe_name}: GOF AUROC = {point:.3f}  {ci_str}  "
+                f"(n={probe_res['n_genes']} genes, "
+                f"{probe_res['n_gof_variants']} GOF variants)"
+            )
 
-    if n_permutations > 0:
+    if n_permutations > 0 and out["mlp"]["point"] is None:
+        out["permutation_mlp"] = {
+            "observed": None,
+            "p_value": None,
+            "missing": True,
+            "reason": "observed_fold_aware_gof_auroc_unavailable",
+        }
+    elif n_permutations > 0:
         inputs = {fam: family_inputs[fam] for fam in gof_families}
         observed = _run_delta_gof_auroc_for_labels(
             inputs, {fam: inputs[fam]["y"] for fam in gof_families}, n_seeds, n_folds,
@@ -337,8 +417,20 @@ def pooled_gof_test(
 
         flat_labels = np.concatenate([inputs[fam]["y"] for fam in gof_families])
         flat_genes = np.concatenate([inputs[fam]["genes"] for fam in gof_families])
+        flat_folds = []
+        fold_offset = 0
+        for family in gof_families:
+            family_splits = gene_split_cv(
+                inputs[family]["genes"], n_folds=n_folds, seed=0
+            )
+            family_folds = fold_index_array(
+                family_splits, len(inputs[family]["genes"])
+            )
+            flat_folds.append(family_folds + fold_offset)
+            fold_offset += n_folds
         perm = label_permutation_pvalue(
             _run_metric, flat_labels, statistic="auroc_GOF", groups=flat_genes,
+            folds=np.concatenate(flat_folds),
             n_permutations=n_permutations, alternative="greater",
         )
         perm["observed"] = observed if observed is not None else perm.get("observed")
@@ -354,6 +446,84 @@ def pooled_gof_test(
         )
 
     return out
+
+
+def _within_family_majority_reference(y, genes, classes, n_seeds, n_folds):
+    """Calculate the class-only reference from each training fold."""
+    per_seed = []
+    seed_values = []
+    for seed in range(n_seeds):
+        splits = gene_split_cv(genes, n_folds=n_folds, seed=seed)
+        contract = validate_classification_splits(
+            splits,
+            requested_folds=n_folds,
+            eligible_rows=np.concatenate([test for _train, test in splits]),
+            labels=y,
+            classes=classes,
+            required_train_classes=None,
+            required_test_classes=None,
+            allow_missing_classifier_classes=True,
+            minimum_train_classes=2,
+            groups=genes,
+            held_out_unit="gene",
+        )
+        if contract["status"] != "valid":
+            per_seed.append(
+                {
+                    "seed": seed,
+                    "status": "unscorable",
+                    "split_validation": contract,
+                }
+            )
+            continue
+        fold_values = []
+        fold_majorities = []
+        try:
+            for train_rows, test_rows in splits:
+                value, majority_class = majority_baseline_f1(
+                    y[train_rows], y[test_rows], classes
+                )
+                fold_values.append(value)
+                fold_majorities.append(majority_class)
+        except ValueError as error:
+            per_seed.append(
+                {
+                    "seed": seed,
+                    "status": "unscorable",
+                    "reason": str(error),
+                    "split_validation": contract,
+                }
+            )
+            continue
+        seed_value = float(np.mean(fold_values))
+        seed_values.append(seed_value)
+        per_seed.append(
+            {
+                "seed": seed,
+                "status": "success",
+                "macro_f1_mean": seed_value,
+                "fold_macro_f1": fold_values,
+                "fold_majority_classes": fold_majorities,
+                "split_validation": contract,
+            }
+        )
+    if len(seed_values) != n_seeds:
+        return {
+            "status": "unavailable",
+            "classes": list(classes),
+            "macro_f1_mean": None,
+            "macro_f1_std": None,
+            "per_seed": per_seed,
+            "reason": "one or more required seeds are unscorable",
+        }
+    return {
+        "status": "success",
+        "classes": list(classes),
+        "macro_f1_mean": float(np.mean(seed_values)),
+        "macro_f1_std": float(np.std(seed_values)),
+        "per_seed": per_seed,
+        "reason": None,
+    }
 
 
 def probe_phase(
@@ -397,7 +567,9 @@ def probe_phase(
             "n_variants": int(row_mask.sum()),
             "classes": present_classes,
             "gene_class_counts": dict(class_counts),
-            "majority_baseline_f1": majority_baseline_f1(y, y)[0],
+            "majority_reference": _within_family_majority_reference(
+                y, genes_rows, present_classes, n_seeds, n_folds
+            ),
             **family_res,
         }
         delta_oof_by_family[family] = family_oof[VIEW_DELTA]
@@ -424,18 +596,22 @@ def _print_headline(results):
     print("HEADLINE - within-family mechanism: delta vs wt_only macro-F1")
     print("=" * 78)
     for family, res in results["by_family"].items():
-        base = res["majority_baseline_f1"]
+        base = res["majority_reference"]["macro_f1_mean"]
+        base_text = "Unscorable" if base is None else f"{base:.3f}"
         line = (
             f"  {family:9s} n={res['n_genes']:>2}g/{res['n_variants']:>4}v  "
-            f"base={base:.3f}"
+            f"base={base_text}"
         )
         for probe_name in results["probes"]:
             wt_f1 = res[VIEW_WT][probe_name]["macro_f1"]
             delta_f1 = res[VIEW_DELTA][probe_name]["macro_f1"]
-            line += (
-                f"  | {probe_name}: wt={wt_f1['mean']:.3f}+/-{wt_f1['std']:.3f} "
-                f"delta={delta_f1['mean']:.3f}+/-{delta_f1['std']:.3f}"
-            )
+            if wt_f1["mean"] is None or delta_f1["mean"] is None:
+                line += f"  | {probe_name}: Unscorable"
+            else:
+                line += (
+                    f"  | {probe_name}: wt={wt_f1['mean']:.3f}+/-{wt_f1['std']:.3f} "
+                    f"delta={delta_f1['mean']:.3f}+/-{delta_f1['std']:.3f}"
+                )
         print(line)
 
 

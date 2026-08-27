@@ -13,17 +13,19 @@ import numpy as np
 from scipy.spatial.distance import cdist
 from scipy.stats import pearsonr
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import accuracy_score, f1_score, silhouette_score
+from sklearn.metrics import accuracy_score, silhouette_score
 from sklearn.model_selection import StratifiedKFold
 from sklearn.neighbors import NearestNeighbors
 
 from esm2_mech.utils.bootstrap import (
+    INTERVAL_GATE_REASON,
     cluster_bootstrap_ci,
     cluster_subsample_ci,
     folds_to_arms,
     score_within_folds,
     within_stratum_bootstrap_ci,
 )
+from esm2_mech.utils.classification import validate_complete_classification_splits
 from esm2_mech.utils.constants import BOOTSTRAP_N_RESAMPLES, N_SEEDS
 from esm2_mech.utils.data import (
     embedding_fingerprint,
@@ -34,7 +36,14 @@ from esm2_mech.utils.data import (
     validate_embedding_variant_identity,
 )
 from esm2_mech.utils.io import write_result_json
-from esm2_mech.utils.metrics import fold_macro_f1, majority_baseline_f1, mean_std_n
+from esm2_mech.utils.metrics import (
+    aggregate_folds,
+    align_proba,
+    compute_metrics,
+    fold_macro_f1,
+    majority_baseline_f1,
+    mean_std_n,
+)
 from esm2_mech.utils.paths import (
     EMB_MUT_MEAN,
     EMB_VALID_VARIANTS_JSON,
@@ -175,7 +184,7 @@ def within_between_ratio(emb, families, n_shuffles=20, seed=42):
 
 def family_probe(
     gene_emb, gene_families, seed=42, min_family_size=MIN_FAMILY_SIZE_PROBE,
-    n_folds=5, return_oof=False,
+    n_folds=3, return_oof=False,
 ):
     """Linear probe predicting Pfam family from gene-level embedding.
 
@@ -196,44 +205,82 @@ def family_probe(
     y = np.array(gene_families)[mask]
     classes = sorted(set(y))
 
-    # n_splits cannot exceed the smallest kept-family size.
     min_kept_size = min(c for f, c in fam_counts.items() if f in kept)
-    n_splits = min(n_folds, min_kept_size)
-    if n_splits < 2:
-        result = {"note": "smallest kept family too small for CV"}
+    if min_kept_size < n_folds:
+        result = {
+            "status": "unscorable",
+            "note": "smallest kept family has fewer rows than the declared fold count",
+            "requested_folds": n_folds,
+            "minimum_family_rows": min_kept_size,
+        }
         return (result, None) if return_oof else result
 
-    _, majority_overall = majority_baseline_f1(y, y)
-    skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=seed)
+    skf = StratifiedKFold(n_splits=n_folds, shuffle=True, random_state=seed)
+    splits = list(skf.split(X, y))
+    contract = validate_complete_classification_splits(
+        splits,
+        requested_folds=n_folds,
+        eligible_rows=np.arange(len(y)),
+        labels=y,
+        classes=classes,
+        groups=None,
+        held_out_unit=None,
+    )
+    if contract["status"] != "valid":
+        result = {
+            "status": "unscorable",
+            "note": "family-probe split validation failed",
+            "split_validation": contract,
+            "requested_folds": n_folds,
+            "completed_folds": 0,
+        }
+        return (result, None) if return_oof else result
 
-    accs, f1s, baseline_accs = [], [], []
+    accs, baseline_accs, fold_metrics = [], [], []
     oof_y, oof_pred, oof_folds = [], [], []
-    for fold_i, (train_idx, test_idx) in enumerate(skf.split(X, y)):
-        if len(set(y[train_idx])) < 2:
-            continue
+    for fold_i, (train_idx, test_idx) in enumerate(splits):
         clf = LogisticRegression(max_iter=500, C=1.0, solver="lbfgs", random_state=seed)
         clf.fit(X[train_idx], y[train_idx])
         pred = clf.predict(X[test_idx])
-        baseline_pred = np.full_like(y[test_idx], majority_overall)
-        accs.append(float(accuracy_score(y[test_idx], pred)))
-        f1s.append(
-            float(f1_score(y[test_idx], pred, labels=classes, average="macro", zero_division=0))
+        proba = align_proba(
+            clf.predict_proba(X[test_idx]),
+            clf.classes_,
+            classes,
+            allow_missing_classes=False,
         )
-        baseline_accs.append(float(accuracy_score(y[test_idx], baseline_pred)))
+        try:
+            _, fold_majority = majority_baseline_f1(
+                y[train_idx], y[test_idx], classes
+            )
+            baseline_pred = np.full_like(y[test_idx], fold_majority)
+            baseline_accs.append(float(accuracy_score(y[test_idx], baseline_pred)))
+        except ValueError:
+            baseline_accs.append(None)
+        accs.append(float(accuracy_score(y[test_idx], pred)))
+        fold_metrics.append(compute_metrics(y[test_idx], pred, proba, classes))
         if return_oof:
             oof_y.append(y[test_idx])
             oof_pred.append(pred)
             oof_folds.append(np.full(len(test_idx), fold_i, dtype=int))
 
-    if not accs:
-        result = {"note": "all folds failed"}
-        return (result, None) if return_oof else result
+    aggregate = aggregate_folds(fold_metrics, classes, n_folds)
     result = {
+        **aggregate,
+        "status": "success",
         "accuracy": float(np.mean(accs)),
         "accuracy_std": float(np.std(accs)),
-        "macro_f1": float(np.mean(f1s)),
-        "majority_baseline_acc": float(np.mean(baseline_accs)),
-        "n_folds": len(accs),
+        "macro_f1": aggregate["macro_f1_mean"],
+        "majority_baseline_acc": (
+            None
+            if any(value is None for value in baseline_accs)
+            else float(np.mean(baseline_accs))
+        ),
+        "n_folds": n_folds,
+        "requested_folds": n_folds,
+        "completed_folds": n_folds,
+        "eligible_rows": int(len(y)),
+        "out_of_fold_rows": int(len(y)),
+        "split_validation": contract,
         "n_genes": int(mask.sum()),
         "n_families": int(len(set(y))),
     }
@@ -248,25 +295,13 @@ def family_probe(
             "families": y_true,
             "folds": np.concatenate(oof_folds),
             "classes": classes,
+            "row_ids": np.arange(len(y)),
         }
     return result, oof
 
 
 def _family_probe_bootstrap_ci(oof, n_resamples, seed):
-    """Bootstrap CI on the family probe's accuracy and macro-F1, from its OOF rows.
-
-    Resamples genes inside each (family, fold) cell rather than inside each family as
-    a whole. The family is this probe's prediction target, so dropping families from a
-    draw changes the class set the macro average runs over and moves the value
-    systematically; the reported point estimate then sits outside its own interval.
-    Resampling within family alone does not fully fix this: a family's rows are spread
-    across folds by the stratified split, and pooling them before resampling can, by
-    chance, draw a family's rows entirely out of one of its folds, starving that fold's
-    block in score_within_folds and forcing the whole resample to be discarded (or, for
-    families that keep some rows in a fold, silently shifting that fold's class
-    balance). Resampling within each (family, fold) cell keeps every family's per-fold
-    row count fixed across draws, matching the point estimate, which is a fold mean.
-    """
+    """Return point estimates with classification intervals gated by audit 1.4."""
     y_true, pred, classes = oof["y_true"], oof["pred"], oof["classes"]
     arms = folds_to_arms(pred, oof["folds"])
 
@@ -276,26 +311,22 @@ def _family_probe_bootstrap_ci(oof, n_resamples, seed):
     def _fold_macro_f1(block, arm_pred):
         return fold_macro_f1(y_true, block, arm_pred, classes)
 
-    def _scored(fold_fn):
-        return lambda rows: score_within_folds(rows, arms, fold_fn)
-
-    family_fold_strata = np.array(
-        [f"{family}::{fold}" for family, fold in zip(oof["families"], oof["folds"])],
-        dtype=object,
-    )
-    reasons = {
-        "accuracy": None,  # accuracy never returns None; a discard here can't happen
-        "macro_f1": (
-            "a (family, fold) stratum's resampled rows lost a class — the target "
-            "is the family itself, so this is a genuine class-loss discard"
-        ),
+    rows = np.arange(len(y_true))
+    points = {
+        "accuracy": score_within_folds(rows, arms, _fold_accuracy),
+        "macro_f1": score_within_folds(rows, arms, _fold_macro_f1),
     }
     return {
-        name: within_stratum_bootstrap_ci(
-            family_fold_strata, _scored(fold_fn), n_resamples=n_resamples, seed=seed,
-            discard_reason=reasons[name],
-        )
-        for name, fold_fn in (("accuracy", _fold_accuracy), ("macro_f1", _fold_macro_f1))
+        name: {
+            "point": point,
+            "ci_low": None,
+            "ci_high": None,
+            "missing": True,
+            "reason": INTERVAL_GATE_REASON,
+            "n_resamples": 0,
+            "n_resamples_total": 0,
+        }
+        for name, point in points.items()
     }
 
 
@@ -478,7 +509,7 @@ def main():
 
         # 4. Family probe (gene-level) — multi-seed accuracy/macro-F1, plus a
         # cluster-bootstrap CI (resampled at the family level) from seed 0's OOF.
-        per_seed_acc, per_seed_f1 = [], []
+        per_seed_probes = []
         probe = None
         probe_oof = None
         for seed in range(args.seeds):
@@ -490,10 +521,15 @@ def main():
             )
             if seed == 0:
                 probe, probe_oof = seed_probe, seed_oof
-            if "accuracy" in seed_probe:
-                per_seed_acc.append(seed_probe["accuracy"])
-                per_seed_f1.append(seed_probe["macro_f1"])
-        if per_seed_acc:
+            per_seed_probes.append(seed_probe)
+        unavailable_seeds = [
+            seed
+            for seed, seed_probe in enumerate(per_seed_probes)
+            if seed_probe.get("status") != "success"
+        ]
+        if not unavailable_seeds:
+            per_seed_acc = [seed_probe["accuracy"] for seed_probe in per_seed_probes]
+            per_seed_f1 = [seed_probe["macro_f1"] for seed_probe in per_seed_probes]
             acc_mean, acc_std, n_seeds_used = mean_std_n(per_seed_acc)
             f1_mean, f1_std, _ = mean_std_n(per_seed_f1)
             probe_seed0 = probe
@@ -517,13 +553,26 @@ def main():
                     "macro_f1": probe_seed0["macro_f1"],
                 }
                 probe["ci"] = _family_probe_bootstrap_ci(probe_oof, args.n_boot, seed=0)
+        elif per_seed_probes:
+            probe = {
+                "status": "unavailable",
+                "accuracy": None,
+                "macro_f1": None,
+                "n_seeds": len(per_seed_probes),
+                "unavailable_seeds": unavailable_seeds,
+                "per_seed": per_seed_probes,
+            }
         view_res["family_probe"] = probe
-        if probe and "accuracy" in probe:
+        if probe and probe.get("accuracy") is not None:
+            baseline = probe.get("majority_baseline_acc")
+            baseline_text = "unavailable" if baseline is None else f"{baseline:.3f}"
             print(
                 f"  family probe accuracy: {probe['accuracy']:.3f}  "
-                f"(majority baseline {probe['majority_baseline_acc']:.3f}, "
+                f"(majority baseline {baseline_text}, "
                 f"{probe['n_families']} families)"
             )
+        elif probe:
+            print("  family probe: Unscorable")
 
         # 5. Per-gene: family-distance ratio vs mechanism-isolation
         #    For each gene, distance to same-family neighbors / distance to others.
@@ -594,11 +643,17 @@ def main():
     wt_knn5_null = wt_view.get("knn5_purity_null", float("nan"))
     wt_knn5_z = wt_view.get("knn5_purity_z", float("nan"))
     delta_knn5 = delta_view.get("knn5_purity", float("nan"))
-    wt_probe_acc = wt_view.get("family_probe", {}).get("accuracy", float("nan"))
-    wt_probe_base = wt_view.get("family_probe", {}).get("majority_baseline_acc", float("nan"))
+    wt_probe_acc = wt_view.get("family_probe", {}).get("accuracy")
+    wt_probe_acc_text = (
+        "unavailable" if wt_probe_acc is None else f"{wt_probe_acc:.3f}"
+    )
+    wt_probe_base = wt_view.get("family_probe", {}).get("majority_baseline_acc")
+    wt_probe_base_text = (
+        "unavailable" if wt_probe_base is None else f"{wt_probe_base:.3f}"
+    )
     print(
         f"WT  embeddings: k=5 family purity={wt_knn5:.3f} (null {wt_knn5_null:.3f}, z={wt_knn5_z:+.1f})  "
-        f"family-probe acc={wt_probe_acc:.3f} (majority {wt_probe_base:.3f})"
+        f"family-probe acc={wt_probe_acc_text} (majority {wt_probe_base_text})"
     )
     print(f"Δ   embeddings: k=5 family purity={delta_knn5:.3f}")
     # k=5 purity z-score is the primary signal — silhouette is unreliable in

@@ -14,11 +14,12 @@ import functools
 
 print = functools.partial(print, flush=True)
 from esm2_mech.utils.constants import (
-    DELTA_MEAN_FEATURE, DELTA_POS_FEATURE, N_SEEDS, SPLIT_FAMILY, SPLIT_GENE, nonlinear_key,
+    DELTA_MEAN_FEATURE, DELTA_POS_FEATURE, MECHANISM_CLASSES, N_SEEDS, SPLIT_FAMILY, SPLIT_GENE, nonlinear_key,
 )
 from esm2_mech.utils.splits import gene_split_cv, family_split_cv
 from esm2_mech.utils.probes import run_logreg_binary_cv, run_mlp_binary_cv, run_mlp_probe_cv
 from esm2_mech.utils.bootstrap import family_or_gene_clusters
+from esm2_mech.utils.classification import validate_complete_classification_splits
 from esm2_mech.utils.io import atomic_write_json, load_json_or_discard, write_result_json
 from esm2_mech.utils.paths import (
     PFAM_JSON,
@@ -92,16 +93,28 @@ def run_seed(seed, pfam_map, out_dir):
         family_validation_groups = family_or_gene_clusters(
             genes, pfam_map, is_family_split=True
         )
+        gene_contract = validate_complete_classification_splits(
+            gs, requested_folds=5,
+            eligible_rows=np.concatenate([test for _train, test in gs]),
+            labels=labels, classes=MECHANISM_CLASSES, groups=genes,
+            held_out_unit="gene",
+        )
+        family_contract = validate_complete_classification_splits(
+            fs, requested_folds=5,
+            eligible_rows=np.concatenate([test for _train, test in fs]),
+            labels=labels, classes=MECHANISM_CLASSES,
+            groups=family_validation_groups, held_out_unit="family",
+        )
         geras_results = {}
         for feat_name, X in [(DELTA_MEAN_FEATURE, dm), (DELTA_POS_FEATURE, dp)]:
             print(f"  MLP gene-split {feat_name}")
             geras_results[nonlinear_key("mlp", feat_name, SPLIT_GENE)] = run_mlp_probe_cv(
-                X, labels, gs, validation_groups=genes,
+                X, labels, gs, MECHANISM_CLASSES, gene_contract, validation_groups=genes,
                 seed=seed, genes=genes, label=f"{feat_name}_gene"
             )
             print(f"  MLP family-split {feat_name}")
             geras_results[nonlinear_key("mlp", feat_name, SPLIT_FAMILY)] = run_mlp_probe_cv(
-                X, labels, fs, validation_groups=family_validation_groups,
+                X, labels, fs, MECHANISM_CLASSES, family_contract, validation_groups=family_validation_groups,
                 seed=seed, genes=genes, label=f"{feat_name}_family"
             )
         write_result_json(geras_out, geras_results, seeds=[seed], indent=2)
@@ -119,15 +132,27 @@ def run_seed(seed, pfam_map, out_dir):
         family_validation_groups = family_or_gene_clusters(
             genes, pfam_map, is_family_split=True
         )
+        gene_contract = validate_complete_classification_splits(
+            gs, requested_folds=5,
+            eligible_rows=np.concatenate([test for _train, test in gs]),
+            labels=labels, classes=MECHANISM_CLASSES, groups=genes,
+            held_out_unit="gene",
+        )
+        family_contract = validate_complete_classification_splits(
+            fs, requested_folds=5,
+            eligible_rows=np.concatenate([test for _train, test in fs]),
+            labels=labels, classes=MECHANISM_CLASSES,
+            groups=family_validation_groups, held_out_unit="family",
+        )
         merged_results = {}
         print(f"  MLP gene-split delta_mean")
         merged_results[MLP_DELTA_MEAN_GENE] = run_mlp_probe_cv(
-            dm, labels, gs, validation_groups=genes,
+            dm, labels, gs, MECHANISM_CLASSES, gene_contract, validation_groups=genes,
             seed=seed, genes=genes, label="delta_mean_gene"
         )
         print(f"  MLP family-split delta_mean")
         merged_results[MLP_DELTA_MEAN_FAMILY] = run_mlp_probe_cv(
-            dm, labels, fs, validation_groups=family_validation_groups,
+            dm, labels, fs, MECHANISM_CLASSES, family_contract, validation_groups=family_validation_groups,
             seed=seed, genes=genes, label="delta_mean_family"
         )
         write_result_json(merged_out, merged_results, seeds=[seed], indent=2)
@@ -145,18 +170,36 @@ def run_seed(seed, pfam_map, out_dir):
         family_validation_groups = family_or_gene_clusters(
             genes, pfam_map, is_family_split=True
         )
+        binary_classes = [0, 1]
+        gene_contract = validate_complete_classification_splits(
+            gs, requested_folds=5,
+            eligible_rows=np.concatenate([test for _train, test in gs]),
+            labels=y, classes=binary_classes, groups=genes, held_out_unit="gene",
+        )
+        family_contract = validate_complete_classification_splits(
+            fs, requested_folds=5,
+            eligible_rows=np.concatenate([test for _train, test in fs]),
+            labels=y, classes=binary_classes,
+            groups=family_validation_groups, held_out_unit="family",
+        )
         path_results = {}
         print(f"  logreg gene-split")
-        path_results["logreg_gene"] = run_logreg_binary_cv(delta, y, gs, seed=seed)
+        path_results["logreg_gene"] = run_logreg_binary_cv(
+            delta, y, gs, binary_classes, gene_contract, seed=seed
+        )
         print(f"  logreg family-split")
-        path_results["logreg_family"] = run_logreg_binary_cv(delta, y, fs, seed=seed)
+        path_results["logreg_family"] = run_logreg_binary_cv(
+            delta, y, fs, binary_classes, family_contract, seed=seed
+        )
         print(f"  MLP gene-split")
         path_results["mlp_gene"] = run_mlp_binary_cv(
-            delta, y, gs, validation_groups=genes, seed=seed
+            delta, y, gs, binary_classes, gene_contract,
+            validation_groups=genes, seed=seed
         )
         print(f"  MLP family-split")
         path_results["mlp_family"] = run_mlp_binary_cv(
-            delta, y, fs, validation_groups=family_validation_groups, seed=seed
+            delta, y, fs, binary_classes, family_contract,
+            validation_groups=family_validation_groups, seed=seed
         )
         write_result_json(path_out, path_results, seeds=[seed], indent=2)
         print(f"  -> {path_out}")
@@ -168,10 +211,9 @@ def summarise(all_seeds, out_dir):
     """Aggregate across seeds."""
 
     def agg(values):
-        v = [x for x in values if x is not None and not np.isnan(x)]
-        if not v:
+        if any(value is None or np.isnan(value) for value in values):
             return None, None
-        return float(np.mean(v)), float(np.std(v))
+        return float(np.mean(values)), float(np.std(values))
 
     # headline keys
     metrics = {

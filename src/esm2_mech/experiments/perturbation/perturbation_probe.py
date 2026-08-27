@@ -23,6 +23,8 @@ from esm2_mech.utils.paths import (
 from esm2_mech.utils.splits import gene_split_cv, family_split_cv
 from esm2_mech.utils.embed import load_gene_delta
 from esm2_mech.utils.probes import run_logreg_cv, run_histgb_cv
+from esm2_mech.utils.constants import MECHANISM_CLASSES
+from esm2_mech.utils.classification import validate_complete_classification_splits
 
 print = functools.partial(print, flush=True)
 OUT = _RESULTS_DIR / "perturbation_scan"
@@ -98,11 +100,21 @@ def load_all_features(gene_list):
 NAN_BEARING_COMBOS = {"scan_proteome"}
 
 
-def run_probe(X, labels, splits, seed=42, combo_name=""):
+def run_probe(X, labels, splits, groups, held_out_unit, seed=42, combo_name=""):
     """Route to NaN-native runner if combo contains proteome block."""
+    contract = validate_complete_classification_splits(
+        splits, requested_folds=5,
+        eligible_rows=np.concatenate([test for _train, test in splits]),
+        labels=labels, classes=MECHANISM_CLASSES, groups=groups,
+        held_out_unit=held_out_unit,
+    )
     if combo_name in NAN_BEARING_COMBOS:
-        return run_histgb_cv(X, labels, splits, seed=seed)
-    return run_logreg_cv(X, labels, splits, seed=seed)
+        return run_histgb_cv(
+            X, labels, splits, MECHANISM_CLASSES, contract, seed=seed
+        )
+    return run_logreg_cv(
+        X, labels, splits, MECHANISM_CLASSES, contract, seed=seed
+    )
 
 
 def main():
@@ -159,9 +171,20 @@ def main():
         fs = family_split_cv(gene_list_scan, pfam_map, seed=seed)
         seed_res = {}
         for combo_name, X in combos.items():
-            for split_name, splits in [("gene_split", gs), ("family_split", fs)]:
+            split_specs = [
+                ("gene_split", gs, gene_list_scan, "gene"),
+                (
+                    "family_split", fs,
+                    np.array([pfam_map.get(gene) for gene in gene_list_scan], dtype=object),
+                    "family",
+                ),
+            ]
+            for split_name, splits, groups, held_out_unit in split_specs:
                 key = f"{combo_name}_{split_name}"
-                r = run_probe(X, labels_scan, splits, seed=seed, combo_name=combo_name)
+                r = run_probe(
+                    X, labels_scan, splits, groups, held_out_unit,
+                    seed=seed, combo_name=combo_name
+                )
                 seed_res[key] = r
                 f1 = r.get("macro_f1_mean", float("nan"))
                 gof = r.get("auroc_GOF_mean", float("nan"))
@@ -177,27 +200,36 @@ def main():
         gof_vals = [
             all_results[s][key].get("auroc_GOF_mean", float("nan")) for s in range(5)
         ]
+        unavailable = any(value is None or not np.isfinite(value) for value in f1_vals + gof_vals)
         summary[key] = {
-            "macro_f1_mean": float(np.nanmean(f1_vals)),
-            "macro_f1_std": float(np.nanstd(f1_vals)),
-            "auroc_GOF_mean": float(np.nanmean(gof_vals)),
-            "auroc_GOF_std": float(np.nanstd(gof_vals)),
+            "status": "unavailable" if unavailable else "success",
+            "macro_f1_mean": None if unavailable else float(np.mean(f1_vals)),
+            "macro_f1_std": None if unavailable else float(np.std(f1_vals)),
+            "auroc_GOF_mean": None if unavailable else float(np.mean(gof_vals)),
+            "auroc_GOF_std": None if unavailable else float(np.std(gof_vals)),
         }
-        print(
-            f"  {key}: F1={summary[key]['macro_f1_mean']:.3f}±{summary[key]['macro_f1_std']:.3f}"
-            f"  GOF={summary[key]['auroc_GOF_mean']:.3f}±{summary[key]['auroc_GOF_std']:.3f}"
-        )
+        if unavailable:
+            print(f"  {key}: Unscorable")
+        else:
+            print(
+                f"  {key}: F1={summary[key]['macro_f1_mean']:.3f}±{summary[key]['macro_f1_std']:.3f}"
+                f"  GOF={summary[key]['auroc_GOF_mean']:.3f}±{summary[key]['auroc_GOF_std']:.3f}"
+            )
 
     print("\n=== DECISION RULES ===")
     gate_results = {}
     for gate, (key, metric, threshold) in DECISION_RULES.items():
         val = summary.get(key, {}).get(metric, float("nan"))
-        passed = val > threshold
+        passed = None if val is None or not np.isfinite(val) else val > threshold
         gate_results[gate] = {"value": val, "threshold": threshold, "passed": passed}
-        status = "PASS ✓" if passed else "FAIL ✗"
-        print(
-            f"  {gate}: {key} {metric} = {val:.3f} (threshold {threshold:.3f}) → {status}"
-        )
+        if passed is None:
+            print(f"  {gate}: {key} {metric} = Unscorable")
+        else:
+            status = "PASS ✓" if passed else "FAIL ✗"
+            print(
+                f"  {gate}: {key} {metric} = {val:.3f} "
+                f"(threshold {threshold:.3f}) → {status}"
+            )
 
     if not gate_results.get("G1", {}).get("passed"):
         print(
