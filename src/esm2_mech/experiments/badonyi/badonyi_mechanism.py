@@ -1,4 +1,9 @@
-"""Compare Badonyi 2024 pDN/pGOF/pLOF as a modality against ESM-2 delta and proteome features."""
+"""Compare Badonyi 2024 pDN/pGOF/pLOF against ESM-2 and proteome features.
+
+Every reported cross-arm comparison is derived from arms fitted in this module.
+The output records each arm's classifier so downstream reports cannot silently
+substitute a score from a different probe.
+"""
 
 from __future__ import annotations
 
@@ -43,6 +48,65 @@ MERGED_MUT_MEAN = EMB_MUT_MEAN
 PROTEOME_FEATURES = PROTEOME_FEATURES_ALIGNED
 BADONYI_FEATURES = BADONYI_FEATURES_ALIGNED
 BADONYI_RAW_COLS = [0, 1, 2]  # pDN, pGOF, pLOF only
+V1_HIDDEN_LAYERS = (256, 64)
+
+ARM_PROBE_SPECS = {
+    "V1": {
+        "features": "esm2_delta_mean",
+        "classifier": "mlp",
+        "hidden_layers": V1_HIDDEN_LAYERS,
+        "preprocessing": "per_fold_standard_scaler",
+        "class_balance": "training_fold_oversampling",
+    },
+    "V2": {
+        "features": "proteome",
+        "classifier": "hist_gradient_boosting",
+        "preprocessing": "none",
+        "class_balance": "balanced_class_weight",
+    },
+    "V_bad": {
+        "features": "badonyi_propensities",
+        "classifier": "hist_gradient_boosting",
+        "preprocessing": "none",
+        "class_balance": "balanced_class_weight",
+    },
+    "V2_bad": {
+        "features": "proteome_plus_badonyi_propensities",
+        "classifier": "hist_gradient_boosting",
+        "preprocessing": "none",
+        "class_balance": "balanced_class_weight",
+    },
+    "V1_bad": {
+        "features": "esm2_delta_mean_plus_badonyi_propensities",
+        "classifier": "hist_gradient_boosting",
+        "preprocessing": "none",
+        "class_balance": "balanced_class_weight",
+    },
+    "V_all": {
+        "features": "esm2_delta_mean_plus_proteome_plus_badonyi_propensities",
+        "classifier": "hist_gradient_boosting",
+        "preprocessing": "none",
+        "class_balance": "balanced_class_weight",
+    },
+}
+
+COMPARISON_SPECS = {
+    "gene_features_minus_esm2": {
+        "left_arm": "V2",
+        "right_arm": "V1",
+        "interpretation": "marginal arm contrast",
+    },
+    "esm2_added_to_gene_features": {
+        "left_arm": "V_all",
+        "right_arm": "V2_bad",
+        "interpretation": "matched-classifier ESM-2 ablation",
+    },
+    "esm2_added_to_badonyi": {
+        "left_arm": "V1_bad",
+        "right_arm": "V_bad",
+        "interpretation": "matched-classifier ESM-2 ablation",
+    },
+}
 
 # MUST be GENE_UNIVERSE, not GENE_LIST_TSV: .npy rows are in gene_universe.tsv order.
 MERGED_GENE_LIST = GENE_UNIVERSE
@@ -180,6 +244,12 @@ def run_seed(
         "seed": seed,
         "n_variants_with_family": int(len(fam_idx)),
         "n_total_variants": int(len(y)),
+        "evaluation": {
+            "split": "pfam_family",
+            "metric": "mean_fold_macro_f1",
+            "n_folds": n_folds,
+        },
+        "arm_probe_specs": ARM_PROBE_SPECS,
     }
 
     def _log_ci(agg: dict) -> str:
@@ -191,7 +261,7 @@ def run_seed(
     # V1 — ESM-2 delta MLP
     print(f"\n--- V1: ESM-2 delta only ---")
     results["V1"] = run_mlp_family_split(
-        X_delta_f, y_f, genes_f, groups, (256, 64), n_folds, seed, "V1",
+        X_delta_f, y_f, genes_f, groups, V1_HIDDEN_LAYERS, n_folds, seed, "V1",
         pfam_map, compute_ci=compute_ci, n_boot=n_boot,
     )
     print(
@@ -266,7 +336,45 @@ def run_seed(
         + _log_ci(results["V_all"])
     )
 
+    results["comparisons"] = build_seed_comparisons(results)
     return results
+
+
+def build_seed_comparisons(seed_result: dict) -> dict:
+    """Build named comparisons from arms produced by one evaluation run."""
+    comparisons = {}
+    for name, comparison_spec in COMPARISON_SPECS.items():
+        left_arm = comparison_spec["left_arm"]
+        right_arm = comparison_spec["right_arm"]
+        missing_arms = [
+            arm for arm in (left_arm, right_arm) if arm not in seed_result
+        ]
+        if missing_arms:
+            raise KeyError(
+                f"Cannot compute {name}: missing arms {missing_arms} from seed result"
+            )
+
+        left_value = seed_result[left_arm]["macro_f1_mean"]
+        right_value = seed_result[right_arm]["macro_f1_mean"]
+        if not np.isfinite(left_value) or not np.isfinite(right_value):
+            raise ValueError(
+                f"Cannot compute {name}: macro-F1 must be finite for "
+                f"{left_arm} and {right_arm}"
+            )
+
+        left_classifier = ARM_PROBE_SPECS[left_arm]["classifier"]
+        right_classifier = ARM_PROBE_SPECS[right_arm]["classifier"]
+        comparisons[name] = {
+            **comparison_spec,
+            "metric": "mean_fold_macro_f1",
+            "left_value": float(left_value),
+            "right_value": float(right_value),
+            "difference": float(left_value - right_value),
+            "same_classifier": left_classifier == right_classifier,
+            "left_classifier": left_classifier,
+            "right_classifier": right_classifier,
+        }
+    return comparisons
 
 
 def seed_metric_mean_std(all_results: list[dict], extractor) -> tuple[float | None, float | None, int]:
@@ -282,7 +390,18 @@ def seed_metric_mean_std(all_results: list[dict], extractor) -> tuple[float | No
 
 
 def aggregate_seeds(all_results: list[dict]) -> dict:
-    summary: dict = {"n_seeds": len(all_results)}
+    if not all_results:
+        raise ValueError("Cannot aggregate Badonyi comparisons without seed results")
+
+    summary: dict = {
+        "schema_version": 2,
+        "n_seeds": len(all_results),
+        "evaluation": {
+            "split": "pfam_family",
+            "metric": "mean_fold_macro_f1",
+        },
+        "arm_probe_specs": ARM_PROBE_SPECS,
+    }
 
     def pull(key, metric):
         # Returns the per-seed metric or None; seed_metric_mean_std drops None+NaN.
@@ -315,6 +434,31 @@ def aggregate_seeds(all_results: list[dict]) -> dict:
                 if n:
                     summary[f"{key}_{metric_name}_{bound}_seed_mean"] = mean
                     summary[f"{key}_{metric_name}_{bound}_n_seeds"] = n
+
+    seed_comparisons = [build_seed_comparisons(result) for result in all_results]
+    summary["comparisons"] = {}
+    for name, comparison_spec in COMPARISON_SPECS.items():
+        left_values = np.asarray(
+            [comparison[name]["left_value"] for comparison in seed_comparisons],
+            dtype=float,
+        )
+        right_values = np.asarray(
+            [comparison[name]["right_value"] for comparison in seed_comparisons],
+            dtype=float,
+        )
+        differences = left_values - right_values
+        summary["comparisons"][name] = {
+            **comparison_spec,
+            "metric": "mean_fold_macro_f1",
+            "left_mean": float(np.mean(left_values)),
+            "right_mean": float(np.mean(right_values)),
+            "difference_mean": float(np.mean(differences)),
+            "difference_std": float(np.std(differences)),
+            "n_seeds": len(all_results),
+            "same_classifier": seed_comparisons[0][name]["same_classifier"],
+            "left_classifier": seed_comparisons[0][name]["left_classifier"],
+            "right_classifier": seed_comparisons[0][name]["right_classifier"],
+        }
     return summary
 
 

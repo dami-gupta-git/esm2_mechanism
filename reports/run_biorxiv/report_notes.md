@@ -1,4 +1,4 @@
-# Mechanism results — notes
+# Mechanism results — notes  . Personal notes only.
 
 - Delta embedding (the mutation signal) sits at the chance floor (0.290) whether or not gene families are held out — the confirmed mechanism null.
 - Wildtype and mutant embeddings score well but drop sharply once families are held out (~0.55 → ~0.45–0.49) — that's homology leakage, about 38–39% of the score.
