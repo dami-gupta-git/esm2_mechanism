@@ -13,8 +13,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import f1_score, roc_auc_score
+from sklearn.ensemble import HistGradientBoostingClassifier
 from sklearn.neural_network import MLPClassifier
 from sklearn.preprocessing import StandardScaler
 from esm2_mech.utils.data import build_gene_to_row
@@ -408,9 +407,22 @@ def run_v2_ablation(
         result["split_validation"] = contract
         return result
 
+    def _difference(full_value, ablated_value):
+        """A delta is defined only when both arms scored. A missing metric stays
+        None: neither 0.0 nor NaN, both of which read as a real 'no change'."""
+        if full_value is None or ablated_value is None:
+            return None
+        return float(full_value - ablated_value)
+
+    def _fmt(value):
+        return f"{value:+.4f}" if value is not None else "  N/A  "
+
     full_result = run_ablation_cv(X_prot_gene, y_gene, groups_gene)
     full_f1 = full_result["macro_f1_mean"]
-    print(f"  [T4 seed={seed}] V2 FULL: macro_f1={full_f1:.4f}")
+    if full_f1 is None:
+        print(f"  [T4 seed={seed}] V2 FULL: unscorable")
+    else:
+        print(f"  [T4 seed={seed}] V2 FULL: macro_f1={full_f1:.4f}")
 
     ablation_results = {"FULL": full_result}
 
@@ -419,26 +431,23 @@ def run_v2_ablation(
         keep_idx = [i for i in range(X_prot_gene.shape[1]) if i not in drop_idx]
         X_abl = X_prot_gene[:, keep_idx]
         res = run_ablation_cv(X_abl, y_gene, groups_gene)
-        delta_f1 = full_f1 - res["macro_f1_mean"]
-        # DN AUROC delta — missing AUROC must NOT be coerced to 0.0
-        # (a 0.0 default would read as "no change" and silently mask the failure).
-        dn_full = full_result.get("auroc_DN_mean")
-        dn_abl = res.get("auroc_DN_mean")
-        if dn_full is None or dn_abl is None:
-            delta_dn = float("nan")
-        else:
-            delta_dn = dn_full - dn_abl
+        delta_f1 = _difference(full_f1, res["macro_f1_mean"])
+        delta_dn = _difference(
+            full_result.get("auroc_DN_mean"), res.get("auroc_DN_mean")
+        )
         ablation_results[cls_name] = {
             **res,
             "n_features_dropped": len(drop_idx),
             "n_features_kept": len(keep_idx),
-            "delta_f1": float(delta_f1),
-            "delta_auroc_DN": float(delta_dn),
+            "delta_f1": delta_f1,
+            "delta_auroc_DN": delta_dn,
         }
+        abl_f1 = res["macro_f1_mean"]
+        abl_f1_text = f"{abl_f1:.4f}" if abl_f1 is not None else "  N/A  "
         print(
             f"  [T4 seed={seed}] minus {cls_name:12s}: "
-            f"f1={res['macro_f1_mean']:.4f}  ΔF1={delta_f1:+.4f}  "
-            f"ΔDN_AUROC={delta_dn:+.4f}"
+            f"f1={abl_f1_text}  ΔF1={_fmt(delta_f1)}  "
+            f"ΔDN_AUROC={_fmt(delta_dn)}"
         )
 
     return ablation_results
@@ -500,8 +509,11 @@ def main():
                 json.dump(res, f, indent=2)
             print(f"  Saved {out_path.name}")
             for v in ["V1_per_gene", "V2_per_gene", "V3_per_gene"]:
-                f1 = res[v].get("macro_f1_mean", float("nan"))
-                print(f"  {v}: macro_f1={f1:.4f}")
+                f1 = res[v].get("macro_f1_mean")
+                print(
+                    f"  {v}: macro_f1={f1:.4f}" if f1 is not None
+                    else f"  {v}: macro_f1=N/A"
+                )
 
         t2_summary = {}
         for v in ["V1_per_gene", "V2_per_gene", "V3_per_gene"]:
@@ -538,7 +550,7 @@ def main():
             dn = t2_summary[v].get("auroc_DN_mean")
             print(
                 f"  {v}: macro_f1={m:.4f}±{s:.4f}  DN_AUROC={dn:.3f}"
-                if m
+                if m is not None and s is not None and dn is not None
                 else f"  {v}: N/A"
             )
 
@@ -573,12 +585,12 @@ def main():
             delta_f1s = [
                 r[cls_name]["delta_f1"]
                 for r in t4_seed_results
-                if cls_name in r and "delta_f1" in r[cls_name]
+                if cls_name in r and r[cls_name].get("delta_f1") is not None
             ]
             delta_dns = [
                 r[cls_name]["delta_auroc_DN"]
                 for r in t4_seed_results
-                if cls_name in r and "delta_auroc_DN" in r[cls_name]
+                if cls_name in r and r[cls_name].get("delta_auroc_DN") is not None
             ]
             abl_f1s = [
                 r[cls_name].get("macro_f1_mean")
@@ -601,7 +613,10 @@ def main():
         print("\n=== T4 SUMMARY (V2 ablation, mean ± std across seeds) ===")
         full_m = t4_summary["FULL"].get("macro_f1_mean")
         full_s = t4_summary["FULL"].get("macro_f1_std")
-        print(f"  V2 FULL:  {full_m:.4f} ± {full_s:.4f}")
+        if full_m is None:
+            print("  V2 FULL:  N/A")
+        else:
+            print(f"  V2 FULL:  {full_m:.4f} ± {full_s:.4f}")
         print(f"  {'Class':<14}  {'Abl F1':>8}  {'ΔF1':>8}  {'ΔDN AUROC':>10}")
         for cls_name in FEATURE_CLASSES:
             m = t4_summary[cls_name].get("macro_f1_mean")
