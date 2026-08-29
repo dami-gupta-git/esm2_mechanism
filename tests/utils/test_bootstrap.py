@@ -2,10 +2,6 @@
 Tests for esm2_mech.utils.bootstrap (dependency-aware inference).
 
 Invariants:
-- average_oof_over_seeds: de-duplicates variants across seeds (one row per variant)
-- average_oof_over_seeds: averages proba across seeds; rows stay simplex (sum to 1)
-- average_oof_over_seeds: skips None entries; all-None / empty -> None
-- average_oof_over_seeds: y_true and gene are carried through per row
 - cluster_bootstrap_ci: point matches metric_fn on all rows; CI brackets the point
 - cluster_bootstrap_ci: resamples whole clusters (n_clusters == #unique), not rows
 - cluster_bootstrap_ci: a few undefined resamples are dropped, not imputed
@@ -58,7 +54,6 @@ from esm2_mech.utils.bootstrap import (
     adjudicate_equivalence,
     adjudicate_level,
     attach_mechanism_ci,
-    average_oof_over_seeds,
     binary_auroc_cluster_bootstrap_ci,
     bootstrap_mechanism_metrics,
     cluster_bootstrap_ci,
@@ -81,10 +76,10 @@ from esm2_mech.utils.bootstrap import (
 )
 from esm2_mech.utils.constants import MECHANISM_CLASSES, GOF, DN, LOF
 
-
 # ---------------------------------------------------------------------------
 # helpers
 # ---------------------------------------------------------------------------
+
 
 def _simplex_proba(rng, n, n_classes=3):
     """n rows of random probabilities that sum to 1 across columns."""
@@ -92,95 +87,10 @@ def _simplex_proba(rng, n, n_classes=3):
     return raw / raw.sum(axis=1, keepdims=True)
 
 
-def _oof_for_seed(row_ids, y_true, genes, rng):
-    """Build one seed's OOF dict over the given row ids, in a shuffled fold order."""
-    order = rng.permutation(len(row_ids))
-    rid = np.asarray(row_ids)[order]
-    return {
-        "row_ids": rid,
-        "y_true": np.asarray(y_true)[order],
-        "genes": np.asarray(genes)[order],
-        "proba": _simplex_proba(rng, len(row_ids)),
-    }
-
-
-# ---------------------------------------------------------------------------
-# average_oof_over_seeds
-# ---------------------------------------------------------------------------
-
-class TestAverageOofOverSeeds:
-    def _setup(self, n_variants=12, n_seeds=5, seed=0):
-        rng = np.random.RandomState(seed)
-        row_ids = np.arange(n_variants)
-        genes = np.array([f"G{r % 4}" for r in row_ids])
-        y_true = np.array([[GOF, DN, LOF][r % 3] for r in row_ids])
-        oofs = [_oof_for_seed(row_ids, y_true, genes, rng) for _ in range(n_seeds)]
-        return oofs, row_ids, y_true, genes
-
-    def test_dedups_to_one_row_per_variant(self):
-        oofs, row_ids, _, _ = self._setup()
-        avg = average_oof_over_seeds(oofs)
-        # Each variant appears once per seed in OOF; averaging collapses to one row.
-        assert len(avg["row_ids"]) == len(row_ids)
-        assert sorted(avg["row_ids"].tolist()) == sorted(row_ids.tolist())
-        assert len(set(avg["row_ids"].tolist())) == len(row_ids)
-
-    def test_rows_sorted_by_row_id(self):
-        oofs, _, _, _ = self._setup()
-        avg = average_oof_over_seeds(oofs)
-        assert list(avg["row_ids"]) == sorted(avg["row_ids"])
-
-    def test_proba_is_average_and_simplex(self):
-        oofs, row_ids, _, _ = self._setup()
-        avg = average_oof_over_seeds(oofs)
-        assert np.allclose(avg["proba"].sum(axis=1), 1.0)
-        # Spot-check: avg proba for a row equals the mean of that row across seeds.
-        target = row_ids[0]
-        per_seed_vecs = []
-        for oof in oofs:
-            pos = int(np.where(oof["row_ids"] == target)[0][0])
-            per_seed_vecs.append(oof["proba"][pos])
-        out_pos = int(np.where(avg["row_ids"] == target)[0][0])
-        assert np.allclose(avg["proba"][out_pos], np.mean(per_seed_vecs, axis=0))
-
-    def test_y_and_gene_carried_per_row(self):
-        oofs, row_ids, y_true, genes = self._setup()
-        avg = average_oof_over_seeds(oofs)
-        for pos, row in enumerate(avg["row_ids"]):
-            assert avg["y_true"][pos] == y_true[row]
-            assert avg["genes"][pos] == genes[row]
-
-    def test_skips_none_entries(self):
-        oofs, row_ids, _, _ = self._setup()
-        with_none = [oofs[0], None, oofs[1], None]
-        avg = average_oof_over_seeds(with_none)
-        assert len(avg["row_ids"]) == len(row_ids)
-
-    def test_all_none_returns_none(self):
-        assert average_oof_over_seeds([None, None]) is None
-
-    def test_empty_list_returns_none(self):
-        assert average_oof_over_seeds([]) is None
-
-    def test_partial_coverage_across_seeds(self):
-        # A variant scored in only some seeds is still emitted, averaged over the
-        # seeds that covered it (count differs per row).
-        rng = np.random.RandomState(1)
-        genes = np.array(["G0", "G0", "G1", "G1"])
-        y_true = np.array([GOF, DN, LOF, GOF])
-        full = _oof_for_seed([0, 1, 2, 3], y_true, genes, rng)
-        partial = _oof_for_seed([0, 2], y_true[[0, 2]], genes[[0, 2]], rng)
-        avg = average_oof_over_seeds([full, partial])
-        assert sorted(avg["row_ids"].tolist()) == [0, 1, 2, 3]
-        # row 1 seen once (only `full`); equals full's vector for that row.
-        pos_full = int(np.where(full["row_ids"] == 1)[0][0])
-        out_pos = int(np.where(avg["row_ids"] == 1)[0][0])
-        assert np.allclose(avg["proba"][out_pos], full["proba"][pos_full])
-
-
 # ---------------------------------------------------------------------------
 # cluster_bootstrap_ci
 # ---------------------------------------------------------------------------
+
 
 class TestClusterBootstrapCI:
     def test_point_matches_metric_on_all_rows(self):
@@ -201,7 +111,9 @@ class TestClusterBootstrapCI:
 
     def test_n_clusters_is_unique_cluster_count(self):
         clusters = np.array([f"G{i % 7}" for i in range(40)])
-        out = cluster_bootstrap_ci(clusters, lambda rows: float(len(rows)), n_resamples=10)
+        out = cluster_bootstrap_ci(
+            clusters, lambda rows: float(len(rows)), n_resamples=10
+        )
         assert out["n_clusters"] == 7
 
     def test_resamples_clusters_not_rows(self):
@@ -328,7 +240,9 @@ class TestDiscardReasonWarning:
             calls.append(1)
             return "computed after the fact"
 
-        cluster_bootstrap_ci(clusters, metric, n_resamples=200, seed=0, discard_reason=reason)
+        cluster_bootstrap_ci(
+            clusters, metric, n_resamples=200, seed=0, discard_reason=reason
+        )
         out = capsys.readouterr().out
         assert "computed after the fact" in out
         # Called exactly once, for the warning — not once per resample.
@@ -396,6 +310,7 @@ class TestDiscardReasonWarning:
 # ---------------------------------------------------------------------------
 # cluster_subsample_ci (m-out-of-n, without replacement)
 # ---------------------------------------------------------------------------
+
 
 class TestClusterSubsampleCI:
     def _genes_with_rows(self, n_genes=30, rows_per_gene=4):
@@ -503,6 +418,7 @@ class TestClusterSubsampleCI:
 # bootstrap_mechanism_metrics
 # ---------------------------------------------------------------------------
 
+
 class TestBootstrapMechanismMetrics:
     def _signal_data(self, seed=0):
         rng = np.random.RandomState(seed)
@@ -531,8 +447,14 @@ class TestBootstrapMechanismMetrics:
         for cls in MECHANISM_CLASSES:
             assert f"auroc_{cls}" in out
             assert {
-                "point", "ci_low", "ci_high", "n_resamples", "n_resamples_total",
-                "valid_frac", "ci_suppressed", "n_clusters",
+                "point",
+                "ci_low",
+                "ci_high",
+                "n_resamples",
+                "n_resamples_total",
+                "valid_frac",
+                "ci_suppressed",
+                "n_clusters",
             } <= set(out[f"auroc_{cls}"])
 
     def test_auprc_carries_a_resampled_baseline_and_lift(self):
@@ -610,6 +532,7 @@ class TestBootstrapMechanismMetrics:
 # ---------------------------------------------------------------------------
 # paired_cluster_bootstrap_diff (same-fold pairing mode)
 # ---------------------------------------------------------------------------
+
 
 class TestPairedClusterBootstrapDiffSameFold:
     def _genes_with_rows(self, n_genes=30, rows_per_gene=4):
@@ -768,8 +691,11 @@ class TestPairedClusterBootstrapDiffSameFold:
 # paired_cluster_bootstrap_diff_cross_partition (cross-partition pairing mode)
 # ---------------------------------------------------------------------------
 
+
 class TestPairedClusterBootstrapDiffCrossPartition:
-    def _family_and_gene_clusters(self, n_families=6, genes_per_family=2, rows_per_gene=2):
+    def _family_and_gene_clusters(
+        self, n_families=6, genes_per_family=2, rows_per_gene=2
+    ):
         family_clusters = []
         gene_clusters = []
         for family_idx in range(n_families):
@@ -892,6 +818,7 @@ class TestPairedClusterBootstrapDiffCrossPartition:
 # label permutation
 # ---------------------------------------------------------------------------
 
+
 def _one_fold(rows):
     """All rows in one fold, for the tests that are about the shuffle unit alone."""
     return np.zeros(len(rows), dtype=int)
@@ -996,8 +923,12 @@ class TestLabelPermutationPvalue:
             return float(roc_auc_score(y_bin, scores))
 
         out = label_permutation_pvalue(
-            run_metric, labels, statistic="auroc_GOF", folds=_one_fold(labels),
-            groups=genes, n_permutations=200,
+            run_metric,
+            labels,
+            statistic="auroc_GOF",
+            folds=_one_fold(labels),
+            groups=genes,
+            n_permutations=200,
             alternative="greater",
         )
         assert out["observed"] == pytest.approx(1.0)  # perfect by construction
@@ -1010,7 +941,12 @@ class TestLabelPermutationPvalue:
         labels = np.array([GOF if i % 2 else LOF for i in range(30)])
 
         out = label_permutation_pvalue(
-            lambda lab: 0.5, labels, statistic="constant", folds=_one_fold(labels), groups=genes, n_permutations=50
+            lambda lab: 0.5,
+            labels,
+            statistic="constant",
+            folds=_one_fold(labels),
+            groups=genes,
+            n_permutations=50,
         )
         # (1 + #{null >= observed}) / (1 + n); with a constant metric all null >=
         # observed, so p == 1.0, and p is always in (0, 1].
@@ -1033,10 +969,22 @@ class TestLabelPermutationPvalue:
             return float(np.corrcoef(feature, y_bin)[0, 1])
 
         first = label_permutation_pvalue(
-            run_metric, labels, statistic="corr", folds=_one_fold(labels), groups=genes, n_permutations=64, seed=7
+            run_metric,
+            labels,
+            statistic="corr",
+            folds=_one_fold(labels),
+            groups=genes,
+            n_permutations=64,
+            seed=7,
         )
         second = label_permutation_pvalue(
-            run_metric, labels, statistic="corr", folds=_one_fold(labels), groups=genes, n_permutations=64, seed=7
+            run_metric,
+            labels,
+            statistic="corr",
+            folds=_one_fold(labels),
+            groups=genes,
+            n_permutations=64,
+            seed=7,
         )
         assert first["p_value"] == second["p_value"]
         assert first["null_mean"] == second["null_mean"]
@@ -1057,10 +1005,24 @@ class TestLabelPermutationPvalue:
             return float(np.corrcoef(feature, y_bin)[0, 1])
 
         serial = label_permutation_pvalue(
-            run_metric, labels, statistic="corr", folds=_one_fold(labels), groups=genes, n_permutations=48, seed=1, n_jobs=1
+            run_metric,
+            labels,
+            statistic="corr",
+            folds=_one_fold(labels),
+            groups=genes,
+            n_permutations=48,
+            seed=1,
+            n_jobs=1,
         )
         parallel = label_permutation_pvalue(
-            run_metric, labels, statistic="corr", folds=_one_fold(labels), groups=genes, n_permutations=48, seed=1, n_jobs=2
+            run_metric,
+            labels,
+            statistic="corr",
+            folds=_one_fold(labels),
+            groups=genes,
+            n_permutations=48,
+            seed=1,
+            n_jobs=2,
         )
         assert serial["p_value"] == parallel["p_value"]
         assert serial["null_mean"] == parallel["null_mean"]
@@ -1082,7 +1044,14 @@ class TestLabelPermutationPvalue:
         labels = np.array([GOF if i % 3 == 0 else LOF for i in range(200)])
 
         out = label_permutation_pvalue(
-            make_metric(), labels, statistic="r2", folds=_one_fold(labels), groups=genes, n_permutations=32, seed=0, n_jobs=2
+            make_metric(),
+            labels,
+            statistic="r2",
+            folds=_one_fold(labels),
+            groups=genes,
+            n_permutations=32,
+            seed=0,
+            n_jobs=2,
         )
         assert out["n_permutations"] == 32
         assert 0.0 < out["p_value"] <= 1.0
@@ -1102,7 +1071,14 @@ class TestLabelPermutationPvalue:
             return 0.5
 
         out = label_permutation_pvalue(
-            flaky_metric, labels, statistic="flaky", folds=_one_fold(labels), groups=genes, n_permutations=10, seed=0, n_jobs=1
+            flaky_metric,
+            labels,
+            statistic="flaky",
+            folds=_one_fold(labels),
+            groups=genes,
+            n_permutations=10,
+            seed=0,
+            n_jobs=1,
         )
         # Half the draws are NaN and dropped; the kept null has only finite values.
         assert out["n_permutations"] < 10
@@ -1113,12 +1089,16 @@ class TestLabelPermutationPvalue:
 # oof_permutation_pvalue / macro_ovr_auroc
 # ---------------------------------------------------------------------------
 
+
 def _folds_by_unit(units, n_folds=3):
     """Assign each unit (gene or family) to a fold, the way the CV splitters do.
 
     Whole units stay inside one fold, which is what the within-fold shuffle needs.
     """
-    unit_fold = {unit: i % n_folds for i, unit in enumerate(sorted(set(np.asarray(units).tolist())))}
+    unit_fold = {
+        unit: i % n_folds
+        for i, unit in enumerate(sorted(set(np.asarray(units).tolist())))
+    }
     return np.array([unit_fold[u] for u in np.asarray(units)], dtype=int)
 
 
@@ -1147,7 +1127,9 @@ class TestPermuteLabelsByCluster:
     def test_whole_blocks_move_together(self):
         labels, genes, clusters = self._families()
         rng = np.random.RandomState(0)
-        permuted = _permute_labels_by_cluster(labels, genes, clusters, _one_fold(labels), rng)
+        permuted = _permute_labels_by_cluster(
+            labels, genes, clusters, _one_fold(labels), rng
+        )
         # Every size-2 family must now hold some size-2 family's original block.
         original_blocks = {("F0", (GOF, LOF)), ("F1", (DN, DN)), ("F2", (GOF, GOF))}
         blocks_in = {tuple(sorted(b)) for _, b in original_blocks}
@@ -1158,7 +1140,9 @@ class TestPermuteLabelsByCluster:
     def test_label_multiset_is_preserved(self):
         labels, genes, clusters = self._families()
         rng = np.random.RandomState(1)
-        permuted = _permute_labels_by_cluster(labels, genes, clusters, _one_fold(labels), rng)
+        permuted = _permute_labels_by_cluster(
+            labels, genes, clusters, _one_fold(labels), rng
+        )
         assert sorted(permuted.tolist()) == sorted(labels.tolist())
 
     def test_unique_size_cluster_cannot_move_and_is_counted(self):
@@ -1166,7 +1150,9 @@ class TestPermuteLabelsByCluster:
         # with and keeps its own label. That has to be visible, not silent.
         labels, genes, clusters = self._families()
         rng = np.random.RandomState(2)
-        permuted = _permute_labels_by_cluster(labels, genes, clusters, _one_fold(labels), rng)
+        permuted = _permute_labels_by_cluster(
+            labels, genes, clusters, _one_fold(labels), rng
+        )
         immovable = count_immovable_clusters(genes, clusters, _one_fold(labels))
         assert immovable == 1
         assert permuted[clusters == "F3"][0] == LOF
@@ -1177,11 +1163,15 @@ class TestPermuteLabelsByCluster:
         labels, genes, clusters = self._families()
         rng = np.random.RandomState(3)
         homogeneous_before = sum(
-            len(set(labels[clusters == fam].tolist())) == 1 for fam in ["F0", "F1", "F2"]
+            len(set(labels[clusters == fam].tolist())) == 1
+            for fam in ["F0", "F1", "F2"]
         )
-        permuted = _permute_labels_by_cluster(labels, genes, clusters, _one_fold(labels), rng)
+        permuted = _permute_labels_by_cluster(
+            labels, genes, clusters, _one_fold(labels), rng
+        )
         homogeneous_after = sum(
-            len(set(permuted[clusters == fam].tolist())) == 1 for fam in ["F0", "F1", "F2"]
+            len(set(permuted[clusters == fam].tolist())) == 1
+            for fam in ["F0", "F1", "F2"]
         )
         assert homogeneous_after == homogeneous_before
 
@@ -1214,7 +1204,9 @@ class TestPermuteLabelsByCluster:
         clusters = np.repeat(["F0", "F0", "F1", "F1"], rows_per_gene)
         labels = np.repeat([GOF, LOF, DN, GOF], rows_per_gene)
         rng = np.random.RandomState(4)
-        permuted = _permute_labels_by_cluster(labels, genes, clusters, _one_fold(labels), rng)
+        permuted = _permute_labels_by_cluster(
+            labels, genes, clusters, _one_fold(labels), rng
+        )
         for gene in np.unique(genes):
             assert len(set(permuted[genes == gene].tolist())) == 1
 
@@ -1283,12 +1275,20 @@ class TestFoldScalesAreNotPooled:
         labels, proba, folds, genes = _offset_fold_scales()
         two_class_proba = np.column_stack([proba[:, 0], 1.0 - proba[:, 0]])
         arm = {
-            "y_true": labels, "proba": two_class_proba, "folds": folds,
-            "genes": genes, "row_ids": np.arange(len(labels)),
+            "y_true": labels,
+            "proba": two_class_proba,
+            "folds": folds,
+            "genes": genes,
+            "row_ids": np.arange(len(labels)),
         }
         out = paired_oof_diff(
-            arm, arm, {gene: gene for gene in genes}, "same-arm",
-            classes=[GOF, LOF], metric="auroc_one_vs_rest", pos_class=GOF,
+            arm,
+            arm,
+            {gene: gene for gene in genes},
+            "same-arm",
+            classes=[GOF, LOF],
+            metric="auroc_one_vs_rest",
+            pos_class=GOF,
             n_resamples=50,
         )
         assert out["point_a"] == pytest.approx(1.0)
@@ -1352,8 +1352,12 @@ class TestOofPermutationPvalue:
         rng = np.random.RandomState(0)
         genes, labels = _gene_level_labels(rng, 60, 4)
         out = oof_permutation_pvalue(
-            labels, _proba_matching(labels), _folds_by_unit(genes),
-            groups=genes, n_permutations=200, seed=0,
+            labels,
+            _proba_matching(labels),
+            _folds_by_unit(genes),
+            groups=genes,
+            n_permutations=200,
+            seed=0,
         )
         assert out["observed"] == pytest.approx(1.0)
         assert out["null_mean"] == pytest.approx(0.5, abs=0.05)
@@ -1365,8 +1369,12 @@ class TestOofPermutationPvalue:
         rng = np.random.RandomState(1)
         genes, labels = _gene_level_labels(rng, 60, 4)
         out = oof_permutation_pvalue(
-            labels, _simplex_proba(rng, len(labels)), _folds_by_unit(genes),
-            groups=genes, n_permutations=200, seed=0,
+            labels,
+            _simplex_proba(rng, len(labels)),
+            _folds_by_unit(genes),
+            groups=genes,
+            n_permutations=200,
+            seed=0,
         )
         assert out["p_value"] > 0.1
 
@@ -1389,8 +1397,13 @@ class TestOofPermutationPvalue:
 
         folds = _folds_by_unit(clusters)
         block = oof_permutation_pvalue(
-            labels, proba, folds, groups=genes, clusters=clusters,
-            n_permutations=300, seed=0,
+            labels,
+            proba,
+            folds,
+            groups=genes,
+            clusters=clusters,
+            n_permutations=300,
+            seed=0,
         )
         gene_level = oof_permutation_pvalue(
             labels, proba, folds, groups=genes, n_permutations=300, seed=0
@@ -1429,7 +1442,12 @@ class TestOofPermutationPvalue:
         proba = _proba_matching(labels)
         before = proba.copy()
         oof_permutation_pvalue(
-            labels, proba, _folds_by_unit(genes), groups=genes, n_permutations=50, seed=0
+            labels,
+            proba,
+            _folds_by_unit(genes),
+            groups=genes,
+            n_permutations=50,
+            seed=0,
         )
         assert np.array_equal(proba, before)
 
@@ -1438,8 +1456,12 @@ class TestOofPermutationPvalue:
         genes, labels = _gene_level_labels(rng, 30, 4)
         proba = _simplex_proba(rng, len(labels))
         folds = _folds_by_unit(genes)
-        first = oof_permutation_pvalue(labels, proba, folds, groups=genes, n_permutations=64, seed=7)
-        second = oof_permutation_pvalue(labels, proba, folds, groups=genes, n_permutations=64, seed=7)
+        first = oof_permutation_pvalue(
+            labels, proba, folds, groups=genes, n_permutations=64, seed=7
+        )
+        second = oof_permutation_pvalue(
+            labels, proba, folds, groups=genes, n_permutations=64, seed=7
+        )
         assert first["p_value"] == second["p_value"]
         assert first["null_mean"] == second["null_mean"]
 
@@ -1452,8 +1474,12 @@ class TestOofPermutationPvalue:
         labels = np.array([GOF, GOF, LOF, LOF, DN, DN])
         proba = _simplex_proba(rng, len(labels))
         out = oof_permutation_pvalue(
-            labels, proba, np.zeros(len(labels), dtype=int),
-            groups=genes, n_permutations=50, seed=0,
+            labels,
+            proba,
+            np.zeros(len(labels), dtype=int),
+            groups=genes,
+            n_permutations=50,
+            seed=0,
         )
         assert set(out["classes_scored"]) == set(MECHANISM_CLASSES)
         assert out["n_permutations"] + out["n_dropped_class_mismatch"] <= 50
@@ -1463,6 +1489,7 @@ class TestOofPermutationPvalue:
 # ---------------------------------------------------------------------------
 # paired_oof_diff
 # ---------------------------------------------------------------------------
+
 
 def _mechanism_oof(row_ids, genes, y_true, proba, folds=None):
     return {
@@ -1490,8 +1517,16 @@ def _confident_proba(labels, classes, correct_mask):
 class TestPairedOofDiff:
     """paired_oof_diff aligns two arms by row_ids and pairs one resample across both."""
 
-    def _arms(self, n=120, n_genes=20, n_families=5, a_correct=1.0, b_correct=0.5,
-              seed=0, correctness_by_family=False):
+    def _arms(
+        self,
+        n=120,
+        n_genes=20,
+        n_families=5,
+        a_correct=1.0,
+        b_correct=0.5,
+        seed=0,
+        correctness_by_family=False,
+    ):
         rng = np.random.RandomState(seed)
         row_ids = np.arange(n)
         genes = np.array([f"G{i % n_genes}" for i in row_ids], dtype=object)
@@ -1512,8 +1547,12 @@ class TestPairedOofDiff:
         else:
             mask_a = rng.rand(n) < a_correct
             mask_b = rng.rand(n) < b_correct
-        arm_a = _mechanism_oof(row_ids, genes, y_true, _confident_proba(y_true, classes, mask_a))
-        arm_b = _mechanism_oof(row_ids, genes, y_true, _confident_proba(y_true, classes, mask_b))
+        arm_a = _mechanism_oof(
+            row_ids, genes, y_true, _confident_proba(y_true, classes, mask_a)
+        )
+        arm_b = _mechanism_oof(
+            row_ids, genes, y_true, _confident_proba(y_true, classes, mask_b)
+        )
         return arm_a, arm_b, pfam_map, classes
 
     def test_planted_difference_excludes_zero(self):
@@ -1540,12 +1579,22 @@ class TestPairedOofDiff:
     def test_family_split_resamples_families_not_genes(self):
         arm_a, arm_b, pfam_map, classes = self._arms(n_genes=20, n_families=5)
         family = paired_oof_diff(
-            arm_a, arm_b, pfam_map, "fam", classes=classes,
-            is_family_split=True, n_resamples=50,
+            arm_a,
+            arm_b,
+            pfam_map,
+            "fam",
+            classes=classes,
+            is_family_split=True,
+            n_resamples=50,
         )
         gene = paired_oof_diff(
-            arm_a, arm_b, pfam_map, "gene", classes=classes,
-            is_family_split=False, n_resamples=50,
+            arm_a,
+            arm_b,
+            pfam_map,
+            "gene",
+            classes=classes,
+            is_family_split=False,
+            n_resamples=50,
         )
         assert family["n_clusters"] == 5
         assert gene["n_clusters"] == 20
@@ -1617,8 +1666,14 @@ class TestPairedOofDiff:
         arm_b = _mechanism_oof(row_ids, genes, y_true, weak)
 
         dn = paired_oof_diff(
-            arm_a, arm_b, pfam_map, "dn", classes=classes,
-            metric="auroc_one_vs_rest", pos_class=DN, n_resamples=200,
+            arm_a,
+            arm_b,
+            pfam_map,
+            "dn",
+            classes=classes,
+            metric="auroc_one_vs_rest",
+            pos_class=DN,
+            n_resamples=200,
         )
         assert dn["point_a"] > 0.95
         assert dn["ci_low"] is None
@@ -1630,13 +1685,22 @@ class TestPairedOofDiff:
         # the wrong class's column.
         with pytest.raises(ValueError, match="not in classes"):
             paired_oof_diff(
-                arm_a, arm_b, pfam_map, "bad-class", classes=classes,
-                metric="auroc_one_vs_rest", pos_class="NOT_A_CLASS",
+                arm_a,
+                arm_b,
+                pfam_map,
+                "bad-class",
+                classes=classes,
+                metric="auroc_one_vs_rest",
+                pos_class="NOT_A_CLASS",
             )
         with pytest.raises(ValueError, match="requires the `classes` list"):
             paired_oof_diff(
-                arm_a, arm_b, pfam_map, "no-classes",
-                metric="auroc_one_vs_rest", pos_class=DN,
+                arm_a,
+                arm_b,
+                pfam_map,
+                "no-classes",
+                metric="auroc_one_vs_rest",
+                pos_class=DN,
             )
 
     def test_unknown_metric_raises(self):
@@ -1659,7 +1723,9 @@ class TestPairedOofDiff:
             row_ids, genes, y_true, _confident_proba(y_true, classes, np.ones(n, bool))
         )
         arm_b = _mechanism_oof(
-            row_ids, genes, y_true,
+            row_ids,
+            genes,
+            y_true,
             _confident_proba(y_true, classes, np.zeros(n, bool)),
         )
         out = paired_oof_diff(
@@ -1687,8 +1753,13 @@ class TestPairedOofDiff:
     def test_cross_partition_resamples_families_and_adds_gene_sensitivity(self):
         arm_a, arm_b, pfam_map, classes = self._arms(n_genes=20, n_families=5)
         out = paired_oof_diff(
-            arm_a, arm_b, pfam_map, "gap", classes=classes,
-            cross_partition=True, n_resamples=50,
+            arm_a,
+            arm_b,
+            pfam_map,
+            "gap",
+            classes=classes,
+            cross_partition=True,
+            n_resamples=50,
         )
         # Pre-registration §1.2: the primary interval resamples the coarser unit (families); the
         # gene-resampled one rides alongside as a labelled sensitivity check.
@@ -1697,12 +1768,21 @@ class TestPairedOofDiff:
 
     def test_cross_partition_family_interval_is_wider_than_gene(self):
         arm_a, arm_b, pfam_map, classes = self._arms(
-            n=400, n_genes=40, n_families=8, a_correct=0.8, b_correct=0.6,
+            n=400,
+            n_genes=40,
+            n_families=8,
+            a_correct=0.8,
+            b_correct=0.6,
             correctness_by_family=True,
         )
         out = paired_oof_diff(
-            arm_a, arm_b, pfam_map, "gap", classes=classes,
-            cross_partition=True, n_resamples=400,
+            arm_a,
+            arm_b,
+            pfam_map,
+            "gap",
+            classes=classes,
+            cross_partition=True,
+            n_resamples=400,
         )
         assert out["ci_low"] is None
         assert out["ci_high"] is None
@@ -1714,6 +1794,7 @@ class TestPairedOofDiff:
 # ---------------------------------------------------------------------------
 # adjudicate_diff / adjudicate_level (pre-registration §1.1 verdicts)
 # ---------------------------------------------------------------------------
+
 
 class TestAdjudicateDiff:
     def test_pass_with_ci_above_zero_is_established(self):
@@ -1754,7 +1835,9 @@ class TestAdjudicateDiff:
 
 class TestAdjudicateLevel:
     def test_clearing_threshold_with_clear_interval_is_established(self):
-        assert "established" in adjudicate_level(0.891, {"ci_low": 0.86, "ci_high": 0.92}, 0.85)
+        assert "established" in adjudicate_level(
+            0.891, {"ci_low": 0.86, "ci_high": 0.92}, 0.85
+        )
 
     def test_clearing_threshold_with_covering_interval_is_not_distinguishable(self):
         # An interval that still covers 0.85 has not established the level, however
@@ -1764,7 +1847,9 @@ class TestAdjudicateLevel:
         )
 
     def test_below_threshold_with_covering_interval_is_underpowered(self):
-        assert "underpowered" in adjudicate_level(0.83, {"ci_low": 0.79, "ci_high": 0.88}, 0.85)
+        assert "underpowered" in adjudicate_level(
+            0.83, {"ci_low": 0.79, "ci_high": 0.88}, 0.85
+        )
 
     def test_interval_ending_at_threshold_still_covers_it(self):
         assert adjudicate_level(0.83, {"ci_low": 0.79, "ci_high": 0.85}, 0.85) == (
@@ -1780,9 +1865,9 @@ class TestAdjudicateLevel:
         assert adjudicate_level(None, {"ci_low": 0.8, "ci_high": 0.9}, 0.85) == (
             "not adjudicated (no point estimate)"
         )
-        assert adjudicate_level(float("nan"), {"ci_low": 0.8, "ci_high": 0.9}, 0.85) == (
-            "not adjudicated (no point estimate)"
-        )
+        assert adjudicate_level(
+            float("nan"), {"ci_low": 0.8, "ci_high": 0.9}, 0.85
+        ) == ("not adjudicated (no point estimate)")
 
     def test_suppressed_ci_reports_no_ci(self):
         assert adjudicate_level(0.9, {"ci_suppressed": True}, 0.85) == "pass, no CI"
@@ -1811,12 +1896,15 @@ class TestAdjudicateEquivalence:
 
     def test_suppressed_or_absent_ci_reports_no_ci(self):
         assert adjudicate_equivalence(True, None, 0.05) == "pass, no CI"
-        assert adjudicate_equivalence(False, {"ci_suppressed": True}, 0.05) == "fail, no CI"
+        assert (
+            adjudicate_equivalence(False, {"ci_suppressed": True}, 0.05)
+            == "fail, no CI"
+        )
 
     def test_no_point_estimate_is_not_adjudicated(self):
-        assert adjudicate_equivalence(None, {"ci_low": -0.01, "ci_high": 0.01}, 0.05) == (
-            "not adjudicated (no point estimate)"
-        )
+        assert adjudicate_equivalence(
+            None, {"ci_low": -0.01, "ci_high": 0.01}, 0.05
+        ) == ("not adjudicated (no point estimate)")
 
 
 class TestIndependentClusterBootstrapDiff:
@@ -1904,6 +1992,7 @@ class TestPairedClusterBootstrapDiffSharedClusters:
 # ---------------------------------------------------------------------------
 # fold-aware ranking (the defect this module was fixed for)
 # ---------------------------------------------------------------------------
+
 
 class TestRankingIsFoldAware:
     """Per-fold probability scales must not leak into a ranking metric.

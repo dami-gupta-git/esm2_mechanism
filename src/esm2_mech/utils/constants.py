@@ -19,6 +19,10 @@ AA_INDEX = {aa: i for i, aa in enumerate(AA_ORDER)}
 # never hardcode 5 or [0, 1, 2, 3, 4] inline.
 N_SEEDS = 5
 
+# Schema for per-seed records and aggregates produced by utils.seed_aggregation.
+# Increment when that shared result shape or its validation rules change.
+SEED_AGGREGATION_SCHEMA_VERSION = 1
+
 # Number of CV folds for every multi-seed probe. Single source of truth — never
 # hardcode 5 inline.
 N_FOLDS = 5

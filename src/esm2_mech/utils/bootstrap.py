@@ -61,47 +61,9 @@ class BootstrapMetricResult:
     discard_reason: str | None = None
 
 
-def average_oof_over_seeds(oof_list: list[dict | None]) -> dict | None:
-    """Average per-seed OOF probas to one prediction per variant.
-
-    The result deliberately carries no fold assignment: each seed reshuffles the
-    folds, so an averaged row has no single fold and its metrics could only be scored
-    on the pooled concatenation. Use stack_oof_over_seeds for anything that computes
-    a ranking metric; a fold-aware consumer handed this dict raises rather than
-    silently pooling.
-    """
-    valid = [oof for oof in oof_list if oof is not None and len(oof["row_ids"])]
-    if not valid:
-        return None
-
-    proba_sum: dict = {}
-    proba_count: dict = {}
-    y_by_row: dict = {}
-    gene_by_row: dict = {}
-    for oof in valid:
-        for pos, row in enumerate(oof["row_ids"]):
-            row = int(row)
-            vec = np.asarray(oof["proba"][pos], dtype=float)
-            if row in proba_sum:
-                proba_sum[row] = proba_sum[row] + vec
-                proba_count[row] += 1
-            else:
-                proba_sum[row] = vec.copy()
-                proba_count[row] = 1
-            y_by_row.setdefault(row, oof["y_true"][pos])
-            gene_by_row.setdefault(row, oof["genes"][pos])
-
-    rows_sorted = sorted(proba_sum.keys())
-    proba = np.array([proba_sum[row] / proba_count[row] for row in rows_sorted])
-    return {
-        "y_true": np.array([y_by_row[row] for row in rows_sorted]),
-        "proba": proba,
-        "genes": np.array([gene_by_row[row] for row in rows_sorted], dtype=object),
-        "row_ids": np.array(rows_sorted, dtype=int),
-    }
-
-
-def oof_score_arms(oof: dict, label: str) -> list[tuple[np.ndarray, np.ndarray, np.ndarray]]:
+def oof_score_arms(
+    oof: dict, label: str
+) -> list[tuple[np.ndarray, np.ndarray, np.ndarray]]:
     """Normalize an OOF dict to the (proba, folds, fold_ids) blocks a metric scores in.
 
     Every fold is fitted independently, so its probabilities carry their own scale
@@ -125,8 +87,7 @@ def oof_score_arms(oof: dict, label: str) -> list[tuple[np.ndarray, np.ndarray, 
             f"{label}: this OOF has no 'folds' array, so its metrics can only be "
             "scored on the pooled concatenation, which is the defect this code "
             "exists to prevent. Produce it with a probe that records the fold, or "
-            "combine seeds with stack_oof_over_seeds rather than "
-            "average_oof_over_seeds."
+            "combine seeds with stack_oof_over_seeds."
         )
     folds = np.asarray(oof["folds"])
     return [(np.asarray(oof["proba"]), folds, np.unique(folds))]
@@ -185,9 +146,7 @@ def stack_oof_over_seeds(oof_list: list[dict | None]) -> dict | None:
         return None
     for oof in valid:
         if "folds" not in oof:
-            raise KeyError(
-                "stack_oof_over_seeds: a per-seed OOF has no 'folds' array"
-            )
+            raise KeyError("stack_oof_over_seeds: a per-seed OOF has no 'folds' array")
 
     pos_by_row = [
         {int(row): pos for pos, row in enumerate(oof["row_ids"])} for oof in valid
@@ -474,18 +433,18 @@ def _within_stratum_resample_value(
 ) -> float | None:
     """Draw one within-stratum resample and score it."""
     rng = np.random.RandomState(child_seed)
-    rows = np.concatenate([
-        rows_in[rng.randint(0, len(rows_in), size=len(rows_in))]
-        for rows_in in stratum_rows
-    ])
+    rows = np.concatenate(
+        [
+            rows_in[rng.randint(0, len(rows_in), size=len(rows_in))]
+            for rows_in in stratum_rows
+        ]
+    )
     return _clean_scalar(metric_fn(rows))
 
 
 def cluster_bootstrap_ci(
     clusters: np.ndarray,
-    metric_fn: Callable[
-        [np.ndarray], float | None | BootstrapMetricResult
-    ],
+    metric_fn: Callable[[np.ndarray], float | None | BootstrapMetricResult],
     n_resamples: int = BOOTSTRAP_N_RESAMPLES,
     ci_level: float = BOOTSTRAP_CI_LEVEL,
     min_valid_frac: float = BOOTSTRAP_MIN_VALID_FRAC,
@@ -617,7 +576,9 @@ def _paired_cluster_bootstrap_diff_ci(
     point_b = metric_fn_b(all_rows)
     point_a = float(point_a) if point_a is not None and np.isfinite(point_a) else None
     point_b = float(point_b) if point_b is not None and np.isfinite(point_b) else None
-    point_diff = point_a - point_b if point_a is not None and point_b is not None else None
+    point_diff = (
+        point_a - point_b if point_a is not None and point_b is not None else None
+    )
 
     child_seqs = np.random.SeedSequence(seed).spawn(n_resamples)
     child_seeds = [int(seq.generate_state(1)[0]) for seq in child_seqs]
@@ -646,9 +607,7 @@ def _paired_cluster_bootstrap_diff_ci(
         "valid_frac": float(valid_frac),
         "n_clusters": int(n_clusters),
     }
-    _warn_on_discards(
-        {"paired_diff": base}, {"paired_diff": discard_reason}
-    )
+    _warn_on_discards({"paired_diff": base}, {"paired_diff": discard_reason})
     if not diffs or valid_frac < min_valid_frac:
         return {**base, "ci_low": None, "ci_high": None, "ci_suppressed": True}
     lo_pct = (1.0 - ci_level) / 2.0 * 100.0
@@ -718,7 +677,9 @@ def paired_cluster_bootstrap_diff_shared_clusters(
     all_rows_b = np.concatenate(shared_rows_b)
     point_a = _clean_scalar(metric_fn_a(all_rows_a))
     point_b = _clean_scalar(metric_fn_b(all_rows_b))
-    point_diff = point_a - point_b if point_a is not None and point_b is not None else None
+    point_diff = (
+        point_a - point_b if point_a is not None and point_b is not None else None
+    )
 
     seed_sequences = np.random.SeedSequence(seed).spawn(n_resamples)
     differences = []
@@ -777,7 +738,9 @@ def independent_cluster_bootstrap_diff(
 
     point_a = _clean_scalar(metric_fn_a(np.arange(len(clusters_a))))
     point_b = _clean_scalar(metric_fn_b(np.arange(len(clusters_b))))
-    point_diff = point_a - point_b if point_a is not None and point_b is not None else None
+    point_diff = (
+        point_a - point_b if point_a is not None and point_b is not None else None
+    )
 
     seed_sequences = np.random.SeedSequence(seed).spawn(n_resamples)
     differences = []
@@ -913,12 +876,20 @@ def bootstrap_mechanism_metrics_from_oof(
     def _macro_f1(rows: np.ndarray) -> dict:
         def _fold_f1(block: np.ndarray, arm_pred: np.ndarray) -> float | None:
             return fold_macro_f1(y_true, block, arm_pred, classes)
+
         return {"macro_f1": score_within_folds(rows, pred_arms, _fold_f1)}
 
     def _class_metrics(rows: np.ndarray, *, _col: int, _cls: str) -> dict:
-        names = (f"auroc_{_cls}", f"auprc_{_cls}", f"prevalence_{_cls}", f"auprc_lift_{_cls}")
+        names = (
+            f"auroc_{_cls}",
+            f"auprc_{_cls}",
+            f"prevalence_{_cls}",
+            f"auprc_lift_{_cls}",
+        )
 
-        def _fold_metric(block: np.ndarray, arm_proba: np.ndarray, which: str) -> float | None:
+        def _fold_metric(
+            block: np.ndarray, arm_proba: np.ndarray, which: str
+        ) -> float | None:
             y_bin = binary_class_target(y_true[block], _cls)
             if y_bin is None:
                 return None
@@ -935,7 +906,9 @@ def bootstrap_mechanism_metrics_from_oof(
             name: score_within_folds(
                 rows, arms, functools.partial(_fold_metric, which=which)
             )
-            for name, which in zip(names, ("auroc", "auprc", "prevalence", "auprc_lift"))
+            for name, which in zip(
+                names, ("auroc", "auprc", "prevalence", "auprc_lift")
+            )
         }
 
     metric_fns = [_macro_f1] + [
@@ -947,9 +920,7 @@ def bootstrap_mechanism_metrics_from_oof(
     for metric_fn in metric_fns:
         points.update(metric_fn(all_rows))
     return {
-        metric_name: _blocked_classification_interval(
-            point, len(np.unique(clusters))
-        )
+        metric_name: _blocked_classification_interval(point, len(np.unique(clusters)))
         for metric_name, point in points.items()
     }
 
@@ -1010,13 +981,21 @@ def family_or_gene_clusters(
     """
     if not is_family_split:
         return genes
-    return np.array([
-        pfam_map[gene] if pfam_map.get(gene) else f"{UNANNOTATED_CLUSTER_PREFIX}{gene}"
-        for gene in genes
-    ])
+    return np.array(
+        [
+            (
+                pfam_map[gene]
+                if pfam_map.get(gene)
+                else f"{UNANNOTATED_CLUSTER_PREFIX}{gene}"
+            )
+            for gene in genes
+        ]
+    )
 
 
-def _align_oof_pair(oof_a: dict, oof_b: dict, label: str) -> tuple[np.ndarray, np.ndarray] | None:
+def _align_oof_pair(
+    oof_a: dict, oof_b: dict, label: str
+) -> tuple[np.ndarray, np.ndarray] | None:
     """Index positions into each arm for variants both arms scored."""
     for name, oof in (("a", oof_a), ("b", oof_b)):
         if "row_ids" not in oof:
@@ -1092,7 +1071,11 @@ def paired_oof_diff(
         # on the same variants while each keeps its own fold assignment — the two
         # arms are different CV partitions and their folds do not correspond.
         arms = [
-            (np.asarray(proba)[idx], np.asarray(folds)[idx], np.unique(np.asarray(folds)[idx]))
+            (
+                np.asarray(proba)[idx],
+                np.asarray(folds)[idx],
+                np.unique(np.asarray(folds)[idx]),
+            )
             for proba, folds, _ in oof_score_arms(oof, label)
         ]
 
@@ -1111,6 +1094,7 @@ def paired_oof_diff(
 
             def _macro_f1(rows: np.ndarray) -> float | None:
                 return score_within_folds(rows, f1_arms, _fold_f1)
+
             return _macro_f1
 
         if metric == "auroc_one_vs_rest":
@@ -1131,6 +1115,7 @@ def paired_oof_diff(
 
         def _auroc(rows: np.ndarray) -> float | None:
             return score_within_folds(rows, column_arms, _fold_auroc)
+
         return _auroc
 
     fn_a, fn_b = _metric_fn(oof_a, idx_a), _metric_fn(oof_b, idx_b)
@@ -1145,9 +1130,7 @@ def paired_oof_diff(
         pfam_map,
         is_family_split=True if cross_partition else is_family_split,
     )
-    out = _blocked_classification_interval(
-        point_diff, len(np.unique(cluster_values))
-    )
+    out = _blocked_classification_interval(point_diff, len(np.unique(cluster_values)))
     out.update({"point_a": point_a, "point_b": point_b, "point_diff": point_diff})
     if cross_partition:
         shared_genes = np.asarray(oof_a["genes"], dtype=object)[idx_a]
@@ -1252,9 +1235,7 @@ def binary_auroc_cluster_bootstrap_ci(
 
     point = _auroc(np.arange(len(y_true), dtype=int))
     resample_unit = oof["genes"] if clusters is None else clusters
-    return _blocked_classification_interval(
-        point, len(np.unique(resample_unit))
-    )
+    return _blocked_classification_interval(point, len(np.unique(resample_unit)))
 
 
 def _fold_of_each_unit(units: np.ndarray, folds: np.ndarray, what: str) -> dict:
@@ -1344,7 +1325,9 @@ def _cluster_partition(
 
     by_fold_size: dict = {}
     for cluster, genes_in in cluster_genes.items():
-        by_fold_size.setdefault((fold_of_cluster[cluster], len(genes_in)), []).append(cluster)
+        by_fold_size.setdefault((fold_of_cluster[cluster], len(genes_in)), []).append(
+            cluster
+        )
 
     return cluster_genes, by_fold_size
 
@@ -1444,7 +1427,10 @@ def macro_ovr_auroc(
     all_rows = np.arange(len(y_true))
     values, scored = [], []
     for col_idx, cls in enumerate(classes):
-        def _fold_auroc(block: np.ndarray, arm_proba: np.ndarray, _cls=cls, _col=col_idx):
+
+        def _fold_auroc(
+            block: np.ndarray, arm_proba: np.ndarray, _cls=cls, _col=col_idx
+        ):
             y_bin = binary_class_target(y_true[block], _cls)
             if y_bin is None:
                 return None
@@ -1488,7 +1474,9 @@ def oof_permutation_pvalue(
     if clusters is not None and groups is None:
         raise ValueError("clusters requires groups (the gene-level label unit)")
     immovable = (
-        count_immovable_clusters(groups, clusters, folds) if clusters is not None else None
+        count_immovable_clusters(groups, clusters, folds)
+        if clusters is not None
+        else None
     )
 
     rng = np.random.RandomState(seed)
@@ -1496,9 +1484,7 @@ def oof_permutation_pvalue(
     dropped_class_mismatch = 0
     for _ in range(n_permutations):
         if clusters is not None:
-            permuted = _permute_labels_by_cluster(
-                y_true, groups, clusters, folds, rng
-            )
+            permuted = _permute_labels_by_cluster(y_true, groups, clusters, folds, rng)
         else:
             permuted = _permute_labels(y_true, groups, folds, rng)
         value, scored = macro_ovr_auroc(permuted, proba, folds, classes)
@@ -1524,7 +1510,11 @@ def oof_permutation_pvalue(
     if observed is None or not np.isfinite(observed) or len(null_arr) == 0:
         return {
             **common,
-            "observed": float(observed) if observed is not None and np.isfinite(observed) else None,
+            "observed": (
+                float(observed)
+                if observed is not None and np.isfinite(observed)
+                else None
+            ),
             "p_value": None,
             "p_value_resolution": (
                 float(1 / (1 + len(null_arr))) if len(null_arr) else None
@@ -1565,7 +1555,9 @@ def label_permutation_pvalue(
     if clusters is not None and groups is None:
         raise ValueError("clusters requires groups (the gene-level label unit)")
     immovable = (
-        count_immovable_clusters(groups, clusters, folds) if clusters is not None else None
+        count_immovable_clusters(groups, clusters, folds)
+        if clusters is not None
+        else None
     )
 
     observed = run_metric_fn(labels)
@@ -1592,7 +1584,11 @@ def label_permutation_pvalue(
     if observed is None or not np.isfinite(observed) or len(null_arr) == 0:
         return {
             **common,
-            "observed": float(observed) if observed is not None and np.isfinite(observed) else None,
+            "observed": (
+                float(observed)
+                if observed is not None and np.isfinite(observed)
+                else None
+            ),
             "p_value": None,
             "p_value_resolution": (
                 float(1 / (1 + len(null_arr))) if len(null_arr) else None
@@ -1607,7 +1603,9 @@ def label_permutation_pvalue(
     elif alternative == "less":
         extreme = int(np.sum(null_arr <= observed))
     else:
-        raise ValueError(f"alternative must be 'greater' or 'less', got {alternative!r}")
+        raise ValueError(
+            f"alternative must be 'greater' or 'less', got {alternative!r}"
+        )
     p_value = (1 + extreme) / (1 + len(null_arr))
     return {
         **common,

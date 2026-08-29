@@ -4,7 +4,7 @@ Tests for esm2_mech.utils.seed_aggregation.
 Invariants:
 - load_seed_files: loads every matching seed file as (seed, basename, dict), seed
   parsed from the glob's `*` position
-- load_seed_files: corrupt JSON file is skipped (not silently dropped, not crashing)
+- load_seed_files: corrupt JSON and missing recorded identity raise
 - load_seed_files: non-matching glob returns empty list
 - load_seed_files: a filename whose `*` position is not a plain integer raises
 - load_seed_files: two files claiming the same seed number raises
@@ -29,10 +29,10 @@ from esm2_mech.utils.seed_aggregation import (
     read_across_seed_metric,
 )
 
-
 # ---------------------------------------------------------------------------
 # helpers
 # ---------------------------------------------------------------------------
+
 
 def _seed_result(macro_f1_mean, *, split="gene_split", feature="esm2"):
     """Build a minimal per-seed result dict for one split/feature."""
@@ -48,6 +48,8 @@ def _seed_result(macro_f1_mean, *, split="gene_split", feature="esm2"):
 
 
 def _write_seed_file(path, data):
+    token = path.stem.rsplit("seed", 1)[-1]
+    data["seed"] = int(token) if token.isdigit() else 0
     path.write_text(json.dumps(data))
     return path
 
@@ -61,12 +63,13 @@ def _with_seeds(named_results):
 # load_seed_files
 # ---------------------------------------------------------------------------
 
+
 class TestLoadSeedFiles:
 
     def test_loads_matching_files(self, tmp_path):
         _write_seed_file(tmp_path / "res_seed0.json", _seed_result(0.5))
         _write_seed_file(tmp_path / "res_seed1.json", _seed_result(0.6))
-        loaded = load_seed_files(str(tmp_path), "res_seed*.json")
+        loaded = load_seed_files(str(tmp_path), "res_seed*.json", expected_seeds=(0, 1))
         assert len(loaded) == 2
         names = [name for _seed, name, _data in loaded]
         assert "res_seed0.json" in names
@@ -74,48 +77,50 @@ class TestLoadSeedFiles:
 
     def test_returns_seed_basename_and_parsed_dict(self, tmp_path):
         _write_seed_file(tmp_path / "res_seed0.json", _seed_result(0.5))
-        loaded = load_seed_files(str(tmp_path), "res_seed*.json")
+        loaded = load_seed_files(str(tmp_path), "res_seed*.json", expected_seeds=(0,))
         seed, name, data = loaded[0]
         assert seed == 0
         assert name == "res_seed0.json"
         assert data["gene_split"]["esm2"]["macro_f1_mean"] == 0.5
 
-    def test_corrupt_file_skipped(self, tmp_path):
+    def test_corrupt_file_raises(self, tmp_path):
         _write_seed_file(tmp_path / "res_seed0.json", _seed_result(0.5))
         (tmp_path / "res_seed1.json").write_text("{not valid json")
-        loaded = load_seed_files(str(tmp_path), "res_seed*.json")
-        # The good file loads; the corrupt one is skipped rather than crashing.
-        assert len(loaded) == 1
-        assert loaded[0][1] == "res_seed0.json"
+        with pytest.raises(ValueError, match="invalid seed-result JSON"):
+            load_seed_files(str(tmp_path), "res_seed*.json", expected_seeds=(0, 1))
 
     def test_no_match_returns_empty(self, tmp_path):
         _write_seed_file(tmp_path / "res_seed0.json", _seed_result(0.5))
-        assert load_seed_files(str(tmp_path), "nomatch*.json") == []
+        assert load_seed_files(str(tmp_path), "nomatch*.json", expected_seeds=()) == []
 
     def test_sorted_order(self, tmp_path):
         _write_seed_file(tmp_path / "res_seed2.json", _seed_result(0.5))
         _write_seed_file(tmp_path / "res_seed0.json", _seed_result(0.5))
         _write_seed_file(tmp_path / "res_seed1.json", _seed_result(0.5))
-        loaded = load_seed_files(str(tmp_path), "res_seed*.json")
+        loaded = load_seed_files(
+            str(tmp_path), "res_seed*.json", expected_seeds=(0, 1, 2)
+        )
         names = [name for _seed, name, _data in loaded]
         assert names == sorted(names)
 
     def test_non_integer_seed_token_raises(self, tmp_path):
         _write_seed_file(tmp_path / "res_seedfinal.json", _seed_result(0.5))
         with pytest.raises(ValueError, match="does not encode an integer seed"):
-            load_seed_files(str(tmp_path), "res_seed*.json")
+            load_seed_files(str(tmp_path), "res_seed*.json", expected_seeds=(0,))
 
     def test_duplicate_seed_raises(self, tmp_path):
         # Two distinct filenames that both parse to seed 0 under this glob.
         _write_seed_file(tmp_path / "res_seed0.json", _seed_result(0.5))
         _write_seed_file(tmp_path / "res_seed00.json", _seed_result(0.6))
         with pytest.raises(ValueError, match="duplicate seed"):
-            load_seed_files(str(tmp_path), "res_seed*.json")
+            load_seed_files(str(tmp_path), "res_seed*.json", expected_seeds=(0,))
 
     def test_expected_seeds_satisfied_passes(self, tmp_path):
         _write_seed_file(tmp_path / "res_seed0.json", _seed_result(0.5))
         _write_seed_file(tmp_path / "res_seed1.json", _seed_result(0.6))
-        loaded = load_seed_files(str(tmp_path), "res_seed*.json", expected_seeds=range(2))
+        loaded = load_seed_files(
+            str(tmp_path), "res_seed*.json", expected_seeds=range(2)
+        )
         assert len(loaded) == 2
 
     def test_expected_seeds_missing_raises(self, tmp_path):
@@ -134,18 +139,21 @@ class TestLoadSeedFiles:
 # aggregate_across_seeds
 # ---------------------------------------------------------------------------
 
+
 class TestAggregateAcrossSeeds:
 
     def test_mean_and_std_across_seeds(self):
         seed_results = [
             ("seed0.json", _seed_result(0.4)),
-            ("seed1.json", _seed_result(0.6)),
+            ("seed1.json", _seed_result(0.5)),
+            ("seed2.json", _seed_result(0.6)),
         ]
         agg = aggregate_across_seeds(_with_seeds(seed_results))
         feature = agg["gene_split"]["esm2"]
         assert feature["macro_f1_seed_mean"] == pytest.approx(0.5)
         assert feature["macro_f1_seed_std"] == pytest.approx(0.1)
-        assert feature["macro_f1_n_seeds"] == 2
+        assert feature["macro_f1_n_seeds"] == 3
+        assert feature["macro_f1_seed_aggregate"]["sampling_unit"] == "model_seed"
 
     def test_only_mean_keys_aggregated(self):
         # macro_f1_std is present per seed but must NOT be aggregated as a metric.
@@ -205,6 +213,18 @@ class TestAggregateAcrossSeeds:
         assert agg["gene_split"]["esm3"]["macro_f1_seed_mean"] is None
         assert agg["gene_split"]["esm3"]["status"] == "unavailable"
 
+    def test_unknown_seed_status_is_not_relabelled_as_failed(self):
+        result = _seed_result(0.5)
+        result["gene_split"]["esm2"]["status"] = "unknown"
+        with pytest.raises(ValueError, match="unsupported seed status"):
+            aggregate_across_seeds(_with_seeds([("seed0.json", result)]))
+
+    def test_missing_seed_status_is_not_filled_in(self):
+        result = _seed_result(0.5)
+        del result["gene_split"]["esm2"]["status"]
+        with pytest.raises(ValueError, match="has no status"):
+            aggregate_across_seeds(_with_seeds([("seed0.json", result)]))
+
     def test_both_splits_in_output(self):
         seed_results = [("seed0.json", _seed_result(0.5))]
         agg = aggregate_across_seeds(_with_seeds(seed_results))
@@ -220,11 +240,27 @@ class TestAggregateAcrossSeeds:
         seed_results = [
             (
                 "seed0.json",
-                {"gene_split": {"esm2": {"status": "success", "macro_f1_mean": 0.4, "auroc_GOF_mean": 0.8}}},
+                {
+                    "gene_split": {
+                        "esm2": {
+                            "status": "success",
+                            "macro_f1_mean": 0.4,
+                            "auroc_GOF_mean": 0.8,
+                        }
+                    }
+                },
             ),
             (
                 "seed1.json",
-                {"gene_split": {"esm2": {"status": "success", "macro_f1_mean": 0.6, "auroc_GOF_mean": 0.9}}},
+                {
+                    "gene_split": {
+                        "esm2": {
+                            "status": "success",
+                            "macro_f1_mean": 0.6,
+                            "auroc_GOF_mean": 0.9,
+                        }
+                    }
+                },
             ),
         ]
         agg = aggregate_across_seeds(_with_seeds(seed_results))
@@ -274,6 +310,7 @@ class TestAggregateAcrossSeeds:
 # print_table
 # ---------------------------------------------------------------------------
 
+
 class TestPrintTable:
 
     def test_does_not_crash_on_full_aggregate(self, capsys):
@@ -288,8 +325,20 @@ class TestPrintTable:
     def test_does_not_crash_when_feature_missing_from_one_split(self, capsys):
         # esm2 only present in gene_split, esm3 only in family_split.
         agg = {
-            "gene_split": {"esm2": {"macro_f1_seed_mean": 0.5, "macro_f1_seed_std": 0.0, "macro_f1_n_seeds": 2}},
-            "family_split": {"esm3": {"macro_f1_seed_mean": 0.4, "macro_f1_seed_std": 0.0, "macro_f1_n_seeds": 2}},
+            "gene_split": {
+                "esm2": {
+                    "macro_f1_seed_mean": 0.5,
+                    "macro_f1_seed_std": 0.0,
+                    "macro_f1_n_seeds": 2,
+                }
+            },
+            "family_split": {
+                "esm3": {
+                    "macro_f1_seed_mean": 0.4,
+                    "macro_f1_seed_std": 0.0,
+                    "macro_f1_n_seeds": 2,
+                }
+            },
         }
         print_table(agg)
         out = capsys.readouterr().out
@@ -306,14 +355,13 @@ def test_read_across_seed_metric_preserves_unavailable_value(tmp_path):
         json.dumps(
             {
                 "across_seed": {
-                    "family_split": {
-                        "delta_mean": {"macro_f1_seed_mean": None}
-                    }
+                    "family_split": {"delta_mean": {"macro_f1_seed_mean": None}}
                 }
             }
         )
     )
 
-    assert read_across_seed_metric(
-        str(aggregate_path), "family_split", "delta_mean"
-    ) is None
+    assert (
+        read_across_seed_metric(str(aggregate_path), "family_split", "delta_mean")
+        is None
+    )
