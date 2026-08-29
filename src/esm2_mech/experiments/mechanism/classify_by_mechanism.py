@@ -15,10 +15,13 @@ from esm2_mech.experiments.mechanism.mechanism_delta_probe import _load_alphamis
 from esm2_mech.utils.data import load_variants, validate_embedding_variant_identity
 from esm2_mech.utils.io import write_result_json
 from esm2_mech.utils.seed_aggregation import (
-    aggregate_across_seeds,
     aggregate_seed_vote,
     load_seed_files,
     make_seed_record,
+)
+from esm2_mech.experiments.mechanism.seed_results import (
+    aggregate_across_seeds,
+    aggregate_result_contract,
     print_table,
 )
 from esm2_mech.utils.constants import (
@@ -83,21 +86,11 @@ def summarize_split_gap(
         minimum_supporting_seeds=SPLIT_GAP_MIN_SUPPORTING_SEEDS,
         comparison="greater_than",
     )
-    supporting_seeds = vote.payload["supporting_seeds"] if vote.available else None
-    for row in per_seed:
-        row["supports_positive_gene_minus_family_gap"] = (
-            row["seed"] in supporting_seeds if supporting_seeds is not None else None
-        )
     return {
         "seed_vote": vote.to_dict(),
         "feature": feature,
         "per_seed": per_seed,
-        "supporting_seeds": supporting_seeds,
-        "n_supporting_seeds": (
-            len(supporting_seeds) if supporting_seeds is not None else None
-        ),
         "contradictory_seeds": contradictory_seeds,
-        "invalid_ci_seeds": list(vote.affected_seeds),
         "required_seed_count": N_SEEDS,
         "required_supporting_seed_count": SPLIT_GAP_MIN_SUPPORTING_SEEDS,
         "preregistered_rule_evaluable": vote.available,
@@ -140,14 +133,6 @@ def summarize_mechanism_null_ci(
         threshold=threshold,
         minimum_supporting_seeds=MECHANISM_NULL_MIN_AFFIRMING_SEEDS,
     )
-    affirming_ci_seeds = vote.payload["supporting_seeds"] if vote.available else None
-    for row in per_seed:
-        row["ci_upper_below_floor_plus_margin"] = (
-            row["seed"] in affirming_ci_seeds
-            if affirming_ci_seeds is not None
-            else None
-        )
-    meets_interval_rule = vote.payload["decision"] if vote.available else None
     return {
         "seed_vote": vote.to_dict(),
         "feature": "delta_mean",
@@ -155,17 +140,11 @@ def summarize_mechanism_null_ci(
         "floor_margin": MECHANISM_NULL_FLOOR_MARGIN,
         "threshold": threshold,
         "per_seed": per_seed,
-        "affirming_ci_seeds": affirming_ci_seeds,
-        "n_affirming_ci_seeds": (
-            len(affirming_ci_seeds) if affirming_ci_seeds is not None else None
-        ),
-        "invalid_ci_seeds": list(vote.affected_seeds),
         "required_seed_count": N_SEEDS,
         "required_affirming_seed_count": MECHANISM_NULL_MIN_AFFIRMING_SEEDS,
         "preregistered_rule_evaluable": vote.available,
-        "meets_claim_2a_interval_rule": meets_interval_rule,
-        "overall_verdict": (
-            "affirmed" if meets_interval_rule is True else "not adjudicated"
+        "meets_claim_2a_interval_rule": (
+            vote.payload["decision"] if vote.available else None
         ),
     }
 
@@ -205,7 +184,21 @@ def aggregate_permutation_results(
             threshold=PERMUTATION_SIGNIFICANCE_THRESHOLD,
             minimum_supporting_seeds=PERMUTATION_MIN_SIGNIFICANT_SEEDS,
         )
-        summaries[feature] = {**vote.to_dict(), "per_seed": per_seed}
+        summaries[feature] = {
+            "seed_vote": vote.to_dict(),
+            "feature": feature,
+            "per_seed": per_seed,
+            "resolution_limited_seeds": [
+                row["seed"] for row in per_seed if row.get("resolution_limited") is True
+            ],
+            "significance_threshold": PERMUTATION_SIGNIFICANCE_THRESHOLD,
+            "required_seed_count": N_SEEDS,
+            "required_significant_seed_count": PERMUTATION_MIN_SIGNIFICANT_SEEDS,
+            "preregistered_rule_evaluable": vote.available,
+            "meets_preregistered_three_of_five_rule": (
+                vote.payload["decision"] if vote.available else None
+            ),
+        }
     return summaries
 
 
@@ -213,23 +206,24 @@ def print_permutation_summary(summary: dict[str, dict]) -> None:
     """Print the full-seed permutation decision without hiding incomplete runs."""
     print("\n=== Permutation results across seeds ===")
     for feature in PERMUTATION_FEATURES:
-        feature_summary = summary[feature]
-        if feature_summary["state"] == "available":
-            payload = feature_summary["payload"]
-            count = payload["n_supporting_seeds"]
+        vote = summary[feature]["seed_vote"]
+        if vote["state"] == "available":
+            count = vote["payload"]["n_supporting_seeds"]
             verdict = (
                 "criterion met"
-                if payload["decision"]
+                if vote["payload"]["decision"]
                 else "criterion not met"
             )
             print(
                 f"  {feature}: {count}/{N_SEEDS} p-values below "
-                f"{PERMUTATION_SIGNIFICANCE_THRESHOLD} ({verdict})"
+                f"{PERMUTATION_SIGNIFICANCE_THRESHOLD} ({verdict}); "
+                f"resolution-limited seeds "
+                f"{summary[feature]['resolution_limited_seeds']}"
             )
         else:
             print(
-                f"  {feature}: unavailable ({feature_summary['reason']}), affected "
-                f"seeds {feature_summary['affected_seeds']}"
+                f"  {feature}: unavailable ({vote['reason']}), affected "
+                f"seeds {vote['affected_seeds']}"
             )
 
 
@@ -308,6 +302,7 @@ def main():
     args = parser.parse_args()
     if args.seeds < 1:
         parser.error("--seeds must be >= 1")
+    requested_seeds = range(args.seeds)
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -324,7 +319,7 @@ def main():
 
     print("\n=== Aggregating across seeds ===")
     seed_results = load_seed_files(
-        str(OUT_DIR), SEED_RESULT_GLOB, expected_seeds=range(args.seeds)
+        str(OUT_DIR), SEED_RESULT_GLOB, expected_seeds=requested_seeds
     )
     print(f"Loaded {len(seed_results)} seed files:")
     for _seed, filename, _result in seed_results:
@@ -343,7 +338,9 @@ def main():
             raise ValueError(f"{filename}: seed {seed} used different analysis parameters")
 
     aggregated = aggregate_across_seeds(
-        seed_results, confusion_matrix_class_order=MECHANISM_CLASSES
+        seed_results,
+        requested_seeds,
+        confusion_matrix_class_order=MECHANISM_CLASSES,
     )
     split_gap_summary = summarize_split_gap(seed_results)
     permutation_summary = (
@@ -351,6 +348,7 @@ def main():
         if args.n_permutations > 0 else None
     )
     aggregate_payload = {
+        **aggregate_result_contract(),
         "n_seeds": len(seed_results),
         "seed_files": [filename for _seed, filename, _result in seed_results],
         "input_fingerprints": input_fingerprints,

@@ -20,6 +20,13 @@ from esm2_mech.experiments.mechanism.mechanism_delta_family_split import run
 from esm2_mech.utils.probes import run_logreg_pca_cv
 from esm2_mech.utils.constants import MECHANISM_CLASSES
 from esm2_mech.utils.classification import validate_complete_classification_splits
+from esm2_mech.utils.constants import SEED_AGGREGATION_SCHEMA_VERSION
+from esm2_mech.utils.metrics import FOLD_SAMPLING_UNIT
+from esm2_mech.utils.seed_aggregation import (
+    SEED_SCHEMA_KEY,
+    SEED_STATUS_KEY,
+    SEED_STATUS_SUCCESS,
+)
 
 
 def _contract(labels, genes, splits):
@@ -289,3 +296,56 @@ def test_result_and_oof_cache_share_exact_execution_binding(tmp_path, monkeypatc
     assert cache["input_fingerprints"] == result["input_fingerprints"]
     assert cache["analysis_parameters"] == result["analysis_parameters"]
     assert set(cache["features"]) == {"wt_only_mean"}
+
+
+def test_per_seed_file_declares_the_shared_seed_contract(tmp_path, monkeypatch):
+    """The written per-seed file states its schema, seed and status, and each
+    metric block states that its spread is over folds."""
+    n_rows = 60
+    labels = np.array(["GOF", "DN", "LOF"] * (n_rows // 3))
+    genes = np.array([f"G{row % 6}" for row in range(n_rows)])
+    embedding = np.random.RandomState(0).randn(n_rows, 8)
+    data = {
+        "valid_variants": [
+            {
+                "gene": genes[row], "uniprot_id": f"P{row}", "aa_pos": 1,
+                "aa_wt": "A", "aa_mut": "V",
+            }
+            for row in range(n_rows)
+        ],
+        "emb_wt_mean": embedding,
+        "emb_mut_mean": embedding + 1,
+        "emb_wt_pos": embedding + 2,
+        "emb_mut_pos": embedding + 3,
+        "labels_3class": labels,
+        "genes_arr": genes,
+        "foldx_ddg": np.full(n_rows, np.nan),
+        "aa_wt_list": ["A"] * n_rows,
+        "aa_mut_list": ["V"] * n_rows,
+        "alphamissense_scores": np.full(n_rows, np.nan),
+    }
+    (tmp_path / "pfam.json").write_text("{}")
+    monkeypatch.setattr(family_probe, "PFAM_JSON", tmp_path / "pfam.json")
+    monkeypatch.setattr(
+        family_probe,
+        "load_pfam_map",
+        lambda _path: {gene: f"F{index % 3}" for index, gene in enumerate(set(genes))},
+    )
+    monkeypatch.setattr(family_probe, "attach_mechanism_ci", lambda *args, **kwargs: None)
+
+    run(
+        data,
+        out_dir=str(tmp_path),
+        seed=3,
+        compute_ci=False,
+        n_folds=2,
+        feature_names=("wt_only_mean",),
+    )
+
+    written = json.loads((tmp_path / "family_split_baselines_seed3.json").read_text())
+    assert written[SEED_SCHEMA_KEY] == SEED_AGGREGATION_SCHEMA_VERSION
+    assert written["seed"] == 3
+    assert written[SEED_STATUS_KEY] == SEED_STATUS_SUCCESS
+    block = written["gene_split"]["wt_only_mean"]
+    assert block["spread_sampling_unit"] == FOLD_SAMPLING_UNIT
+    assert "macro_f1_std" in block

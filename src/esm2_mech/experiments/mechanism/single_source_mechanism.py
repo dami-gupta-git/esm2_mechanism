@@ -58,13 +58,14 @@ from esm2_mech.utils.paths import (
     SINGLE_SOURCE_DIR,
     SINGLE_SOURCE_NAIVE_BASELINE_JSON,
 )
-from esm2_mech.utils.seed_aggregation import (
+from esm2_mech.utils.seed_aggregation import load_seed_files
+from esm2_mech.experiments.mechanism.seed_results import (
     FAMILY_SPLIT,
     GENE_SPLIT,
     HEADLINE_METRIC,
     SEED_MEAN_SUFFIX,
     aggregate_across_seeds,
-    load_seed_files,
+    aggregate_result_contract,
     print_table,
 )
 
@@ -113,6 +114,7 @@ def main() -> None:
     args = parser.parse_args()
     if args.seeds < 1:
         parser.error("--seeds must be >= 1")
+    requested_seeds = range(args.seeds)
 
     SINGLE_SOURCE_DIR.mkdir(parents=True, exist_ok=True)
     stale = []
@@ -161,14 +163,17 @@ def main() -> None:
 
     print("\n=== Aggregating across seeds ===")
     seed_results = load_seed_files(
-        str(SINGLE_SOURCE_DIR), SEED_RESULT_GLOB, expected_seeds=range(args.seeds)
+        str(SINGLE_SOURCE_DIR), SEED_RESULT_GLOB, expected_seeds=requested_seeds
     )
     aggregated = aggregate_across_seeds(
-        seed_results, confusion_matrix_class_order=MECHANISM_CLASSES
+        seed_results,
+        requested_seeds,
+        confusion_matrix_class_order=MECHANISM_CLASSES,
     )
     write_result_json(
         SINGLE_SOURCE_AGGREGATE_JSON,
         {
+            **aggregate_result_contract(),
             "source": SOURCE_GERASIMAVICIUS,
             "n_seeds": len(seed_results),
             "seed_files": [filename for _seed, filename, _result in seed_results],

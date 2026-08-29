@@ -3,7 +3,9 @@
 import matplotlib.axes
 
 from esm2_mech.experiments.mechanism import make_figures
+from esm2_mech.experiments.mechanism.seed_results import read_feature_metric
 from esm2_mech.figures import manuscript_figures
+from esm2_mech.utils.constants import SEED_AGGREGATION_SCHEMA_VERSION
 
 
 def _unavailable_family_clustering_views():
@@ -144,3 +146,142 @@ def test_manuscript_enzyme_figure_uses_family_split_reference(monkeypatch):
 
     assert 0.34 in horizontal_lines
     assert 0.21 not in horizontal_lines
+
+
+# ---------------------------------------------------------------------------
+# across-seed mechanism readers
+# ---------------------------------------------------------------------------
+
+
+def _seed_aggregate(mean, spread, seeds=(0, 1, 2, 3, 4)):
+    return {
+        "schema_version": SEED_AGGREGATION_SCHEMA_VERSION,
+        "state": "available",
+        "reason": None,
+        "requested_seeds": list(seeds),
+        "contributing_seeds": list(seeds),
+        "affected_seeds": [],
+        "mean": mean,
+        "seed_std": spread,
+        "sampling_unit": "model_seed",
+        "message": None,
+    }
+
+
+def _unavailable_seed_aggregate(seeds=(0, 1, 2, 3, 4), affected=(4,)):
+    return {
+        "schema_version": SEED_AGGREGATION_SCHEMA_VERSION,
+        "state": "unavailable",
+        "reason": "failed_seed",
+        "requested_seeds": list(seeds),
+        "contributing_seeds": [seed for seed in seeds if seed not in affected],
+        "affected_seeds": list(affected),
+        "mean": None,
+        "seed_std": None,
+        "sampling_unit": "model_seed",
+        "message": "a requested seed failed",
+    }
+
+
+def _mechanism_feature(mean, spread, *, available=True):
+    aggregate = (
+        _seed_aggregate(mean, spread) if available else _unavailable_seed_aggregate()
+    )
+    block = {"macro_f1_seed_aggregate": aggregate}
+    for class_name in make_figures.MECHANISM_CLASSES:
+        block[f"auroc_{class_name}_seed_aggregate"] = aggregate
+    return block
+
+
+def _mechanism_aggregate(available_features, unavailable_features=()):
+    across_seed = {"gene_split": {}, "family_split": {}}
+    for split in across_seed:
+        for feature in available_features:
+            across_seed[split][feature] = _mechanism_feature(0.4, 0.02)
+        for feature in unavailable_features:
+            across_seed[split][feature] = _mechanism_feature(
+                None, None, available=False
+            )
+    return {"across_seed": across_seed}
+
+
+def _patch_mechanism_figure_inputs(monkeypatch, aggregate):
+    def fake_load(path):
+        if path == make_figures.MECHANISM_AGGREGATE_JSON:
+            return aggregate
+        if path == make_figures.NAIVE_BASELINE_JSON:
+            return {
+                "by_strategy": {"most_frequent": {"gene": {"macro_f1_mean": 0.29}}}
+            }
+        raise AssertionError(path)
+
+    monkeypatch.setattr(make_figures, "_load_json", fake_load)
+    saved = []
+    monkeypatch.setattr(make_figures, "_save", lambda figure, name: saved.append(name))
+    return saved
+
+
+def test_probe_ranking_omits_a_feature_without_a_seed_mean(monkeypatch, capsys):
+    features = [key for key, _label in make_figures.MECH_FEATURES]
+    aggregate = _mechanism_aggregate(features[:-1], unavailable_features=features[-1:])
+    saved = _patch_mechanism_figure_inputs(monkeypatch, aggregate)
+
+    make_figures.fig_probe_ranking()
+
+    assert saved == ["fig3_probe_ranking.png"]
+    assert f"[omitted] gene_split {features[-1]}" in capsys.readouterr().out
+
+
+def test_family_split_figure_is_skipped_when_nothing_is_readable(monkeypatch, capsys):
+    features = [key for key, _label in make_figures.MECH_FEATURES]
+    aggregate = _mechanism_aggregate([], unavailable_features=features)
+    saved = _patch_mechanism_figure_inputs(monkeypatch, aggregate)
+
+    make_figures.fig_family_split()
+
+    assert saved == []
+    assert "no feature has a readable seed mean" in capsys.readouterr().out
+
+
+def test_auroc_split_bars_drops_only_the_unavailable_class(monkeypatch):
+    aggregate = _mechanism_aggregate(["wt_only_mean", "delta_mean"])
+    dropped = make_figures.MECHANISM_CLASSES[0]
+    for split in aggregate["across_seed"].values():
+        split["delta_mean"][
+            f"auroc_{dropped}_seed_aggregate"
+        ] = _unavailable_seed_aggregate()
+    saved = _patch_mechanism_figure_inputs(monkeypatch, aggregate)
+
+    make_figures.fig_auroc_split_bars()
+
+    assert saved == ["fig6_auroc_split_bars.png"]
+
+
+def test_a_stale_schema_version_is_not_read_as_a_value(monkeypatch, capsys):
+    aggregate = _mechanism_aggregate(["delta_mean", "wt_only_mean"])
+    aggregate["across_seed"]["gene_split"]["delta_mean"]["macro_f1_seed_aggregate"][
+        "schema_version"
+    ] = SEED_AGGREGATION_SCHEMA_VERSION + 1
+    _patch_mechanism_figure_inputs(monkeypatch, aggregate)
+
+    read = read_feature_metric(
+        aggregate["across_seed"], "gene_split", "delta_mean", "macro_f1"
+    )
+
+    assert read.available is False
+    assert read.value is None
+
+
+def test_auroc_panels_are_skipped_when_no_class_is_readable(monkeypatch, capsys):
+    aggregate = _mechanism_aggregate(
+        [], unavailable_features=["wt_only_mean", "delta_mean"]
+    )
+    saved = _patch_mechanism_figure_inputs(monkeypatch, aggregate)
+
+    make_figures.fig_auroc_split_bars()
+    make_figures.fig_auroc_split_slope()
+
+    assert saved == []
+    output = capsys.readouterr().out
+    assert "[skipped] fig6_auroc_split_bars" in output
+    assert "[skipped] fig7_auroc_split_slope" in output

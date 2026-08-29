@@ -1,13 +1,12 @@
 """Shared validation, aggregation, and reading for model-seed results.
 
-The scalar core requires one explicit record for every requested seed. The
-mechanism-specific traversal below remains as a delegating compatibility layer
-until its callers migrate to the scalar core.
+The scalar core requires one explicit record for every requested seed. Experiment
+modules traverse their own result structures and call these reducers; this module
+holds no experiment-specific layout.
 """
 
 from __future__ import annotations
 
-import functools
 import glob
 import json
 import math
@@ -21,21 +20,12 @@ import numpy as np
 
 from esm2_mech.utils.constants import SEED_AGGREGATION_SCHEMA_VERSION
 
-print = functools.partial(print, flush=True)
-
-GENE_SPLIT = "gene_split"
-FAMILY_SPLIT = "family_split"
-SPLITS = [GENE_SPLIT, FAMILY_SPLIT]
-HEADLINE_METRIC = "macro_f1"
-
-# Per-feature mean computed across seeds is stored under "<metric>_seed_mean".
-SEED_MEAN_SUFFIX = "_seed_mean"
-
-# Top-level key under which the across-seed aggregate is nested in the run's
-# aggregate result file (written by classify_by_mechanism).
-ACROSS_SEED_KEY = "across_seed"
-
 SEED_SAMPLING_UNIT = "model_seed"
+
+# Root keys every per-seed result file declares, alongside its "seed".
+SEED_SCHEMA_KEY = "seed_schema_version"
+SEED_STATUS_KEY = "seed_status"
+
 SEED_STATUS_SUCCESS = "success"
 SEED_STATUS_FAILED = "failed"
 SEED_STATUS_SKIPPED = "skipped"
@@ -208,6 +198,43 @@ def make_seed_record(
         raise TypeError("seed metric values must be numeric or None")
     numeric_value = None if value is None else float(value)
     return SeedValueRecord(seed=seed, status=status, value=numeric_value)
+
+
+def seed_result_contract(seed: int, *, status: str = SEED_STATUS_SUCCESS) -> dict:
+    """Root fields every per-seed result file declares for the shared contract.
+
+    A per-seed file states its own seed and status once, at the root, so an
+    aggregator reads what the run declared rather than inferring a seed's fate
+    from whichever inner block it happens to look at first.
+    """
+    if isinstance(seed, bool) or not isinstance(seed, int):
+        raise TypeError("seed identifiers must be integers")
+    if status not in SEED_STATUSES:
+        raise ValueError(f"unsupported seed status {status!r}")
+    return {
+        SEED_SCHEMA_KEY: SEED_AGGREGATION_SCHEMA_VERSION,
+        "seed": seed,
+        SEED_STATUS_KEY: status,
+    }
+
+
+def read_seed_result_contract(seed: int, source: str, result: Mapping) -> str:
+    """Return the declared root status of one per-seed result file."""
+    version = result.get(SEED_SCHEMA_KEY)
+    if version != SEED_AGGREGATION_SCHEMA_VERSION:
+        raise ValueError(
+            f"{source}: seed schema version {version!r} does not match the "
+            f"expected {SEED_AGGREGATION_SCHEMA_VERSION}"
+        )
+    declared_seed = result.get("seed")
+    if declared_seed != seed:
+        raise ValueError(
+            f"{source}: declares seed {declared_seed!r} but was loaded as seed {seed}"
+        )
+    status = result.get(SEED_STATUS_KEY)
+    if status not in SEED_STATUSES:
+        raise ValueError(f"{source}: root seed status {status!r} is not a seed status")
+    return status
 
 
 def make_seed_payload_record(
@@ -991,212 +1018,3 @@ def load_seed_files(
         )
 
     return loaded
-
-
-def aggregate_across_seeds(
-    seed_results: list[tuple[int, str, dict]],
-    *,
-    confusion_matrix_class_order: Iterable | None = None,
-) -> dict[str, dict[str, dict]]:
-    """Aggregate only complete, successful seed sets for each feature and metric.
-
-    Reads each per-seed `<metric>_mean` value. Returns nested dict:
-        {split: {feature: {<metric>_seed_mean, <metric>_seed_std, n_seeds}}}
-    """
-    required_seeds = [seed for seed, _filename, _result in seed_results]
-    declared_confusion_order = (
-        None
-        if confusion_matrix_class_order is None
-        else tuple(confusion_matrix_class_order)
-    )
-    if len(set(required_seeds)) != len(required_seeds):
-        raise ValueError("seed_results contains duplicate seed identifiers")
-    aggregated: dict[str, dict[str, dict]] = {}
-    for split in SPLITS:
-        features = sorted(
-            {
-                feature
-                for _seed, _filename, result in seed_results
-                for feature in result.get(split, {})
-            }
-        )
-        split_out: dict[str, dict] = {}
-        for feature in features:
-            blocks = {
-                seed: result.get(split, {}).get(feature)
-                for seed, _filename, result in seed_results
-            }
-            metric_names = sorted(
-                {
-                    key[: -len("_mean")]
-                    for block in blocks.values()
-                    if isinstance(block, dict)
-                    for key in block
-                    if key.endswith("_mean")
-                }
-            )
-            feature_out: dict = {
-                "required_seeds": required_seeds,
-                "status": "success",
-            }
-            failed_seeds = [
-                seed
-                for seed, block in blocks.items()
-                if not isinstance(block, dict) or block.get("status") != "success"
-            ]
-            if failed_seeds:
-                feature_out["status"] = "unavailable"
-                feature_out["unavailable_seeds"] = failed_seeds
-
-            for base_metric in metric_names:
-                records = []
-                for seed in required_seeds:
-                    block = blocks[seed]
-                    if not isinstance(block, dict):
-                        records.append(make_seed_record(seed, None))
-                        continue
-                    if "status" not in block:
-                        raise ValueError(
-                            f"seed {seed} feature {feature!r} has no status"
-                        )
-                    value = block.get(f"{base_metric}_mean")
-                    status = block["status"]
-                    records.append(make_seed_record(seed, value, status=status))
-                aggregate = aggregate_seed_values(required_seeds, records)
-                feature_out[f"{base_metric}_seed_aggregate"] = aggregate.to_dict()
-                feature_out[f"{base_metric}_n_seeds"] = len(
-                    aggregate.contributing_seeds
-                )
-                feature_out[f"{base_metric}_missing"] = not aggregate.available
-                feature_out[f"{base_metric}_missing_seeds"] = list(
-                    aggregate.affected_seeds
-                )
-                feature_out[f"{base_metric}{SEED_MEAN_SUFFIX}"] = aggregate.mean
-                feature_out[f"{base_metric}_seed_std"] = aggregate.spread
-                feature_out[f"{base_metric}_reason"] = aggregate.message
-                if not aggregate.available:
-                    feature_out["status"] = "unavailable"
-
-            matrix_blocks = [
-                (seed, block)
-                for seed, block in blocks.items()
-                if isinstance(block, dict) and "confusion_matrix" in block
-            ]
-            if matrix_blocks:
-                if declared_confusion_order is None:
-                    raise ValueError(
-                        "confusion_matrix_class_order must be declared by the caller"
-                    )
-                _aggregate_confusion_matrices(
-                    feature_out,
-                    blocks,
-                    required_seeds,
-                    declared_confusion_order,
-                )
-            split_out[feature] = feature_out
-        aggregated[split] = split_out
-    return aggregated
-
-
-def _aggregate_confusion_matrices(
-    output: dict,
-    blocks: dict[int, dict | None],
-    required_seeds: list[int],
-    class_order: Iterable,
-) -> None:
-    """Adapt mechanism result blocks to the shared matrix reducer."""
-    declared_classes = tuple(class_order)
-    records = []
-    for seed in required_seeds:
-        block = blocks[seed]
-        status = (
-            block.get("status")
-            if isinstance(block, dict) and "status" in block
-            else SEED_STATUS_UNSCORABLE
-        )
-        payload = (
-            {
-                "matrix": block.get("confusion_matrix"),
-                "class_order": block.get("confusion_matrix_class_order"),
-            }
-            if isinstance(block, dict)
-            else None
-        )
-        records.append(make_seed_payload_record(seed, payload, status=status))
-    aggregate = aggregate_seed_confusion_matrices(
-        required_seeds, declared_classes, records
-    )
-    output["confusion_matrix_seed_aggregate"] = aggregate.to_dict()
-    output["confusion_matrix_class_order"] = list(declared_classes)
-    output["confusion_matrix_n_seeds"] = len(aggregate.contributing_seeds)
-    output["confusion_matrix_missing_seeds"] = list(aggregate.affected_seeds)
-    if not aggregate.available:
-        output["confusion_matrix_raw_by_seed"] = {}
-        output["confusion_matrix_normalized_by_seed"] = {}
-        output["confusion_matrix_pooled_raw"] = None
-        output["confusion_matrix_seed_mean"] = None
-        return
-    output["confusion_matrix_raw_by_seed"] = aggregate.payload["raw_by_seed"]
-    output["confusion_matrix_normalized_by_seed"] = aggregate.payload[
-        "normalized_by_seed"
-    ]
-    output["confusion_matrix_pooled_raw"] = aggregate.payload["pooled_raw"]
-    output["confusion_matrix_seed_mean"] = aggregate.payload["normalized_seed_mean"]
-
-
-def read_across_seed_metric(
-    aggregate_path: str,
-    split: str,
-    feature: str,
-    metric: str = HEADLINE_METRIC,
-) -> float | None:
-    """Read one across-seed metric mean from a run's aggregate result file.
-
-    Returns the `<metric>_seed_mean` value for the given split and feature
-    (e.g. family_split / delta_mean / macro_f1). The caller supplies the path so
-    this helper stays generic. No fallback: if the file or the requested
-    split/feature/metric is absent, the underlying KeyError/FileNotFoundError
-    propagates so the caller knows that baseline has not been produced. A present
-    but unavailable metric remains ``None``.
-    """
-    with open(aggregate_path) as handle:
-        aggregate = json.load(handle)
-    block = aggregate[ACROSS_SEED_KEY][split][feature]
-    value = block[f"{metric}{SEED_MEAN_SUFFIX}"]
-    return None if value is None else float(value)
-
-
-def print_table(aggregated: dict[str, dict[str, dict]]) -> None:
-    """Print the headline-metric table: per-feature gene vs family, across seeds."""
-    gene = aggregated.get("gene_split", {})
-    family = aggregated.get("family_split", {})
-    features = sorted(set(gene) | set(family))
-
-    mean_key = f"{HEADLINE_METRIC}_seed_mean"
-    std_key = f"{HEADLINE_METRIC}_seed_std"
-    n_key = f"{HEADLINE_METRIC}_n_seeds"
-
-    print(f"\n=== {HEADLINE_METRIC} across seeds (mean ± std) ===")
-    print(
-        f"{'feature':<20} {'gene-split':>18} {'family-split':>18} {'Δ(gene−fam)':>14}"
-    )
-    for feature in features:
-        gene_metrics = gene.get(feature, {})
-        family_metrics = family.get(feature, {})
-        gene_mean = gene_metrics.get(mean_key)
-        gene_std = gene_metrics.get(std_key)
-        family_mean = family_metrics.get(mean_key)
-        family_std = family_metrics.get(std_key)
-        n_seeds = gene_metrics.get(n_key, family_metrics.get(n_key, 0))
-        if None in (gene_mean, gene_std, family_mean, family_std):
-            print(
-                f"{feature:<20} {'Unscorable':>18} {'Unscorable':>18} {'NA':>14}  (n_seeds={n_seeds})"
-            )
-            continue
-        delta = gene_mean - family_mean
-        print(
-            f"{feature:<20} "
-            f"{gene_mean:>8.3f} ± {gene_std:<6.3f} "
-            f"{family_mean:>8.3f} ± {family_std:<6.3f} "
-            f"{delta:>+13.3f}  (n_seeds={n_seeds})"
-        )

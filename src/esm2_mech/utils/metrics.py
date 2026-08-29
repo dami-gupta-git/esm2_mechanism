@@ -16,6 +16,11 @@ from sklearn.metrics import (
 
 from esm2_mech.utils.classification import validate_classes, validate_observed_labels
 
+# The `<metric>_mean` / `<metric>_std` pairs an aggregated arm carries summarize its
+# cross-validation folds, not its model seeds. A result file states this alongside
+# them so a reader never has to infer a spread's sampling unit from the key name.
+FOLD_SAMPLING_UNIT = "cv_fold"
+
 
 def mean_std_n(values) -> tuple[float, float, int]:
     """Return the mean, population standard deviation, and count of finite values."""
@@ -449,6 +454,7 @@ def empty_aggregate_metrics(
     """Return explicit null aggregate fields for an unscorable or failed arm."""
     declared = validate_classes(classes)
     output = {
+        "spread_sampling_unit": FOLD_SAMPLING_UNIT,
         "macro_f1_mean": None,
         "macro_f1_std": None,
         "balanced_accuracy_mean": None,
@@ -495,6 +501,7 @@ def aggregate_folds(
             f"cannot aggregate {len(fold_list)} completed folds; expected {requested_folds}"
         )
     output = {
+        "spread_sampling_unit": FOLD_SAMPLING_UNIT,
         "requested_folds": int(requested_folds),
         "completed_folds": int(len(fold_list)),
         "n_folds": int(len(fold_list)),

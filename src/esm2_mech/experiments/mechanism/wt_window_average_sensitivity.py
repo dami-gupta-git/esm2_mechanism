@@ -69,9 +69,10 @@ from esm2_mech.utils.paths import (
     WT_WINDOW_AVERAGE_DIR,
     WT_WINDOW_AVERAGE_ORIGINAL_DIR,
 )
-from esm2_mech.utils.seed_aggregation import (
+from esm2_mech.utils.seed_aggregation import load_seed_files
+from esm2_mech.experiments.mechanism.seed_results import (
     aggregate_across_seeds,
-    load_seed_files,
+    aggregate_result_contract,
     print_table,
 )
 from esm2_mech.utils.sequences import window_sequence
@@ -440,10 +441,14 @@ def main() -> None:
         WT_WINDOW_AVERAGE_CANONICAL_DIR, expected_seeds
     )
     original_aggregate = aggregate_across_seeds(
-        original_results, confusion_matrix_class_order=MECHANISM_CLASSES
+        original_results,
+        expected_seeds,
+        confusion_matrix_class_order=MECHANISM_CLASSES,
     )
     averaged_aggregate = aggregate_across_seeds(
-        averaged_results, confusion_matrix_class_order=MECHANISM_CLASSES
+        averaged_results,
+        expected_seeds,
+        confusion_matrix_class_order=MECHANISM_CLASSES,
     )
     original_gap = summarize_split_gap(original_results)
     averaged_gap = summarize_split_gap(averaged_results)
@@ -483,6 +488,7 @@ def main() -> None:
             raise RuntimeError(f"seed {seed}: original split-gap estimands disagree")
 
     result = {
+        **aggregate_result_contract(),
         "analysis": "WT window-average sensitivity on the full Section 4 row set",
         "interpretation_limit": (
             "The protein vector averages only variant-observed windows and is not "

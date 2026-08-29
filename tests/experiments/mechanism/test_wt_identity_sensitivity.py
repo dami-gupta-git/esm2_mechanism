@@ -43,7 +43,7 @@ def test_split_gap_summary_applies_three_of_five_rule():
 
     summary = sensitivity.summarize_split_gap(seed_results)
 
-    assert summary["supporting_seeds"] == [0, 1, 2]
+    assert summary["seed_vote"]["payload"]["supporting_seeds"] == [0, 1, 2]
     assert summary["preregistered_rule_evaluable"] is True
     assert summary["meets_claim_2b_interval_rule"] is True
 
@@ -68,6 +68,6 @@ def test_negative_interval_does_not_support_positive_leakage_gap():
 
     summary = sensitivity.summarize_split_gap(seed_results)
 
-    assert summary["supporting_seeds"] == [1, 2]
+    assert summary["seed_vote"]["payload"]["supporting_seeds"] == [1, 2]
     assert summary["contradictory_seeds"] == [0]
     assert summary["meets_claim_2b_interval_rule"] is False

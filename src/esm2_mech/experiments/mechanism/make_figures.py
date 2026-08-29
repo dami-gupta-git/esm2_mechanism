@@ -13,6 +13,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from esm2_mech.utils.constants import MECHANISM_CLASSES
+from esm2_mech.experiments.mechanism.seed_results import read_feature_metric
 from esm2_mech.utils.paths import (
     FAMILY_CLUSTERING_JSON,
     FIGURES_DIR,
@@ -66,6 +67,16 @@ def _is_nan(value):
     return value is None or (isinstance(value, float) and math.isnan(value))
 
 
+def _mechanism_metric(across_seed, split, feature, metric="macro_f1", *, require_spread=True):
+    """Read one across-seed mechanism metric, naming what is missing when it is."""
+    read = read_feature_metric(
+        across_seed, split, feature, metric, require_spread=require_spread
+    )
+    if not read.available:
+        print(f"  [omitted] {split} {feature} {metric}: {read.message}")
+    return read
+
+
 def _mechanism_chance():
     """Measured majority-class macro-F1 floor (gene-split) for mechanism."""
     nb = _load_json(NAIVE_BASELINE_JSON)
@@ -96,14 +107,28 @@ def fig_dissociation():
     ax_path.set_ylabel("Pathogenicity AUROC")
     ax_path.set_title("Pathogenicity (known-answer control)")
 
-    mech_feats = [("delta_mean", "delta_mean"), ("wt_only_mean", "wt_only")]
+    labels, gene_vals, gene_err, fam_vals, fam_err = [], [], [], [], []
+    for key, label in [("delta_mean", "delta_mean"), ("wt_only_mean", "wt_only")]:
+        gene = _mechanism_metric(mech, "gene_split", key)
+        family = _mechanism_metric(mech, "family_split", key)
+        if not (gene.available and family.available):
+            continue
+        labels.append(label)
+        gene_vals.append(gene.value)
+        gene_err.append(gene.spread)
+        fam_vals.append(family.value)
+        fam_err.append(family.spread)
+    if not labels:
+        print("  [skipped] fig1_dissociation: no mechanism feature is readable")
+        plt.close(fig)
+        return
     _grouped_split_bars(
         ax_mech,
-        labels=[lab for _, lab in mech_feats],
-        gene_vals=[mech["gene_split"][key]["macro_f1_seed_mean"] for key, _ in mech_feats],
-        gene_err=[mech["gene_split"][key]["macro_f1_seed_std"] for key, _ in mech_feats],
-        family_vals=[mech["family_split"][key]["macro_f1_seed_mean"] for key, _ in mech_feats],
-        family_err=[mech["family_split"][key]["macro_f1_seed_std"] for key, _ in mech_feats],
+        labels=labels,
+        gene_vals=gene_vals,
+        gene_err=gene_err,
+        family_vals=fam_vals,
+        family_err=fam_err,
     )
     ax_mech.axhline(mech_chance, ls="--", c="grey", lw=1)
     ax_mech.text(0.02, mech_chance, f"chance {mech_chance:.2f}",
@@ -132,14 +157,19 @@ def fig_family_split():
     mech_chance = _mechanism_chance()
 
     labels, gene_vals, gene_err, fam_vals, fam_err = [], [], [], [], []
-    for key, lab in MECH_FEATURES:
-        gcell = mech["gene_split"][key]
-        fcell = mech["family_split"][key]
-        labels.append(lab)
-        gene_vals.append(gcell["macro_f1_seed_mean"])
-        gene_err.append(gcell["macro_f1_seed_std"])
-        fam_vals.append(fcell["macro_f1_seed_mean"])
-        fam_err.append(fcell["macro_f1_seed_std"])
+    for key, label in MECH_FEATURES:
+        gene = _mechanism_metric(mech, "gene_split", key)
+        family = _mechanism_metric(mech, "family_split", key)
+        if not (gene.available and family.available):
+            continue
+        labels.append(label)
+        gene_vals.append(gene.value)
+        gene_err.append(gene.spread)
+        fam_vals.append(family.value)
+        fam_err.append(family.spread)
+    if not labels:
+        print("  [skipped] fig2_family_split: no feature has a readable seed mean")
+        return
 
     fig, ax = plt.subplots(figsize=(10, 5))
     _grouped_split_bars(ax, labels, gene_vals, gene_err, fam_vals, fam_err)
@@ -167,11 +197,17 @@ def fig_family_split():
 
 def fig_probe_ranking():
     """Horizontal per-feature gene-split macro-F1 with the chance floor line."""
-    mech = _load_json(MECHANISM_AGGREGATE_JSON)["across_seed"]["gene_split"]
+    mech = _load_json(MECHANISM_AGGREGATE_JSON)["across_seed"]
     mech_chance = _mechanism_chance()
 
-    rows = [(key, lab, mech[key]["macro_f1_seed_mean"], mech[key]["macro_f1_seed_std"])
-            for key, lab in MECH_FEATURES]
+    rows = []
+    for key, label in MECH_FEATURES:
+        gene = _mechanism_metric(mech, "gene_split", key)
+        if gene.available:
+            rows.append((key, label, gene.value, gene.spread))
+    if not rows:
+        print("  [skipped] fig3_probe_ranking: no feature has a readable seed mean")
+        return
     rows.sort(key=lambda r: r[2])
     keys = [r[0] for r in rows]
     labels = [r[1] for r in rows]
@@ -318,15 +354,21 @@ def fig_auroc_split_bars():
     panels = [("wt_only_mean", "wt_only"), ("delta_mean", "delta_mean")]
 
     fig, axes = plt.subplots(1, 2, figsize=(11, 4.5), sharey=True)
-    x = np.arange(len(MECHANISM_CLASSES))
     width = 0.38
+    plotted = 0
     for ax, (key, title) in zip(axes, panels):
-        gene = agg["gene_split"][key]
-        fam = agg["family_split"][key]
-        gene_vals = [gene[f"auroc_{cls}_seed_mean"] for cls in MECHANISM_CLASSES]
-        gene_err = [gene[f"auroc_{cls}_seed_std"] for cls in MECHANISM_CLASSES]
-        fam_vals = [fam[f"auroc_{cls}_seed_mean"] for cls in MECHANISM_CLASSES]
-        fam_err = [fam[f"auroc_{cls}_seed_std"] for cls in MECHANISM_CLASSES]
+        classes, gene_vals, gene_err, fam_vals, fam_err = [], [], [], [], []
+        for cls in MECHANISM_CLASSES:
+            gene = _mechanism_metric(agg, "gene_split", key, f"auroc_{cls}")
+            family = _mechanism_metric(agg, "family_split", key, f"auroc_{cls}")
+            if not (gene.available and family.available):
+                continue
+            classes.append(cls)
+            gene_vals.append(gene.value)
+            gene_err.append(gene.spread)
+            fam_vals.append(family.value)
+            fam_err.append(family.spread)
+        x = np.arange(len(classes))
         ax.bar(x - width / 2, gene_vals, width, yerr=gene_err, capsize=3,
                color=GENE_COLOR, label="Gene-split")
         ax.bar(x + width / 2, fam_vals, width, yerr=fam_err, capsize=3,
@@ -335,9 +377,14 @@ def fig_auroc_split_bars():
         ax.text(0.02, 0.5, "chance 0.50", transform=ax.get_yaxis_transform(),
                 va="bottom", ha="left", fontsize=8, color="grey")
         ax.set_xticks(x)
-        ax.set_xticklabels(MECHANISM_CLASSES)
+        ax.set_xticklabels(classes)
         ax.set_ylim(0.0, 1.0)
         ax.set_title(title)
+        plotted += len(classes)
+    if not plotted:
+        print("  [skipped] fig6_auroc_split_bars: no class AUROC is readable")
+        plt.close(fig)
+        return
     axes[0].set_ylabel("One-vs-rest AUROC")
     axes[0].legend(frameon=False)
     fig.suptitle("wt_only AUROC falls on every class under family-split; the delta\n"
@@ -353,13 +400,21 @@ def fig_auroc_split_slope():
     x_gene, x_fam = 0.0, 1.0
 
     fig, ax = plt.subplots(figsize=(7.5, 5.5))
+    plotted = 0
     for key, style, name_side in features:
-        gene = agg["gene_split"][key]
-        fam = agg["family_split"][key]
         for cls in MECHANISM_CLASSES:
-            g = gene[f"auroc_{cls}_seed_mean"]
-            f = fam[f"auroc_{cls}_seed_mean"]
+            gene_read = _mechanism_metric(
+                agg, "gene_split", key, f"auroc_{cls}", require_spread=False
+            )
+            family_read = _mechanism_metric(
+                agg, "family_split", key, f"auroc_{cls}", require_spread=False
+            )
+            if not (gene_read.available and family_read.available):
+                continue
+            g = gene_read.value
+            f = family_read.value
             color = CLASS_COLORS[cls]
+            plotted += 1
             ax.plot([x_gene, x_fam], [g, f], style, marker="o", color=color, lw=2)
             if name_side == "left":
                 ax.text(x_gene - 0.04, g, f"{cls} {g:.2f}", ha="right", va="center",
@@ -371,6 +426,11 @@ def fig_auroc_split_slope():
                         fontsize=9, color=color)
                 ax.text(x_gene - 0.04, g, f"{g:.2f}", ha="right", va="center",
                         fontsize=9, color=color)
+
+    if not plotted:
+        print("  [skipped] fig7_auroc_split_slope: no class AUROC is readable")
+        plt.close(fig)
+        return
 
     ax.axhline(0.5, ls=":", c="grey", lw=1)
     ax.text(x_gene - 0.04, 0.5, "chance 0.50", ha="right", va="bottom", fontsize=8,

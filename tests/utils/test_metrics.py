@@ -10,6 +10,7 @@ Invariants:
 - aggregate_folds: correct mean/std across folds
 - aggregate_folds: None AUROCs excluded from aggregation
 - aggregate_folds: n_folds matches input length
+- aggregate_folds: the mean/std pairs declare that their spread is over folds
 - align_proba: identity mapping preserved
 - align_proba: column reordering correct
 - align_proba: output shape matches (n_samples, n_classes)
@@ -27,7 +28,9 @@ import pytest
 
 from esm2_mech.utils.metrics import (
     compute_metrics,
+    FOLD_SAMPLING_UNIT,
     aggregate_folds,
+    empty_aggregate_metrics,
     align_proba,
     auroc_at_median,
     family_frequency_reference,
@@ -242,6 +245,17 @@ class TestAggregateFolds:
         )
         assert r["macro_f1_mean"] == pytest.approx(0.6)
         assert r["macro_f1_std"] == pytest.approx(0.0)
+
+    def test_spread_declares_the_fold_sampling_unit(self):
+        folds = [self._fold(0.4, 0.7), self._fold(0.6, 0.9)]
+        result = aggregate_folds(folds, MECHANISM_CLASSES, requested_folds=2)
+        assert result["spread_sampling_unit"] == FOLD_SAMPLING_UNIT
+        assert (
+            empty_aggregate_metrics(MECHANISM_CLASSES, 2, "no_scorable_fold")[
+                "spread_sampling_unit"
+            ]
+            == FOLD_SAMPLING_UNIT
+        )
 
 
 # ---------------------------------------------------------------------------

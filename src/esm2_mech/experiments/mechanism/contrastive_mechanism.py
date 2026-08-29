@@ -48,10 +48,11 @@ from esm2_mech.utils.constants import (
     N_SEEDS,
     contrastive_seed_result_filename,
 )
-from esm2_mech.utils.seed_aggregation import (
+from esm2_mech.utils.seed_aggregation import load_seed_files, seed_result_contract
+from esm2_mech.experiments.mechanism.seed_results import (
     FAMILY_SPLIT,
     aggregate_across_seeds,
-    load_seed_files,
+    aggregate_result_contract,
     print_table,
     read_across_seed_metric,
 )
@@ -591,7 +592,7 @@ def run(
             f"Evaluated by k-NN (k=10, cosine) in projected {proj_dim}-d space."
         ),
         "architecture": f"1280 -> 256 -> {proj_dim} (TripletMarginLoss)",
-        "seed": seed,
+        **seed_result_contract(seed),
         "n_folds": n_folds,
         "gene_split": {
             "contrastive_knn": gene_cont,
@@ -749,20 +750,24 @@ def main():
         return
 
     print("\n=== Aggregating across seeds ===")
+    requested_seeds = range(N_SEEDS)
     seed_results = load_seed_files(
-        out_dir, CONTRASTIVE_SEED_RESULT_GLOB, expected_seeds=range(N_SEEDS)
+        out_dir, CONTRASTIVE_SEED_RESULT_GLOB, expected_seeds=requested_seeds
     )
     print(f"Loaded {len(seed_results)} seed files:")
     for _seed, filename, _result in seed_results:
         print(f"  {filename}")
 
     aggregated = aggregate_across_seeds(
-        seed_results, confusion_matrix_class_order=MECHANISM_CLASSES
+        seed_results,
+        requested_seeds,
+        confusion_matrix_class_order=MECHANISM_CLASSES,
     )
     seed_numbers = [seed for seed, _filename, _result in seed_results]
     write_result_json(
         CONTRASTIVE_AGGREGATE_JSON,
         {
+            **aggregate_result_contract(),
             "n_seeds": len(seed_results),
             "seed_files": [filename for _seed, filename, _result in seed_results],
             "across_seed": aggregated,

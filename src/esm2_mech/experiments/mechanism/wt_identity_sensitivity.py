@@ -57,9 +57,10 @@ from esm2_mech.utils.paths import (
     WT_IDENTITY_SENSITIVITY_AGGREGATE_JSON,
     WT_IDENTITY_SENSITIVITY_DIR,
 )
-from esm2_mech.utils.seed_aggregation import (
+from esm2_mech.utils.seed_aggregation import load_seed_files
+from esm2_mech.experiments.mechanism.seed_results import (
     aggregate_across_seeds,
-    load_seed_files,
+    aggregate_result_contract,
     print_table,
 )
 from esm2_mech.utils.data import load_pfam_map
@@ -108,6 +109,7 @@ def main() -> None:
     args = parser.parse_args()
     if args.seeds < 1:
         parser.error("--seeds must be >= 1")
+    requested_seeds = range(args.seeds)
     if args.n_folds < 2:
         parser.error("--n_folds must be >= 2")
     if args.n_boot < 1:
@@ -157,13 +159,16 @@ def main() -> None:
     seed_results = load_seed_files(
         str(WT_IDENTITY_SENSITIVITY_DIR),
         SEED_RESULT_GLOB,
-        expected_seeds=range(args.seeds),
+        expected_seeds=requested_seeds,
     )
     aggregated = aggregate_across_seeds(
-        seed_results, confusion_matrix_class_order=MECHANISM_CLASSES
+        seed_results,
+        requested_seeds,
+        confusion_matrix_class_order=MECHANISM_CLASSES,
     )
     split_gap_summary = summarize_split_gap(seed_results)
     payload = {
+        **aggregate_result_contract(),
         "analysis": "WT-only gene-minus-family split gap on unwindowed proteins",
         "interpretation_limit": (
             "Subset robustness test; excluding long proteins does not isolate windowing "
@@ -206,14 +211,18 @@ def main() -> None:
         indent=2,
     )
     print_table(aggregated)
+    vote = split_gap_summary["seed_vote"]
     if split_gap_summary["preregistered_rule_evaluable"]:
         print(
-            f"\nClaim 2B sensitivity: {split_gap_summary['n_supporting_seeds']}/"
+            f"\nClaim 2B sensitivity: {vote['payload']['n_supporting_seeds']}/"
             f"{N_SEEDS} seed intervals exclude zero; "
             f"meets interval rule {split_gap_summary['meets_claim_2b_interval_rule']}"
         )
     else:
-        print("\nClaim 2B sensitivity: interval rule unavailable")
+        print(
+            f"\nClaim 2B sensitivity: interval rule unavailable "
+            f"({vote['message']})"
+        )
     print(f"Wrote {WT_IDENTITY_SENSITIVITY_AGGREGATE_JSON}")
 
 

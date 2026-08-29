@@ -18,6 +18,7 @@ from matplotlib.figure import Figure
 from matplotlib.patches import FancyArrowPatch, FancyBboxPatch, Rectangle
 import numpy as np
 
+from esm2_mech.experiments.mechanism.seed_results import read_feature_metric
 from esm2_mech.utils.constants import (
     DN,
     ESM2_MODEL,
@@ -94,6 +95,16 @@ def _load_json(path: Path) -> object:
         raise FileNotFoundError(f"Required figure input is missing: {path}")
     with path.open() as handle:
         return json.load(handle)
+
+
+def _seed_mean(aggregate: dict, split: str, feature: str, metric: str = "macro_f1") -> float:
+    """Read an across-seed mechanism mean through the shared seed reader."""
+    read = read_feature_metric(aggregate["across_seed"], split, feature, metric)
+    if not read.available:
+        raise ValueError(
+            f"{split} {feature} {metric} has no across-seed mean: {read.message}"
+        )
+    return read.value
 
 
 def _finite(value: object, field_name: str) -> float:
@@ -586,12 +597,12 @@ def figure2_mechanism_delta() -> None:
         "Exploratory\nMLP",
     )
     gene_values = (
-        aggregate["across_seed"]["gene_split"]["delta_mean"]["macro_f1_seed_mean"],
+        _seed_mean(aggregate, "gene_split", "delta_mean"),
         geometry["mechanism"]["full"]["gene_split"]["logreg_macro_f1"]["mean"],
         geometry["mechanism"]["full"]["gene_split"]["mlp_macro_f1"]["mean"],
     )
     family_values = (
-        aggregate["across_seed"]["family_split"]["delta_mean"]["macro_f1_seed_mean"],
+        _seed_mean(aggregate, "family_split", "delta_mean"),
         geometry["mechanism"]["full"]["family_split"]["logreg_macro_f1"]["mean"],
         geometry["mechanism"]["full"]["family_split"]["mlp_macro_f1"]["mean"],
     )
@@ -625,9 +636,8 @@ def figure2_mechanism_delta() -> None:
     probe_axis.legend(frameon=False, loc="upper right")
     _panel_label(probe_axis, "B")
 
-    delta_family = aggregate["across_seed"]["family_split"]["delta_mean"]
     auroc_values = tuple(
-        _finite(delta_family[f"auroc_{class_label}_seed_mean"], class_label)
+        _seed_mean(aggregate, "family_split", "delta_mean", f"auroc_{class_label}")
         for class_label in DISPLAY_CLASS_ORDER
     )
     _plot_per_class_auroc(
@@ -1259,10 +1269,8 @@ def figure_s1_single_source() -> None:
     split_labels = ("Gene holdout", "Family holdout")
     split_positions = np.arange(len(split_labels))
     delta_values = (
-        single_source["across_seed"]["gene_split"]["delta_mean"]["macro_f1_seed_mean"],
-        single_source["across_seed"]["family_split"]["delta_mean"][
-            "macro_f1_seed_mean"
-        ],
+        _seed_mean(single_source, "gene_split", "delta_mean"),
+        _seed_mean(single_source, "family_split", "delta_mean"),
     )
     subset_references = (
         single_source["subset_floor"]["gene_split"]["macro_f1_mean"],
@@ -1290,16 +1298,12 @@ def figure_s1_single_source() -> None:
     wildtype_axis = axes[1]
     cohort_labels = ("Merged cohort", "Gerasimavicius only")
     gene_values = (
-        aggregate["across_seed"]["gene_split"]["wt_only_mean"]["macro_f1_seed_mean"],
-        single_source["across_seed"]["gene_split"]["wt_only_mean"][
-            "macro_f1_seed_mean"
-        ],
+        _seed_mean(aggregate, "gene_split", "wt_only_mean"),
+        _seed_mean(single_source, "gene_split", "wt_only_mean"),
     )
     family_values = (
-        aggregate["across_seed"]["family_split"]["wt_only_mean"]["macro_f1_seed_mean"],
-        single_source["across_seed"]["family_split"]["wt_only_mean"][
-            "macro_f1_seed_mean"
-        ],
+        _seed_mean(aggregate, "family_split", "wt_only_mean"),
+        _seed_mean(single_source, "family_split", "wt_only_mean"),
     )
     cohort_positions = np.arange(len(cohort_labels))
     for position, gene_value, family_value in zip(

@@ -35,6 +35,7 @@ from esm2_mech.utils.splits import (
     annotated_gene_mask, gene_split_cv, family_split_cv, fold_index_array,
 )
 from esm2_mech.utils.embed import unpack_run_data
+from esm2_mech.utils.seed_aggregation import seed_result_contract
 from esm2_mech.utils.io import atomic_write_json, write_result_json
 from esm2_mech.utils.probes import run_logreg_pca_cv
 from esm2_mech.utils.classification import validate_complete_classification_splits
@@ -167,7 +168,7 @@ def run(
     print(f"Unique Pfam families: {n_families}")
 
     results = {
-        "seed": seed,
+        **seed_result_contract(seed),
         "analysis_run_id": analysis_run_id,
         "cache_schema_version": MECHANISM_OOF_CACHE_SCHEMA_VERSION,
         "input_fingerprints": input_fingerprints,
