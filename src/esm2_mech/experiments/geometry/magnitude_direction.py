@@ -15,10 +15,15 @@ from joblib import Parallel, delayed
 from esm2_mech.utils.bootstrap import (
     binary_auroc_cluster_bootstrap_ci,
     attach_mechanism_ci,
-    stack_oof_over_seeds,
     family_or_gene_clusters,
 )
-from esm2_mech.utils.constants import BOOTSTRAP_N_RESAMPLES, MECHANISM_CLASSES, N_SEEDS
+from esm2_mech.utils.seed_aggregation import aggregate_oof_dicts
+from esm2_mech.utils.constants import (
+    BOOTSTRAP_N_RESAMPLES,
+    MECHANISM_CLASSES,
+    N_FOLDS,
+    N_SEEDS,
+)
 from esm2_mech.utils.data import load_pfam_map
 from esm2_mech.utils.io import write_result_json
 from esm2_mech.utils.paths import (
@@ -29,7 +34,11 @@ from esm2_mech.utils.paths import (
 )
 from esm2_mech.experiments.mechanism.loaders import load_merged
 from esm2_mech.utils.metrics import mean_std_n
-from esm2_mech.utils.splits import gene_split_cv, family_split_cv
+from esm2_mech.utils.splits import (
+    annotated_gene_mask,
+    gene_split_cv,
+    family_split_cv,
+)
 from esm2_mech.utils.probes import run_mlp_binary_cv, run_mlp_probe_cv, run_logreg_cv
 from esm2_mech.utils.probes import run_logreg_binary_cv
 from esm2_mech.utils.data import embedding_fingerprint
@@ -71,6 +80,13 @@ def decompose(delta):
     mag = norm.astype(np.float32)  # (N, 1)
     direction = (delta / (norm + 1e-8)).astype(np.float32)
     return {"full": delta.astype(np.float32), "mag": mag, "dir": direction}
+
+
+def scored_rows(split_name, genes, pfam_map):
+    """Rows a split scores: the family split excludes unannotated genes."""
+    if split_name == "gene_split":
+        return np.arange(len(genes))
+    return np.flatnonzero(annotated_gene_mask(genes, pfam_map))
 
 
 def run_logreg_multi(
@@ -187,12 +203,11 @@ def run_pathogenicity(
     )
 
     collect = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
-    oof_collect = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
+    oof_collect = defaultdict(lambda: defaultdict(lambda: defaultdict(dict)))
     for seed, res in zip(seeds, per_seed):
         for (fname, split_name, probe), (auroc, oof) in res.items():
             collect[fname][split_name][probe].append(auroc)
-            if oof is not None:
-                oof_collect[fname][split_name][probe].append(oof)
+            oof_collect[fname][split_name][probe][seed] = oof
             print(f"  seed{seed} {fname:4s} {split_name:12s} {probe}={_f(auroc)}")
 
     out = {}
@@ -204,11 +219,19 @@ def run_pathogenicity(
                 "mlp_auroc": agg_seeds(collect[fname][split_name]["mlp"]),
             }
             if compute_ci:
+                rows = scored_rows(split_name, genes, pfam_map)
                 for probe in ("logreg", "mlp"):
-                    combined = stack_oof_over_seeds(
-                        oof_collect[fname][split_name][probe]
+                    combined_result = aggregate_oof_dicts(
+                        seeds,
+                        oof_collect[fname][split_name][probe],
+                        declared_row_ids=rows,
+                        declared_labels=y[rows],
+                        declared_clusters=genes[rows],
+                        class_order=[0, 1],
+                        declared_fold_ids=range(N_FOLDS),
                     )
-                    if combined is not None:
+                    combined = combined_result.payload
+                    if combined_result.available:
                         clusters = family_or_gene_clusters(
                             combined["genes"],
                             pfam_map,
@@ -297,15 +320,13 @@ def run_mechanism(
     )
 
     collect = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
-    oof_collect = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
+    oof_collect = defaultdict(lambda: defaultdict(lambda: defaultdict(dict)))
     for seed, res in zip(seeds, per_seed):
         for (fname, split_name), cell in res.items():
             for key in ("logreg_f1", "mlp_f1", "logreg_gof", "mlp_gof"):
                 collect[fname][split_name][key].append(cell[key])
-            if cell["logreg_oof"] is not None:
-                oof_collect[fname][split_name]["logreg"].append(cell["logreg_oof"])
-            if cell["mlp_oof"] is not None:
-                oof_collect[fname][split_name]["mlp"].append(cell["mlp_oof"])
+            oof_collect[fname][split_name]["logreg"][seed] = cell["logreg_oof"]
+            oof_collect[fname][split_name]["mlp"][seed] = cell["mlp_oof"]
             print(
                 f"  seed{seed} {fname:4s} {split_name:12s} "
                 f"F1(lr={_f(cell['logreg_f1'])} mlp={_f(cell['mlp_f1'])})"
@@ -326,14 +347,22 @@ def run_mechanism(
                 "mlp_gof_auroc": agg_seeds(c["mlp_gof"]),
             }
             if compute_ci:
+                rows = scored_rows(split_name, genes, pfam_map)
                 for probe, out_key in (
                     ("logreg", "logreg_macro_f1"),
                     ("mlp", "mlp_macro_f1"),
                 ):
-                    combined = stack_oof_over_seeds(
-                        oof_collect[fname][split_name][probe]
+                    combined_result = aggregate_oof_dicts(
+                        seeds,
+                        oof_collect[fname][split_name][probe],
+                        declared_row_ids=rows,
+                        declared_labels=labels[rows],
+                        declared_clusters=genes[rows],
+                        class_order=MECHANISM_CLASSES,
+                        declared_fold_ids=range(N_FOLDS),
                     )
-                    if combined is not None:
+                    combined = combined_result.payload
+                    if combined_result.available:
                         clusters = family_or_gene_clusters(
                             combined["genes"],
                             pfam_map,

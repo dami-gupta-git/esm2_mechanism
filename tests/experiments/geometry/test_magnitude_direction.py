@@ -16,6 +16,21 @@ def test_decompose_preserves_full_magnitude_and_direction():
     assert np.allclose(result["dir"] * result["mag"], delta)
 
 
+def test_family_split_scored_rows_exclude_unannotated_genes():
+    genes = np.array(["A", "B", "C", "A"])
+    pfam_map = {"A": "PF1", "B": None}
+
+    assert magnitude_direction.scored_rows("gene_split", genes, pfam_map).tolist() == [
+        0,
+        1,
+        2,
+        3,
+    ]
+    assert magnitude_direction.scored_rows(
+        "family_split", genes, pfam_map
+    ).tolist() == [0, 3]
+
+
 def test_selected_stability_dataset_does_not_silently_skip(monkeypatch):
     def missing_inputs():
         raise FileNotFoundError("missing stability fingerprint")

@@ -44,6 +44,7 @@ from esm2_mech.experiments.mechanism.mechanism_delta_family_split import (
 from esm2_mech.experiments.mechanism.naive_baseline import evaluate as eval_naive
 from esm2_mech.utils.constants import (
     BOOTSTRAP_N_RESAMPLES,
+    MECHANISM_CLASSES,
     N_SEEDS,
     MECHANISM_OOF_CACHE_GLOB,
     SEED_RESULT_GLOB,
@@ -162,7 +163,9 @@ def main() -> None:
     seed_results = load_seed_files(
         str(SINGLE_SOURCE_DIR), SEED_RESULT_GLOB, expected_seeds=range(args.seeds)
     )
-    aggregated = aggregate_across_seeds(seed_results)
+    aggregated = aggregate_across_seeds(
+        seed_results, confusion_matrix_class_order=MECHANISM_CLASSES
+    )
     write_result_json(
         SINGLE_SOURCE_AGGREGATE_JSON,
         {

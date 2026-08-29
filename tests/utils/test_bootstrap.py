@@ -68,7 +68,6 @@ from esm2_mech.utils.bootstrap import (
     paired_cluster_bootstrap_diff_shared_clusters,
     paired_cluster_bootstrap_diff_cross_partition,
     paired_oof_diff,
-    stack_oof_over_seeds,
     within_stratum_bootstrap_ci,
     _permute_labels,
     _permute_labels_by_cluster,

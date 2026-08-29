@@ -17,6 +17,7 @@ Invariants:
 """
 
 import json
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -136,6 +137,50 @@ def test_every_fold_is_handed_to_the_runner(phase3, monkeypatch):
 
     assert seen  # the runner was called
     assert all(n_folds == mod.N_FOLDS for n_folds in seen)
+
+
+def test_family_oof_declares_scored_rows_and_string_labels(phase3, monkeypatch):
+    mod, _delta = phase3
+    variants, genes, pfam_map, delta = _synthetic_dataset()
+    pfam_map.pop("G0")
+    monkeypatch.setattr(mod, "load_dataset", lambda: (variants, genes, pfam_map))
+    np.save(mod.EMB_SEQ, delta)
+
+    aggregate_calls = []
+
+    def probe_stub(*args, **kwargs):
+        aggregate = {
+            "macro_f1_mean": 0.5,
+            f"auroc_{GOF}_mean": 0.6,
+            f"auroc_{DN}_mean": 0.6,
+            f"auroc_{LOF}_mean": 0.6,
+        }
+        return aggregate, {}
+
+    def aggregate_stub(*args, **kwargs):
+        aggregate_calls.append(kwargs)
+        return SimpleNamespace(available=False, payload=None)
+
+    monkeypatch.setattr(mod, "run_mlp_probe_cv", probe_stub)
+    monkeypatch.setattr(
+        mod, "_run_logreg_folds", lambda *args, **kwargs: {"macro_f1_mean": 0.5}
+    )
+    monkeypatch.setattr(mod, "aggregate_oof_dicts", aggregate_stub)
+
+    mod.phase3_probes(seeds=[0], compute_ci=True, n_boot=1)
+
+    expected_rows = np.flatnonzero(genes != "G0")
+    family_call = next(
+        call
+        for call in aggregate_calls
+        if len(call["declared_row_ids"]) < len(genes)
+    )
+    assert np.array_equal(family_call["declared_row_ids"], expected_rows)
+    assert np.array_equal(
+        family_call["declared_labels"],
+        np.array([variant["mech3"] for variant in variants])[expected_rows],
+    )
+    assert np.array_equal(family_call["declared_clusters"], genes[expected_rows])
 
 
 def test_logistic_arm_rejects_a_class_incomplete_split_before_fitting():

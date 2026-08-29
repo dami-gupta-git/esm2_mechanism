@@ -439,8 +439,12 @@ def main() -> None:
     averaged_results, averaged_oof = _load_validated_condition(
         WT_WINDOW_AVERAGE_CANONICAL_DIR, expected_seeds
     )
-    original_aggregate = aggregate_across_seeds(original_results)
-    averaged_aggregate = aggregate_across_seeds(averaged_results)
+    original_aggregate = aggregate_across_seeds(
+        original_results, confusion_matrix_class_order=MECHANISM_CLASSES
+    )
+    averaged_aggregate = aggregate_across_seeds(
+        averaged_results, confusion_matrix_class_order=MECHANISM_CLASSES
+    )
     original_gap = summarize_split_gap(original_results)
     averaged_gap = summarize_split_gap(averaged_results)
     original_result_by_seed = {

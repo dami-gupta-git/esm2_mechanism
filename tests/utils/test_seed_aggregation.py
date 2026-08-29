@@ -298,7 +298,8 @@ class TestAggregateAcrossSeeds:
             }
         )
         aggregate = aggregate_across_seeds(
-            _with_seeds([("seed0.json", first), ("seed1.json", second)])
+            _with_seeds([("seed0.json", first), ("seed1.json", second)]),
+            confusion_matrix_class_order=["A", "B"],
         )["gene_split"]["esm2"]
         assert np.allclose(
             aggregate["confusion_matrix_seed_mean"],

@@ -15,7 +15,7 @@ import os
 from dataclasses import dataclass
 from enum import Enum
 from numbers import Real
-from typing import Iterable, Mapping
+from typing import Any, Iterable, Mapping
 
 import numpy as np
 
@@ -63,6 +63,11 @@ class SeedUnavailableReason(str, Enum):
     SAMPLING_UNIT_MISMATCH = "sampling_unit_mismatch"
     INVALID_AGGREGATE = "invalid_aggregate"
     INSUFFICIENT_SEEDS = "insufficient_seeds"
+    INVALID_ROW_SET = "invalid_row_set"
+    METADATA_MISMATCH = "metadata_mismatch"
+    CLASS_ORDER_MISMATCH = "class_order_mismatch"
+    INVALID_SHAPE = "invalid_shape"
+    ZERO_SUPPORT = "zero_support"
 
 
 _REASON_MESSAGES = {
@@ -78,6 +83,11 @@ _REASON_MESSAGES = {
     SeedUnavailableReason.SAMPLING_UNIT_MISMATCH: "the aggregate has the wrong sampling unit",
     SeedUnavailableReason.INVALID_AGGREGATE: "the stored seed aggregate is internally inconsistent",
     SeedUnavailableReason.INSUFFICIENT_SEEDS: "at least three requested seeds are required for inference",
+    SeedUnavailableReason.INVALID_ROW_SET: "a requested seed does not cover the declared row set",
+    SeedUnavailableReason.METADATA_MISMATCH: "seed records disagree with declared metadata",
+    SeedUnavailableReason.CLASS_ORDER_MISMATCH: "a seed record has the wrong class order",
+    SeedUnavailableReason.INVALID_SHAPE: "a seed payload has an invalid shape or value",
+    SeedUnavailableReason.ZERO_SUPPORT: "a confusion-matrix row has zero observed support",
 }
 
 _STORED_UNAVAILABLE_REASONS = frozenset(
@@ -93,12 +103,48 @@ _STORED_UNAVAILABLE_REASONS = frozenset(
     }
 )
 
-
 @dataclass(frozen=True)
 class SeedValueRecord:
     seed: int
     status: str
     value: float | None
+
+
+@dataclass(frozen=True)
+class SeedPayloadRecord:
+    seed: int
+    status: str
+    payload: Any
+
+
+@dataclass(frozen=True)
+class SeedPayloadAggregate:
+    state: str
+    reason: SeedUnavailableReason | None
+    requested_seeds: tuple[int, ...]
+    contributing_seeds: tuple[int, ...]
+    affected_seeds: tuple[int, ...]
+    payload: Any
+    sampling_unit: str
+    message: str | None
+    schema_version: int = SEED_AGGREGATION_SCHEMA_VERSION
+
+    @property
+    def available(self) -> bool:
+        return self.state == "available"
+
+    def to_dict(self) -> dict:
+        return {
+            "schema_version": self.schema_version,
+            "state": self.state,
+            "reason": None if self.reason is None else self.reason.value,
+            "requested_seeds": list(self.requested_seeds),
+            "contributing_seeds": list(self.contributing_seeds),
+            "affected_seeds": list(self.affected_seeds),
+            "payload": self.payload,
+            "sampling_unit": self.sampling_unit,
+            "message": self.message,
+        }
 
 
 @dataclass(frozen=True)
@@ -162,6 +208,88 @@ def make_seed_record(
         raise TypeError("seed metric values must be numeric or None")
     numeric_value = None if value is None else float(value)
     return SeedValueRecord(seed=seed, status=status, value=numeric_value)
+
+
+def make_seed_payload_record(
+    seed: int,
+    payload: Any,
+    *,
+    status: str = SEED_STATUS_SUCCESS,
+) -> SeedPayloadRecord:
+    """Construct one non-scalar seed record under the shared seed contract."""
+    make_seed_record(seed, None, status=status)
+    return SeedPayloadRecord(seed=seed, status=status, payload=payload)
+
+
+def _payload_unavailable(
+    reason: SeedUnavailableReason,
+    requested_seeds: Iterable[int],
+    contributing_seeds: Iterable[int],
+    affected_seeds: Iterable[int],
+) -> SeedPayloadAggregate:
+    return SeedPayloadAggregate(
+        state="unavailable",
+        reason=reason,
+        requested_seeds=tuple(requested_seeds),
+        contributing_seeds=tuple(contributing_seeds),
+        affected_seeds=tuple(affected_seeds),
+        payload=None,
+        sampling_unit=SEED_SAMPLING_UNIT,
+        message=_REASON_MESSAGES[reason],
+    )
+
+
+def _payload_available(
+    requested_seeds: Iterable[int], payload: Any
+) -> SeedPayloadAggregate:
+    requested = tuple(requested_seeds)
+    return SeedPayloadAggregate(
+        state="available",
+        reason=None,
+        requested_seeds=requested,
+        contributing_seeds=requested,
+        affected_seeds=(),
+        payload=payload,
+        sampling_unit=SEED_SAMPLING_UNIT,
+        message=None,
+    )
+
+
+def _validate_payload_seed_contract(
+    requested_seeds: Iterable[int],
+    records: Iterable[SeedPayloadRecord],
+) -> tuple[tuple[int, ...], dict[int, SeedPayloadRecord], SeedPayloadAggregate | None]:
+    """Apply the scalar core's identity and status rules to payload records."""
+    requested = tuple(requested_seeds)
+    payload_records = tuple(records)
+    for record in payload_records:
+        if not isinstance(record, SeedPayloadRecord):
+            raise TypeError(
+                "payload records must be created with make_seed_payload_record"
+            )
+    identity = aggregate_seed_values(
+        requested,
+        [
+            make_seed_record(
+                record.seed,
+                0.0 if record.status == SEED_STATUS_SUCCESS else None,
+                status=record.status,
+            )
+            for record in payload_records
+        ],
+    )
+    if not identity.available:
+        return (
+            requested,
+            {},
+            _payload_unavailable(
+                identity.reason,
+                identity.requested_seeds,
+                identity.contributing_seeds,
+                identity.affected_seeds,
+            ),
+        )
+    return requested, {record.seed: record for record in payload_records}, None
 
 
 def _unavailable(
@@ -325,6 +453,316 @@ def aggregate_seed_values(
         spread=spread,
         sampling_unit=SEED_SAMPLING_UNIT,
         message=None,
+    )
+
+
+def aggregate_seed_vote(
+    requested_seeds: Iterable[int],
+    values: Iterable[SeedValueRecord],
+    *,
+    threshold: float,
+    minimum_supporting_seeds: int,
+    comparison: str = "less_than",
+) -> SeedPayloadAggregate:
+    """Apply one complete-seed threshold voting rule."""
+    if isinstance(threshold, bool) or not isinstance(threshold, Real):
+        raise TypeError("vote threshold must be numeric")
+    if not math.isfinite(threshold):
+        raise ValueError("vote threshold must be finite")
+    if comparison not in {"less_than", "greater_than"}:
+        raise ValueError("comparison must be 'less_than' or 'greater_than'")
+    requested = tuple(requested_seeds)
+    if (
+        isinstance(minimum_supporting_seeds, bool)
+        or not isinstance(minimum_supporting_seeds, int)
+        or minimum_supporting_seeds < 1
+        or minimum_supporting_seeds > len(requested)
+    ):
+        raise ValueError(
+            "minimum_supporting_seeds must be between one and the requested seed count"
+        )
+    records = tuple(values)
+    scalar_contract = aggregate_seed_values(requested, records)
+    if not scalar_contract.available:
+        return _payload_unavailable(
+            scalar_contract.reason,
+            scalar_contract.requested_seeds,
+            scalar_contract.contributing_seeds,
+            scalar_contract.affected_seeds,
+        )
+    by_seed = {record.seed: float(record.value) for record in records}
+    if comparison == "less_than":
+        supporting = [seed for seed in requested if by_seed[seed] < threshold]
+    else:
+        supporting = [seed for seed in requested if by_seed[seed] > threshold]
+    return _payload_available(
+        requested,
+        {
+            "decision": len(supporting) >= minimum_supporting_seeds,
+            "threshold": float(threshold),
+            "comparison": comparison,
+            "minimum_supporting_seeds": minimum_supporting_seeds,
+            "supporting_seeds": supporting,
+            "n_supporting_seeds": len(supporting),
+            "values_by_seed": {seed: by_seed[seed] for seed in requested},
+        },
+    )
+
+
+def aggregate_paired_seed_difference(
+    requested_seeds: Iterable[int],
+    arm_a: Iterable[SeedValueRecord],
+    arm_b: Iterable[SeedValueRecord],
+) -> SeedAggregate:
+    """Subtract arm B from arm A within seed, then aggregate the differences."""
+    requested = tuple(requested_seeds)
+    records_a = tuple(arm_a)
+    records_b = tuple(arm_b)
+    aggregate_a = aggregate_seed_values(requested, records_a)
+    aggregate_b = aggregate_seed_values(requested, records_b)
+    if not aggregate_a.available or not aggregate_b.available:
+        failures = [
+            aggregate
+            for aggregate in (aggregate_a, aggregate_b)
+            if not aggregate.available
+        ]
+        reason = failures[0].reason
+        assert reason is not None
+        affected = sorted(
+            {seed for aggregate in failures for seed in aggregate.affected_seeds}
+        )
+        contributing = [
+            seed
+            for seed in requested
+            if all(seed in aggregate.contributing_seeds for aggregate in failures)
+        ]
+        return _unavailable(reason, requested, contributing, affected)
+    values_a = {record.seed: float(record.value) for record in records_a}
+    values_b = {record.seed: float(record.value) for record in records_b}
+    differences = [
+        make_seed_record(seed, values_a[seed] - values_b[seed]) for seed in requested
+    ]
+    return aggregate_seed_values(requested, differences)
+
+
+def aggregate_seed_confusion_matrices(
+    requested_seeds: Iterable[int],
+    class_order: Iterable,
+    records: Iterable[SeedPayloadRecord],
+) -> SeedPayloadAggregate:
+    """Aggregate complete per-seed confusion matrices under a declared class order."""
+    requested, by_seed, failure = _validate_payload_seed_contract(
+        requested_seeds, records
+    )
+    if failure is not None:
+        return failure
+    declared_classes = tuple(class_order)
+    if not declared_classes or len(set(declared_classes)) != len(declared_classes):
+        raise ValueError("class_order must contain unique declared classes")
+
+    raw_by_seed = {}
+    normalized_by_seed = {}
+    normalized = []
+    defects = {
+        SeedUnavailableReason.CLASS_ORDER_MISMATCH: [],
+        SeedUnavailableReason.INVALID_SHAPE: [],
+        SeedUnavailableReason.ZERO_SUPPORT: [],
+    }
+    expected_shape = (len(declared_classes), len(declared_classes))
+    for seed in requested:
+        payload = by_seed[seed].payload
+        if not isinstance(payload, Mapping):
+            defects[SeedUnavailableReason.INVALID_SHAPE].append(seed)
+            continue
+        seed_order = payload.get("class_order")
+        if (
+            not isinstance(seed_order, (list, tuple))
+            or tuple(seed_order) != declared_classes
+        ):
+            defects[SeedUnavailableReason.CLASS_ORDER_MISMATCH].append(seed)
+            continue
+        matrix = np.asarray(payload.get("matrix"))
+        if (
+            matrix.shape != expected_shape
+            or not np.issubdtype(matrix.dtype, np.number)
+            or not np.isfinite(matrix).all()
+            or np.any(matrix < 0)
+            or np.any(matrix != np.floor(matrix))
+        ):
+            defects[SeedUnavailableReason.INVALID_SHAPE].append(seed)
+            continue
+        row_totals = matrix.sum(axis=1, keepdims=True)
+        if np.any(row_totals == 0):
+            defects[SeedUnavailableReason.ZERO_SUPPORT].append(seed)
+            continue
+        matrix_float = matrix.astype(float)
+        seed_normalized = matrix_float / row_totals
+        raw_by_seed[seed] = matrix.tolist()
+        normalized_by_seed[seed] = seed_normalized.tolist()
+        normalized.append(seed_normalized)
+
+    affected = sorted({seed for seeds in defects.values() for seed in seeds})
+    if affected:
+        reason = next(reason for reason, seeds in defects.items() if seeds)
+        contributing = [seed for seed in requested if seed not in affected]
+        return _payload_unavailable(reason, requested, contributing, affected)
+
+    pooled_raw = np.sum(
+        [np.asarray(raw_by_seed[seed], dtype=float) for seed in requested], axis=0
+    )
+    return _payload_available(
+        requested,
+        {
+            "class_order": list(declared_classes),
+            "raw_by_seed": raw_by_seed,
+            "normalized_by_seed": normalized_by_seed,
+            "pooled_raw": pooled_raw.tolist(),
+            "normalized_seed_mean": np.mean(normalized, axis=0).tolist(),
+        },
+    )
+
+
+def aggregate_seed_oof(
+    requested_seeds: Iterable[int],
+    declared_row_ids: Iterable[int],
+    declared_labels: Iterable,
+    declared_clusters: Iterable,
+    class_order: Iterable,
+    declared_fold_ids: Iterable[int],
+    records: Iterable[SeedPayloadRecord],
+) -> SeedPayloadAggregate:
+    """Align complete OOF predictions without dropping seeds or intersecting rows."""
+    requested, by_seed, failure = _validate_payload_seed_contract(
+        requested_seeds, records
+    )
+    if failure is not None:
+        return failure
+
+    row_ids = np.asarray(tuple(declared_row_ids))
+    labels = np.asarray(tuple(declared_labels))
+    clusters = np.asarray(tuple(declared_clusters), dtype=object)
+    classes = tuple(class_order)
+    fold_ids = tuple(declared_fold_ids)
+    if (
+        row_ids.ndim != 1
+        or labels.ndim != 1
+        or clusters.ndim != 1
+        or len(row_ids) == 0
+        or not (len(row_ids) == len(labels) == len(clusters))
+        or not np.issubdtype(row_ids.dtype, np.integer)
+        or len(np.unique(row_ids)) != len(row_ids)
+        or not classes
+        or len(set(classes)) != len(classes)
+        or not set(labels.tolist()).issubset(set(classes))
+        or not fold_ids
+        or any(isinstance(fold, bool) or not isinstance(fold, int) for fold in fold_ids)
+        or len(set(fold_ids)) != len(fold_ids)
+    ):
+        raise ValueError(
+            "declared OOF rows, labels, clusters, classes, or folds are invalid"
+        )
+
+    seed_payloads = {}
+    defects = {
+        SeedUnavailableReason.INVALID_ROW_SET: [],
+        SeedUnavailableReason.CLASS_ORDER_MISMATCH: [],
+        SeedUnavailableReason.INVALID_SHAPE: [],
+        SeedUnavailableReason.METADATA_MISMATCH: [],
+    }
+    for seed in requested:
+        payload = by_seed[seed].payload
+        if not isinstance(payload, Mapping):
+            defects[SeedUnavailableReason.INVALID_SHAPE].append(seed)
+            continue
+        seed_rows = np.asarray(payload.get("row_ids"))
+        if seed_rows.ndim != 1 or len(np.unique(seed_rows)) != len(seed_rows):
+            defects[SeedUnavailableReason.INVALID_ROW_SET].append(seed)
+            continue
+        if set(seed_rows.tolist()) != set(row_ids.tolist()):
+            defects[SeedUnavailableReason.INVALID_ROW_SET].append(seed)
+            continue
+        seed_order = payload.get("classes")
+        if not isinstance(seed_order, (list, tuple)) or tuple(seed_order) != classes:
+            defects[SeedUnavailableReason.CLASS_ORDER_MISMATCH].append(seed)
+            continue
+        seed_position = {
+            row_id: position for position, row_id in enumerate(seed_rows.tolist())
+        }
+        order = np.array(
+            [seed_position[row_id] for row_id in row_ids.tolist()], dtype=int
+        )
+        seed_labels = np.asarray(payload.get("y_true"))
+        seed_clusters = np.asarray(payload.get("genes"), dtype=object)
+        probabilities = np.asarray(payload.get("proba"))
+        folds = np.asarray(payload.get("folds"))
+        if (
+            seed_labels.shape != labels.shape
+            or seed_clusters.shape != clusters.shape
+            or probabilities.shape != (len(row_ids), len(classes))
+            or folds.shape != row_ids.shape
+            or not np.issubdtype(probabilities.dtype, np.number)
+            or not np.isfinite(probabilities).all()
+            or np.any(probabilities < 0)
+            or not np.allclose(probabilities.sum(axis=1), 1.0)
+            or not np.issubdtype(folds.dtype, np.integer)
+            or set(folds.tolist()) != set(fold_ids)
+        ):
+            defects[SeedUnavailableReason.INVALID_SHAPE].append(seed)
+            continue
+        if not np.array_equal(seed_labels[order], labels) or not np.array_equal(
+            seed_clusters[order], clusters
+        ):
+            defects[SeedUnavailableReason.METADATA_MISMATCH].append(seed)
+            continue
+        seed_payloads[seed] = {
+            "seed": seed,
+            "proba": probabilities[order],
+            "folds": folds[order],
+        }
+
+    affected = sorted({seed for seeds in defects.values() for seed in seeds})
+    if affected:
+        reason = next(reason for reason, seeds in defects.items() if seeds)
+        contributing = [seed for seed in requested if seed not in affected]
+        return _payload_unavailable(reason, requested, contributing, affected)
+
+    return _payload_available(
+        requested,
+        {
+            "requested_seeds": list(requested),
+            "row_ids": row_ids,
+            "y_true": labels,
+            "genes": clusters,
+            "classes": list(classes),
+            "oof_by_seed": seed_payloads,
+        },
+    )
+
+
+def aggregate_oof_dicts(
+    requested_seeds: Iterable[int],
+    oof_by_seed: Mapping[int, dict | None],
+    *,
+    declared_row_ids: Iterable[int],
+    declared_labels: Iterable,
+    declared_clusters: Iterable,
+    class_order: Iterable,
+    declared_fold_ids: Iterable[int],
+) -> SeedPayloadAggregate:
+    """Adapt probe OOF dictionaries to the strict shared OOF reducer."""
+    requested = tuple(requested_seeds)
+    records = []
+    for seed, oof in oof_by_seed.items():
+        status = SEED_STATUS_SUCCESS if oof is not None else SEED_STATUS_UNSCORABLE
+        records.append(make_seed_payload_record(seed, oof, status=status))
+    return aggregate_seed_oof(
+        requested,
+        declared_row_ids,
+        declared_labels,
+        declared_clusters,
+        class_order,
+        declared_fold_ids,
+        records,
     )
 
 
@@ -557,6 +995,8 @@ def load_seed_files(
 
 def aggregate_across_seeds(
     seed_results: list[tuple[int, str, dict]],
+    *,
+    confusion_matrix_class_order: Iterable | None = None,
 ) -> dict[str, dict[str, dict]]:
     """Aggregate only complete, successful seed sets for each feature and metric.
 
@@ -564,6 +1004,11 @@ def aggregate_across_seeds(
         {split: {feature: {<metric>_seed_mean, <metric>_seed_std, n_seeds}}}
     """
     required_seeds = [seed for seed, _filename, _result in seed_results]
+    declared_confusion_order = (
+        None
+        if confusion_matrix_class_order is None
+        else tuple(confusion_matrix_class_order)
+    )
     if len(set(required_seeds)) != len(required_seeds):
         raise ValueError("seed_results contains duplicate seed identifiers")
     aggregated: dict[str, dict[str, dict]] = {}
@@ -638,7 +1083,16 @@ def aggregate_across_seeds(
                 if isinstance(block, dict) and "confusion_matrix" in block
             ]
             if matrix_blocks:
-                _aggregate_confusion_matrices(feature_out, blocks, required_seeds)
+                if declared_confusion_order is None:
+                    raise ValueError(
+                        "confusion_matrix_class_order must be declared by the caller"
+                    )
+                _aggregate_confusion_matrices(
+                    feature_out,
+                    blocks,
+                    required_seeds,
+                    declared_confusion_order,
+                )
             split_out[feature] = feature_out
         aggregated[split] = split_out
     return aggregated
@@ -648,52 +1102,46 @@ def _aggregate_confusion_matrices(
     output: dict,
     blocks: dict[int, dict | None],
     required_seeds: list[int],
+    class_order: Iterable,
 ) -> None:
-    """Store raw matrices and their equal-seed mean after row normalization."""
-    raw_by_seed: dict[str, list] = {}
-    normalized_by_seed: dict[str, list] = {}
-    class_order = None
-    missing_seeds = []
-    normalized_matrices = []
+    """Adapt mechanism result blocks to the shared matrix reducer."""
+    declared_classes = tuple(class_order)
+    records = []
     for seed in required_seeds:
         block = blocks[seed]
-        if not isinstance(block, dict) or block.get("status") != "success":
-            missing_seeds.append(seed)
-            continue
-        matrix_value = block.get("confusion_matrix")
-        seed_order = block.get("confusion_matrix_class_order")
-        if matrix_value is None or seed_order is None:
-            missing_seeds.append(seed)
-            continue
-        if class_order is None:
-            class_order = list(seed_order)
-        elif list(seed_order) != class_order:
-            raise ValueError("confusion matrix class order differs across seeds")
-        matrix = np.asarray(matrix_value, dtype=float)
-        expected_shape = (len(class_order), len(class_order))
-        if matrix.shape != expected_shape:
-            raise ValueError(
-                f"confusion matrix for seed {seed} has shape {matrix.shape}, "
-                f"expected {expected_shape}"
-            )
-        row_totals = matrix.sum(axis=1, keepdims=True)
-        if np.any(row_totals == 0):
-            raise ValueError(
-                f"confusion matrix for seed {seed} has an empty observed-class row"
-            )
-        normalized = matrix / row_totals
-        raw_by_seed[str(seed)] = matrix.astype(int).tolist()
-        normalized_by_seed[str(seed)] = normalized.tolist()
-        normalized_matrices.append(normalized)
-
-    output["confusion_matrix_raw_by_seed"] = raw_by_seed
-    output["confusion_matrix_normalized_by_seed"] = normalized_by_seed
-    output["confusion_matrix_class_order"] = class_order
-    output["confusion_matrix_n_seeds"] = len(normalized_matrices)
-    output["confusion_matrix_missing_seeds"] = missing_seeds
-    output["confusion_matrix_seed_mean"] = (
-        None if missing_seeds else np.mean(normalized_matrices, axis=0).tolist()
+        status = (
+            block.get("status")
+            if isinstance(block, dict) and "status" in block
+            else SEED_STATUS_UNSCORABLE
+        )
+        payload = (
+            {
+                "matrix": block.get("confusion_matrix"),
+                "class_order": block.get("confusion_matrix_class_order"),
+            }
+            if isinstance(block, dict)
+            else None
+        )
+        records.append(make_seed_payload_record(seed, payload, status=status))
+    aggregate = aggregate_seed_confusion_matrices(
+        required_seeds, declared_classes, records
     )
+    output["confusion_matrix_seed_aggregate"] = aggregate.to_dict()
+    output["confusion_matrix_class_order"] = list(declared_classes)
+    output["confusion_matrix_n_seeds"] = len(aggregate.contributing_seeds)
+    output["confusion_matrix_missing_seeds"] = list(aggregate.affected_seeds)
+    if not aggregate.available:
+        output["confusion_matrix_raw_by_seed"] = {}
+        output["confusion_matrix_normalized_by_seed"] = {}
+        output["confusion_matrix_pooled_raw"] = None
+        output["confusion_matrix_seed_mean"] = None
+        return
+    output["confusion_matrix_raw_by_seed"] = aggregate.payload["raw_by_seed"]
+    output["confusion_matrix_normalized_by_seed"] = aggregate.payload[
+        "normalized_by_seed"
+    ]
+    output["confusion_matrix_pooled_raw"] = aggregate.payload["pooled_raw"]
+    output["confusion_matrix_seed_mean"] = aggregate.payload["normalized_seed_mean"]
 
 
 def read_across_seed_metric(

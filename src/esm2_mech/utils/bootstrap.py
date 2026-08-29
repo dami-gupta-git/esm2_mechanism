@@ -72,22 +72,26 @@ def oof_score_arms(
     but drives a weak one below 0.5. Metrics therefore score inside a fold and
     average across folds, which is only possible if the fold survived collection.
 
-    A single-seed OOF gives one block set. A multi-seed OOF from
-    stack_oof_over_seeds gives one block set per seed, because each seed reshuffles
+    A single-seed OOF gives one block set. A multi-seed OOF from the shared seed
+    reducer gives one block set per seed, because each seed reshuffles
     the fold assignment and a seed's probabilities are not comparable with another
     seed's either.
     """
-    if "proba_by_seed" in oof:
+    if "oof_by_seed" in oof:
         return [
-            (np.asarray(proba), np.asarray(folds), np.unique(np.asarray(folds)))
-            for proba, folds in zip(oof["proba_by_seed"], oof["folds_by_seed"])
+            (
+                np.asarray(oof["oof_by_seed"][seed]["proba"]),
+                np.asarray(oof["oof_by_seed"][seed]["folds"]),
+                np.unique(np.asarray(oof["oof_by_seed"][seed]["folds"])),
+            )
+            for seed in oof["requested_seeds"]
         ]
     if "folds" not in oof:
         raise KeyError(
             f"{label}: this OOF has no 'folds' array, so its metrics can only be "
             "scored on the pooled concatenation, which is the defect this code "
             "exists to prevent. Produce it with a probe that records the fold, or "
-            "combine seeds with stack_oof_over_seeds."
+            "combine seeds with aggregate_seed_oof."
         )
     folds = np.asarray(oof["folds"])
     return [(np.asarray(oof["proba"]), folds, np.unique(folds))]
@@ -131,64 +135,6 @@ def score_within_folds(
     if not values:
         return None
     return float(np.mean(values))
-
-
-def stack_oof_over_seeds(oof_list: list[dict | None]) -> dict | None:
-    """Align per-seed OOF dicts on the variants every seed scored, keeping folds.
-
-    The seed-averaging alternative collapses the per-seed probabilities into one
-    vector and has no fold to report, so its metrics can only be pooled. This keeps
-    each seed's probabilities and fold assignment separate; a metric then scores
-    inside each seed's folds and averages over folds and seeds.
-    """
-    valid = [oof for oof in oof_list if oof is not None and len(oof["row_ids"])]
-    if not valid:
-        return None
-    for oof in valid:
-        if "folds" not in oof:
-            raise KeyError("stack_oof_over_seeds: a per-seed OOF has no 'folds' array")
-
-    pos_by_row = [
-        {int(row): pos for pos, row in enumerate(oof["row_ids"])} for oof in valid
-    ]
-    shared = sorted(set.intersection(*[set(m) for m in pos_by_row]))
-    if not shared:
-        return None
-    dropped = sum(len(m) - len(shared) for m in pos_by_row)
-    if dropped:
-        print(
-            f"  [stack_oof] {len(shared)} variants scored by all {len(valid)} seeds, "
-            f"{dropped} seed-specific rows dropped"
-        )
-
-    first = valid[0]
-    first_idx = np.array([pos_by_row[0][row] for row in shared], dtype=int)
-    y_true = np.asarray(first["y_true"])[first_idx]
-    for oof, pos_map in zip(valid[1:], pos_by_row[1:]):
-        idx = np.array([pos_map[row] for row in shared], dtype=int)
-        if not np.array_equal(np.asarray(oof["y_true"])[idx], y_true):
-            raise RuntimeError(
-                "stack_oof_over_seeds: two seeds disagree on a variant's label — "
-                "the OOF row spaces are not the same variants"
-            )
-
-    return {
-        "y_true": y_true,
-        "genes": np.asarray(first["genes"], dtype=object)[first_idx],
-        "row_ids": np.array(shared, dtype=int),
-        "proba_by_seed": [
-            np.asarray(oof["proba"])[
-                np.array([pos_map[row] for row in shared], dtype=int)
-            ]
-            for oof, pos_map in zip(valid, pos_by_row)
-        ],
-        "folds_by_seed": [
-            np.asarray(oof["folds"])[
-                np.array([pos_map[row] for row in shared], dtype=int)
-            ]
-            for oof, pos_map in zip(valid, pos_by_row)
-        ],
-    }
 
 
 def _cluster_to_rows(clusters: np.ndarray) -> tuple[np.ndarray, list[np.ndarray]]:
@@ -861,7 +807,7 @@ def bootstrap_mechanism_metrics_from_oof(
 ) -> dict:
     """As bootstrap_mechanism_metrics, taking the OOF dict rather than loose arrays.
 
-    Accepts a multi-seed OOF from stack_oof_over_seeds, where the average runs over
+    Accepts a multi-seed OOF from aggregate_seed_oof, where the average runs over
     every seed's folds.
     """
     y_true = np.asarray(oof["y_true"])

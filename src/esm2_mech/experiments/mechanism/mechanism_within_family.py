@@ -18,8 +18,8 @@ from esm2_mech.utils.bootstrap import (
     label_permutation_pvalue,
     oof_score_arms,
     score_within_folds,
-    stack_oof_over_seeds,
 )
+from esm2_mech.utils.seed_aggregation import aggregate_oof_dicts
 from esm2_mech.utils.constants import (
     BOOTSTRAP_CI_LEVEL,
     BOOTSTRAP_N_RESAMPLES,
@@ -137,7 +137,7 @@ def _probe_one_family(
         view: {p: defaultdict(list) for p in probes} for view in features_by_view
     }
     oof_by_view_probe = {
-        view: {p: [] for p in probes} for view in features_by_view
+        view: {p: {} for p in probes} for view in features_by_view
     }
 
     for seed in range(n_seeds):
@@ -162,7 +162,7 @@ def _probe_one_family(
                     label=f"{view}:{probe_name}", genes=genes_rows, return_oof=True,
                     **extra_kwargs[probe_name],
                 )
-                oof_by_view_probe[view][probe_name].append(oof)
+                oof_by_view_probe[view][probe_name][seed] = oof
                 f1_seed = res.get("macro_f1_mean")
                 per_seed_f1[view][probe_name].append(
                     float("nan") if f1_seed is None else f1_seed
@@ -189,19 +189,18 @@ def _probe_one_family(
         out[view] = {}
         oof_out[view] = {}
         for probe_name in probes:
-            all_seeds_scorable = all(
-                oof is not None for oof in oof_by_view_probe[view][probe_name]
+            combined_result = aggregate_oof_dicts(
+                range(n_seeds),
+                oof_by_view_probe[view][probe_name],
+                declared_row_ids=np.arange(len(y)),
+                declared_labels=y,
+                declared_clusters=genes_rows,
+                class_order=classes,
+                declared_fold_ids=range(n_folds),
             )
-            seed_avg_oof = (
-                stack_oof_over_seeds(oof_by_view_probe[view][probe_name])
-                if all_seeds_scorable
-                else None
-            )
-            stacked_oof = (
-                stack_oof_over_seeds(oof_by_view_probe[view][probe_name])
-                if compute_ci and all_seeds_scorable
-                else None
-            )
+            all_seeds_scorable = combined_result.available
+            seed_avg_oof = combined_result.payload
+            stacked_oof = seed_avg_oof if compute_ci else None
             oof_out[view][probe_name] = seed_avg_oof
             entry = {
                 "status": "success" if all_seeds_scorable else "unavailable",
@@ -241,32 +240,38 @@ def _gof_auroc_from_oof(oof, classes=MECHANISM_CLASSES):
 
 def _stack_oof(oof_list):
     """Concatenate families while preserving each fitted seed/fold block."""
-    valid = [oof for oof in oof_list if oof is not None and len(oof["y_true"])]
-    if not valid:
+    if not oof_list or any(oof is None for oof in oof_list):
+        return None
+    valid = [oof for oof in oof_list if len(oof["y_true"])]
+    if len(valid) != len(oof_list):
         return None
     output = {
         "y_true": np.concatenate([oof["y_true"] for oof in valid]),
         "genes": np.concatenate([np.asarray(oof["genes"], dtype=object) for oof in valid]),
         "row_ids": np.arange(sum(len(oof["y_true"]) for oof in valid)),
     }
-    if all("proba_by_seed" in oof for oof in valid):
-        seed_counts = {len(oof["proba_by_seed"]) for oof in valid}
-        if len(seed_counts) != 1:
-            raise ValueError("families have different numbers of OOF seeds")
-        n_seeds = seed_counts.pop()
-        output["proba_by_seed"] = []
-        output["folds_by_seed"] = []
-        for seed_index in range(n_seeds):
-            output["proba_by_seed"].append(
-                np.concatenate([oof["proba_by_seed"][seed_index] for oof in valid])
+    if all("oof_by_seed" in oof for oof in valid):
+        requested_seed_sets = {tuple(oof["requested_seeds"]) for oof in valid}
+        if len(requested_seed_sets) != 1:
+            raise ValueError("families have different requested OOF seeds")
+        requested_seeds = requested_seed_sets.pop()
+        output["requested_seeds"] = list(requested_seeds)
+        output["oof_by_seed"] = {}
+        for seed in requested_seeds:
+            proba = np.concatenate(
+                [oof["oof_by_seed"][seed]["proba"] for oof in valid]
             )
             fold_blocks = []
             fold_offset = 0
             for oof in valid:
-                folds = np.asarray(oof["folds_by_seed"][seed_index], dtype=int)
+                folds = np.asarray(oof["oof_by_seed"][seed]["folds"], dtype=int)
                 fold_blocks.append(folds + fold_offset)
                 fold_offset += int(folds.max()) + 1
-            output["folds_by_seed"].append(np.concatenate(fold_blocks))
+            output["oof_by_seed"][seed] = {
+                "seed": seed,
+                "proba": proba,
+                "folds": np.concatenate(fold_blocks),
+            }
         return output
     if not all("proba" in oof and "folds" in oof for oof in valid):
         raise KeyError("pooled OOF inputs must retain folds and probabilities")
@@ -320,8 +325,18 @@ def _run_delta_gof_auroc_for_labels(
                     MECHANISM_CLASSES,
                     allow_missing_classes=True,
                 )
+                oof["classes"] = list(MECHANISM_CLASSES)
             seed_oofs.append(oof)
-        per_family_oof.append(stack_oof_over_seeds(seed_oofs))
+        combined = aggregate_oof_dicts(
+            range(n_seeds),
+            {seed: oof for seed, oof in enumerate(seed_oofs)},
+            declared_row_ids=np.arange(len(labels_fam)),
+            declared_labels=labels_fam,
+            declared_clusters=inp["genes"],
+            class_order=MECHANISM_CLASSES,
+            declared_fold_ids=range(n_folds),
+        )
+        per_family_oof.append(combined.payload)
     pooled = _stack_oof(per_family_oof)
     if pooled is None:
         return None

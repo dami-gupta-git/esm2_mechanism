@@ -37,6 +37,7 @@ from esm2_mech.experiments.mechanism.mechanism_delta_family_split import (
 from esm2_mech.utils.constants import (
     BOOTSTRAP_N_RESAMPLES,
     MAX_SEQ_LEN,
+    MECHANISM_CLASSES,
     MECHANISM_OOF_CACHE_GLOB,
     N_FOLDS,
     N_SEEDS,
@@ -158,7 +159,9 @@ def main() -> None:
         SEED_RESULT_GLOB,
         expected_seeds=range(args.seeds),
     )
-    aggregated = aggregate_across_seeds(seed_results)
+    aggregated = aggregate_across_seeds(
+        seed_results, confusion_matrix_class_order=MECHANISM_CLASSES
+    )
     split_gap_summary = summarize_split_gap(seed_results)
     payload = {
         "analysis": "WT-only gene-minus-family split gap on unwindowed proteins",
@@ -203,11 +206,14 @@ def main() -> None:
         indent=2,
     )
     print_table(aggregated)
-    print(
-        f"\nClaim 2B sensitivity: {split_gap_summary['n_supporting_seeds']}/"
-        f"{N_SEEDS} seed intervals exclude zero; "
-        f"meets interval rule {split_gap_summary['meets_claim_2b_interval_rule']}"
-    )
+    if split_gap_summary["preregistered_rule_evaluable"]:
+        print(
+            f"\nClaim 2B sensitivity: {split_gap_summary['n_supporting_seeds']}/"
+            f"{N_SEEDS} seed intervals exclude zero; "
+            f"meets interval rule {split_gap_summary['meets_claim_2b_interval_rule']}"
+        )
+    else:
+        print("\nClaim 2B sensitivity: interval rule unavailable")
     print(f"Wrote {WT_IDENTITY_SENSITIVITY_AGGREGATE_JSON}")
 
 

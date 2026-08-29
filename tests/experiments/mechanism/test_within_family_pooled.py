@@ -113,11 +113,10 @@ class TestStackOof:
         assert len(pooled["y_true"]) == 3
         assert list(pooled["genes"]) == ["A0", "A1", "B0"]
 
-    def test_skips_none_and_empty(self):
+    def test_refuses_none_and_empty_family_oof(self):
         a = _oof([0], [GOF], ["A0"], [[0.6, 0.2, 0.2]])
         empty = _oof([], [], [], np.empty((0, 3)))
-        pooled = wf._stack_oof([None, a, empty])
-        assert len(pooled["y_true"]) == 1
+        assert wf._stack_oof([None, a, empty]) is None
 
     def test_all_empty_returns_none(self):
         assert wf._stack_oof([None, None]) is None

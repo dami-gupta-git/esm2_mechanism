@@ -151,14 +151,18 @@ class TestAggregatePermutationResults:
 
         wt_summary = summary["wt_only_mean"]
         assert [row["p_value"] for row in wt_summary["per_seed"]] == wt_p_values
-        assert wt_summary["n_below_significance_threshold"] == 3
-        assert wt_summary["preregistered_rule_evaluable"] is True
-        assert wt_summary["meets_preregistered_three_of_five_rule"] is True
+        assert wt_summary["state"] == "available"
+        assert wt_summary["payload"]["n_supporting_seeds"] == 3
+        assert wt_summary["payload"]["decision"] is True
 
         delta_summary = summary["delta_mean"]
-        assert delta_summary["resolution_limited_seeds"] == [0]
-        assert delta_summary["n_below_significance_threshold"] == 1
-        assert delta_summary["meets_preregistered_three_of_five_rule"] is False
+        assert [
+            row["seed"]
+            for row in delta_summary["per_seed"]
+            if row["resolution_limited"]
+        ] == [0]
+        assert delta_summary["payload"]["n_supporting_seeds"] == 1
+        assert delta_summary["payload"]["decision"] is False
         assert delta_summary["per_seed"][0]["n_clusters_immovable"] == 3
 
     def test_fewer_than_five_seeds_is_not_a_negative_result(self):
@@ -169,8 +173,9 @@ class TestAggregatePermutationResults:
 
         summary = classify_by_mechanism.aggregate_permutation_results(seed_results)
 
-        assert summary["wt_only_mean"]["preregistered_rule_evaluable"] is False
-        assert summary["wt_only_mean"]["meets_preregistered_three_of_five_rule"] is None
+        assert summary["wt_only_mean"]["state"] == "unavailable"
+        assert summary["wt_only_mean"]["reason"] == "missing_seed"
+        assert summary["wt_only_mean"]["payload"] is None
 
     def test_missing_feature_or_p_value_is_reported_and_not_evaluated(self):
         seed_results = [
@@ -186,7 +191,7 @@ class TestAggregatePermutationResults:
         summary = classify_by_mechanism.aggregate_permutation_results(seed_results)
         wt_summary = summary["wt_only_mean"]
 
-        assert wt_summary["missing_seeds"] == [4]
-        assert wt_summary["seeds_without_valid_p_value"] == [3]
-        assert wt_summary["preregistered_rule_evaluable"] is False
-        assert wt_summary["meets_preregistered_three_of_five_rule"] is None
+        assert wt_summary["state"] == "unavailable"
+        assert wt_summary["reason"] == "invalid_value"
+        assert wt_summary["affected_seeds"] == [3, 4]
+        assert wt_summary["payload"] is None

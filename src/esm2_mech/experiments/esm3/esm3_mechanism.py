@@ -37,8 +37,8 @@ from esm2_mech.utils.bootstrap import (
     attach_mechanism_ci,
     family_or_gene_clusters,
     paired_oof_diff,
-    stack_oof_over_seeds,
 )
+from esm2_mech.utils.seed_aggregation import aggregate_oof_dicts
 
 # The matched ESM-2 probe for the ESM-3 comparison: MLP, delta_mean, family-split.
 MLP_DELTA_MEAN_FAMILY = nonlinear_key("mlp", DELTA_MEAN_FEATURE, SPLIT_FAMILY)
@@ -590,7 +590,11 @@ def phase3_probes(
     compute_ci: bool = True,
     n_boot: int = BOOTSTRAP_N_RESAMPLES,
 ) -> None:
-    from esm2_mech.utils.splits import gene_split_cv, family_split_cv
+    from esm2_mech.utils.splits import (
+        annotated_gene_mask,
+        gene_split_cv,
+        family_split_cv,
+    )
 
     OUT.mkdir(parents=True, exist_ok=True)
 
@@ -663,7 +667,7 @@ def phase3_probes(
         ]:
             mlp_f1s, mlp_gof, mlp_dn, mlp_lof = [], [], [], []
             lr_f1s = []
-            seed_oof_list = []
+            seed_oof_by_seed = {}
 
             for seed in seeds:
                 splits = get_splits(seed)
@@ -705,7 +709,7 @@ def phase3_probes(
                     return_oof=True,
                 )
                 if compute_ci:
-                    seed_oof_list.append(oof)
+                    seed_oof_by_seed[seed] = oof
                 mlp_f1s.append(agg["macro_f1_mean"])
                 mlp_gof.append(agg.get(f"auroc_{GOF}_mean", float("nan")))
                 mlp_dn.append(agg.get(f"auroc_{DN}_mean", float("nan")))
@@ -744,12 +748,24 @@ def phase3_probes(
                 "n_seeds": n_seeds_scored,
             }
             if compute_ci:
-                combined_oof = (
-                    stack_oof_over_seeds(seed_oof_list)
-                    if all(oof is not None for oof in seed_oof_list)
-                    else None
+                # The family split excludes unannotated genes from every fold, so
+                # only those rows are scored and can be declared.
+                rows = (
+                    np.arange(len(labels_cond))
+                    if cv_name == "gene_split"
+                    else np.flatnonzero(annotated_gene_mask(genes_cond, pfam_map))
                 )
-                if combined_oof is not None:
+                combined_result = aggregate_oof_dicts(
+                    seeds,
+                    seed_oof_by_seed,
+                    declared_row_ids=rows,
+                    declared_labels=labels_cond[rows],
+                    declared_clusters=genes_cond[rows],
+                    class_order=MECHANISM_CLASSES,
+                    declared_fold_ids=range(N_FOLDS),
+                )
+                combined_oof = combined_result.payload
+                if combined_result.available:
                     oof_by_arm[(cond, cv_name)] = combined_oof
                     clusters = family_or_gene_clusters(
                         combined_oof["genes"], pfam_map,

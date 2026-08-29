@@ -756,7 +756,9 @@ def main():
     for _seed, filename, _result in seed_results:
         print(f"  {filename}")
 
-    aggregated = aggregate_across_seeds(seed_results)
+    aggregated = aggregate_across_seeds(
+        seed_results, confusion_matrix_class_order=MECHANISM_CLASSES
+    )
     seed_numbers = [seed for seed, _filename, _result in seed_results]
     write_result_json(
         CONTRASTIVE_AGGREGATE_JSON,
