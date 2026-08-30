@@ -21,6 +21,7 @@ from esm2_mech.utils.seed_aggregation import (
     aggregate_seed_values,
     make_seed_record,
     read_seed_point_estimate,
+    seed_count,
 )
 from esm2_mech.utils.probes import auroc_for_clf
 from esm2_mech.utils.data import embedding_fingerprint
@@ -266,7 +267,7 @@ def main():
     import argparse
 
     ap = argparse.ArgumentParser()
-    ap.add_argument("--seeds", type=int, default=N_SEEDS, help="number of seeds (>=1)")
+    ap.add_argument("--seeds", type=seed_count, default=N_SEEDS, help="number of seeds (>=1)")
     ap.add_argument(
         "--stability-dataset",
         choices=list(STABILITY_DATASETS),

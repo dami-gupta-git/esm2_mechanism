@@ -57,6 +57,7 @@ from esm2_mech.utils.seed_aggregation import (
     aggregate_seed_results,
     make_seed_record,
     read_seed_point_estimate,
+    seed_count,
     seed_result_contract,
 )
 from esm2_mech.utils.splits import family_split_cv
@@ -930,7 +931,7 @@ def main(n_jobs=1, n_seeds=N_SEEDS, compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLE
 
 def _cli():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--seeds", type=int, default=N_SEEDS)
+    parser.add_argument("--seeds", type=seed_count, default=N_SEEDS)
     parser.add_argument(
         "--no_ci", action="store_true", help="skip cluster-bootstrap CIs"
     )

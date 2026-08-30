@@ -10,7 +10,7 @@ from pathlib import Path
 from esm2_mech.utils.paths import EMB_MUT_MEAN, EMB_WT_MEAN, LL_CKPT_JSON, RESULTS_DIR as _RESULTS_DIR, SCAN_FEATURES_META_JSON, SCAN_FEATURES_NPY, SCAN_PROBE_CACHE_JSON, SEQUENCES_EXTENDED_JSON, SEQUENCES_JSON, VALID_VARIANTS_JSON
 from esm2_mech.utils.constants import AA_ORDER, MECHANISM_CLASSES, N_SEEDS
 from esm2_mech.utils.io import write_result_json
-from esm2_mech.utils.seed_aggregation import aggregate_result_contract, seed_result_contract
+from esm2_mech.utils.seed_aggregation import aggregate_result_contract, seed_result_contract, seed_count
 from esm2_mech.experiments.perturbation.seed_summary import (
     aggregate_probe_results,
     read_probe_metric,
@@ -425,7 +425,7 @@ def main():
         help="Phases to run: '2', '3', '23' (default: 23). Phase 2=GPU extraction, 3=features+probe",
     )
     parser.add_argument("--batch_size", type=int, default=32)
-    parser.add_argument("--seeds", type=int, default=N_SEEDS)
+    parser.add_argument("--seeds", type=seed_count, default=N_SEEDS)
     args = parser.parse_args()
 
     phases = set(args.run_phase)

@@ -786,7 +786,7 @@ def figure3_family_information() -> None:
 
     gap_axis = axes[1, 0]
     gap = read_seed_inference(
-        aggregate["claim_2b_split_gap_summary"][
+        aggregate["gene_minus_family_split_gap"][
             "gene_minus_family_seed_aggregate"
         ]
     )
@@ -942,7 +942,7 @@ def figure4_pathogenicity_conservation() -> None:
     conservation_axis.set_title(
         "Adding delta did not improve discrimination", loc="left"
     )
-    paired_difference = conservation["claims"]["2E_delta_beyond_conservation"][
+    paired_difference = conservation["claims"]["delta_added_value_beyond_conservation"][
         "paired_diff"
     ]
     paired_value = geometry_value(
@@ -954,7 +954,7 @@ def figure4_pathogenicity_conservation() -> None:
         "Combined − conservation\n"
         f"{paired_value:+.3f}\n"
         + _interval_note(
-            conservation["claims"]["2E_delta_beyond_conservation"].get(
+            conservation["claims"]["delta_added_value_beyond_conservation"].get(
                 "paired_diff_ci"
             ),
             point_key="point_diff",
@@ -1111,7 +1111,7 @@ def figure5_enzyme_classification() -> None:
         capsize=3,
     )
     comparison_axis.axvline(0, color=GREY, linewidth=1)
-    minimum_gap = enzyme["gate_evaluation"]["2G_minimum_f1_gap"]
+    minimum_gap = enzyme["gate_evaluation"]["enzyme_minus_mechanism_minimum_f1_gap"]
     comparison_axis.plot(
         [minimum_gap, minimum_gap],
         [0.66, 1.34],

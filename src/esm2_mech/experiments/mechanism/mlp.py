@@ -35,7 +35,7 @@ from esm2_mech.utils.io import load_variants_and_delta, write_result_json
 from esm2_mech.utils.probes import run_mlp_probe_cv, run_sklearn_probe_pca, run_sklearn_probe
 from esm2_mech.utils.splits import gene_split_cv, family_split_cv
 from esm2_mech.utils.classification import validate_complete_classification_splits
-from esm2_mech.utils.seed_aggregation import read_seed_result_contract, seed_result_contract
+from esm2_mech.utils.seed_aggregation import read_seed_result_contract, seed_result_contract, seed_count
 
 print = functools.partial(print, flush=True)
 
@@ -230,7 +230,7 @@ def run_seed(
 
 def main():
     parser = argparse.ArgumentParser(allow_abbrev=False)
-    parser.add_argument("--seeds", type=int, default=N_SEEDS,
+    parser.add_argument("--seeds", type=seed_count, default=N_SEEDS,
                         help="number of seeds to run; runs 0..seeds-1 (>=1)")
     parser.add_argument("--max_epochs", type=int, default=100)
     parser.add_argument("--patience", type=int, default=10)
@@ -243,8 +243,6 @@ def main():
     parser.add_argument("--no_ci", action="store_true", help="skip cluster-bootstrap CIs")
     parser.add_argument("--n_boot", type=int, default=BOOTSTRAP_N_RESAMPLES)
     args = parser.parse_args()
-    if args.seeds < 1:
-        parser.error("--seeds must be >= 1")
 
     labels, genes, delta_mean, delta_pos, pfam_map, input_fingerprints = load_data()
 

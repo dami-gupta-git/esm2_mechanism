@@ -57,7 +57,7 @@ from esm2_mech.utils.paths import (
     WT_IDENTITY_SENSITIVITY_AGGREGATE_JSON,
     WT_IDENTITY_SENSITIVITY_DIR,
 )
-from esm2_mech.utils.seed_aggregation import load_seed_files, read_seed_point_estimate
+from esm2_mech.utils.seed_aggregation import load_seed_files, read_seed_point_estimate, seed_count
 from esm2_mech.experiments.mechanism.seed_results import (
     aggregate_across_seeds,
     aggregate_result_contract,
@@ -101,15 +101,13 @@ def sequence_selection_fingerprint(variants: list[dict], sequences: dict[str, st
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--seeds", type=int, default=N_SEEDS,
+        "--seeds", type=seed_count, default=N_SEEDS,
         help="number of seeds to run; runs 0..seeds-1 (>=1)",
     )
     parser.add_argument("--n_folds", type=int, default=N_FOLDS)
     parser.add_argument("--n_boot", type=int, default=BOOTSTRAP_N_RESAMPLES)
     parser.add_argument("--no_ci", action="store_true", help="skip cluster-bootstrap CIs")
     args = parser.parse_args()
-    if args.seeds < 1:
-        parser.error("--seeds must be >= 1")
     requested_seeds = range(args.seeds)
     if args.n_folds < 2:
         parser.error("--n_folds must be >= 2")

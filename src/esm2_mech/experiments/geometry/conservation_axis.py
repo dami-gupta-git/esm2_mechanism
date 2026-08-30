@@ -80,8 +80,8 @@ CONS_CACHE = CONSERVATION_PATHOGENICITY_NPY
 CONS_META = CONSERVATION_PATHOGENICITY_META_JSON
 
 # Claim thresholds
-CLAIM_2D_CONSERVATION_MIN = 0.85
-CLAIM_2E_DELTA_ADD_MIN = 0.02
+CONSERVATION_ONLY_AUROC_MIN = 0.85
+DELTA_ADDED_VALUE_MIN = 0.02
 
 PATHOGENIC = 1
 LOGREG_MAX_ITER = 2000
@@ -449,7 +449,7 @@ def analyse(compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES):
     print("\n=== PAIRED DIFFERENCES (within model seed, and family-cluster CI) ===")
     contrasts = [
         (
-            "2E_delta_beyond_conservation",
+            "delta_added_value_beyond_conservation",
             "conservation_plus_delta",
             "conservation",
         ),
@@ -514,16 +514,16 @@ def analyse(compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES):
     cons_a = read_seed_point_estimate(auroc["conservation"]).value
     both_a = read_seed_point_estimate(auroc["conservation_plus_delta"]).value
     delta_a = read_seed_point_estimate(auroc["delta"]).value
-    claim_2d_passed = (
-        bool(cons_a >= CLAIM_2D_CONSERVATION_MIN)
+    conservation_only_passed = (
+        bool(cons_a >= CONSERVATION_ONLY_AUROC_MIN)
         if cons_a is not None and np.isfinite(cons_a)
         else None
     )
-    claim_2e_diff = paired.get("2E_delta_beyond_conservation")
-    claim_2e_read = read_seed_point_estimate(claim_2e_diff or {})
-    claim_2e_passed = (
-        bool(claim_2e_read.value >= CLAIM_2E_DELTA_ADD_MIN)
-        if claim_2e_read.available
+    delta_added_diff = paired.get("delta_added_value_beyond_conservation")
+    delta_added_read = read_seed_point_estimate(delta_added_diff or {})
+    delta_added_passed = (
+        bool(delta_added_read.value >= DELTA_ADDED_VALUE_MIN)
+        if delta_added_read.available
         else None
     )
     # A verdict compares an interval with the point estimate that interval was
@@ -533,35 +533,35 @@ def analyse(compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES):
     conservation_ci_point = (
         None if conservation_ci is None else conservation_ci.get("point")
     )
-    claim_2e_ci = paired_ci.get("2E_delta_beyond_conservation")
-    claim_2e_ci_point = None if claim_2e_ci is None else claim_2e_ci.get("point_diff")
-    claim_2e_ci_passed = (
-        bool(claim_2e_ci_point >= CLAIM_2E_DELTA_ADD_MIN)
-        if claim_2e_ci_point is not None and np.isfinite(claim_2e_ci_point)
+    delta_added_ci = paired_ci.get("delta_added_value_beyond_conservation")
+    delta_added_ci_point = None if delta_added_ci is None else delta_added_ci.get("point_diff")
+    delta_added_ci_passed = (
+        bool(delta_added_ci_point >= DELTA_ADDED_VALUE_MIN)
+        if delta_added_ci_point is not None and np.isfinite(delta_added_ci_point)
         else None
     )
     claims = {
-        "2D_conservation_clears_0.85": {
+        "conservation_only_pathogenicity_auroc": {
             "value": cons_a,
-            "threshold": CLAIM_2D_CONSERVATION_MIN,
-            "passed": claim_2d_passed,
+            "threshold": CONSERVATION_ONLY_AUROC_MIN,
+            "passed": conservation_only_passed,
             "interval_point_estimate": conservation_ci_point,
             "ci": conservation_ci,
             "verdict": adjudicate_level(
-                conservation_ci_point, conservation_ci, CLAIM_2D_CONSERVATION_MIN
+                conservation_ci_point, conservation_ci, CONSERVATION_ONLY_AUROC_MIN
             ),
         },
-        "2E_delta_beyond_conservation": {
-            "value": claim_2e_read.value,
-            "threshold": CLAIM_2E_DELTA_ADD_MIN,
+        "delta_added_value_beyond_conservation": {
+            "value": delta_added_read.value,
+            "threshold": DELTA_ADDED_VALUE_MIN,
             "conservation": cons_a,
             "conservation_plus_delta": both_a,
-            "paired_diff": claim_2e_diff,
-            "passed": claim_2e_passed,
-            "interval_point_estimate": claim_2e_ci_point,
-            "paired_diff_ci": claim_2e_ci,
+            "paired_diff": delta_added_diff,
+            "passed": delta_added_passed,
+            "interval_point_estimate": delta_added_ci_point,
+            "paired_diff_ci": delta_added_ci,
             "verdict": adjudicate_diff(
-                claim_2e_ci_passed, claim_2e_ci, CLAIM_2E_DELTA_ADD_MIN
+                delta_added_ci_passed, delta_added_ci, DELTA_ADDED_VALUE_MIN
             ),
         },
         "descriptive_conservation_beyond_delta": {
@@ -604,7 +604,10 @@ def analyse(compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES):
         "auroc_family_split_per_seed_fold_summaries": seed_runs_by_feature,
         "paired_difference_ci": paired_ci,
         "claims": claims,
-        "thresholds": {"2D": CLAIM_2D_CONSERVATION_MIN, "2E": CLAIM_2E_DELTA_ADD_MIN},
+        "thresholds": {
+            "conservation_only_pathogenicity_auroc": CONSERVATION_ONLY_AUROC_MIN,
+            "delta_added_value_beyond_conservation": DELTA_ADDED_VALUE_MIN,
+        },
         "input_provenance": provenance,
         "calibration_note": (
             "The probes are uncalibrated and measure discrimination only; the "
@@ -635,19 +638,19 @@ def analyse(compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES):
             f"{_show_interval(auroc_ci.get(name))}"
         )
     print(
-        f"\n  2D conservation-alone >= {CLAIM_2D_CONSERVATION_MIN}: "
+        f"\n  conservation alone >= {CONSERVATION_ONLY_AUROC_MIN}: "
         f"{_show_seed_summary(auroc['conservation'])} "
         f"{_show_interval(conservation_ci)} -> "
         f"{claims['2D_conservation_clears_0.85']['verdict']}"
     )
-    claim_2e_value = claims["2E_delta_beyond_conservation"]["value"]
-    claim_2e_shown = (
-        f"{claim_2e_value:+.3f}" if claim_2e_value is not None else "no point estimate"
+    delta_added_value = claims["delta_added_value_beyond_conservation"]["value"]
+    delta_added_shown = (
+        f"{delta_added_value:+.3f}" if delta_added_value is not None else "no point estimate"
     )
     print(
-        f"  2E delta adds over conservation >= {CLAIM_2E_DELTA_ADD_MIN}: {claim_2e_shown}"
+        f"  delta adds over conservation >= {DELTA_ADDED_VALUE_MIN}: {delta_added_shown}"
     )
-    print(f"     {claims['2E_delta_beyond_conservation']['verdict']}")
+    print(f"     {claims['delta_added_value_beyond_conservation']['verdict']}")
     print(f"\nResults -> {CONSERVATION_AXIS_JSON}")
 
 

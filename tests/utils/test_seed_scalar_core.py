@@ -206,13 +206,10 @@ class TestSeedIdentity:
         aggregate = aggregate_seed_values((0, 1, 1, 2), {0: 0.1, 1: 0.2, 2: 0.3})
         _assert_refused(aggregate, SeedUnavailableReason.DUPLICATE_SEED, [1])
 
-    def test_empty_requested_set_refuses(self):
-        aggregate = aggregate_seed_values((), {})
-        assert aggregate.available is False
-
-    def test_record_for_empty_requested_set_is_unexpected(self):
-        aggregate = aggregate_seed_values((), {4: 0.2})
-        _assert_refused(aggregate, SeedUnavailableReason.UNEXPECTED_SEED, [4])
+    def test_empty_requested_set_raises(self):
+        """A caller error, not a scientific outcome, so it is not reportable."""
+        with pytest.raises(ValueError):
+            aggregate_seed_values((), {})
 
     def test_values_are_matched_by_identifier_not_by_order(self):
         """Two mappings with the same values in different insertion order must
@@ -416,18 +413,6 @@ class TestSharedReaders:
     def test_unavailable_reader_rejects_a_stored_mean(self):
         stored = aggregate_seed_values(FIVE_SEEDS, {0: 0.1}).to_dict()
         stored["mean"] = 0.1
-        result = read_seed_point_estimate(stored)
-        assert result.reason is SeedUnavailableReason.INVALID_AGGREGATE
-
-    def test_empty_request_refusal_remains_readable(self):
-        aggregate = aggregate_seed_values((), {})
-        result = read_seed_point_estimate(aggregate)
-        assert result.reason is SeedUnavailableReason.EMPTY_REQUESTED_SEEDS
-
-    def test_empty_request_reason_is_invalid_for_nonempty_request(self):
-        stored = aggregate_seed_values(FIVE_SEEDS, {0: 0.1}).to_dict()
-        stored["reason"] = SeedUnavailableReason.EMPTY_REQUESTED_SEEDS.value
-        stored["affected_seeds"] = []
         result = read_seed_point_estimate(stored)
         assert result.reason is SeedUnavailableReason.INVALID_AGGREGATE
 

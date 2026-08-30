@@ -27,6 +27,15 @@ N_SEEDS = 5
 # replacement method (docs/improve/fix_seed.md, "Suppress invalid intervals").
 INFERENTIAL_SEED = 0
 
+# Audit item 1.4 has not yet defined a valid interval method for classification
+# metrics scored within folds, where a resample can lose a required fold or class.
+# While this is True those producers return the point estimate with the interval
+# marked blocked, and every verdict that reads such an interval reports itself as
+# not adjudicated instead of passing or failing. Point estimates are unaffected.
+# Set to False only when the audit item 1.4 replacement method is implemented and
+# validated (docs/improve/ANALYSIS_PLAN.md, "Uncertainty and resampling").
+CLASSIFICATION_INTERVALS_BLOCKED = True
+
 # Schema for per-seed records and aggregates produced by utils.seed_aggregation.
 # Increment when that shared result shape or its validation rules change.
 SEED_AGGREGATION_SCHEMA_VERSION = 1

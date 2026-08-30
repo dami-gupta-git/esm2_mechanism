@@ -153,7 +153,7 @@ class TestAggregatePermutationResults:
         assert [row["p_value"] for row in wt_summary["per_seed"]] == wt_p_values
         assert wt_summary["seed_vote"]["state"] == "available"
         assert wt_summary["seed_vote"]["payload"]["n_supporting_seeds"] == 3
-        assert wt_summary["meets_preregistered_three_of_five_rule"] is True
+        assert wt_summary["meets_permutation_seed_vote_rule"] is True
 
         delta_summary = summary["delta_mean"]
         assert [
@@ -162,7 +162,7 @@ class TestAggregatePermutationResults:
             if row["resolution_limited"]
         ] == [0]
         assert delta_summary["seed_vote"]["payload"]["n_supporting_seeds"] == 1
-        assert delta_summary["meets_preregistered_three_of_five_rule"] is False
+        assert delta_summary["meets_permutation_seed_vote_rule"] is False
         assert delta_summary["per_seed"][0]["n_clusters_immovable"] == 3
 
     def test_fewer_than_five_seeds_is_not_a_negative_result(self):
@@ -175,7 +175,7 @@ class TestAggregatePermutationResults:
 
         assert summary["wt_only_mean"]["seed_vote"]["state"] == "unavailable"
         assert summary["wt_only_mean"]["seed_vote"]["reason"] == "missing_seed"
-        assert summary["wt_only_mean"]["meets_preregistered_three_of_five_rule"] is None
+        assert summary["wt_only_mean"]["meets_permutation_seed_vote_rule"] is None
 
     def test_missing_feature_or_p_value_is_reported_and_not_evaluated(self):
         seed_results = [
@@ -194,4 +194,4 @@ class TestAggregatePermutationResults:
         assert wt_summary["seed_vote"]["state"] == "unavailable"
         assert wt_summary["seed_vote"]["reason"] == "invalid_value"
         assert wt_summary["seed_vote"]["affected_seeds"] == [3, 4]
-        assert wt_summary["meets_preregistered_three_of_five_rule"] is None
+        assert wt_summary["meets_permutation_seed_vote_rule"] is None

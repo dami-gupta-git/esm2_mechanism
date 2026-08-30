@@ -58,7 +58,7 @@ from esm2_mech.utils.paths import (
     SINGLE_SOURCE_DIR,
     SINGLE_SOURCE_NAIVE_BASELINE_JSON,
 )
-from esm2_mech.utils.seed_aggregation import load_seed_files, read_seed_point_estimate
+from esm2_mech.utils.seed_aggregation import load_seed_files, read_seed_point_estimate, seed_count
 from esm2_mech.experiments.mechanism.seed_results import (
     aggregate_across_seeds,
     aggregate_result_contract,
@@ -107,7 +107,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--n_folds", type=int, default=5)
     parser.add_argument(
-        "--seeds", type=int, default=N_SEEDS,
+        "--seeds", type=seed_count, default=N_SEEDS,
         help="number of seeds to run; runs 0..seeds-1 (>=1)",
     )
     parser.add_argument("--no_ci", action="store_true", help="skip cluster-bootstrap CIs")
@@ -117,8 +117,6 @@ def main() -> None:
         help="label-permutation reps for headline features (0 = skip; slow, refits per rep)",
     )
     args = parser.parse_args()
-    if args.seeds < 1:
-        parser.error("--seeds must be >= 1")
     requested_seeds = range(args.seeds)
 
     SINGLE_SOURCE_DIR.mkdir(parents=True, exist_ok=True)

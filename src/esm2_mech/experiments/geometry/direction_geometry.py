@@ -17,6 +17,7 @@ from esm2_mech.utils.seed_aggregation import (
     aggregate_seed_values,
     make_seed_record,
     read_seed_point_estimate,
+    seed_count,
 )
 from esm2_mech.utils.probes import auroc_for_clf
 from esm2_mech.utils.splits import family_split_cv
@@ -327,7 +328,7 @@ def main():
     import argparse
 
     ap = argparse.ArgumentParser()
-    ap.add_argument("--seeds", type=int, default=N_SEEDS, help="number of seeds (>=1)")
+    ap.add_argument("--seeds", type=seed_count, default=N_SEEDS, help="number of seeds (>=1)")
     args = ap.parse_args()
     result = run(n_seeds=args.seeds)
     ablation = result["iterative_direction_ablation"]

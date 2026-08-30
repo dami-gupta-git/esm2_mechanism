@@ -30,6 +30,7 @@ import pytest
 from sklearn.metrics import f1_score
 
 from esm2_mech.experiments.mechanism import clan_holdout, homology_partition_panel as panel
+from esm2_mech.utils.bootstrap import INTERVAL_GATE_REASON
 from esm2_mech.utils.constants import DN, GOF, LOF, MECHANISM_CLASSES
 from esm2_mech.utils.metrics import majority_baseline_f1
 
@@ -238,9 +239,12 @@ class TestPartitionRow:
         assert row["n_clusters"] == 4
         assert row["measured_floor"] == 0.288
         interval = row["mechanism_null_macro_f1"]
-        assert interval["ci_low"] is not None and interval["ci_high"] is not None
-        assert interval["ci_low"] <= interval["point"] <= interval["ci_high"]
+        # The point estimate and the cluster count stay reportable; the interval
+        # is withheld while audit item 1.4 blocks this resampling path.
+        assert interval["point"] is not None
         assert interval["n_clusters"] == 4
+        assert interval["ci_low"] is None and interval["ci_high"] is None
+        assert interval["reason"] == INTERVAL_GATE_REASON
 
 
 class TestMeasuredChanceFloors:
@@ -488,12 +492,12 @@ class TestPanelEndToEnd:
         for name, row in rows.items():
             null_ci = row["mechanism_null_macro_f1"]
             assert null_ci["point"] is not None, f"{name} has no point estimate"
-            if null_ci["ci_suppressed"]:
-                # Only a genuinely undefined draw set may withhold the interval,
-                # and the row must say how many draws it lost.
-                assert null_ci["n_discarded"] > 0, f"{name} CI gated for no reason"
-                continue
-            assert null_ci["ci_low"] <= null_ci["point"] <= null_ci["ci_high"]
+            # Every row's interval is withheld under the audit item 1.4 block, and
+            # each must say so rather than appearing to have been resampled.
+            assert null_ci["ci_suppressed"], f"{name} reported a blocked interval"
+            assert null_ci["reason"] == INTERVAL_GATE_REASON, (
+                f"{name} withheld its interval for an unstated reason"
+            )
 
         # Write and reload the consolidated JSON, matching main()'s shape.
         from esm2_mech.utils.io import atomic_write_json

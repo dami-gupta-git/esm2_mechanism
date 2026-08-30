@@ -124,5 +124,5 @@ def test_wt_sensitivity_consumers_do_not_read_removed_interval_votes():
         / "wt_window_average_sensitivity.py",
     )
     source = "\n".join(path.read_text() for path in paths)
-    assert "meets_claim_2b_interval_rule" not in source
+    assert "meets_split_gap_interval_rule" not in source
     assert 'split_gap_summary["seed_vote"]' not in source

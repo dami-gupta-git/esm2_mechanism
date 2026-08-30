@@ -26,6 +26,7 @@ from esm2_mech.utils.seed_aggregation import (
     aggregate_seed_values,
     make_seed_record,
     read_seed_inference,
+    seed_count,
     seed_result_contract,
 )
 from esm2_mech.experiments.mechanism.seed_results import aggregate_result_contract
@@ -367,13 +368,11 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--seeds",
-        type=int,
+        type=seed_count,
         default=N_SEEDS,
         help="number of seeds to run; runs 0..seeds-1 (>=1)",
     )
     args = parser.parse_args()
-    if args.seeds < 1:
-        parser.error("--seeds must be >= 1")
 
     os.makedirs(OUT_DIR, exist_ok=True)
 

@@ -28,6 +28,7 @@ from esm2_mech.utils.seed_aggregation import (
     aggregate_seed_values,
     make_seed_record,
     read_seed_inference,
+    seed_count,
 )
 from esm2_mech.experiments.mechanism.seed_results import aggregate_result_contract
 from esm2_mech.utils.data import (
@@ -349,7 +350,7 @@ def _family_probe_bootstrap_ci(oof, n_resamples, seed):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--seeds", type=int, default=N_SEEDS,
+        "--seeds", type=seed_count, default=N_SEEDS,
         help="number of seeds for the k-NN purity / within-between / family-probe "
         "null-shuffles and CV folds; runs 0..seeds-1 (>=1)",
     )
@@ -358,8 +359,6 @@ def main():
     )
     parser.add_argument("--n_boot", type=int, default=BOOTSTRAP_N_RESAMPLES)
     args = parser.parse_args()
-    if args.seeds < 1:
-        parser.error("--seeds must be >= 1")
     compute_ci = not args.no_ci
 
     # Load the pre-filtered variant list (the same row-aligned set the embeddings

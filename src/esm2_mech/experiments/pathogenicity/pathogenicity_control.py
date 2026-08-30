@@ -63,13 +63,14 @@ from esm2_mech.utils.seed_aggregation import (
     aggregate_seed_results,
     read_seed_point_estimate,
     read_seed_result_contract,
+    seed_count,
     seed_result_contract,
 )
 
 print = functools.partial(print, flush=True)
 
 ESM2_MODEL_650M = "esm2_t33_650M_UR50D"
-CLAIM_2C_THRESHOLD = 0.85
+PATHOGENICITY_AUROC_MIN = 0.85
 _EMBEDDING_METADATA_VERSION = 2
 _PROBE_RESULT_VERSION = 4
 _BINARY_METRICS = ("auroc", "auprc", "prevalence", "ppv", "npv")
@@ -88,7 +89,7 @@ class ExpectedPathogenicitySelection:
 
 
 def _source_files_fingerprint() -> str:
-    """Hash every project source file that defines the Section 5 estimand."""
+    """Hash every project source file that defines the pathogenicity control estimand."""
     paths = {
         Path(__file__),
         Path(bootstrap_module.__file__),
@@ -416,7 +417,7 @@ def _aggregate_metric(seed_results, requested_seeds, cell_key, metric):
     )
 
 
-def _build_claim_2c(single_seed_inference, across_seed_point_estimate):
+def _build_pathogenicity_auroc_assessment(single_seed_inference, across_seed_point_estimate):
     """Report the claim 2C threshold and estimates without an interval verdict.
 
     The only interval available here is a bootstrap over one seed's out-of-fold
@@ -427,12 +428,12 @@ def _build_claim_2c(single_seed_inference, across_seed_point_estimate):
     audit item 1.4.
     """
     return {
-        "claim": "2C",
+        "assessment": "pathogenicity_family_held_out_auroc",
         "feature": "delta_mean",
         "probe": "mlp",
         "split": "family",
         "seed": single_seed_inference["seed"],
-        "threshold": CLAIM_2C_THRESHOLD,
+        "threshold": PATHOGENICITY_AUROC_MIN,
         "point_estimate": single_seed_inference["point_estimate"],
         "across_seed_point_estimate": across_seed_point_estimate,
         "estimate_basis": single_seed_inference["estimate_basis"],
@@ -710,7 +711,7 @@ def probe_phase(
 
     claim_cell = results["by_feature"]["delta_mean"]["mlp_family"]
     claim_metric = read_seed_point_estimate(claim_cell["metrics"]["auroc"])
-    results["claim_2c"] = _build_claim_2c(
+    results["pathogenicity_family_held_out_auroc"] = _build_pathogenicity_auroc_assessment(
         claim_cell["single_seed_inference"], claim_metric.value
     )
 
@@ -741,7 +742,7 @@ def _print_headline(results):
                 )
         print()
 
-    claim = results["claim_2c"]
+    claim = results["pathogenicity_family_held_out_auroc"]
     across_seed = claim["across_seed_point_estimate"]
     single_seed = claim["point_estimate"]
     if across_seed is not None:
@@ -758,7 +759,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", default=ESM2_MODEL_650M, choices=[ESM2_MODEL_650M])
     parser.add_argument("--batch_size", type=int, default=32)
-    parser.add_argument("--seeds", type=int, default=N_SEEDS, help="number of probe seeds (>=1)")
+    parser.add_argument("--seeds", type=seed_count, default=N_SEEDS, help="number of probe seeds (>=1)")
     parser.add_argument("--n_jobs", type=int, default=-1, help="parallel jobs for probes (-1 = all cores)")
     parser.add_argument("--no_ci", action="store_true", help="skip cluster-bootstrap CIs")
     parser.add_argument("--n_boot", type=int, default=BOOTSTRAP_N_RESAMPLES)
@@ -773,8 +774,6 @@ def main():
     )
     args = parser.parse_args()
 
-    if args.seeds < 1:
-        parser.error("--seeds must be >= 1")
     if args.force_embed and args.phase == "probe":
         parser.error("--force_embed requires --phase embed or --phase both")
 

@@ -7,6 +7,7 @@ holds no experiment-specific layout.
 
 from __future__ import annotations
 
+import argparse
 import glob
 import json
 import math
@@ -41,7 +42,6 @@ SEED_STATUSES = frozenset(
 
 
 class SeedUnavailableReason(str, Enum):
-    EMPTY_REQUESTED_SEEDS = "empty_requested_seeds"
     DUPLICATE_SEED = "duplicate_seed"
     UNEXPECTED_SEED = "unexpected_seed"
     MISSING_SEED = "missing_seed"
@@ -61,7 +61,6 @@ class SeedUnavailableReason(str, Enum):
 
 
 _REASON_MESSAGES = {
-    SeedUnavailableReason.EMPTY_REQUESTED_SEEDS: "no model seeds were requested",
     SeedUnavailableReason.DUPLICATE_SEED: "a seed identifier is duplicated",
     SeedUnavailableReason.UNEXPECTED_SEED: "an unrequested seed record is present",
     SeedUnavailableReason.MISSING_SEED: "a requested seed record is missing",
@@ -82,7 +81,6 @@ _REASON_MESSAGES = {
 
 _STORED_UNAVAILABLE_REASONS = frozenset(
     {
-        SeedUnavailableReason.EMPTY_REQUESTED_SEEDS,
         SeedUnavailableReason.DUPLICATE_SEED,
         SeedUnavailableReason.UNEXPECTED_SEED,
         SeedUnavailableReason.MISSING_SEED,
@@ -93,11 +91,28 @@ _STORED_UNAVAILABLE_REASONS = frozenset(
     }
 )
 
+def _check_seed(seed) -> None:
+    if isinstance(seed, bool) or not isinstance(seed, int):
+        raise TypeError("seed identifiers must be integers")
+
+
 @dataclass(frozen=True)
 class SeedValueRecord:
     seed: int
     status: str
     value: float | None
+
+    def __post_init__(self):
+        """Checked here so a record is validated once, however it was built."""
+        _check_seed(self.seed)
+        if self.status not in SEED_STATUSES:
+            raise ValueError(f"unsupported seed status {self.status!r}")
+        if isinstance(self.value, bool):
+            raise TypeError("a boolean is not a scientific metric value")
+        if self.value is not None and not isinstance(self.value, Real):
+            raise TypeError("seed metric values must be numeric or None")
+        if self.value is not None:
+            object.__setattr__(self, "value", float(self.value))
 
 
 @dataclass(frozen=True)
@@ -169,6 +184,14 @@ class SeedAggregate:
         }
 
 
+def seed_count(value: str) -> int:
+    """argparse type for `--seeds`, which is a count of seeds 0..n-1."""
+    count = int(value)
+    if count < 1:
+        raise argparse.ArgumentTypeError("--seeds must be >= 1")
+    return count
+
+
 @dataclass(frozen=True)
 class SeedMetricRead:
     value: float | None
@@ -188,16 +211,7 @@ def make_seed_record(
     status: str = SEED_STATUS_SUCCESS,
 ) -> SeedValueRecord:
     """Construct one seed record without changing a missing scientific value."""
-    if isinstance(seed, bool) or not isinstance(seed, int):
-        raise TypeError("seed identifiers must be integers")
-    if status not in SEED_STATUSES:
-        raise ValueError(f"unsupported seed status {status!r}")
-    if isinstance(value, bool):
-        raise TypeError("a boolean is not a scientific metric value")
-    if value is not None and not isinstance(value, Real):
-        raise TypeError("seed metric values must be numeric or None")
-    numeric_value = None if value is None else float(value)
-    return SeedValueRecord(seed=seed, status=status, value=numeric_value)
+    return SeedValueRecord(seed=seed, status=status, value=value)
 
 
 def seed_result_contract(seed: int, *, status: str = SEED_STATUS_SUCCESS) -> dict:
@@ -224,7 +238,12 @@ def aggregate_result_contract() -> dict:
 
 
 def read_seed_result_contract(seed: int, source: str, result: Mapping) -> str:
-    """Return the declared root status of one per-seed result file."""
+    """Return the declared root status of one per-seed result file.
+
+    Raises where the readers below return unavailable: a bad per-seed file means
+    this run is wrong, while a bad aggregate may be another experiment's and must
+    suppress only the dependent output.
+    """
     version = result.get(SEED_SCHEMA_KEY)
     if version != SEED_AGGREGATION_SCHEMA_VERSION:
         raise ValueError(
@@ -359,33 +378,16 @@ def _unavailable(
     )
 
 
-def validate_seed_records(
-    values: Iterable[SeedValueRecord],
-) -> tuple[SeedValueRecord, ...]:
-    """Validate records made in memory or reconstructed from stored results."""
-    records = tuple(values)
-    for record in records:
-        if not isinstance(record, SeedValueRecord):
-            raise TypeError("seed records must be created with make_seed_record")
-        if isinstance(record.seed, bool) or not isinstance(record.seed, int):
-            raise TypeError("seed identifiers must be integers")
-        if record.status not in SEED_STATUSES:
-            raise ValueError(f"unsupported seed status {record.status!r}")
-        if isinstance(record.value, bool):
-            raise TypeError("a boolean is not a scientific metric value")
-        if record.value is not None and not isinstance(record.value, Real):
-            raise TypeError("seed metric values must be numeric or None")
-    return records
-
-
 def aggregate_seed_values(
     requested_seeds: Iterable[int],
     values: Iterable[SeedValueRecord],
 ) -> SeedAggregate:
     """Aggregate one finite point estimate from every explicitly requested seed."""
     requested = tuple(requested_seeds)
-    if any(isinstance(seed, bool) or not isinstance(seed, int) for seed in requested):
-        raise TypeError("requested seed identifiers must be integers")
+    for seed in requested:
+        _check_seed(seed)
+    if not requested:
+        raise ValueError("at least one seed must be requested")
 
     duplicate_requested = sorted(
         {seed for seed in requested if requested.count(seed) > 1}
@@ -398,7 +400,10 @@ def aggregate_seed_values(
             duplicate_requested,
         )
 
-    records = validate_seed_records(values)
+    records = tuple(values)
+    for record in records:
+        if not isinstance(record, SeedValueRecord):
+            raise TypeError("seed records must be created with make_seed_record")
 
     record_seeds = [record.seed for record in records]
     duplicate_records = sorted(
@@ -410,18 +415,6 @@ def aggregate_seed_values(
             requested,
             (),
             duplicate_records,
-        )
-
-    if not requested:
-        if record_seeds:
-            return _unavailable(
-                SeedUnavailableReason.UNEXPECTED_SEED,
-                requested,
-                (),
-                sorted(record_seeds),
-            )
-        return _unavailable(
-            SeedUnavailableReason.EMPTY_REQUESTED_SEEDS, requested, (), ()
         )
 
     records_by_seed = {record.seed: record for record in records}
@@ -900,28 +893,14 @@ def read_seed_point_estimate(
             reason = SeedUnavailableReason(fields.get("reason"))
         except (TypeError, ValueError):
             return _read_failure(SeedUnavailableReason.INVALID_AGGREGATE)
-        if reason not in _STORED_UNAVAILABLE_REASONS:
+        if reason not in _STORED_UNAVAILABLE_REASONS or fields.get("mean") is not None:
             return _read_failure(SeedUnavailableReason.INVALID_AGGREGATE)
         message = fields.get("message")
-        empty_request = not requested
-        if (
-            fields.get("mean") is not None
-            or fields.get("seed_std") is not None
-            or (message is not None and not isinstance(message, str))
-            or any(seed not in requested for seed in contributing)
-            or any(seed in contributing for seed in affected)
-            or (reason is SeedUnavailableReason.EMPTY_REQUESTED_SEEDS) != empty_request
-            or (
-                not affected
-                and reason is not SeedUnavailableReason.EMPTY_REQUESTED_SEEDS
-            )
-        ):
-            return _read_failure(SeedUnavailableReason.INVALID_AGGREGATE)
         return SeedMetricRead(
             value=None,
             spread=None,
             reason=reason,
-            message=message or _REASON_MESSAGES[reason],
+            message=message if isinstance(message, str) else _REASON_MESSAGES[reason],
         )
     if state != "available":
         return _read_failure(SeedUnavailableReason.INVALID_AGGREGATE)

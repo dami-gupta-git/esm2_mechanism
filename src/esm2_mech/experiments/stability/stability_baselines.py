@@ -28,6 +28,7 @@ from esm2_mech.utils.seed_aggregation import (
     aggregate_seed_values,
     make_seed_record,
     read_seed_point_estimate,
+    seed_count,
 )
 
 print = functools.partial(print, flush=True)
@@ -240,6 +241,6 @@ if __name__ == "__main__":
         "label-shuffle, and PLS sweep parallel loops. Set explicitly (never -1) "
         "to bound peak RAM. Start low (e.g. 4), watch peak RAM, raise only if it fits.",
     )
-    parser.add_argument("--seeds", type=int, default=N_SEEDS)
+    parser.add_argument("--seeds", type=seed_count, default=N_SEEDS)
     args = parser.parse_args()
     main(n_jobs=args.n_jobs, n_seeds=args.seeds)

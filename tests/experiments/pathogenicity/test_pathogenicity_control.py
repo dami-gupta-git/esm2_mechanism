@@ -7,9 +7,9 @@ import pytest
 
 from esm2_mech.experiments.pathogenicity import pathogenicity_control as control
 from esm2_mech.experiments.pathogenicity.pathogenicity_control import (
-    CLAIM_2C_THRESHOLD,
+    PATHOGENICITY_AUROC_MIN,
     ExpectedPathogenicitySelection,
-    _build_claim_2c,
+    _build_pathogenicity_auroc_assessment,
     _rebalance_after_filter,
     _seed_params,
     _run_probe_with_contract,
@@ -249,11 +249,11 @@ class TestClaim2C:
             "n_scored": 100,
             "n_excluded": 0,
         }
-        claim = _build_claim_2c(single_seed, across_seed_point_estimate=0.89)
+        claim = _build_pathogenicity_auroc_assessment(single_seed, across_seed_point_estimate=0.89)
 
         assert claim["split"] == "family"
         assert claim["seed"] == 0
-        assert claim["threshold"] == CLAIM_2C_THRESHOLD
+        assert claim["threshold"] == PATHOGENICITY_AUROC_MIN
         assert claim["resampling_unit"] == "gene"
         # The one-seed estimate and the across-seed estimate are different
         # quantities and are recorded in separate fields.
@@ -273,7 +273,7 @@ class TestClaim2C:
         suppressed = {**base, "ci": {"ci_low": None, "ci_high": None, "ci_suppressed": True}}
 
         for inference in (usable, suppressed):
-            claim = _build_claim_2c(inference, across_seed_point_estimate=0.89)
+            claim = _build_pathogenicity_auroc_assessment(inference, across_seed_point_estimate=0.89)
             assert claim["verdict"] is None
             assert claim["interval_dependent_verdict"] is None
 
@@ -291,7 +291,7 @@ class TestClaim2C:
             "n_scored": 100,
             "n_excluded": 0,
         }
-        claim = _build_claim_2c(single_seed, across_seed_point_estimate=0.89)
+        claim = _build_pathogenicity_auroc_assessment(single_seed, across_seed_point_estimate=0.89)
 
         verdict = claim.get("verdict")
         assert verdict is None or "not adjudicated" in verdict
@@ -310,7 +310,7 @@ class TestClaim2C:
             "n_scored": 100,
             "n_excluded": 0,
         }
-        claim = _build_claim_2c(single_seed, across_seed_point_estimate=0.89)
+        claim = _build_pathogenicity_auroc_assessment(single_seed, across_seed_point_estimate=0.89)
 
         assert claim["across_seed_point_estimate"] == 0.89
         assert claim.get("ci") is None
@@ -331,7 +331,7 @@ class TestClaim2C:
             "n_scored": 100,
             "n_excluded": 0,
         }
-        claim = _build_claim_2c(inference, across_seed_point_estimate=0.89)
+        claim = _build_pathogenicity_auroc_assessment(inference, across_seed_point_estimate=0.89)
         assert claim["seed"] == 2
 
 

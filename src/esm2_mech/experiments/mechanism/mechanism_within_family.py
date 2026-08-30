@@ -28,6 +28,7 @@ from esm2_mech.utils.seed_aggregation import (
     make_seed_record,
     read_seed_inference,
     read_seed_point_estimate,
+    seed_count,
 )
 from esm2_mech.utils.constants import (
     BOOTSTRAP_CI_LEVEL,
@@ -695,7 +696,7 @@ def _print_headline(results):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--seeds", type=int, default=N_SEEDS, help="number of seeds (>=1)")
+    parser.add_argument("--seeds", type=seed_count, default=N_SEEDS, help="number of seeds (>=1)")
     parser.add_argument("--min-genes", type=int, default=MIN_GENES)
     parser.add_argument("--min-classes", type=int, default=MIN_CLASSES)
     parser.add_argument("--n-folds", type=int, default=N_FOLDS)
@@ -710,8 +711,6 @@ def main():
     )
     args = parser.parse_args()
 
-    if args.seeds < 1:
-        parser.error("--seeds must be >= 1")
 
     wt_mean, delta, genes, labels, pfam_map = load_phase()
     families, gene_label = select_families(

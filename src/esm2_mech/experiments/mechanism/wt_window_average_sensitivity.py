@@ -1,4 +1,4 @@
-"""Test whether variant-centered WT windows change the Section 4 result.
+"""Test whether variant-centered WT windows change the gene-minus-family split gap.
 
 For each UniProt protein, this analysis reconstructs every variant window start,
 averages embeddings within identical windows, then averages the unique-window
@@ -71,6 +71,7 @@ from esm2_mech.utils.seed_aggregation import (
     aggregate_seed_values,
     load_seed_files,
     make_seed_record,
+    seed_count,
 )
 from esm2_mech.experiments.mechanism.seed_results import (
     aggregate_across_seeds,
@@ -354,10 +355,10 @@ def compare_conditions_for_seed(
     return output
 
 
-def _section_4_conclusion() -> dict:
-    """Report the Section 4 conclusion as unavailable while intervals are suppressed.
+def _wt_vector_split_gap_conclusion() -> dict:
+    """Report the split-gap conclusion as unavailable while intervals are suppressed.
 
-    Section 4 rests on whether switching the WT vector moves the gene-minus-family
+    This analysis rests on whether switching the WT vector moves the gene-minus-family
     gap, and that verdict was previously read off one seed's paired interval. A
     one-seed interval describes that seed rather than the across-seed change
     reported for this section, so the conclusion is withheld instead. The
@@ -365,8 +366,8 @@ def _section_4_conclusion() -> dict:
     summary.
     """
     return {
-        "section_4_conclusion_changed": None,
-        "section_4_conclusion_reason": (
+        "wt_vector_changes_split_gap": None,
+        "wt_vector_changes_split_gap_reason": (
             "the conclusion depends on an interval for the across-seed change in "
             "the gene-minus-family gap, which is unavailable pending audit item "
             "1.4; a single-seed paired interval is not a substitute"
@@ -394,14 +395,12 @@ def _comparison_summary(per_seed: list[dict]) -> dict:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--seeds", type=int, default=N_SEEDS,
+        "--seeds", type=seed_count, default=N_SEEDS,
         help="number of seeds to run; runs 0..seeds-1 (>=1)",
     )
     parser.add_argument("--n_folds", type=int, default=N_FOLDS)
     parser.add_argument("--n_boot", type=int, default=BOOTSTRAP_N_RESAMPLES)
     args = parser.parse_args()
-    if args.seeds < 1:
-        parser.error("--seeds must be >= 1")
     if args.n_folds < 2:
         parser.error("--n_folds must be >= 2")
     if args.n_boot < 1:
@@ -508,7 +507,7 @@ def main() -> None:
 
     result = {
         **aggregate_result_contract(),
-        "analysis": "WT window-average sensitivity on the full Section 4 row set",
+        "analysis": "WT window-average sensitivity on the full mechanism row set",
         "interpretation_limit": (
             "The protein vector averages only variant-observed windows and is not "
             "a full-protein embedding for sequences longer than ESM-2's limit."
@@ -548,7 +547,7 @@ def main() -> None:
             "per_seed": per_seed_comparisons,
             "summary": _comparison_summary(per_seed_comparisons),
         },
-        **_section_4_conclusion(),
+        **_wt_vector_split_gap_conclusion(),
     }
     write_result_json(
         WT_WINDOW_AVERAGE_AGGREGATE_JSON,

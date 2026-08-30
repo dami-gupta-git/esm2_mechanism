@@ -51,7 +51,24 @@ import pytest
 
 from sklearn.metrics import roc_auc_score
 
+from esm2_mech.utils import bootstrap as bootstrap_module
+
+
+@pytest.fixture
+def interval_gate_open(monkeypatch):
+    """Exercise the resampling machinery that audit item 1.4 currently gates off.
+
+    While the gate is on, the classification producers return a point estimate
+    and no interval. The machinery behind them must still be correct for when the
+    replacement method lands, so the tests that check its arithmetic run against
+    it directly. Tests of the gate itself do not use this fixture.
+    """
+    monkeypatch.setattr(
+        bootstrap_module, "CLASSIFICATION_INTERVALS_BLOCKED", False
+    )
+
 from esm2_mech.utils.bootstrap import (
+    INTERVAL_GATE_REASON,
     adjudicate_diff,
     adjudicate_equivalence,
     adjudicate_level,
@@ -429,6 +446,7 @@ class TestClusterSubsampleCI:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.usefixtures("interval_gate_open")
 class TestBootstrapMechanismMetrics:
     def _signal_data(self, seed=0):
         rng = np.random.RandomState(seed)
@@ -542,6 +560,7 @@ class TestBootstrapMechanismMetrics:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.usefixtures("interval_gate_open")
 class TestPairedClusterBootstrapDiffSameFold:
     def _genes_with_rows(self, n_genes=30, rows_per_gene=4):
         clusters = np.array(
@@ -1526,6 +1545,7 @@ def _confident_proba(labels, classes, correct_mask):
     return np.array(rows)
 
 
+@pytest.mark.usefixtures("interval_gate_open")
 class TestPairedOofDiff:
     """paired_oof_diff aligns two arms by row_ids and pairs one resample across both."""
 
@@ -1948,6 +1968,7 @@ class TestIndependentClusterBootstrapDiff:
         assert first == second
 
 
+@pytest.mark.usefixtures("interval_gate_open")
 class TestPairedClusterBootstrapDiffSharedClusters:
     def test_pairs_shared_clusters_across_different_row_spaces(self):
         clusters_a = np.array(["F1", "F2", "F2", "F3", "F3"])
@@ -1990,6 +2011,7 @@ class TestPairedClusterBootstrapDiffSharedClusters:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.usefixtures("interval_gate_open")
 class TestRankingIsFoldAware:
     """Per-fold probability scales must not leak into a ranking metric.
 
@@ -2037,6 +2059,7 @@ class TestRankingIsFoldAware:
         assert out["auroc_GOF"]["point"] == pytest.approx(1.0)
 
 
+@pytest.mark.usefixtures("interval_gate_open")
 class TestClassStratifiedResampling:
     """A ranking metric stays defined on every draw instead of conditioning on
     the draws where a rare class happened to survive."""
@@ -2109,3 +2132,66 @@ class TestClassStratifiedResampling:
         folds = np.array([0, 1, 0, 1], dtype=int)
         labels = np.array([1, 0, 1, 0])
         assert class_presence_strata(clusters, [folds], labels) is None
+
+
+class TestAuditGateBlocksClassificationIntervals:
+    """The audit item 1.4 gate must actually be on, and verdicts must honour it.
+
+    A resample of a within-fold classification score can lose a required fold or
+    class, and no valid interval method for that path has been agreed. Every such
+    producer therefore reports its point estimate with the interval marked
+    blocked, and every verdict reading one reports itself as not adjudicated
+    rather than passing or failing.
+    """
+
+    def test_the_gate_is_on(self):
+        assert bootstrap_module.CLASSIFICATION_INTERVALS_BLOCKED is True
+
+    def test_paired_difference_reports_its_point_and_no_interval(self):
+        clusters = np.array(["G0", "G0", "G1", "G1", "G2", "G2"])
+        values_a = np.array([2.0, 2.0, 2.0, 2.0, 2.0, 2.0])
+        values_b = np.array([1.0, 1.0, 1.0, 1.0, 1.0, 1.0])
+
+        out = paired_cluster_bootstrap_diff(
+            clusters,
+            lambda rows: float(values_a[rows].mean()),
+            lambda rows: float(values_b[rows].mean()),
+            n_resamples=50,
+            seed=0,
+        )
+
+        assert out["point_diff"] == pytest.approx(1.0)
+        assert out["ci_low"] is None and out["ci_high"] is None
+        assert out["ci_suppressed"] is True
+        assert out["reason"] == INTERVAL_GATE_REASON
+        # No draw was taken, so no discard rate can be presented as evidence.
+        assert out["n_resamples_total"] == 0
+
+    def test_binary_auroc_reports_its_point_and_no_interval(self):
+        y_true = np.array([0, 1, 0, 1, 0, 1, 0, 1])
+        oof = {
+            "y_true": y_true,
+            "proba": y_true.astype(float),
+            "genes": np.array([f"G{i // 2}" for i in range(8)], dtype=object),
+            "folds": np.array([0, 0, 0, 0, 1, 1, 1, 1]),
+        }
+
+        out = binary_auroc_cluster_bootstrap_ci(oof, n_resamples=50, seed=0)
+
+        assert out["point"] == pytest.approx(1.0)
+        assert out["ci_low"] is None and out["ci_high"] is None
+        assert out["reason"] == INTERVAL_GATE_REASON
+
+    def test_a_blocked_interval_is_never_adjudicated(self):
+        blocked = {
+            "point_diff": 0.20,
+            "ci_low": None,
+            "ci_high": None,
+            "ci_suppressed": True,
+            "reason": INTERVAL_GATE_REASON,
+        }
+        # A blocked interval must not be read as "no CI", which would let a
+        # verdict pass or fail on the point estimate alone.
+        assert "not adjudicated" in adjudicate_diff(True, blocked, 0.10)
+        assert "not adjudicated" in adjudicate_diff(False, blocked, 0.10)
+        assert "not adjudicated" in adjudicate_level(0.90, blocked, 0.85)

@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import functools
 
+from esm2_mech.utils.seed_aggregation import seed_count
 from esm2_mech.experiments.geometry import (
     magnitude_direction,
     direction_geometry,
@@ -26,7 +27,7 @@ PROBES = {
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--seeds", type=int, default=N_SEEDS, help="number of seeds (>=1)"
+        "--seeds", type=seed_count, default=N_SEEDS, help="number of seeds (>=1)"
     )
     parser.add_argument(
         "--probe",
@@ -52,8 +53,6 @@ def main():
     )
     parser.add_argument("--n_boot", type=int, default=BOOTSTRAP_N_RESAMPLES)
     args = parser.parse_args()
-    if args.seeds < 1:
-        parser.error("--seeds must be >= 1")
 
     selected = list(PROBES) if "all" in args.probe else args.probe
     stability_aware = {"magnitude", "transfer"}

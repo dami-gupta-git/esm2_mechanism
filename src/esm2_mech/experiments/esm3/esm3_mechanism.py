@@ -29,6 +29,7 @@ from esm2_mech.utils.seed_aggregation import (
     aggregate_result_contract,
     aggregate_seed_results,
     read_seed_point_estimate,
+    seed_count,
     seed_result_contract,
 )
 from esm2_mech.utils.constants import (
@@ -1065,14 +1066,12 @@ def main() -> None:
         default="geras",
         help="geras=Gerasimavicius only (948 genes); merged=Gerasimavicius+G2P (matches ESM-2 classifier)",
     )
-    ap.add_argument("--seeds", type=int, default=N_SEEDS,
+    ap.add_argument("--seeds", type=seed_count, default=N_SEEDS,
                     help="number of probe seeds for phase 3; runs 0..seeds-1 (>=1)")
     ap.add_argument("--no_ci", action="store_true",
                     help="phase 3 only: skip cluster-bootstrap CIs")
     ap.add_argument("--n_boot", type=int, default=BOOTSTRAP_N_RESAMPLES)
     args = ap.parse_args()
-    if args.seeds < 1:
-        ap.error("--seeds must be >= 1")
 
     configure_dataset(args.dataset)
     print(f"Dataset: {args.dataset}  →  embeddings {EMB_DIR}, results {OUT}")

@@ -26,6 +26,7 @@ from esm2_mech.utils.seed_aggregation import (
     aggregate_paired_seed_difference,
     aggregate_result_contract,
     make_seed_record,
+    seed_count,
     seed_result_contract,
 )
 from esm2_mech.experiments.perturbation.seed_summary import (
@@ -323,6 +324,6 @@ def main(n_seeds=N_SEEDS):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--seeds", type=int, default=N_SEEDS)
+    parser.add_argument("--seeds", type=seed_count, default=N_SEEDS)
     arguments = parser.parse_args()
     main(n_seeds=arguments.seeds)

@@ -26,7 +26,7 @@ from esm2_mech.utils.probes import run_logreg_cv, run_histgb_cv
 from esm2_mech.utils.constants import MECHANISM_CLASSES, N_SEEDS
 from esm2_mech.utils.classification import validate_complete_classification_splits
 from esm2_mech.utils.io import write_result_json
-from esm2_mech.utils.seed_aggregation import aggregate_result_contract, seed_result_contract
+from esm2_mech.utils.seed_aggregation import aggregate_result_contract, seed_result_contract, seed_count
 from esm2_mech.experiments.perturbation.seed_summary import (
     aggregate_probe_results,
     read_probe_metric,
@@ -270,6 +270,6 @@ def main(n_seeds=N_SEEDS):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--seeds", type=int, default=N_SEEDS)
+    parser.add_argument("--seeds", type=seed_count, default=N_SEEDS)
     arguments = parser.parse_args()
     main(n_seeds=arguments.seeds)

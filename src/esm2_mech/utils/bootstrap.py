@@ -17,6 +17,7 @@ from esm2_mech.utils.constants import (
     BOOTSTRAP_MAX_DISCARD_FRAC,
     BOOTSTRAP_MIN_VALID_FRAC,
     BOOTSTRAP_N_RESAMPLES,
+    CLASSIFICATION_INTERVALS_BLOCKED,
     MECHANISM_CLASSES,
     PERMUTATION_N_RESAMPLES,
 )
@@ -46,6 +47,26 @@ def _blocked_classification_interval(
         "n_resamples_total": 0,
         "valid_frac": None,
         "n_clusters": n_clusters,
+    }
+
+
+def _blocked_paired_difference(base: dict) -> dict:
+    """Represent a paired difference whose interval was not computed, and say why.
+
+    `base` carries the point estimates and cohort counts the caller already
+    established. Every adjudicating verdict reads the reason and reports itself as
+    not adjudicated rather than passing or failing on a missing interval.
+    """
+    return {
+        **base,
+        "ci_low": None,
+        "ci_high": None,
+        "ci_suppressed": True,
+        "missing": True,
+        "reason": INTERVAL_GATE_REASON,
+        "n_resamples": 0,
+        "n_resamples_total": 0,
+        "valid_frac": None,
     }
 
 
@@ -688,7 +709,29 @@ def paired_cluster_bootstrap_diff(
     discard_reason: str | Callable[[], str] | None = None,
     cluster_strata: np.ndarray | None = None,
 ) -> dict:
-    """Paired CI on metric_a minus metric_b under one shared fold assignment."""
+    """Paired CI on metric_a minus metric_b under one shared fold assignment.
+
+    Every caller pairs classification scores averaged within folds, so while
+    audit item 1.4 blocks that path this returns the paired point estimate with
+    no interval. A correlation contrast uses the cross-partition function, which
+    is not on the blocked path.
+    """
+    if CLASSIFICATION_INTERVALS_BLOCKED:
+        all_rows = np.arange(len(clusters))
+        point_a = _clean_scalar(metric_fn_a(all_rows))
+        point_b = _clean_scalar(metric_fn_b(all_rows))
+        return _blocked_paired_difference(
+            {
+                "point_a": point_a,
+                "point_b": point_b,
+                "point_diff": (
+                    point_a - point_b
+                    if point_a is not None and point_b is not None
+                    else None
+                ),
+                "n_clusters": int(len(np.unique(np.asarray(clusters)))),
+            }
+        )
     return _paired_cluster_bootstrap_diff_ci(
         clusters,
         metric_fn_a,
@@ -738,6 +781,23 @@ def paired_cluster_bootstrap_diff_shared_clusters(
     point_diff = (
         point_a - point_b if point_a is not None and point_b is not None else None
     )
+
+    if CLASSIFICATION_INTERVALS_BLOCKED:
+        # Both arms are classification scores averaged within folds, so a resample
+        # can lose a required fold or class. Report the paired point estimate and
+        # no interval.
+        return _blocked_paired_difference(
+            {
+                "point_a": point_a,
+                "point_b": point_b,
+                "point_diff": point_diff,
+                "n_clusters_a_total": len(unique_a),
+                "n_clusters_b_total": len(unique_b),
+                "n_clusters_shared": len(shared_clusters),
+                "n_rows_a_shared": len(all_rows_a),
+                "n_rows_b_shared": len(all_rows_b),
+            }
+        )
 
     seed_sequences = np.random.SeedSequence(seed).spawn(n_resamples)
     differences = []
@@ -977,6 +1037,18 @@ def bootstrap_mechanism_metrics_from_oof(
         functools.partial(_class_metrics, _col=col_idx, _cls=cls)
         for col_idx, cls in enumerate(classes)
     ]
+    if CLASSIFICATION_INTERVALS_BLOCKED:
+        # Every metric here is scored within folds, so a resample can lose a
+        # required fold or class. Report each point estimate and no interval
+        # rather than resampling on a path audit item 1.4 has not validated.
+        points, _reasons = _evaluate_metric_fns(
+            [_macro_f1] + class_metric_fns, np.arange(len(y_true))
+        )
+        n_clusters = len(np.unique(np.asarray(clusters)))
+        return {
+            name: _blocked_classification_interval(point, n_clusters)
+            for name, point in points.items()
+        }
     # Macro-F1 has a fixed class denominator, so it is defined on every draw and
     # takes the plain cluster bootstrap. The per-class ranking metrics are undefined
     # in a fold that loses the class, so they take the class-stratified draw, which
@@ -1227,6 +1299,28 @@ def paired_oof_diff(
         pfam_map,
         is_family_split=True if cross_partition else is_family_split,
     )
+    if CLASSIFICATION_INTERVALS_BLOCKED:
+        # Both arms are classification scores averaged within folds, so a resample
+        # can lose a required fold or class. Report the paired point estimate and
+        # no interval.
+        all_rows = np.arange(len(y_true))
+        point_a = _clean_scalar(fn_a(all_rows))
+        point_b = _clean_scalar(fn_b(all_rows))
+        return _blocked_paired_difference(
+            {
+                "label": label,
+                "metric": metric,
+                "point_a": point_a,
+                "point_b": point_b,
+                "point_diff": (
+                    point_a - point_b
+                    if point_a is not None and point_b is not None
+                    else None
+                ),
+                "n_shared_rows": int(len(y_true)),
+                "n_clusters": int(len(np.unique(np.asarray(cluster_values)))),
+            }
+        )
     # Macro-F1 has a fixed class denominator and is defined on every draw, so it
     # needs no stratification; a ranking metric does. Each arm keeps its own fold
     # assignment on the shared rows, so both arms' folds go into the key.
@@ -1370,6 +1464,13 @@ def binary_auroc_cluster_bootstrap_ci(
         return score_within_folds(rows, arms, _fold_auroc)
 
     resample_unit = oof["genes"] if clusters is None else clusters
+    if CLASSIFICATION_INTERVALS_BLOCKED:
+        # Scored within fold, so a resample can lose the positive or the negative
+        # class. Report the point estimate and no interval.
+        return _blocked_classification_interval(
+            _auroc(np.arange(len(y_true))),
+            len(np.unique(np.asarray(resample_unit))),
+        )
     return cluster_bootstrap_ci(
         resample_unit,
         _auroc,

@@ -40,6 +40,7 @@ from esm2_mech.utils.seed_aggregation import (
     aggregate_result_contract,
     aggregate_seed_results,
     read_seed_point_estimate,
+    seed_count,
     seed_result_contract,
 )
 
@@ -478,7 +479,7 @@ if __name__ == "__main__":
         help="Use GPU XGBoost (probe 'xgb') instead of sklearn RF/GBM. Faster on "
         "large high-dim data; writes mlp_summary_xgb.json. Requires xgboost installed.",
     )
-    parser.add_argument("--seeds", type=int, default=N_SEEDS)
+    parser.add_argument("--seeds", type=seed_count, default=N_SEEDS)
     parser.add_argument(
         "--no_ci",
         action="store_true",

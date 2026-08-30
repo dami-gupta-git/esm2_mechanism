@@ -63,7 +63,7 @@ OOF_PERMUTATION_FEATURES = ("delta_mean",)
 
 
 def mechanism_input_fingerprints(data: dict, pfam_map: dict) -> dict:
-    """Fingerprint every scientific input that changes a Section 4 probe."""
+    """Fingerprint every scientific input that changes a mechanism family-split probe."""
     return {
         "labeled_variants": labeled_variant_fingerprint(
             data["valid_variants"], data["labels_3class"]

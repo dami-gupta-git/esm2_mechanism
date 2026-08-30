@@ -1,4 +1,4 @@
-"""Regression tests for the Section 4 nonlinear-probe orchestration.
+"""Regression tests for the mechanism nonlinear-probe orchestration.
 
 The family-split MLP must use Pfam family IDs, rather than gene IDs, as its
 early-stopping validation groups.

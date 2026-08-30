@@ -93,7 +93,7 @@ def test_portfolio_within_family_plots_the_within_seed_paired_lift(monkeypatch):
 def test_manuscript_family_figure_accepts_unavailable_probe(monkeypatch):
     clustering = {"by_view": _unavailable_family_clustering_views()}
     aggregate = {
-        "claim_2b_split_gap_summary": {
+        "gene_minus_family_split_gap": {
             "gene_minus_family_seed_aggregate": aggregate_seed_values(
                 range(3), [make_seed_record(seed, 0.1) for seed in range(3)]
             ).to_dict()
@@ -157,7 +157,7 @@ def test_manuscript_enzyme_figure_uses_family_split_reference(monkeypatch):
             "logreg_gene_split": {"macro_f1_seed_aggregate": aggregate(0.60)},
             "logreg_family_split": {"macro_f1_seed_aggregate": aggregate(0.50)},
         },
-        "gate_evaluation": {"2G_minimum_f1_gap": 0.10},
+        "gate_evaluation": {"enzyme_minus_mechanism_minimum_f1_gap": 0.10},
     }
     monkeypatch.setattr(manuscript_figures, "_load_json", lambda _path: enzyme)
     monkeypatch.setattr(manuscript_figures, "_save_figure", lambda _figure, _stem: None)

@@ -77,6 +77,7 @@ from esm2_mech.utils.seed_aggregation import (
     aggregate_seed_results,
     block_seed_status,
     read_seed_inference,
+    seed_count,
     seed_result_contract,
 )
 from esm2_mech.experiments.mechanism.seed_results import aggregate_result_contract
@@ -1082,7 +1083,7 @@ def load_data():
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
-    parser.add_argument("--seeds", type=int, default=N_SEEDS,
+    parser.add_argument("--seeds", type=seed_count, default=N_SEEDS,
                         help="number of seeds to run; runs 0..seeds-1 (>=1)")
     parser.add_argument("--n_folds", type=int, default=N_FOLDS)
     parser.add_argument("--arms", nargs="+", default=list(CASCADE_SAMPLING_ARMS),
@@ -1112,8 +1113,6 @@ def main():
     parser.add_argument("--no_ci", action="store_true", help="skip cluster-bootstrap CIs")
     parser.add_argument("--n_boot", type=int, default=BOOTSTRAP_N_RESAMPLES)
     args = parser.parse_args()
-    if args.seeds < 1:
-        parser.error("--seeds must be >= 1")
     if args.lof_ratio <= 0:
         parser.error("--lof_ratio must be > 0")
 

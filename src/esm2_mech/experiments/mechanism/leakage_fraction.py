@@ -161,7 +161,7 @@ def _load_validated_oof_caches(seed_results: list[tuple[int, str, dict]]) -> dic
         path = os.path.join(RESULTS_DIR, mechanism_oof_cache_filename(seed))
         if not os.path.exists(path):
             raise FileNotFoundError(
-                f"missing required OOF cache {path}; rerun Section 4.1 with CIs enabled"
+                f"missing required OOF cache {path}; rerun the mechanism family-split probe with CIs enabled"
             )
         with open(path) as handle:
             cache = json.load(handle)
@@ -366,14 +366,14 @@ def main(compute_ci: bool = True, n_boot: int = BOOTSTRAP_N_RESAMPLES) -> None:
     common_fingerprints = seeds[0].get("input_fingerprints")
     common_parameters = seeds[0].get("analysis_parameters")
     if common_fingerprints is None:
-        raise ValueError("seed results lack Section 4 input fingerprints")
+        raise ValueError("seed results lack mechanism input fingerprints")
     if common_parameters is None:
-        raise ValueError("seed results lack Section 4 analysis parameters")
+        raise ValueError("seed results lack mechanism analysis parameters")
     for seed_number, seed_result in zip(seed_numbers, seeds):
         if seed_result.get("input_fingerprints") != common_fingerprints:
-            raise ValueError(f"seed {seed_number} was produced from different Section 4 inputs")
+            raise ValueError(f"seed {seed_number} was produced from different mechanism inputs")
         if seed_result.get("analysis_parameters") != common_parameters:
-            raise ValueError(f"seed {seed_number} used different Section 4 parameters")
+            raise ValueError(f"seed {seed_number} used different mechanism parameters")
     naive_fingerprints = naive_result.get("input_fingerprints")
     for key in ("labeled_variants", "pfam_assignments"):
         if naive_fingerprints is None or naive_fingerprints.get(key) != common_fingerprints.get(key):
@@ -381,7 +381,7 @@ def main(compute_ci: bool = True, n_boot: int = BOOTSTRAP_N_RESAMPLES) -> None:
 
     feature_sets = [set(seed["gene_split"]) & set(seed["family_split"]) for seed in seeds]
     if any(feature_set != feature_sets[0] for feature_set in feature_sets[1:]):
-        raise ValueError("Section 4 seed files do not contain the same feature set")
+        raise ValueError("mechanism seed files do not contain the same feature set")
     features = sorted(feature_sets[0])
     oof_caches = _load_validated_oof_caches(seed_results)
 

@@ -57,6 +57,7 @@ from esm2_mech.utils.seed_aggregation import (
     aggregate_seed_results,
     read_seed_point_estimate,
     read_seed_result_contract,
+    seed_count,
     seed_result_contract,
 )
 from esm2_mech.experiments.mechanism.seed_results import read_across_seed_metric
@@ -239,7 +240,7 @@ def load_mechanism_family_oof_arms(seeds: list[int]) -> tuple | None:
 
 
 def _mechanism_reference_fingerprints() -> dict:
-    """Fingerprint the mechanism aggregate when the optional 2G input exists."""
+    """Fingerprint the mechanism aggregate when the optional mechanism comparison input exists."""
     if not MECHANISM_AGGREGATE_JSON.exists():
         return {"content": None, "content_missing": True}
     with open(MECHANISM_AGGREGATE_JSON) as handle:
@@ -731,7 +732,7 @@ def run_multiseed(
                 oof_a=mlp_family_oof,
                 oof_b=logreg_family_oof,
                 pfam_map=pfam_map,
-                label="2H MLP-LogReg",
+                label="MLP minus LogReg",
                 classes=classes,
                 metric="macro_f1",
                 is_family_split=True,
@@ -892,7 +893,7 @@ def run_multiseed(
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--seeds", type=int, default=N_SEEDS,
+    parser.add_argument("--seeds", type=seed_count, default=N_SEEDS,
                         help="number of seeds to run; runs 0..seeds-1 (>=1)")
     parser.add_argument("--n_folds", type=int, default=5)
     parser.add_argument("--no_ci", action="store_true", help="skip cluster-bootstrap CIs")
@@ -902,8 +903,6 @@ def main():
         help="label-permutation reps for OOF macro AUROC (0 = skip)",
     )
     args = parser.parse_args()
-    if args.seeds < 1:
-        parser.error("--seeds must be >= 1")
 
     seeds = list(range(args.seeds))
     compute_ci = not args.no_ci
@@ -1003,7 +1002,7 @@ def main():
     )
 
     print("\n" + "=" * 60)
-    print("DECISION RULES (2F-2H)")
+    print("DECISION RULES")
     print("=" * 60)
 
     fs_metric = read_seed_point_estimate(
@@ -1038,39 +1037,41 @@ def main():
     )
     mechanism_point = mechanism_ci.get("point_b") if mechanism_ci is not None else None
 
-    gate_2f = oof_fs_f1 >= 0.70 if oof_fs_f1 is not None else None
-    gate_2g = (
+    enzyme_f1_gate = oof_fs_f1 >= 0.70 if oof_fs_f1 is not None else None
+    enzyme_beats_mechanism_gate = (
         bool(oof_mechanism_diff >= ENZYME_MECHANISM_MIN_F1_GAP)
         if oof_mechanism_diff is not None
         else None
     )
-    gate_2h = (
+    mlp_logreg_equivalence_gate = (
         abs(oof_mlp_f1 - oof_fs_f1) < 0.05
         if oof_mlp_f1 is not None and oof_fs_f1 is not None
         else None
     )
 
-    verdict_2f = adjudicate_level(oof_fs_f1, fs_ci, 0.70)
-    verdict_2g = adjudicate_diff(gate_2g, mechanism_ci, ENZYME_MECHANISM_MIN_F1_GAP)
-    verdict_2h = adjudicate_equivalence(gate_2h, paired_ci, 0.05)
+    enzyme_f1_verdict = adjudicate_level(oof_fs_f1, fs_ci, 0.70)
+    enzyme_beats_mechanism_verdict = adjudicate_diff(enzyme_beats_mechanism_gate, mechanism_ci, ENZYME_MECHANISM_MIN_F1_GAP)
+    mlp_logreg_equivalence_verdict = adjudicate_equivalence(mlp_logreg_equivalence_gate, paired_ci, 0.05)
 
     fs_text = "N/A" if oof_fs_f1 is None else f"{oof_fs_f1:.3f}"
-    print(f"\n2F — family-split F1 >= 0.70:  {verdict_2f}  (across-seed F1={fs_text})")
+    print(f"\nenzyme family-held-out F1 >= 0.70:  {enzyme_f1_verdict}  "
+        f"(across-seed F1={fs_text})")
     if oof_mechanism_diff is not None:
         print(
-            f"2G — enzyme minus mechanism F1 >= "
-            f"{ENZYME_MECHANISM_MIN_F1_GAP:.2f}:  {verdict_2g}  "
+            f"enzyme minus mechanism F1 >= "
+            f"{ENZYME_MECHANISM_MIN_F1_GAP:.2f}:  {enzyme_beats_mechanism_verdict}  "
             f"(across-seed delta={oof_mechanism_diff:+.3f}, paired on shared families)"
         )
     else:
-        print("2G — not adjudicated (enzyme-mechanism difference unavailable)")
+        print("enzyme minus mechanism F1: not adjudicated (difference unavailable)")
     if oof_mlp_f1 is not None and oof_fs_f1 is not None:
         print(
-            f"2H — MLP approx LogReg family-split:  {verdict_2h}  "
+            f"MLP equivalent to LogReg on the family split:  "
+            f"{mlp_logreg_equivalence_verdict}  "
             f"(across-seed delta_MLP-LR={oof_mlp_f1 - oof_fs_f1:+.3f})"
         )
     else:
-        print("2H — MLP approx LogReg family-split:  SKIPPED (missing OOF)")
+        print("MLP equivalent to LogReg on the family split: SKIPPED (missing OOF)")
 
     output = {
         **aggregate_result_contract(),
@@ -1098,13 +1099,13 @@ def main():
         "esm2_wt_embedding": emb_results,
         "proteome_features": proteome_results,
         "gate_evaluation": {
-            "2F_family_split_f1_ge_0.70": gate_2f,
-            "2F_verdict": verdict_2f,
-            "2G_enzyme_beats_mechanism": gate_2g,
-            "2G_verdict": verdict_2g,
-            "2G_minimum_f1_gap": ENZYME_MECHANISM_MIN_F1_GAP,
-            "2H_mlp_approx_logreg": gate_2h,
-            "2H_verdict": verdict_2h,
+            "enzyme_family_held_out_macro_f1_ge_0.70": enzyme_f1_gate,
+            "enzyme_family_held_out_macro_f1_verdict": enzyme_f1_verdict,
+            "enzyme_minus_mechanism_macro_f1_clears_gap": enzyme_beats_mechanism_gate,
+            "enzyme_minus_mechanism_macro_f1_verdict": enzyme_beats_mechanism_verdict,
+            "enzyme_minus_mechanism_minimum_f1_gap": ENZYME_MECHANISM_MIN_F1_GAP,
+            "mlp_equivalent_to_logreg_family_split": mlp_logreg_equivalence_gate,
+            "mlp_equivalent_to_logreg_family_split_verdict": mlp_logreg_equivalence_verdict,
             "adjudicated_on": "across_seed_out_of_fold_estimates",
             "across_seed_fs_f1": oof_fs_f1,
             "across_seed_mlp_f1": oof_mlp_f1,

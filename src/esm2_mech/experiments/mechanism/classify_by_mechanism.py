@@ -23,6 +23,7 @@ from esm2_mech.utils.seed_aggregation import (
     load_seed_files,
     make_seed_record,
     read_seed_point_estimate,
+    seed_count,
 )
 from esm2_mech.experiments.mechanism.seed_results import (
     aggregate_across_seeds,
@@ -167,8 +168,8 @@ def aggregate_permutation_results(
             "significance_threshold": PERMUTATION_SIGNIFICANCE_THRESHOLD,
             "required_seed_count": N_SEEDS,
             "required_significant_seed_count": PERMUTATION_MIN_SIGNIFICANT_SEEDS,
-            "preregistered_rule_evaluable": vote.available,
-            "meets_preregistered_three_of_five_rule": (
+            "permutation_rule_evaluable": vote.available,
+            "meets_permutation_seed_vote_rule": (
                 vote.payload["decision"] if vote.available else None
             ),
         }
@@ -263,7 +264,7 @@ def load_data() -> dict:
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--seeds", type=int, default=N_SEEDS,
+        "--seeds", type=seed_count, default=N_SEEDS,
         help="number of seeds to run; runs 0..seeds-1 (>=1)",
     )
     parser.add_argument("--no_ci", action="store_true", help="skip cluster-bootstrap CIs")
@@ -273,8 +274,6 @@ def main():
         help="label-permutation reps for headline features (0 = skip; slow, refits per rep)",
     )
     args = parser.parse_args()
-    if args.seeds < 1:
-        parser.error("--seeds must be >= 1")
     requested_seeds = range(args.seeds)
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -301,9 +300,9 @@ def main():
     input_fingerprints = seed_results[0][2].get("input_fingerprints")
     analysis_parameters = seed_results[0][2].get("analysis_parameters")
     if input_fingerprints is None:
-        raise ValueError("seed results lack Section 4 input fingerprints")
+        raise ValueError("seed results lack mechanism input fingerprints")
     if analysis_parameters is None:
-        raise ValueError("seed results lack Section 4 analysis parameters")
+        raise ValueError("seed results lack mechanism analysis parameters")
     for seed, filename, result in seed_results:
         if result.get("input_fingerprints") != input_fingerprints:
             raise ValueError(f"{filename}: seed {seed} was produced from different inputs")
@@ -327,7 +326,7 @@ def main():
         "input_fingerprints": input_fingerprints,
         "analysis_parameters": analysis_parameters,
         "across_seed": aggregated,
-        "claim_2b_split_gap_summary": split_gap_summary,
+        "gene_minus_family_split_gap": split_gap_summary,
     }
     if NAIVE_BASELINE_JSON.exists():
         with open(NAIVE_BASELINE_JSON) as handle:
@@ -344,17 +343,17 @@ def main():
                 ]
             )
             if family_floor_read.available:
-                aggregate_payload["claim_2a_interval_assessment"] = (
+                aggregate_payload["mechanism_above_chance_family_held_out"] = (
                     mechanism_null_assessment(family_floor_read.value)
                 )
             else:
-                aggregate_payload["claim_2a_interval_assessment"] = {
+                aggregate_payload["mechanism_above_chance_family_held_out"] = {
                     "interval": None,
                     "interval_reason": family_floor_read.message,
                     "interval_dependent_verdict": None,
                 }
         else:
-            aggregate_payload["claim_2a_interval_assessment"] = {
+            aggregate_payload["mechanism_above_chance_family_held_out"] = {
                 "interval": None,
                 "interval_reason": (
                     "the available naive baseline was produced from different or "
@@ -363,7 +362,7 @@ def main():
                 "interval_dependent_verdict": None,
             }
     else:
-        aggregate_payload["claim_2a_interval_assessment"] = {
+        aggregate_payload["mechanism_above_chance_family_held_out"] = {
             "interval": None,
             "interval_reason": "the naive baseline result does not exist",
             "interval_dependent_verdict": None,
