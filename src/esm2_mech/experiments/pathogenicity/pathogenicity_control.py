@@ -24,11 +24,15 @@ from esm2_mech.utils import probes as probes_module
 from esm2_mech.utils import sequences as sequences_module
 from esm2_mech.utils import splits as splits_module
 from esm2_mech.utils.bootstrap import (
-    adjudicate_level,
     binary_auroc_cluster_bootstrap_ci,
     family_or_gene_clusters,
 )
-from esm2_mech.utils.constants import BOOTSTRAP_N_RESAMPLES, N_FOLDS, N_SEEDS
+from esm2_mech.utils.constants import (
+    BOOTSTRAP_N_RESAMPLES,
+    INFERENTIAL_SEED,
+    N_FOLDS,
+    N_SEEDS,
+)
 from esm2_mech.utils.classification import validate_complete_classification_splits
 from esm2_mech.utils.data import (
     embedding_fingerprint,
@@ -412,40 +416,36 @@ def _aggregate_metric(seed_results, requested_seeds, cell_key, metric):
     )
 
 
-def _build_claim_2c(seed0_inference, across_seed_point_estimate):
-    """Adjudicate claim 2C on its registered seed-0 family-split CI.
+def _build_claim_2c(single_seed_inference, across_seed_point_estimate):
+    """Report the claim 2C threshold and estimates without an interval verdict.
 
-    The interval belongs to seed 0 and is adjudicated against seed 0's own point
-    estimate. The across-seed mean is recorded beside it as a separate field: it
-    summarizes variation between model seeds, which the interval does not
-    describe, so the two are never read as one quantity.
+    The only interval available here is a bootstrap over one seed's out-of-fold
+    predictions. It describes that seed, not the across-seed AUROC reported in
+    the same record, so it is neither carried as this claim's interval nor used
+    to adjudicate it. Both point estimates stay reportable because each satisfies
+    its own contract; the verdict waits for the replacement interval method under
+    audit item 1.4.
     """
-    point_estimate = seed0_inference["point_estimate"]
-    ci = seed0_inference["ci"]
-    if (
-        ci is None
-        or ci.get("ci_suppressed")
-        or ci.get("ci_low") is None
-        or ci.get("ci_high") is None
-    ):
-        verdict = "not adjudicated (CI unavailable)"
-    else:
-        verdict = adjudicate_level(point_estimate, ci, CLAIM_2C_THRESHOLD)
     return {
         "claim": "2C",
         "feature": "delta_mean",
         "probe": "mlp",
         "split": "family",
-        "seed": 0,
+        "seed": single_seed_inference["seed"],
         "threshold": CLAIM_2C_THRESHOLD,
-        "point_estimate": point_estimate,
-        "ci": ci,
+        "point_estimate": single_seed_inference["point_estimate"],
         "across_seed_point_estimate": across_seed_point_estimate,
-        "estimate_basis": seed0_inference["estimate_basis"],
-        "resampling_unit": seed0_inference["resampling_unit"],
-        "n_scored": seed0_inference["n_scored"],
-        "n_excluded": seed0_inference["n_excluded"],
-        "verdict": verdict,
+        "estimate_basis": single_seed_inference["estimate_basis"],
+        "resampling_unit": single_seed_inference["resampling_unit"],
+        "n_scored": single_seed_inference["n_scored"],
+        "n_excluded": single_seed_inference["n_excluded"],
+        "interval": None,
+        "interval_reason": (
+            "an interval for the across-seed AUROC is unavailable pending audit "
+            "item 1.4; a single-seed bootstrap is not a substitute"
+        ),
+        "interval_dependent_verdict": None,
+        "verdict": None,
     }
 
 
@@ -659,36 +659,51 @@ def probe_phase(
                     ).to_dict()
                     for metric in _BINARY_METRICS
                 }
-                seed_cells = [
-                    seed_result["cells"][key] for seed_result in seed_results
-                ]
-                seed0_ci = seed_cells[0]["auroc_ci"]
-                seed0_point = seed_cells[0]["metrics"]["auroc"]["fold_mean"]
-                if seed0_ci is not None and (
-                    seed0_ci["point"] is None
-                    or seed0_point is None
-                    or not np.isclose(seed0_ci["point"], seed0_point)
+                # Select the bootstrapped seed by its declared identity rather
+                # than by list position, so the reported seed cannot drift from
+                # the numbers beside it.
+                cells_by_seed = {
+                    seed_result["seed"]: seed_result["cells"][key]
+                    for seed_result in seed_results
+                }
+                if INFERENTIAL_SEED not in cells_by_seed:
+                    raise ValueError(
+                        f"{key} has no result for seed {INFERENTIAL_SEED}, which "
+                        "carries the bootstrap"
+                    )
+                inferential_cell = cells_by_seed[INFERENTIAL_SEED]
+                inferential_ci = inferential_cell["auroc_ci"]
+                inferential_point = inferential_cell["metrics"]["auroc"]["fold_mean"]
+                if inferential_ci is not None and (
+                    inferential_ci["point"] is None
+                    or inferential_point is None
+                    or not np.isclose(inferential_ci["point"], inferential_point)
                 ):
                     raise ValueError(
-                        f"{key} seed-0 CI point {seed0_ci['point']} does not match "
-                        f"the seed-0 fold-mean AUROC {seed0_point}"
+                        f"{key} seed-{INFERENTIAL_SEED} CI point "
+                        f"{inferential_ci['point']} does not match the seed-"
+                        f"{INFERENTIAL_SEED} fold-mean AUROC {inferential_point}"
                     )
                 cell = {
                     "metrics": metrics,
-                    # A within-seed resampling interval on seed 0's own estimate.
-                    # It is kept apart from the seed aggregates above, whose
-                    # spread describes variation between model seeds.
-                    "seed0_inference": {
-                        "point_estimate": seed0_point,
-                        "ci": seed0_ci,
-                        "n_scored": seed_cells[0]["n_scored"],
+                    # A within-seed resampling interval on one seed's own
+                    # estimate. It is kept apart from the seed aggregates above,
+                    # whose spread describes variation between model seeds, and
+                    # it does not adjudicate anything.
+                    "single_seed_inference": {
+                        "seed": INFERENTIAL_SEED,
+                        "point_estimate": inferential_point,
+                        "ci": inferential_ci,
+                        "n_scored": inferential_cell["n_scored"],
                         "n_excluded": (
                             None
-                            if seed_cells[0]["n_scored"] is None
-                            else len(valid) - seed_cells[0]["n_scored"]
+                            if inferential_cell["n_scored"] is None
+                            else len(valid) - inferential_cell["n_scored"]
                         ),
-                        "resampling_unit": seed_cells[0]["resampling_unit"],
-                        "estimate_basis": "seed_0_mean_of_fold_aurocs",
+                        "resampling_unit": inferential_cell["resampling_unit"],
+                        "estimate_basis": (
+                            f"seed_{INFERENTIAL_SEED}_mean_of_fold_aurocs"
+                        ),
                     },
                 }
                 results["by_feature"][fname][f"{pname}_{split_name}"] = cell
@@ -696,7 +711,7 @@ def probe_phase(
     claim_cell = results["by_feature"]["delta_mean"]["mlp_family"]
     claim_metric = read_seed_point_estimate(claim_cell["metrics"]["auroc"])
     results["claim_2c"] = _build_claim_2c(
-        claim_cell["seed0_inference"], claim_metric.value
+        claim_cell["single_seed_inference"], claim_metric.value
     )
 
     write_result_json(PATHOGENICITY_CONTROL_JSON, results, seeds=list(range(n_seeds)), indent=2)
@@ -727,29 +742,16 @@ def _print_headline(results):
         print()
 
     claim = results["claim_2c"]
-    point = claim["point_estimate"]
-    ci = claim["ci"]
-    if point is None:
-        print("  Claim 2C is not adjudicated because its point estimate is unavailable.")
-        return
-    if ci is None or ci.get("ci_low") is None:
+    across_seed = claim["across_seed_point_estimate"]
+    single_seed = claim["point_estimate"]
+    if across_seed is not None:
+        print(f"  Claim 2C: across-seed family-split AUROC = {across_seed:.3f}")
+    if single_seed is not None:
         print(
-            f"  Claim 2C: seed-0 family-split AUROC = {point:.3f}; "
-            f"{claim['verdict']}."
+            f"    seed {claim['seed']} alone = {single_seed:.3f} "
+            "(one seed, not the reported estimate)"
         )
-    else:
-        print(
-            f"  Claim 2C: seed-0 family-split AUROC = {point:.3f}, "
-            f"95% family-bootstrap CI [{ci['ci_low']:.3f}, {ci['ci_high']:.3f}]."
-        )
-        print(f"  Verdict: {claim['verdict']}.")
-    if claim["verdict"].startswith("pass, established"):
-        print(
-            "  The positive control establishes that the embeddings and probe "
-            "pipeline recover strong discrimination on pathogenicity."
-        )
-    else:
-        print("  The positive-control gate was not established.")
+    print(f"  Verdict: not adjudicated — {claim['interval_reason']}.")
 
 
 def main():

@@ -8,10 +8,11 @@ outcome metrics, planned comparisons, resampling rules, and reporting rules. It 
 governs the science. `docs/improve/REVISION_PLAN.md` and `docs/improve/audit.md` define the code
 repairs that must land before the run starts.
 
-Pre-registration has been withdrawn. `PREREGISTRATION_run_biorxiv.md` remains in this directory as a
+Pre-registration has been withdrawn. `to_retire/PREREGISTRATION_run_biorxiv.md` is kept only as a
 record of the superseded submission and governs nothing. Its claim numbering (2A–2H, 3A–3D) and its
 pass-or-fail gates do not apply to the fresh run, which reports effect estimates with confidence
-intervals instead.
+intervals instead. Result-file keys and gate identifiers in the code still carry that numbering; they
+are names only, and renaming them is a separate change.
 
 `docs/README.md` and `docs/EXPERIMENT.md` index the run0-era exploratory phase; assume both are
 stale. `docs/FINDINGS.md` is current and describes the statistics machinery this run uses, and the

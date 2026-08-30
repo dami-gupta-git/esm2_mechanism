@@ -1,6 +1,6 @@
 """Linear (Ridge) stability probe on Tsuboyama 2023 point-mutant ΔΔG.
 
-Stability controls 3A-3D; see docs/improve/ANALYSIS_PLAN.md.
+Evaluates the stability control gates 3A-3D.
 Companion nonlinear probe: megascale_mlp.py.
 """
 

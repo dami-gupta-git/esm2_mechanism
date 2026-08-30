@@ -323,7 +323,7 @@ def assert_subspace_removed(deltas_proj, subspace, name, tol=1e-8):
 def variance_explained_per_class(deltas, labels_3class, subspace):
     """
     Report fraction of variance explained by stability subspace per mechanism class.
-    The prediction under test: GOF has ≥ 30% less variance explained than HI+AR (LOF).
+    Prediction: GOF has ≥ 30% less variance explained than HI+AR (LOF).
     """
     if subspace is None:
         return {}

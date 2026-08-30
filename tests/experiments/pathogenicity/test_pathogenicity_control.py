@@ -239,38 +239,100 @@ class TestEmbeddingCacheValidation:
 
 
 class TestClaim2C:
-    def test_seed0_interval_adjudicates_and_across_seed_mean_stays_separate(self):
-        seed0 = {
+    def test_both_point_estimates_are_reported_and_kept_distinct(self):
+        single_seed = {
+            "seed": 0,
             "point_estimate": 0.90,
             "ci": {"ci_low": 0.88, "ci_high": 0.92, "ci_suppressed": False},
-            "estimate_basis": "seed0_fold_mean_auroc",
+            "estimate_basis": "seed_0_mean_of_fold_aurocs",
             "resampling_unit": "gene",
             "n_scored": 100,
             "n_excluded": 0,
         }
-        claim = _build_claim_2c(seed0, across_seed_point_estimate=0.89)
+        claim = _build_claim_2c(single_seed, across_seed_point_estimate=0.89)
 
         assert claim["split"] == "family"
         assert claim["seed"] == 0
         assert claim["threshold"] == CLAIM_2C_THRESHOLD
         assert claim["resampling_unit"] == "gene"
+        # The one-seed estimate and the across-seed estimate are different
+        # quantities and are recorded in separate fields.
         assert claim["point_estimate"] == 0.90
-        # The seed spread and the resampling interval describe different things,
-        # so the across-seed mean is recorded beside the interval, never inside it.
         assert claim["across_seed_point_estimate"] == 0.89
-        assert claim["ci"]["ci_low"] == 0.88
 
-    def test_a_suppressed_interval_is_not_adjudicated(self):
-        seed0 = {
+    def test_no_verdict_is_produced_whether_or_not_an_interval_exists(self):
+        base = {
+            "seed": 0,
             "point_estimate": 0.90,
-            "ci": {"ci_low": None, "ci_high": None, "ci_suppressed": True},
-            "estimate_basis": "seed0_fold_mean_auroc",
+            "estimate_basis": "seed_0_mean_of_fold_aurocs",
             "resampling_unit": "gene",
             "n_scored": 100,
             "n_excluded": 0,
         }
-        claim = _build_claim_2c(seed0, across_seed_point_estimate=0.89)
-        assert claim["verdict"] == "not adjudicated (CI unavailable)"
+        usable = {**base, "ci": {"ci_low": 0.88, "ci_high": 0.92, "ci_suppressed": False}}
+        suppressed = {**base, "ci": {"ci_low": None, "ci_high": None, "ci_suppressed": True}}
+
+        for inference in (usable, suppressed):
+            claim = _build_claim_2c(inference, across_seed_point_estimate=0.89)
+            assert claim["verdict"] is None
+            assert claim["interval_dependent_verdict"] is None
+
+    def test_a_single_seed_interval_does_not_adjudicate_the_control(self):
+        # A one-seed interval describes that seed, not the across-seed estimate
+        # reported in the same record, so supplying a usable one must still not
+        # produce an adjudicated outcome. Interval-dependent conclusions stay
+        # withheld until audit item 1.4 supplies a replacement method.
+        single_seed = {
+            "seed": 0,
+            "point_estimate": 0.90,
+            "ci": {"ci_low": 0.88, "ci_high": 0.92, "ci_suppressed": False},
+            "estimate_basis": "seed_0_mean_of_fold_aurocs",
+            "resampling_unit": "gene",
+            "n_scored": 100,
+            "n_excluded": 0,
+        }
+        claim = _build_claim_2c(single_seed, across_seed_point_estimate=0.89)
+
+        verdict = claim.get("verdict")
+        assert verdict is None or "not adjudicated" in verdict
+        assert claim.get("interval_dependent_verdict") is None
+
+    def test_a_single_seed_interval_is_not_attached_to_the_across_seed_estimate(self):
+        # The across-seed point estimate and a one-seed interval must not be
+        # presented as one quantity: if the multi-seed estimate is reported, no
+        # single-seed interval may be carried alongside it as the claim's own.
+        single_seed = {
+            "seed": 0,
+            "point_estimate": 0.90,
+            "ci": {"ci_low": 0.88, "ci_high": 0.92, "ci_suppressed": False},
+            "estimate_basis": "seed_0_mean_of_fold_aurocs",
+            "resampling_unit": "gene",
+            "n_scored": 100,
+            "n_excluded": 0,
+        }
+        claim = _build_claim_2c(single_seed, across_seed_point_estimate=0.89)
+
+        assert claim["across_seed_point_estimate"] == 0.89
+        assert claim.get("ci") is None
+        assert claim.get("interval") is None
+        assert claim.get("interval_reason")
+
+    def test_reported_seed_comes_from_the_record_not_a_hardcoded_zero(self):
+        # Seed identity is data, never a literal or a list position. An inference
+        # block that declares its own seed must be reported as that seed, so a
+        # later change to which seed carries the bootstrap cannot silently keep
+        # labelling the result as seed 0.
+        inference = {
+            "seed": 2,
+            "point_estimate": 0.90,
+            "ci": None,
+            "estimate_basis": "seed2_fold_mean_auroc",
+            "resampling_unit": "gene",
+            "n_scored": 100,
+            "n_excluded": 0,
+        }
+        claim = _build_claim_2c(inference, across_seed_point_estimate=0.89)
+        assert claim["seed"] == 2
 
 
 class TestProbeSeedParamsCompleteness:

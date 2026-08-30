@@ -105,14 +105,14 @@ The current documents divide the scientific plan, the repairs it depends on, exe
 5. Read [`reports/run_biorxiv/`](reports/run_biorxiv/) for experiment-level methods, results, interpretation, and provenance.
 6. Read [`FOLLOWUP_biorxiv.md`](biorxiv/FOLLOWUP_biorxiv.md) for work outside the current run.
 
-The material under `docs/` outside `docs/improve/` describes the earlier exploratory phase and is retained for historical context only. [`PREREGISTRATION_run_biorxiv.md`](biorxiv/PREREGISTRATION_run_biorxiv.md) is superseded by the analysis plan and does not govern any part of the present study.
+The material under `docs/` outside `docs/improve/` describes the earlier exploratory phase and is retained for historical context only. [`PREREGISTRATION_run_biorxiv.md`](biorxiv/to_retire/PREREGISTRATION_run_biorxiv.md) is superseded by the analysis plan and does not govern any part of the present study.
 
 
 ## Detailed results history
 
 > **Historical and stale.** The text below predates the current `run_biorxiv` analysis and is retained only as a record of earlier project work. Do not use its numbers, verdicts, or conclusions in the bioRxiv manuscript. Manuscript evidence must come from the analysis plan, verified files under `results/run_biorxiv/`, and regenerated reports under `reports/run_biorxiv/`.
 
-The following text is reproduced from [`reports/summaries/report_summary.md`](../reports/summaries/report_summary.md). It summarizes results from runs 0, 1, and 6.
+The following text is reproduced from [`reports/summaries/report_summary.md`](reports/summaries/report_summary.md). It summarizes results from runs 0, 1, and 6.
 
 ### Run 0 — Summary of results 1–26
 
