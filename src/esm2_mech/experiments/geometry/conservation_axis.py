@@ -50,10 +50,11 @@ from esm2_mech.utils.constants import (
     N_SEEDS,
 )
 from esm2_mech.utils.seed_aggregation import (
-    aggregate_oof_dicts,
+    aggregate_seed_oof,
     aggregate_paired_seed_difference,
     aggregate_result_contract,
     aggregate_seed_values,
+    make_seed_payload_record,
     make_seed_record,
     read_seed_point_estimate,
 )
@@ -415,9 +416,14 @@ def analyse(compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES):
         # The interval is a within-seed cluster bootstrap over the pooled
         # out-of-fold predictions of every requested seed. It is reported in its
         # own field and never mixed with the across-seed aggregate above.
-        combined_result = aggregate_oof_dicts(
+        combined_result = aggregate_seed_oof(
             requested_seeds,
-            oof_by_seed,
+            [
+                make_seed_payload_record(
+                    seed, oof_by_seed[seed], status=seed_runs[seed]["status"]
+                )
+                for seed in requested_seeds
+            ],
             declared_row_ids=scored_rows,
             declared_labels=y[scored_rows],
             declared_clusters=genes[scored_rows],

@@ -197,7 +197,7 @@ def test_family_oof_declares_scored_rows_and_string_labels(phase3, monkeypatch):
         "_run_logreg_folds",
         lambda *args, **kwargs: {"status": "success", "macro_f1_mean": 0.5},
     )
-    monkeypatch.setattr(mod, "aggregate_oof_dicts", aggregate_stub)
+    monkeypatch.setattr(mod, "aggregate_seed_oof", aggregate_stub)
 
     mod.phase3_probes(seeds=[0])
 

@@ -44,7 +44,10 @@ from esm2_mech.utils.bootstrap import (
     family_or_gene_clusters,
     paired_oof_diff,
 )
-from esm2_mech.utils.seed_aggregation import aggregate_oof_dicts
+from esm2_mech.utils.seed_aggregation import (
+    aggregate_seed_oof,
+    make_seed_payload_record,
+)
 
 # The matched ESM-2 probe for the ESM-3 comparison: MLP, delta_mean, family-split.
 MLP_DELTA_MEAN_FAMILY = nonlinear_key("mlp", DELTA_MEAN_FEATURE, SPLIT_FAMILY)
@@ -676,7 +679,7 @@ def phase3_probes(
             ),
         ]:
             seed_runs = []
-            seed_oof_by_seed = {}
+            seed_oof_records = []
 
             for seed in seeds:
                 splits = get_splits(seed)
@@ -717,7 +720,9 @@ def phase3_probes(
                     label=f"{cond}_{cv_name}_seed{seed}",
                     return_oof=True,
                 )
-                seed_oof_by_seed[seed] = oof
+                seed_oof_records.append(
+                    make_seed_payload_record(seed, oof, status=agg["status"])
+                )
                 # Logistic regression, over the same fold set.
                 lr_agg = _run_logreg_folds(
                     delta, labels_cond, splits, split_contract, seed
@@ -770,9 +775,9 @@ def phase3_probes(
                 if cv_name == "gene_split"
                 else np.flatnonzero(annotated_gene_mask(genes_cond, pfam_map))
             )
-            combined_result = aggregate_oof_dicts(
+            combined_result = aggregate_seed_oof(
                 seeds,
-                seed_oof_by_seed,
+                seed_oof_records,
                 declared_row_ids=rows,
                 declared_labels=labels_cond[rows],
                 declared_clusters=genes_cond[rows],

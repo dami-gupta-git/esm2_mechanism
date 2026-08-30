@@ -21,10 +21,11 @@ from esm2_mech.utils.bootstrap import (
     score_within_folds,
 )
 from esm2_mech.utils.seed_aggregation import (
-    aggregate_oof_dicts,
+    aggregate_seed_oof,
     aggregate_paired_seed_difference,
     aggregate_seed_values,
     block_seed_status,
+    make_seed_payload_record,
     make_seed_record,
     read_seed_inference,
     read_seed_point_estimate,
@@ -148,10 +149,7 @@ def _probe_one_family(
         view: {p: defaultdict(list) for p in probes} for view in features_by_view
     }
     oof_by_view_probe = {
-        view: {p: {} for p in probes} for view in features_by_view
-    }
-    status_by_view_probe = {
-        view: {p: {} for p in probes} for view in features_by_view
+        view: {p: [] for p in probes} for view in features_by_view
     }
 
     for seed in range(n_seeds):
@@ -176,8 +174,9 @@ def _probe_one_family(
                     label=f"{view}:{probe_name}", genes=genes_rows, return_oof=True,
                     **extra_kwargs[probe_name],
                 )
-                oof_by_view_probe[view][probe_name][seed] = oof
-                status_by_view_probe[view][probe_name][seed] = res["status"]
+                oof_by_view_probe[view][probe_name].append(
+                    make_seed_payload_record(seed, oof, status=res["status"])
+                )
                 f1_seed = res.get("macro_f1_mean")
                 per_seed_f1[view][probe_name].append(
                     float("nan") if f1_seed is None else f1_seed
@@ -204,10 +203,9 @@ def _probe_one_family(
         out[view] = {}
         oof_out[view] = {}
         for probe_name in probes:
-            combined_result = aggregate_oof_dicts(
+            combined_result = aggregate_seed_oof(
                 range(n_seeds),
                 oof_by_view_probe[view][probe_name],
-                status_by_view_probe[view][probe_name],
                 declared_row_ids=np.arange(len(y)),
                 declared_labels=y,
                 declared_clusters=genes_rows,
@@ -351,7 +349,6 @@ def _run_delta_gof_auroc_for_labels(
         if GOF not in present or len(present) < MIN_CLASSES:
             continue
         seed_oofs = []
-        seed_statuses = []
         for seed in range(n_seeds):
             splits = gene_split_cv(inp["genes"], n_folds=n_folds, seed=seed)
             split_contract = validate_classification_splits(
@@ -372,7 +369,7 @@ def _run_delta_gof_auroc_for_labels(
                 genes=inp["genes"], return_oof=True, label="perm",
                 hidden=mlp_hidden, max_iter=mlp_max_iter,
             )
-            seed_statuses.append(res["status"])
+
             if oof is not None:
                 oof["proba"] = align_proba(
                     oof["proba"],
@@ -381,10 +378,10 @@ def _run_delta_gof_auroc_for_labels(
                     allow_missing_classes=True,
                 )
                 oof["classes"] = list(MECHANISM_CLASSES)
-            seed_oofs.append(oof)
-        combined = aggregate_oof_dicts(
+            seed_oofs.append(make_seed_payload_record(seed, oof, status=res["status"]))
+        combined = aggregate_seed_oof(
             range(n_seeds),
-            {seed: oof for seed, oof in enumerate(seed_oofs)},
+            seed_oofs,
             declared_row_ids=np.arange(len(labels_fam)),
             declared_labels=labels_fam,
             declared_clusters=inp["genes"],

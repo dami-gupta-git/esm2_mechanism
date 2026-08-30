@@ -52,7 +52,7 @@ from esm2_mech.utils.bootstrap import (
 from esm2_mech.utils.seed_aggregation import (
     SEED_STATUS_SUCCESS,
     SEED_STATUS_UNSCORABLE,
-    aggregate_oof_dicts,
+    aggregate_seed_oof,
     aggregate_result_contract,
     aggregate_seed_results,
     read_seed_point_estimate,
@@ -211,9 +211,14 @@ def load_mechanism_family_oof_arms(seeds: list[int]) -> tuple | None:
     if not per_seed:
         return None
     first = next(iter(per_seed.values()))
-    combined = aggregate_oof_dicts(
+    combined = aggregate_seed_oof(
         seeds,
-        per_seed,
+        # Only seeds whose cache loaded are present; a seed with no cache is
+        # absent here and is refused as a missing seed, which is what happened.
+        [
+            make_seed_payload_record(seed, oof, status=SEED_STATUS_SUCCESS)
+            for seed, oof in per_seed.items()
+        ],
         declared_row_ids=first["row_ids"],
         declared_labels=first["y_true"],
         declared_clusters=first["genes"],
@@ -420,8 +425,8 @@ def run_multiseed(
 
     seed_runs = []
     permutation_oof = None
-    logreg_family_oof_by_seed = {}
-    mlp_family_oof_by_seed = {}
+    logreg_family_oof_records = []
+    mlp_family_oof_records = []
 
     for seed in seeds:
         print(f"\n  Seed {seed}:")
@@ -534,8 +539,12 @@ def run_multiseed(
                 "mlp_family": mlp,
             }
         )
-        logreg_family_oof_by_seed[seed] = fs_oof
-        mlp_family_oof_by_seed[seed] = mlp_oof
+        logreg_family_oof_records.append(
+            make_seed_payload_record(seed, fs_oof, status=fs["status"])
+        )
+        mlp_family_oof_records.append(
+            make_seed_payload_record(seed, mlp_oof, status=mlp["status"])
+        )
         if seed == seeds[0]:
             permutation_oof = fs_oof
 
@@ -660,10 +669,10 @@ def run_multiseed(
     oof_fs_f1 = None
     oof_mlp_f1 = None
 
-    def _combined_oof(oof_by_seed):
-        combined = aggregate_oof_dicts(
+    def _combined_oof(oof_records):
+        combined = aggregate_seed_oof(
             seeds,
-            oof_by_seed,
+            oof_records,
             declared_row_ids=np.arange(len(y)),
             declared_labels=y,
             declared_clusters=genes_arr,
@@ -672,8 +681,8 @@ def run_multiseed(
         )
         return combined.payload if combined.available else None
 
-    logreg_family_oof = _combined_oof(logreg_family_oof_by_seed)
-    mlp_family_oof = _combined_oof(mlp_family_oof_by_seed)
+    logreg_family_oof = _combined_oof(logreg_family_oof_records)
+    mlp_family_oof = _combined_oof(mlp_family_oof_records)
 
     def _oof_macro_f1(oof):
         """Out-of-fold macro-F1, scored per fold and per seed, then averaged."""

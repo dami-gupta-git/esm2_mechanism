@@ -19,9 +19,10 @@ from esm2_mech.utils.bootstrap import (
 )
 from esm2_mech.utils.seed_aggregation import (
     SeedUnavailableReason,
-    aggregate_oof_dicts,
+    aggregate_seed_oof,
     aggregate_result_contract,
     aggregate_seed_values,
+    make_seed_payload_record,
     make_seed_record,
     read_seed_point_estimate,
     seed_count,
@@ -259,11 +260,13 @@ def run_pathogenicity(
     )
 
     collect = defaultdict(lambda: defaultdict(lambda: defaultdict(dict)))
-    oof_collect = defaultdict(lambda: defaultdict(lambda: defaultdict(dict)))
+    oof_collect = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
     for seed, res in zip(seeds, per_seed):
         for (fname, split_name, probe), cell in res.items():
             collect[fname][split_name][probe][seed] = cell
-            oof_collect[fname][split_name][probe][seed] = cell["oof"]
+            oof_collect[fname][split_name][probe].append(
+                make_seed_payload_record(seed, cell["oof"], status=cell["status"])
+            )
             print(
                 f"  seed{seed} {fname:4s} {split_name:12s} "
                 f"{probe}={_f(cell['value'])}"
@@ -288,7 +291,7 @@ def run_pathogenicity(
                 # The interval is a within-seed bootstrap over the pooled OOF of
                 # every requested seed, and stays a separate field from the
                 # across-seed aggregate beside it.
-                combined_result = aggregate_oof_dicts(
+                combined_result = aggregate_seed_oof(
                     seeds,
                     oof_collect[fname][split_name][probe],
                     declared_row_ids=rows,
@@ -390,13 +393,19 @@ def run_mechanism(
     )
 
     collect = defaultdict(lambda: defaultdict(lambda: defaultdict(dict)))
-    oof_collect = defaultdict(lambda: defaultdict(lambda: defaultdict(dict)))
+    oof_collect = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
     for seed, res in zip(seeds, per_seed):
         for (fname, split_name), cell in res.items():
             for key in ("logreg_f1", "mlp_f1", "logreg_gof", "mlp_gof"):
                 collect[fname][split_name][key][seed] = cell[key]
-            oof_collect[fname][split_name]["logreg"][seed] = cell["logreg_oof"]
-            oof_collect[fname][split_name]["mlp"][seed] = cell["mlp_oof"]
+            for probe in ("logreg", "mlp"):
+                oof_collect[fname][split_name][probe].append(
+                    make_seed_payload_record(
+                        seed,
+                        cell[f"{probe}_oof"],
+                        status=cell[f"{probe}_f1"]["status"],
+                    )
+                )
             print(
                 f"  seed{seed} {fname:4s} {split_name:12s} "
                 f"F1(lr={_f(cell['logreg_f1']['value'])} "
@@ -420,7 +429,7 @@ def run_mechanism(
             if compute_ci:
                 rows = scored_rows(split_name, genes, pfam_map)
                 for probe in ("logreg", "mlp"):
-                    combined_result = aggregate_oof_dicts(
+                    combined_result = aggregate_seed_oof(
                         seeds,
                         oof_collect[fname][split_name][probe],
                         declared_row_ids=rows,

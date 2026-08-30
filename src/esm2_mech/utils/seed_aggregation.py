@@ -91,9 +91,94 @@ _STORED_UNAVAILABLE_REASONS = frozenset(
     }
 )
 
+def _is_int(value) -> bool:
+    """True for a real integer. A boolean is not an identifier or a count."""
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
 def _check_seed(seed) -> None:
-    if isinstance(seed, bool) or not isinstance(seed, int):
+    if not _is_int(seed):
         raise TypeError("seed identifiers must be integers")
+
+
+def _duplicate_seeds(seeds: Iterable[int]) -> list[int]:
+    seen: set[int] = set()
+    repeated: set[int] = set()
+    for seed in seeds:
+        if seed in seen:
+            repeated.add(seed)
+        seen.add(seed)
+    return sorted(repeated)
+
+
+def _identity_failure(
+    requested: tuple[int, ...],
+    record_seeds: Iterable[int],
+    statuses_by_seed: Mapping[int, str],
+    invalid_value_seeds: Iterable[int] = (),
+) -> tuple[SeedUnavailableReason, list[int], list[int]] | None:
+    """The one seed-identity rule, as (reason, contributing, affected) or None.
+
+    The scalar core and every specialized reducer call this, so a payload reducer
+    refuses exactly the seed sets a scalar reducer refuses.
+    """
+    for seed in requested:
+        _check_seed(seed)
+    if not requested:
+        raise ValueError("at least one seed must be requested")
+    duplicates = _duplicate_seeds(requested) or _duplicate_seeds(record_seeds)
+    if duplicates:
+        return SeedUnavailableReason.DUPLICATE_SEED, [], duplicates
+
+    failure = _seed_defects(requested, statuses_by_seed, invalid_value_seeds)
+    if failure is None:
+        return None
+    reason, affected = failure
+    contributing = [
+        seed
+        for seed in requested
+        if statuses_by_seed.get(seed) == SEED_STATUS_SUCCESS and seed not in affected
+    ]
+    return reason, contributing, affected
+
+
+def _seed_defects(
+    requested: tuple[int, ...],
+    statuses_by_seed: Mapping[int, str],
+    invalid_value_seeds: Iterable[int] = (),
+) -> tuple[SeedUnavailableReason, list[int]] | None:
+    """The reason an aggregate is refused and every seed at fault, or None.
+
+    The scalar core and every specialized reducer apply this one rule, so a
+    payload reducer refuses exactly the seed sets a scalar reducer refuses. The
+    reason is the first defect in the order below, so a bad value never outranks
+    a missing or failed seed, while the affected list still names the whole run
+    rather than only the first thing that went wrong.
+    """
+    defects = [
+        (
+            SeedUnavailableReason.UNEXPECTED_SEED,
+            sorted(set(statuses_by_seed) - set(requested)),
+        ),
+        (
+            SeedUnavailableReason.MISSING_SEED,
+            [seed for seed in requested if seed not in statuses_by_seed],
+        ),
+    ]
+    for status, reason in (
+        (SEED_STATUS_FAILED, SeedUnavailableReason.FAILED_SEED),
+        (SEED_STATUS_SKIPPED, SeedUnavailableReason.SKIPPED_SEED),
+        (SEED_STATUS_UNSCORABLE, SeedUnavailableReason.UNSCORABLE_SEED),
+    ):
+        defects.append(
+            (reason, [seed for seed in requested if statuses_by_seed.get(seed) == status])
+        )
+    defects.append((SeedUnavailableReason.INVALID_VALUE, list(invalid_value_seeds)))
+
+    affected = sorted({seed for _reason, seeds in defects for seed in seeds})
+    if not affected:
+        return None
+    return next(reason for reason, seeds in defects if seeds), affected
 
 
 @dataclass(frozen=True)
@@ -334,27 +419,16 @@ def _validate_payload_seed_contract(
             raise TypeError(
                 "payload records must be created with make_seed_payload_record"
             )
-    identity = aggregate_seed_values(
+    failure = _identity_failure(
         requested,
-        [
-            make_seed_record(
-                record.seed,
-                0.0 if record.status == SEED_STATUS_SUCCESS else None,
-                status=record.status,
-            )
-            for record in payload_records
-        ],
+        [record.seed for record in payload_records],
+        {record.seed: record.status for record in payload_records},
     )
-    if not identity.available:
+    if failure is not None:
         return (
             requested,
             {},
-            _payload_unavailable(
-                identity.reason,
-                identity.requested_seeds,
-                identity.contributing_seeds,
-                identity.affected_seeds,
-            ),
+            _payload_unavailable(failure[0], requested, failure[1], failure[2]),
         )
     return requested, {record.seed: record for record in payload_records}, None
 
@@ -384,65 +458,12 @@ def aggregate_seed_values(
 ) -> SeedAggregate:
     """Aggregate one finite point estimate from every explicitly requested seed."""
     requested = tuple(requested_seeds)
-    for seed in requested:
-        _check_seed(seed)
-    if not requested:
-        raise ValueError("at least one seed must be requested")
-
-    duplicate_requested = sorted(
-        {seed for seed in requested if requested.count(seed) > 1}
-    )
-    if duplicate_requested:
-        return _unavailable(
-            SeedUnavailableReason.DUPLICATE_SEED,
-            requested,
-            (),
-            duplicate_requested,
-        )
-
     records = tuple(values)
     for record in records:
         if not isinstance(record, SeedValueRecord):
             raise TypeError("seed records must be created with make_seed_record")
 
-    record_seeds = [record.seed for record in records]
-    duplicate_records = sorted(
-        {seed for seed in record_seeds if record_seeds.count(seed) > 1}
-    )
-    if duplicate_records:
-        return _unavailable(
-            SeedUnavailableReason.DUPLICATE_SEED,
-            requested,
-            (),
-            duplicate_records,
-        )
-
     records_by_seed = {record.seed: record for record in records}
-    requested_set = set(requested)
-    unexpected = sorted(set(record_seeds) - requested_set)
-    missing = [seed for seed in requested if seed not in records_by_seed]
-    contributing = [
-        seed
-        for seed in requested
-        if seed in records_by_seed
-        and records_by_seed[seed].status == SEED_STATUS_SUCCESS
-        and records_by_seed[seed].value is not None
-        and math.isfinite(records_by_seed[seed].value)
-    ]
-
-    status_reasons = (
-        (SEED_STATUS_FAILED, SeedUnavailableReason.FAILED_SEED),
-        (SEED_STATUS_SKIPPED, SeedUnavailableReason.SKIPPED_SEED),
-        (SEED_STATUS_UNSCORABLE, SeedUnavailableReason.UNSCORABLE_SEED),
-    )
-    affected_by_status = {}
-    for status, reason in status_reasons:
-        affected_by_status[reason] = [
-            seed
-            for seed in requested
-            if seed in records_by_seed and records_by_seed[seed].status == status
-        ]
-
     invalid = [
         seed
         for seed in requested
@@ -453,34 +474,14 @@ def aggregate_seed_values(
             or not math.isfinite(records_by_seed[seed].value)
         )
     ]
-    affected = sorted(
-        set(unexpected)
-        | set(missing)
-        | set(invalid)
-        | {
-            seed
-            for status_affected in affected_by_status.values()
-            for seed in status_affected
-        }
+    failure = _identity_failure(
+        requested,
+        [record.seed for record in records],
+        {seed: record.status for seed, record in records_by_seed.items()},
+        invalid,
     )
-    reason = None
-    if unexpected:
-        reason = SeedUnavailableReason.UNEXPECTED_SEED
-    elif missing:
-        reason = SeedUnavailableReason.MISSING_SEED
-    else:
-        for status_reason in (
-            SeedUnavailableReason.FAILED_SEED,
-            SeedUnavailableReason.SKIPPED_SEED,
-            SeedUnavailableReason.UNSCORABLE_SEED,
-        ):
-            if affected_by_status[status_reason]:
-                reason = status_reason
-                break
-    if reason is None and invalid:
-        reason = SeedUnavailableReason.INVALID_VALUE
-    if reason is not None:
-        return _unavailable(reason, requested, contributing, affected)
+    if failure is not None:
+        return _unavailable(failure[0], requested, failure[1], failure[2])
 
     numeric_values = [float(records_by_seed[seed].value) for seed in requested]
     spread = float(np.std(numeric_values, ddof=1)) if len(numeric_values) >= 3 else None
@@ -571,7 +572,6 @@ def aggregate_seed_vote(
             "minimum_supporting_seeds": minimum_supporting_seeds,
             "supporting_seeds": supporting,
             "n_supporting_seeds": len(supporting),
-            "values_by_seed": {seed: by_seed[seed] for seed in requested},
         },
     )
 
@@ -588,22 +588,19 @@ def aggregate_paired_seed_difference(
     aggregate_a = aggregate_seed_values(requested, records_a)
     aggregate_b = aggregate_seed_values(requested, records_b)
     if not aggregate_a.available or not aggregate_b.available:
-        failures = [
-            aggregate
-            for aggregate in (aggregate_a, aggregate_b)
-            if not aggregate.available
-        ]
-        reason = failures[0].reason
-        assert reason is not None
-        affected = sorted(
-            {seed for aggregate in failures for seed in aggregate.affected_seeds}
-        )
+        # A difference needs both arms, so only the seeds both arms scored can
+        # contribute and any seed either arm blamed is affected.
+        failed = aggregate_a if not aggregate_a.available else aggregate_b
         contributing = [
             seed
             for seed in requested
-            if all(seed in aggregate.contributing_seeds for aggregate in failures)
+            if seed in aggregate_a.contributing_seeds
+            and seed in aggregate_b.contributing_seeds
         ]
-        return _unavailable(reason, requested, contributing, affected)
+        affected = sorted(
+            set(aggregate_a.affected_seeds) | set(aggregate_b.affected_seeds)
+        )
+        return _unavailable(failed.reason, requested, contributing, affected)
     values_a = {record.seed: float(record.value) for record in records_a}
     values_b = {record.seed: float(record.value) for record in records_b}
     differences = [
@@ -627,8 +624,7 @@ def aggregate_seed_confusion_matrices(
     if not declared_classes or len(set(declared_classes)) != len(declared_classes):
         raise ValueError("class_order must contain unique declared classes")
 
-    raw_by_seed = {}
-    normalized_by_seed = {}
+    raw = []
     normalized = []
     defects = {
         SeedUnavailableReason.CLASS_ORDER_MISMATCH: [],
@@ -662,11 +658,9 @@ def aggregate_seed_confusion_matrices(
         if np.any(row_totals == 0):
             defects[SeedUnavailableReason.ZERO_SUPPORT].append(seed)
             continue
-        matrix_float = matrix.astype(float)
-        seed_normalized = matrix_float / row_totals
-        raw_by_seed[seed] = matrix.tolist()
-        normalized_by_seed[seed] = seed_normalized.tolist()
-        normalized.append(seed_normalized)
+        counts = matrix.astype(float)
+        raw.append(counts)
+        normalized.append(counts / row_totals)
 
     affected = sorted({seed for seeds in defects.values() for seed in seeds})
     if affected:
@@ -674,16 +668,11 @@ def aggregate_seed_confusion_matrices(
         contributing = [seed for seed in requested if seed not in affected]
         return _payload_unavailable(reason, requested, contributing, affected)
 
-    pooled_raw = np.sum(
-        [np.asarray(raw_by_seed[seed], dtype=float) for seed in requested], axis=0
-    )
     return _payload_available(
         requested,
         {
             "class_order": list(declared_classes),
-            "raw_by_seed": raw_by_seed,
-            "normalized_by_seed": normalized_by_seed,
-            "pooled_raw": pooled_raw.tolist(),
+            "pooled_raw": np.sum(raw, axis=0).tolist(),
             "normalized_seed_mean": np.mean(normalized, axis=0).tolist(),
         },
     )
@@ -691,14 +680,21 @@ def aggregate_seed_confusion_matrices(
 
 def aggregate_seed_oof(
     requested_seeds: Iterable[int],
+    records: Iterable[SeedPayloadRecord],
+    *,
     declared_row_ids: Iterable[int],
     declared_labels: Iterable,
     declared_clusters: Iterable,
     class_order: Iterable,
     declared_fold_ids: Iterable[int],
-    records: Iterable[SeedPayloadRecord],
 ) -> SeedPayloadAggregate:
-    """Align complete OOF predictions without dropping seeds or intersecting rows."""
+    """Align complete OOF predictions without dropping seeds or intersecting rows.
+
+    Each record carries its seed's declared status. A seed whose probe crashed and
+    a seed whose data could not support the metric both arrive with no
+    predictions, and only the producer knows which happened, so reading the status
+    off the missing predictions would record every crash as a property of the data.
+    """
     requested, by_seed, failure = _validate_payload_seed_contract(
         requested_seeds, records
     )
@@ -803,46 +799,6 @@ def aggregate_seed_oof(
             "classes": list(classes),
             "oof_by_seed": seed_payloads,
         },
-    )
-
-
-def aggregate_oof_dicts(
-    requested_seeds: Iterable[int],
-    oof_by_seed: Mapping[int, dict | None],
-    statuses_by_seed: Mapping[int, str],
-    *,
-    declared_row_ids: Iterable[int],
-    declared_labels: Iterable,
-    declared_clusters: Iterable,
-    class_order: Iterable,
-    declared_fold_ids: Iterable[int],
-) -> SeedPayloadAggregate:
-    """Adapt probe OOF dictionaries to the strict shared OOF reducer.
-
-    The caller declares each seed's status. A seed whose probe crashed and a seed
-    whose data could not support the metric both arrive with no predictions, and
-    only the producer knows which happened, so reading the status off the missing
-    predictions would record every crash as a property of the data.
-    """
-    requested = tuple(requested_seeds)
-    if set(statuses_by_seed) != set(oof_by_seed):
-        raise ValueError(
-            "every seed of out-of-fold predictions must declare a status: "
-            f"predictions for {sorted(oof_by_seed)}, "
-            f"statuses for {sorted(statuses_by_seed)}"
-        )
-    records = [
-        make_seed_payload_record(seed, oof, status=statuses_by_seed[seed])
-        for seed, oof in oof_by_seed.items()
-    ]
-    return aggregate_seed_oof(
-        requested,
-        declared_row_ids,
-        declared_labels,
-        declared_clusters,
-        class_order,
-        declared_fold_ids,
-        records,
     )
 
 

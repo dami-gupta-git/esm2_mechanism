@@ -5,9 +5,9 @@ import pytest
 
 from esm2_mech.utils.seed_aggregation import (
     SeedUnavailableReason,
-    aggregate_oof_dicts,
     aggregate_paired_seed_difference,
     aggregate_seed_confusion_matrices,
+    aggregate_seed_oof,
     aggregate_seed_vote,
     make_seed_payload_record,
     make_seed_record,
@@ -36,6 +36,15 @@ def _oof(seed, order=None):
     }
 
 
+def _records(oof_by_seed, statuses=None):
+    """One payload record per supplied seed, scored unless stated otherwise."""
+    statuses = statuses or {}
+    return [
+        make_seed_payload_record(seed, oof, status=statuses.get(seed, "success"))
+        for seed, oof in oof_by_seed.items()
+    ]
+
+
 def _complete_oof_by_seed():
     return {
         11: _oof(11),
@@ -46,9 +55,9 @@ def _complete_oof_by_seed():
 
 class TestAggregateSeedOof:
     def test_preserves_actual_seed_identity_and_declared_row_order(self):
-        result = aggregate_oof_dicts(
+        result = aggregate_seed_oof(
             REQUESTED_SEEDS,
-            _complete_oof_by_seed(),
+            _records(_complete_oof_by_seed()),
             declared_row_ids=ROW_IDS,
             declared_labels=LABELS,
             declared_clusters=CLUSTERS,
@@ -67,9 +76,9 @@ class TestAggregateSeedOof:
     def test_missing_seed_is_unavailable_not_dropped(self):
         oof_by_seed = _complete_oof_by_seed()
         del oof_by_seed[23]
-        result = aggregate_oof_dicts(
+        result = aggregate_seed_oof(
             REQUESTED_SEEDS,
-            oof_by_seed,
+            _records(oof_by_seed),
             declared_row_ids=ROW_IDS,
             declared_labels=LABELS,
             declared_clusters=CLUSTERS,
@@ -83,9 +92,9 @@ class TestAggregateSeedOof:
     def test_unexpected_shifted_seed_is_unavailable(self):
         oof_by_seed = _complete_oof_by_seed()
         oof_by_seed[24] = oof_by_seed.pop(23)
-        result = aggregate_oof_dicts(
+        result = aggregate_seed_oof(
             REQUESTED_SEEDS,
-            oof_by_seed,
+            _records(oof_by_seed),
             declared_row_ids=ROW_IDS,
             declared_labels=LABELS,
             declared_clusters=CLUSTERS,
@@ -102,9 +111,9 @@ class TestAggregateSeedOof:
             key: value[:-1] if isinstance(value, np.ndarray) else value
             for key, value in oof_by_seed[23].items()
         }
-        result = aggregate_oof_dicts(
+        result = aggregate_seed_oof(
             REQUESTED_SEEDS,
-            oof_by_seed,
+            _records(oof_by_seed),
             declared_row_ids=ROW_IDS,
             declared_labels=LABELS,
             declared_clusters=CLUSTERS,
@@ -121,9 +130,9 @@ class TestAggregateSeedOof:
         corrupted = np.array(oof_by_seed[23][field], copy=True)
         corrupted[0] = "wrong"
         oof_by_seed[23][field] = corrupted
-        result = aggregate_oof_dicts(
+        result = aggregate_seed_oof(
             REQUESTED_SEEDS,
-            oof_by_seed,
+            _records(oof_by_seed),
             declared_row_ids=ROW_IDS,
             declared_labels=LABELS,
             declared_clusters=CLUSTERS,
@@ -136,9 +145,9 @@ class TestAggregateSeedOof:
     def test_class_order_mismatch_is_unavailable(self):
         oof_by_seed = _complete_oof_by_seed()
         oof_by_seed[23]["classes"] = ["B", "A"]
-        result = aggregate_oof_dicts(
+        result = aggregate_seed_oof(
             REQUESTED_SEEDS,
-            oof_by_seed,
+            _records(oof_by_seed),
             declared_row_ids=ROW_IDS,
             declared_labels=LABELS,
             declared_clusters=CLUSTERS,
@@ -151,9 +160,9 @@ class TestAggregateSeedOof:
     def test_invalid_fold_shape_is_unavailable(self):
         oof_by_seed = _complete_oof_by_seed()
         oof_by_seed[23]["folds"] = np.array([0, 1])
-        result = aggregate_oof_dicts(
+        result = aggregate_seed_oof(
             REQUESTED_SEEDS,
-            oof_by_seed,
+            _records(oof_by_seed),
             declared_row_ids=ROW_IDS,
             declared_labels=LABELS,
             declared_clusters=CLUSTERS,
@@ -166,9 +175,9 @@ class TestAggregateSeedOof:
     def test_wrong_fold_set_is_unavailable(self):
         oof_by_seed = _complete_oof_by_seed()
         oof_by_seed[23]["folds"] = np.array([0, 0, 1])
-        result = aggregate_oof_dicts(
+        result = aggregate_seed_oof(
             REQUESTED_SEEDS,
-            oof_by_seed,
+            _records(oof_by_seed),
             declared_row_ids=ROW_IDS,
             declared_labels=LABELS,
             declared_clusters=CLUSTERS,
@@ -183,9 +192,9 @@ class TestAggregateSeedOof:
         oof_by_seed = _complete_oof_by_seed()
         oof_by_seed[23]["folds"] = np.array([0, 0, 1])
         oof_by_seed[47]["proba"][0, 0] = np.nan
-        result = aggregate_oof_dicts(
+        result = aggregate_seed_oof(
             REQUESTED_SEEDS,
-            oof_by_seed,
+            _records(oof_by_seed),
             declared_row_ids=ROW_IDS,
             declared_labels=LABELS,
             declared_clusters=CLUSTERS,
@@ -196,7 +205,35 @@ class TestAggregateSeedOof:
         assert result.affected_seeds == (23, 47)
         assert result.contributing_seeds == (11,)
 
-
+    @pytest.mark.parametrize(
+        ("declared_status", "reason"),
+        [
+            ("failed", SeedUnavailableReason.FAILED_SEED),
+            ("unscorable", SeedUnavailableReason.UNSCORABLE_SEED),
+            ("skipped", SeedUnavailableReason.SKIPPED_SEED),
+        ],
+    )
+    def test_the_declared_status_decides_the_reason_not_the_missing_oof(
+        self, declared_status, reason
+    ):
+        """A crashed seed and a seed whose data could not support the metric both
+        arrive with no predictions. Reading the reason off the absent predictions
+        would report every crash as a property of the data, so the producer's
+        declared status is what refuses the aggregate."""
+        oof_by_seed = _complete_oof_by_seed()
+        oof_by_seed[23] = None
+        result = aggregate_seed_oof(
+            REQUESTED_SEEDS,
+            _records(oof_by_seed, {23: declared_status}),
+            declared_row_ids=ROW_IDS,
+            declared_labels=LABELS,
+            declared_clusters=CLUSTERS,
+            class_order=CLASSES,
+            declared_fold_ids=range(3),
+        )
+        assert not result.available
+        assert result.reason is reason
+        assert result.affected_seeds == (23,)
 class TestAggregateSeedVote:
     def test_true_and_false_are_available_decisions(self):
         true_vote = aggregate_seed_vote(
