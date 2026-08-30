@@ -36,18 +36,16 @@ from esm2_mech.utils.seed_aggregation import (
     read_seed_point_estimate,
     seed_result_contract,
 )
+from tests.helpers import (
+    FIVE_SEEDS,
+    FIVE_VALUES_BY_SEED as FIVE_VALUES,
+    POPULATION_SPREAD_OF_FIVE_VALUES,
+    SAMPLE_SPREAD_OF_FIVE_VALUES,
+)
 
 # ---------------------------------------------------------------------------
 # helpers
 # ---------------------------------------------------------------------------
-
-FIVE_SEEDS = (0, 1, 2, 3, 4)
-
-# mean 0.3; sample spread 0.158113...; population spread 0.141421...
-FIVE_VALUES = {0: 0.1, 1: 0.2, 2: 0.3, 3: 0.4, 4: 0.5}
-
-SAMPLE_SPREAD_OF_FIVE_VALUES = 0.15811388300841897
-POPULATION_SPREAD_OF_FIVE_VALUES = 0.1414213562373095
 
 
 def aggregate_seed_values(requested_seeds, values):
@@ -368,41 +366,38 @@ class TestSharedReaders:
         result = read_seed_point_estimate(stored)
         assert result.reason is SeedUnavailableReason.SCHEMA_MISMATCH
 
-    def test_reader_rejects_boolean_schema_version(self):
-        stored = aggregate_seed_values(FIVE_SEEDS, FIVE_VALUES).to_dict()
-        stored["schema_version"] = True
-        result = read_seed_point_estimate(stored)
-        assert result.reason is SeedUnavailableReason.SCHEMA_MISMATCH
-
-    def test_reader_rejects_wrong_sampling_unit(self):
-        stored = aggregate_seed_values(FIVE_SEEDS, FIVE_VALUES).to_dict()
-        stored["sampling_unit"] = "cross_validation_fold"
-        result = read_seed_point_estimate(stored)
-        assert result.reason is SeedUnavailableReason.SAMPLING_UNIT_MISMATCH
-
     def test_inference_reader_requires_three_seeds_and_a_spread(self):
         aggregate = aggregate_seed_values((0, 1), {0: 0.2, 1: 0.4})
         result = read_seed_inference(aggregate)
         assert result.available is False
         assert result.reason is SeedUnavailableReason.INSUFFICIENT_SEEDS
 
-    @pytest.mark.parametrize("field", ["reason", "message", "affected_seeds"])
-    def test_available_reader_rejects_unavailable_metadata(self, field):
+    @pytest.mark.parametrize(
+        ("field", "value", "expected_reason"),
+        [
+            # An aggregate that says it is available must carry no unavailability
+            # metadata, or it is describing two different states at once.
+            ("reason", SeedUnavailableReason.FAILED_SEED.value,
+             SeedUnavailableReason.INVALID_AGGREGATE),
+            ("message", "a requested seed failed",
+             SeedUnavailableReason.INVALID_AGGREGATE),
+            ("affected_seeds", [2], SeedUnavailableReason.INVALID_AGGREGATE),
+            # Three or more seeds must carry a spread.
+            ("seed_std", None, SeedUnavailableReason.INVALID_AGGREGATE),
+            # True is an int in Python, so a bare numeric check would accept it.
+            ("schema_version", True, SeedUnavailableReason.SCHEMA_MISMATCH),
+            ("sampling_unit", "cross_validation_fold",
+             SeedUnavailableReason.SAMPLING_UNIT_MISMATCH),
+        ],
+        ids=["carries_a_reason", "carries_a_message", "carries_affected_seeds",
+             "missing_spread", "boolean_schema_version", "wrong_sampling_unit"],
+    )
+    def test_reader_rejects_a_corrupt_available_aggregate(
+        self, field, value, expected_reason
+    ):
         stored = aggregate_seed_values(FIVE_SEEDS, FIVE_VALUES).to_dict()
-        replacements = {
-            "reason": SeedUnavailableReason.FAILED_SEED.value,
-            "message": "a requested seed failed",
-            "affected_seeds": [2],
-        }
-        stored[field] = replacements[field]
-        result = read_seed_point_estimate(stored)
-        assert result.reason is SeedUnavailableReason.INVALID_AGGREGATE
-
-    def test_reader_rejects_missing_spread_for_three_or_more_seeds(self):
-        stored = aggregate_seed_values(FIVE_SEEDS, FIVE_VALUES).to_dict()
-        stored["seed_std"] = None
-        result = read_seed_point_estimate(stored)
-        assert result.reason is SeedUnavailableReason.INVALID_AGGREGATE
+        stored[field] = value
+        assert read_seed_point_estimate(stored).reason is expected_reason
 
     def test_reader_rejects_spread_for_fewer_than_three_seeds(self):
         stored = aggregate_seed_values((0, 1), {0: 0.2, 1: 0.4}).to_dict()
@@ -410,14 +405,19 @@ class TestSharedReaders:
         result = read_seed_point_estimate(stored)
         assert result.reason is SeedUnavailableReason.INVALID_AGGREGATE
 
-    def test_unavailable_reader_rejects_a_stored_mean(self):
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [
+            # An unavailable aggregate must carry no point estimate.
+            ("mean", 0.1),
+            # SCHEMA_MISMATCH is a reason the reader raises, never one a producer
+            # stores, so finding it in a stored record means the record is wrong.
+            ("reason", SeedUnavailableReason.SCHEMA_MISMATCH.value),
+        ],
+        ids=["stores_a_mean", "stores_a_reader_only_reason"],
+    )
+    def test_reader_rejects_a_corrupt_unavailable_aggregate(self, field, value):
         stored = aggregate_seed_values(FIVE_SEEDS, {0: 0.1}).to_dict()
-        stored["mean"] = 0.1
-        result = read_seed_point_estimate(stored)
-        assert result.reason is SeedUnavailableReason.INVALID_AGGREGATE
-
-    def test_reader_rejects_a_reader_only_reason_as_stored_state(self):
-        stored = aggregate_seed_values(FIVE_SEEDS, {0: 0.1}).to_dict()
-        stored["reason"] = SeedUnavailableReason.SCHEMA_MISMATCH.value
+        stored[field] = value
         result = read_seed_point_estimate(stored)
         assert result.reason is SeedUnavailableReason.INVALID_AGGREGATE

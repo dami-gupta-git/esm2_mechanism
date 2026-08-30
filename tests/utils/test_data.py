@@ -3,11 +3,8 @@ Tests for utils/data.py pure-logic functions.
 
 Covers:
 - load_variants: returns all variants when all fields are present
-- load_variants: filters out variants with missing uniprot_id
-- load_variants: filters out variants with missing aa_wt
-- load_variants: filters out variants with missing aa_mut
-- load_variants: filters out variants with aa_pos == 0
-- load_variants: filters out variants with aa_pos < 0 (negative)
+- load_variants: filters out variants missing any required field, blank or None
+- load_variants: filters out variants whose position is zero or negative
 - load_variants: handles empty input list
 - build_gene_to_row: assigns row indices in order of first appearance
 - build_gene_to_row: deduplicates repeated genes, keeps first occurrence index
@@ -19,6 +16,7 @@ import hashlib
 import json
 
 import numpy as np
+import pytest
 
 from esm2_mech.utils.data import (
     build_gene_to_row,
@@ -67,35 +65,24 @@ class TestLoadVariants:
         result = load_variants(path)
         assert len(result) == 1
 
-    def test_filters_missing_uniprot_id(self, tmp_path):
-        data = [_variant(uid=""), _variant(uid=None), _variant()]
+    @pytest.mark.parametrize(
+        "dropped",
+        [
+            # A field that is present but blank must be dropped, not kept as "".
+            [{"uid": ""}, {"uid": None}],
+            [{"aa_wt": ""}, {"aa_wt": None}],
+            [{"aa_mut": ""}, {"aa_mut": None}],
+            # Positions are 1-indexed, so zero and negatives are not real positions.
+            [{"aa_pos": 0}],
+            [{"aa_pos": -1}],
+        ],
+        ids=["missing_uniprot_id", "missing_aa_wt", "missing_aa_mut",
+             "aa_pos_zero", "aa_pos_negative"],
+    )
+    def test_variants_missing_a_required_field_are_filtered(self, tmp_path, dropped):
+        data = [_variant(**kwargs) for kwargs in dropped] + [_variant()]
         path = _write_json(tmp_path / "v.json", data)
-        result = load_variants(path)
-        assert len(result) == 1
-
-    def test_filters_missing_aa_wt(self, tmp_path):
-        data = [_variant(aa_wt=""), _variant(aa_wt=None), _variant()]
-        path = _write_json(tmp_path / "v.json", data)
-        result = load_variants(path)
-        assert len(result) == 1
-
-    def test_filters_missing_aa_mut(self, tmp_path):
-        data = [_variant(aa_mut=""), _variant(aa_mut=None), _variant()]
-        path = _write_json(tmp_path / "v.json", data)
-        result = load_variants(path)
-        assert len(result) == 1
-
-    def test_filters_aa_pos_zero(self, tmp_path):
-        data = [_variant(aa_pos=0), _variant()]
-        path = _write_json(tmp_path / "v.json", data)
-        result = load_variants(path)
-        assert len(result) == 1
-
-    def test_filters_negative_aa_pos(self, tmp_path):
-        data = [_variant(aa_pos=-1), _variant()]
-        path = _write_json(tmp_path / "v.json", data)
-        result = load_variants(path)
-        assert len(result) == 1
+        assert len(load_variants(path)) == 1
 
     def test_empty_input_returns_empty(self, tmp_path):
         path = _write_json(tmp_path / "v.json", [])

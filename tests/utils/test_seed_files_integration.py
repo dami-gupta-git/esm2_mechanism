@@ -31,12 +31,12 @@ from esm2_mech.utils.seed_aggregation import (
     load_seed_files,
     make_seed_record,
 )
+from tests.helpers import (
+    FIVE_SEEDS,
+    FIVE_VALUES_BY_SEED as MACRO_F1_BY_SEED,
+)
 
 SEED_GLOB = "results_seed*.json"
-FIVE_SEEDS = (0, 1, 2, 3, 4)
-
-# mean 0.3, sample spread 0.158113...
-MACRO_F1_BY_SEED = {0: 0.1, 1: 0.2, 2: 0.3, 3: 0.4, 4: 0.5}
 
 
 # ---------------------------------------------------------------------------

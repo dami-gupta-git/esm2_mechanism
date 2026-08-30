@@ -11,7 +11,15 @@ from esm2_mech.utils.seed_aggregation import (
     SeedUnavailableReason,
 )
 
-DEFAULT_SEEDS = (0, 1, 2, 3, 4)
+# The standard five-seed set, and a value ladder over it whose spreads are
+# known exactly, so a test can assert the reduction rather than a rounded number.
+FIVE_SEEDS = (0, 1, 2, 3, 4)
+FIVE_VALUES_BY_SEED = {0: 0.1, 1: 0.2, 2: 0.3, 3: 0.4, 4: 0.5}
+MEAN_OF_FIVE_VALUES = 0.3
+SAMPLE_SPREAD_OF_FIVE_VALUES = 0.15811388300841897
+POPULATION_SPREAD_OF_FIVE_VALUES = 0.1414213562373095
+
+DEFAULT_SEEDS = FIVE_SEEDS
 
 
 def seed_result(macro_f1_mean, *, split="gene_split", feature="esm2"):
