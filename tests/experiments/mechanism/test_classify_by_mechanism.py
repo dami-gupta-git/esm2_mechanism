@@ -54,14 +54,17 @@ def patched_paths(tmp_path, monkeypatch):
         name: tmp_path / f"{name}.npy"
         for name in ("EMB_WT_MEAN", "EMB_MUT_MEAN", "EMB_WT_POS", "EMB_MUT_POS")
     }
-    monkeypatch.setattr(classify_by_mechanism, "VALID_VARIANTS_JSON", valid_variants_json)
+    monkeypatch.setattr(
+        classify_by_mechanism, "VALID_VARIANTS_JSON", valid_variants_json
+    )
     monkeypatch.setattr(
         classify_by_mechanism, "EMB_VALID_VARIANTS_JSON", embedded_variants_json
     )
     for name, path in emb_paths.items():
         monkeypatch.setattr(classify_by_mechanism, name, path)
     monkeypatch.setattr(
-        classify_by_mechanism, "_load_alphamissense_scores",
+        classify_by_mechanism,
+        "_load_alphamissense_scores",
         lambda variants: np.full(len(variants), np.nan),
     )
     return valid_variants_json, embedded_variants_json, emb_paths
@@ -147,7 +150,9 @@ class TestAggregatePermutationResults:
             for seed in range(5)
         ]
 
-        summary = classify_by_mechanism.aggregate_permutation_results(seed_results)
+        summary = classify_by_mechanism.aggregate_permutation_results(
+            seed_results, range(5)
+        )
 
         wt_summary = summary["wt_only_mean"]
         assert [row["p_value"] for row in wt_summary["per_seed"]] == wt_p_values
@@ -165,13 +170,31 @@ class TestAggregatePermutationResults:
         assert delta_summary["meets_permutation_seed_vote_rule"] is False
         assert delta_summary["per_seed"][0]["n_clusters_immovable"] == 3
 
-    def test_fewer_than_five_seeds_is_not_a_negative_result(self):
-        seed_results = [
-            _permutation_seed_result(seed, 0.01, 0.01)
-            for seed in range(2)
-        ]
+    def test_votes_on_the_seed_set_the_run_requested(self):
+        """A complete run of three seeds votes, rather than reporting a missing seed.
 
-        summary = classify_by_mechanism.aggregate_permutation_results(seed_results)
+        The requested set comes from the entry point, so it is not assumed to be
+        the five-seed default.
+        """
+        seed_results = [_permutation_seed_result(seed, 0.01, 0.01) for seed in range(3)]
+
+        summary = classify_by_mechanism.aggregate_permutation_results(
+            seed_results, range(3)
+        )
+
+        wt_vote = summary["wt_only_mean"]["seed_vote"]
+        assert wt_vote["state"] == "available"
+        assert wt_vote["requested_seeds"] == [0, 1, 2]
+        assert wt_vote["payload"]["n_supporting_seeds"] == 3
+        assert summary["wt_only_mean"]["meets_permutation_seed_vote_rule"] is True
+        assert summary["wt_only_mean"]["required_seed_count"] == 3
+
+    def test_fewer_seeds_than_requested_is_not_a_negative_result(self):
+        seed_results = [_permutation_seed_result(seed, 0.01, 0.01) for seed in range(2)]
+
+        summary = classify_by_mechanism.aggregate_permutation_results(
+            seed_results, range(5)
+        )
 
         assert summary["wt_only_mean"]["seed_vote"]["state"] == "unavailable"
         assert summary["wt_only_mean"]["seed_vote"]["reason"] == "missing_seed"
@@ -188,7 +211,9 @@ class TestAggregatePermutationResults:
             for seed in range(5)
         ]
 
-        summary = classify_by_mechanism.aggregate_permutation_results(seed_results)
+        summary = classify_by_mechanism.aggregate_permutation_results(
+            seed_results, range(5)
+        )
         wt_summary = summary["wt_only_mean"]
 
         assert wt_summary["seed_vote"]["state"] == "unavailable"

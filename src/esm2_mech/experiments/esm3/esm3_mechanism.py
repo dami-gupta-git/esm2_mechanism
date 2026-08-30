@@ -26,11 +26,14 @@ from esm2_mech.utils.paths import (
     VALID_VARIANTS_JSON,
 )
 from esm2_mech.utils.seed_aggregation import (
+    SeedMetricRead,
+    SeedUnavailableReason,
     aggregate_result_contract,
     aggregate_seed_results,
     read_seed_point_estimate,
     seed_count,
     seed_result_contract,
+    unavailable_seed_read,
 )
 from esm2_mech.utils.constants import (
     BOOTSTRAP_N_RESAMPLES,
@@ -132,30 +135,41 @@ def esm2_matched_delta(n_variants: int, valid_idx: np.ndarray | None) -> np.ndar
     return delta if valid_idx is None else delta[valid_idx]
 
 
-def esm2_family_floor(seeds: list[int] = SEEDS) -> tuple[float, str]:
-    """Return (floor, source) for the ESM-2 family-split macro-F1 baseline."""
+def esm2_family_floor(seeds: list[int] = SEEDS) -> tuple[SeedMetricRead, str]:
+    """Return (read, source) for the ESM-2 family-split macro-F1 baseline.
+
+    A different experiment produces this reference, so it can legitimately be
+    absent. An absent or unavailable reference is returned as an unavailable read
+    rather than raised: it gates only the M1 and M2 thresholds, and raising here
+    would discard the completed ESM-3 results and M3 along with it.
+    """
+    source = (
+        f"nonlinear_results ({MLP_DELTA_MEAN_FAMILY}, {len(seeds)}-seed mean, "
+        f"seeds={list(seeds)})"
+    )
     results = []
     for seed in seeds:
         path = Path(NONLINEAR_RESULTS_SEED_JSON.format(seed=seed))
+        if not path.exists():
+            return unavailable_seed_read(SeedUnavailableReason.MISSING_SEED), source
         with open(path) as fh:
             data = json.load(fh)
         entry = data.get(MLP_DELTA_MEAN_FAMILY)
         if not entry or "macro_f1_mean" not in entry:
-            raise KeyError(f"{MLP_DELTA_MEAN_FAMILY}.macro_f1_mean missing from {path}")
+            return unavailable_seed_read(SeedUnavailableReason.MISSING_SEED), source
         results.append(data)
-    aggregate = aggregate_seed_results(
-        seeds,
-        results,
-        lambda result: result[MLP_DELTA_MEAN_FAMILY].get("macro_f1_mean"),
-        status=lambda result: result[MLP_DELTA_MEAN_FAMILY]["status"],
-    )
-    metric = read_seed_point_estimate(aggregate)
-    if not metric.available:
-        raise ValueError(metric.message)
-    return metric.value, (
-        f"nonlinear_results ({MLP_DELTA_MEAN_FAMILY}, {len(seeds)}-seed mean, "
-        f"seeds={list(seeds)})"
-    )
+    try:
+        aggregate = aggregate_seed_results(
+            seeds,
+            results,
+            lambda result: result[MLP_DELTA_MEAN_FAMILY].get("macro_f1_mean"),
+            status=lambda result: result[MLP_DELTA_MEAN_FAMILY]["status"],
+        )
+    except ValueError:
+        # Written under an earlier schema. The nonlinear experiment reruns and
+        # the gate returns; that is not a reason to lose this ESM-3 run.
+        return unavailable_seed_read(SeedUnavailableReason.SCHEMA_MISMATCH), source
+    return read_seed_point_estimate(aggregate), source
 
 
 MECH_MAP = {"GOF": "GOF", "DN": "DN", "HI": "LOF", "AR": "LOF", "LOF": "LOF"}
@@ -825,11 +839,19 @@ def phase3_probes(
 
         results[cond] = cond_results
 
-    esm2_floor, floor_source = esm2_family_floor(seeds)
-    m1_threshold = esm2_floor + M1_MARGIN
+    floor_read, floor_source = esm2_family_floor(seeds)
+    esm2_floor = floor_read.value
+    m1_threshold = None if esm2_floor is None else esm2_floor + M1_MARGIN
     print(f"\n=== DECISION RULES ===")
-    print(f"  ESM-2 family-split floor = {esm2_floor:.3f}  [{floor_source}]")
-    print(f"  M1/M2 threshold = {m1_threshold:.3f}  (floor + {M1_MARGIN})")
+    if m1_threshold is None:
+        print(
+            f"  ESM-2 family-split floor unavailable: {floor_read.message} "
+            f"[{floor_source}]"
+        )
+        print("  M1/M2 not adjudicated; ESM-3 results and M3 are unaffected")
+    else:
+        print(f"  ESM-2 family-split floor = {esm2_floor:.3f}  [{floor_source}]")
+        print(f"  M1/M2 threshold = {m1_threshold:.3f}  (floor + {M1_MARGIN})")
 
     def get_f1(cond: str, cv: str):
         return read_seed_point_estimate(
@@ -847,7 +869,7 @@ def phase3_probes(
     matched_f1 = matched_metric.value
     matched_std = matched_metric.spread
     baseline_divergence = None
-    if matched_f1 is not None:
+    if matched_f1 is not None and esm2_floor is not None:
         baseline_divergence = float(matched_f1 - esm2_floor)
         spread_text = "N/A" if matched_std is None else f"{matched_std:.3f}"
         print(
@@ -863,8 +885,9 @@ def phase3_probes(
                 "comparison uses the subset."
             )
 
-    m1 = ss_f1 > m1_threshold if ss_f1 is not None else None
-    m2 = seq_f1 > m1_threshold if seq_f1 is not None else None
+    gated = ss_f1 is not None and m1_threshold is not None
+    m1 = ss_f1 > m1_threshold if gated else None
+    m2 = seq_f1 > m1_threshold if seq_f1 is not None and m1_threshold is not None else None
     m3 = (
         (ss_f1 - seq_f1) > M3_THRESHOLD
         if ss_f1 is not None and seq_f1 is not None
@@ -878,11 +901,12 @@ def phase3_probes(
             f"{'above threshold' if point_threshold_met else 'below threshold' if point_threshold_met is not None else 'N/A'}"
         )
 
+    threshold_text = "unavailable" if m1_threshold is None else f"{m1_threshold:.3f}"
     print(
-        f"  M1: ESM-3 seq_struct family-split F1 > {m1_threshold:.3f} → {fmt(ss_f1, m1)}"
+        f"  M1: ESM-3 seq_struct family-split F1 > {threshold_text} → {fmt(ss_f1, m1)}"
     )
     print(
-        f"  M2: ESM-3 seq        family-split F1 > {m1_threshold:.3f} → {fmt(seq_f1, m2)}"
+        f"  M2: ESM-3 seq        family-split F1 > {threshold_text} → {fmt(seq_f1, m2)}"
     )
     gap = ss_f1 - seq_f1 if ss_f1 is not None and seq_f1 is not None else None
     print(
@@ -1016,7 +1040,7 @@ def phase3_probes(
         "results": results,
         "decision_rules": {
             "M1": {
-                "criterion": f"seq_struct family-split F1 > {m1_threshold:.3f}",
+                "criterion": f"seq_struct family-split F1 > {threshold_text}",
                 "value": ss_f1,
                 "point_threshold_met": m1,
                 "paired_diff": diffs.get("M1"),
@@ -1026,7 +1050,7 @@ def phase3_probes(
                 "verdict": verdicts["M1"],
             },
             "M2": {
-                "criterion": f"seq family-split F1 > {m1_threshold:.3f}",
+                "criterion": f"seq family-split F1 > {threshold_text}",
                 "value": seq_f1,
                 "point_threshold_met": m2,
                 "paired_diff": diffs.get("M2"),

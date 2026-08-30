@@ -4,6 +4,7 @@ import argparse
 import functools
 import json
 import os
+from typing import Iterable
 
 import numpy as np
 
@@ -11,7 +12,9 @@ from esm2_mech.experiments.mechanism.mechanism_delta_family_split import (
     PERMUTATION_FEATURES,
     run as run_family_split,
 )
-from esm2_mech.experiments.mechanism.mechanism_delta_probe import _load_alphamissense_scores
+from esm2_mech.experiments.mechanism.mechanism_delta_probe import (
+    _load_alphamissense_scores,
+)
 from esm2_mech.utils.data import load_variants, validate_embedding_variant_identity
 from esm2_mech.utils.io import write_result_json
 from esm2_mech.utils.seed_aggregation import (
@@ -72,12 +75,8 @@ def summarize_split_gap(
         status = block_seed_status(family_result)
         if status == SEED_STATUS_SUCCESS and point_difference is None:
             status = SEED_STATUS_UNSCORABLE
-        gap_records.append(
-            make_seed_record(seed, point_difference, status=status)
-        )
-    difference = aggregate_seed_values(
-        requested_seeds, gap_records
-    )
+        gap_records.append(make_seed_record(seed, point_difference, status=status))
+    difference = aggregate_seed_values(requested_seeds, gap_records)
     return {
         "feature": feature,
         "gene_minus_family_seed_aggregate": difference.to_dict(),
@@ -125,25 +124,25 @@ def mechanism_null_assessment(family_chance_floor: float) -> dict:
 
 def aggregate_permutation_results(
     seed_results: list[tuple[int, str, dict]],
+    requested_seeds: Iterable[int],
 ) -> dict[str, dict]:
     """Collect the permutation distribution across seeds.
 
     The ordinary across-seed metric aggregator only reads flat ``*_mean`` values,
     so nested permutation results need an explicit path. A seed-vote decision
-    is emitted only when all five seeds have a finite p-value; incomplete results
-    remain visible and the decision is ``None`` rather than being treated as a
-    negative result.
+    is emitted only when every requested seed has a finite p-value; incomplete
+    results remain visible and the decision is ``None`` rather than being treated
+    as a negative result. The requested seeds come from the entry point, so a run
+    of fewer or more seeds votes on the seeds it actually asked for.
     """
     summaries = {}
-    requested_seeds = tuple(range(N_SEEDS))
+    requested_seeds = tuple(requested_seeds)
     for feature in PERMUTATION_FEATURES:
         per_seed = []
         vote_records = []
         for seed, filename, result in seed_results:
             permutation = (
-                result.get("family_split", {})
-                .get(feature, {})
-                .get("permutation")
+                result.get("family_split", {}).get(feature, {}).get("permutation")
             )
             p_value = None if permutation is None else permutation.get("p_value")
             vote_records.append(make_seed_record(seed, p_value))
@@ -166,7 +165,7 @@ def aggregate_permutation_results(
                 row["seed"] for row in per_seed if row.get("resolution_limited") is True
             ],
             "significance_threshold": PERMUTATION_SIGNIFICANCE_THRESHOLD,
-            "required_seed_count": N_SEEDS,
+            "required_seed_count": len(requested_seeds),
             "required_significant_seed_count": PERMUTATION_MIN_SIGNIFICANT_SEEDS,
             "permutation_rule_evaluable": vote.available,
             "meets_permutation_seed_vote_rule": (
@@ -184,12 +183,10 @@ def print_permutation_summary(summary: dict[str, dict]) -> None:
         if vote["state"] == "available":
             count = vote["payload"]["n_supporting_seeds"]
             verdict = (
-                "criterion met"
-                if vote["payload"]["decision"]
-                else "criterion not met"
+                "criterion met" if vote["payload"]["decision"] else "criterion not met"
             )
             print(
-                f"  {feature}: {count}/{N_SEEDS} p-values below "
+                f"  {feature}: {count}/{len(vote['requested_seeds'])} p-values below "
                 f"{PERMUTATION_SIGNIFICANCE_THRESHOLD} ({verdict}); "
                 f"resolution-limited seeds "
                 f"{summary[feature]['resolution_limited_seeds']}"
@@ -237,7 +234,10 @@ def load_data() -> dict:
     labels_4class = np.array([v["mechanism"] for v in valid_variants])
     genes_arr = np.array([v["gene"] for v in valid_variants])
     foldx_ddg = np.array(
-        [v["foldx_ddg"] if v["foldx_ddg"] is not None else np.nan for v in valid_variants]
+        [
+            v["foldx_ddg"] if v["foldx_ddg"] is not None else np.nan
+            for v in valid_variants
+        ]
     )
     aa_wt_list = [v["aa_wt"] for v in valid_variants]
     aa_mut_list = [v["aa_mut"] for v in valid_variants]
@@ -264,17 +264,30 @@ def load_data() -> dict:
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--seeds", type=seed_count, default=N_SEEDS,
+        "--seeds",
+        type=seed_count,
+        default=N_SEEDS,
         help="number of seeds to run; runs 0..seeds-1 (>=1)",
     )
-    parser.add_argument("--no_ci", action="store_true", help="skip cluster-bootstrap CIs")
+    parser.add_argument(
+        "--no_ci", action="store_true", help="skip cluster-bootstrap CIs"
+    )
     parser.add_argument("--n_boot", type=int, default=BOOTSTRAP_N_RESAMPLES)
     parser.add_argument(
-        "--n_permutations", type=int, default=0,
+        "--n_permutations",
+        type=int,
+        default=0,
         help="label-permutation reps for headline features (0 = skip; slow, refits per rep)",
     )
     args = parser.parse_args()
     requested_seeds = range(args.seeds)
+    # The vote needs enough requested seeds to be satisfiable at all. Refuse here
+    # rather than after the permutation refits have already run.
+    if args.n_permutations > 0 and args.seeds < PERMUTATION_MIN_SIGNIFICANT_SEEDS:
+        parser.error(
+            f"--n_permutations needs at least {PERMUTATION_MIN_SIGNIFICANT_SEEDS} "
+            f"seeds, because the vote requires that many to agree; got {args.seeds}"
+        )
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -284,8 +297,11 @@ def main():
     for seed in range(args.seeds):
         print(f"\n--- Seed {seed} ---")
         run_family_split(
-            data=data, out_dir=str(OUT_DIR), seed=seed,
-            compute_ci=not args.no_ci, n_boot=args.n_boot,
+            data=data,
+            out_dir=str(OUT_DIR),
+            seed=seed,
+            compute_ci=not args.no_ci,
+            n_boot=args.n_boot,
             n_permutations=args.n_permutations,
         )
 
@@ -305,9 +321,13 @@ def main():
         raise ValueError("seed results lack mechanism analysis parameters")
     for seed, filename, result in seed_results:
         if result.get("input_fingerprints") != input_fingerprints:
-            raise ValueError(f"{filename}: seed {seed} was produced from different inputs")
+            raise ValueError(
+                f"{filename}: seed {seed} was produced from different inputs"
+            )
         if result.get("analysis_parameters") != analysis_parameters:
-            raise ValueError(f"{filename}: seed {seed} used different analysis parameters")
+            raise ValueError(
+                f"{filename}: seed {seed} used different analysis parameters"
+            )
 
     aggregated = aggregate_across_seeds(
         seed_results,
@@ -316,8 +336,9 @@ def main():
     )
     split_gap_summary = summarize_split_gap(seed_results, requested_seeds)
     permutation_summary = (
-        aggregate_permutation_results(seed_results)
-        if args.n_permutations > 0 else None
+        aggregate_permutation_results(seed_results, requested_seeds)
+        if args.n_permutations > 0
+        else None
     )
     aggregate_payload = {
         **aggregate_result_contract(),
@@ -379,10 +400,7 @@ def main():
         split_gap_summary["gene_minus_family_seed_aggregate"]
     )
     if split_gap.available:
-        print(
-            f"\nRow-aligned gene-minus-family macro-F1: "
-            f"{split_gap.value:+.3f}"
-        )
+        print(f"\nRow-aligned gene-minus-family macro-F1: " f"{split_gap.value:+.3f}")
     else:
         print(f"\nRow-aligned split gap is unavailable ({split_gap.message}).")
     if permutation_summary is not None:

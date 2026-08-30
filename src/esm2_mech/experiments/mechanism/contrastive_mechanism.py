@@ -758,7 +758,8 @@ def main():
         return
 
     print("\n=== Aggregating across seeds ===")
-    requested_seeds = range(N_SEEDS)
+    # The seeds this run asked for, not the default count.
+    requested_seeds = seeds
     seed_results = load_seed_files(
         out_dir, CONTRASTIVE_SEED_RESULT_GLOB, expected_seeds=requested_seeds
     )

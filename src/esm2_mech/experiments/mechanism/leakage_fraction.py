@@ -104,13 +104,15 @@ def leakage_fraction_per_feature(
     }
     result["n_excluded_unannotated"] = n_excluded
     result["chance_macro_f1"] = chance
-    if not gene.available or not family.available:
+    if not (gene.available and family.available and drop.available):
         result["leakage_fraction"] = None
         result["note"] = "one or more requested seeds are unscorable"
         return result
     denom = gene.mean - chance
     if denom > MIN_ABOVE_CHANCE:
-        result["leakage_fraction"] = (gene.mean - family.mean) / denom
+        # The numerator is the paired within-seed drop, not a subtraction of two
+        # separately averaged arm means.
+        result["leakage_fraction"] = drop.mean / denom
     else:
         result["leakage_fraction"] = None
         result["note"] = "gene-split score not meaningfully above chance; LF undefined"
@@ -124,7 +126,9 @@ def aligned_majority_chance(
     requested_seeds = tuple(requested_seeds)
     aligned = _align_seed_arms(oof_cache_entries)
     if aligned is None:
-        raise ValueError("cannot compute an aligned chance floor without shared OOF rows")
+        raise ValueError(
+            "cannot compute an aligned chance floor without shared OOF rows"
+        )
     per_seed, _ = aligned
     floor_records = []
     for seed, seed_arms in per_seed.items():
@@ -154,7 +158,9 @@ def aligned_majority_chance(
     return floor.mean
 
 
-def _load_validated_oof_caches(seed_results: list[tuple[int, str, dict]]) -> dict[int, dict]:
+def _load_validated_oof_caches(
+    seed_results: list[tuple[int, str, dict]],
+) -> dict[int, dict]:
     """Load caches that belong to the exact executions producing the seed results."""
     caches = {}
     for seed, _filename, result in seed_results:
@@ -221,7 +227,9 @@ def _align_seed_arms(
         if declared_rows is None:
             declared_rows = family_rows
         elif family_rows != declared_rows:
-            raise ValueError(f"seed cache {seed} has a different family-eligible row set")
+            raise ValueError(
+                f"seed cache {seed} has a different family-eligible row set"
+            )
         per_seed[seed] = (
             {int(row): pos for pos, row in enumerate(gene_arm["row_ids"])},
             {int(row): pos for pos, row in enumerate(family_arm["row_ids"])},
@@ -237,7 +245,9 @@ def _align_seed_arms(
     for seed, (gene_pos, family_pos, gene_arm, family_arm) in per_seed.items():
         missing_gene_rows = sorted(set(declared_rows) - set(gene_pos))
         if missing_gene_rows:
-            raise ValueError(f"seed cache {seed} gene arm misses declared eligible rows")
+            raise ValueError(
+                f"seed cache {seed} gene arm misses declared eligible rows"
+            )
         gene_idx = np.array([gene_pos[row] for row in declared_rows], dtype=int)
         family_idx = np.array([family_pos[row] for row in declared_rows], dtype=int)
         gene_labels = np.asarray(gene_arm["y_true"])[gene_idx]
@@ -258,10 +268,14 @@ def _align_seed_arms(
                 f"seed cache {seed} does not describe the same declared variants"
             )
         aligned[seed] = {
-            "gene": {key: np.asarray(gene_arm[key])[gene_idx] for key in
-                     ("y_true", "pred", "folds")},
-            "family": {key: np.asarray(family_arm[key])[family_idx] for key in
-                       ("y_true", "pred", "folds")},
+            "gene": {
+                key: np.asarray(gene_arm[key])[gene_idx]
+                for key in ("y_true", "pred", "folds")
+            },
+            "family": {
+                key: np.asarray(family_arm[key])[family_idx]
+                for key in ("y_true", "pred", "folds")
+            },
         }
     return aligned, reference_genes
 
@@ -356,9 +370,7 @@ def main(compute_ci: bool = True, n_boot: int = BOOTSTRAP_N_RESAMPLES) -> None:
     seeds = [result for _seed, _filename, result in seed_results]
     naive_result = _measured_chance_result()
     reference_read = read_seed_point_estimate(
-        naive_result["by_strategy"]["most_frequent"]["gene"][
-            "macro_f1_seed_aggregate"
-        ]
+        naive_result["by_strategy"]["most_frequent"]["gene"]["macro_f1_seed_aggregate"]
     )
     if not reference_read.available:
         raise ValueError(f"naive baseline is unavailable: {reference_read.message}")
@@ -371,15 +383,23 @@ def main(compute_ci: bool = True, n_boot: int = BOOTSTRAP_N_RESAMPLES) -> None:
         raise ValueError("seed results lack mechanism analysis parameters")
     for seed_number, seed_result in zip(seed_numbers, seeds):
         if seed_result.get("input_fingerprints") != common_fingerprints:
-            raise ValueError(f"seed {seed_number} was produced from different mechanism inputs")
+            raise ValueError(
+                f"seed {seed_number} was produced from different mechanism inputs"
+            )
         if seed_result.get("analysis_parameters") != common_parameters:
             raise ValueError(f"seed {seed_number} used different mechanism parameters")
     naive_fingerprints = naive_result.get("input_fingerprints")
     for key in ("labeled_variants", "pfam_assignments"):
-        if naive_fingerprints is None or naive_fingerprints.get(key) != common_fingerprints.get(key):
-            raise ValueError(f"naive baseline {key} does not match the probe seed results")
+        if naive_fingerprints is None or naive_fingerprints.get(
+            key
+        ) != common_fingerprints.get(key):
+            raise ValueError(
+                f"naive baseline {key} does not match the probe seed results"
+            )
 
-    feature_sets = [set(seed["gene_split"]) & set(seed["family_split"]) for seed in seeds]
+    feature_sets = [
+        set(seed["gene_split"]) & set(seed["family_split"]) for seed in seeds
+    ]
     if any(feature_set != feature_sets[0] for feature_set in feature_sets[1:]):
         raise ValueError("mechanism seed files do not contain the same feature set")
     features = sorted(feature_sets[0])
@@ -420,32 +440,33 @@ def main(compute_ci: bool = True, n_boot: int = BOOTSTRAP_N_RESAMPLES) -> None:
         "mut_mean_embedding",
         "pfam_assignments",
     ):
-        if (
-            family_fingerprints is None
-            or family_fingerprints.get(key) != common_fingerprints.get(key)
-        ):
+        if family_fingerprints is None or family_fingerprints.get(
+            key
+        ) != common_fingerprints.get(key):
             raise ValueError(
                 f"family clustering {key} does not match the probe seed results"
             )
-    results["within_family_mechanism_agreement"] = (
-        fc["by_view"]["wt_mean"].get("frac_gene_mech_matches_family_majority")
+    results["within_family_mechanism_agreement"] = fc["by_view"]["wt_mean"].get(
+        "frac_gene_mech_matches_family_majority"
     )
     pfam_map = load_pfam_map(PFAM_JSON)
 
-    print(f"n={results['n_variants']} variants, {results['n_genes']} genes, "
-          f"{results['n_families']} families, {results['n_seeds']} seeds")
+    print(
+        f"n={results['n_variants']} variants, {results['n_genes']} genes, "
+        f"{results['n_families']} families, {results['n_seeds']} seeds"
+    )
     print(
         "full-cohort reference chance macro-F1 "
         f"(feature rows are recomputed below) = {reference_chance:.3f}\n"
     )
-    print(f"{'feature':18} {'gene':>6} {'family':>7} {'drop':>6} {'leakage_fraction':>20}")
+    print(
+        f"{'feature':18} {'gene':>6} {'family':>7} {'drop':>6} {'leakage_fraction':>20}"
+    )
 
     for feature in features:
         if not all(feature in cache for cache in oof_caches.values()):
             missing_seeds = [
-                seed
-                for seed, cache in oof_caches.items()
-                if feature not in cache
+                seed for seed, cache in oof_caches.items() if feature not in cache
             ]
             raise ValueError(f"{feature}: OOF cache missing for seeds {missing_seeds}")
         feature_caches = {seed: cache[feature] for seed, cache in oof_caches.items()}
@@ -479,7 +500,11 @@ def main(compute_ci: bool = True, n_boot: int = BOOTSTRAP_N_RESAMPLES) -> None:
                 ci_str += " (includes zero)"
         elif ci:
             ci_str = "  CI suppressed"
-        if not gene_metric.available or not family_metric.available or not drop_metric.available:
+        if (
+            not gene_metric.available
+            or not family_metric.available
+            or not drop_metric.available
+        ):
             print(f"{feature:18} {'unscorable':>41} {lf_str:>20}{ci_str}")
             continue
         print(

@@ -23,6 +23,12 @@ import numpy as np
 import pytest
 
 from esm2_mech.utils.constants import DN, GOF, LOF, MECHANISM_CLASSES
+from esm2_mech.utils.seed_aggregation import (
+    SeedMetricRead,
+    SeedUnavailableReason,
+    seed_result_contract,
+    unavailable_seed_read,
+)
 
 MODULE = "esm2_mech.experiments.esm3.esm3_mechanism"
 
@@ -63,7 +69,14 @@ def phase3(monkeypatch, tmp_path):
 
     variants, genes, pfam_map, delta = _synthetic_dataset()
     monkeypatch.setattr(mod, "load_dataset", lambda: (variants, genes, pfam_map))
-    monkeypatch.setattr(mod, "esm2_family_floor", lambda seeds: (0.3, "test"))
+    monkeypatch.setattr(
+        mod,
+        "esm2_family_floor",
+        lambda seeds: (
+            SeedMetricRead(value=0.3, spread=None, reason=None, message=None),
+            "test",
+        ),
+    )
 
     emb_dir = tmp_path / "emb"
     emb_dir.mkdir()
@@ -242,3 +255,117 @@ def test_logistic_arm_rejects_a_class_incomplete_split_before_fitting():
     )
     assert contract["status"] == "unscorable"
     assert mod._run_logreg_folds(X, labels, splits, contract, seed=0) is None
+
+
+class TestEsm2FloorIsADependencyNotAGate:
+    """The ESM-2 family-split floor comes from a different experiment.
+
+    It sets the M1 and M2 thresholds and nothing else. When it is absent, stale,
+    or unavailable those two gates cannot be adjudicated, but the ESM-3 results
+    and the M3 gate do not depend on it. Reading it is therefore never allowed to
+    raise: the floor is read after the whole ESM-3 analysis has run, so raising
+    would discard a completed run over a missing upstream file.
+    """
+
+    @pytest.fixture
+    def mod(self):
+        import importlib
+
+        return importlib.import_module(MODULE)
+
+    def _pin_reference_dir(self, mod, monkeypatch, tmp_path, files):
+        monkeypatch.setattr(
+            mod,
+            "NONLINEAR_RESULTS_SEED_JSON",
+            str(tmp_path / "nonlinear_results_seed{seed}.json"),
+        )
+        for seed, body in files.items():
+            (tmp_path / f"nonlinear_results_seed{seed}.json").write_text(
+                json.dumps(body)
+            )
+
+    def test_absent_reference_is_unavailable_not_an_exception(
+        self, mod, monkeypatch, tmp_path
+    ):
+        self._pin_reference_dir(mod, monkeypatch, tmp_path, {})
+        read, source = mod.esm2_family_floor([0, 1])
+        assert read.available is False
+        assert read.reason is SeedUnavailableReason.MISSING_SEED
+        assert read.value is None
+        assert source, "the source is still named so the summary can record it"
+
+    def test_reference_written_under_an_earlier_schema_is_unavailable(
+        self, mod, monkeypatch, tmp_path
+    ):
+        stale = {mod.MLP_DELTA_MEAN_FAMILY: {"macro_f1_mean": 0.4, "status": "success"}}
+        self._pin_reference_dir(mod, monkeypatch, tmp_path, {0: stale, 1: stale})
+        read, _source = mod.esm2_family_floor([0, 1])
+        assert read.available is False
+        assert read.reason is SeedUnavailableReason.SCHEMA_MISMATCH
+
+    def test_reference_without_the_metric_is_unavailable(
+        self, mod, monkeypatch, tmp_path
+    ):
+        self._pin_reference_dir(
+            mod, monkeypatch, tmp_path, {0: {"other_probe": {"macro_f1_mean": 0.4}}}
+        )
+        read, _source = mod.esm2_family_floor([0])
+        assert read.available is False
+        assert read.reason is SeedUnavailableReason.MISSING_SEED
+
+    def test_complete_current_schema_reference_is_available(
+        self, mod, monkeypatch, tmp_path
+    ):
+        files = {}
+        for seed, value in ((0, 0.30), (1, 0.40), (2, 0.50)):
+            files[seed] = {
+                **seed_result_contract(seed),
+                mod.MLP_DELTA_MEAN_FAMILY: {
+                    "macro_f1_mean": value,
+                    "status": "success",
+                },
+            }
+        self._pin_reference_dir(mod, monkeypatch, tmp_path, files)
+        read, _source = mod.esm2_family_floor([0, 1, 2])
+        assert read.available is True
+        assert read.value == pytest.approx(0.40)
+
+    def test_unavailable_floor_suppresses_only_m1_and_m2(
+        self, phase3, monkeypatch, tmp_path
+    ):
+        """M3 compares the two ESM-3 arms to each other, so it survives."""
+        mod, _delta = phase3
+        monkeypatch.setattr(
+            mod,
+            "esm2_family_floor",
+            lambda seeds: (
+                unavailable_seed_read(SeedUnavailableReason.MISSING_SEED),
+                "test",
+            ),
+        )
+        aggregate = {
+            "status": "success",
+            "macro_f1_mean": 0.5,
+            "macro_f1_std": 0.0,
+            f"auroc_{GOF}_mean": 0.6,
+            f"auroc_{DN}_mean": 0.6,
+            f"auroc_{LOF}_mean": 0.6,
+            "n_folds": 5,
+        }
+        monkeypatch.setattr(
+            mod,
+            "run_mlp_probe_cv",
+            lambda X, labels, splits, *a, **kw: (
+                (aggregate, None) if kw.get("return_oof") else aggregate
+            ),
+        )
+
+        mod.phase3_probes(seeds=[0])
+
+        summary = _summary(mod)
+        assert summary["m1_threshold"] is None
+        assert summary["esm2_baseline_family_split_f1"] is None
+        # the ESM-3 results themselves were still written
+        assert summary["results"]["seq"]["family_split"]["mlp_f1_seed_aggregate"][
+            "mean"
+        ] == pytest.approx(0.5)

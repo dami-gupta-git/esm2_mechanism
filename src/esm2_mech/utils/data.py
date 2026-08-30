@@ -353,6 +353,12 @@ def subset_data(data: dict, mask: np.ndarray) -> dict:
     value whose length differs raises rather than silently mis-aligning.
     """
     n_full = len(data["valid_variants"])
+    mask = np.asarray(mask)
+    if mask.shape != (n_full,):
+        raise ValueError(
+            f"mask has shape {mask.shape}, expected ({n_full},) — a mask of the "
+            f"wrong length truncates list values instead of raising"
+        )
     subset: dict = {}
     for key, value in data.items():
         if isinstance(value, np.ndarray):

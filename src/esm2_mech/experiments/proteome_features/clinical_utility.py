@@ -816,20 +816,24 @@ def apply_decision_rule(hi3_results: dict) -> str:
         return f"NULL: GOF AUROC within HI=3 = {auroc:.3f}{ci_str} < 0.55"
 
 
-def main(out_dir: Path) -> None:
+def main(
+    out_dir: Path,
+    seed: int,
+    df: pd.DataFrame,
+    X_all: np.ndarray,
+    feature_names: list[str],
+    le: LabelEncoder,
+) -> None:
+    """Descriptive gene-level report: probability tables, plots, decision rule.
+
+    Takes the data the caller already loaded, and the seed it runs at, so this
+    report cannot silently describe a different seed from the one requested.
+    """
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    print("Loading data...")
-    gene_list = pd.read_csv(MERGED_GENE_LIST, sep="\t")
-    feat_df = pd.read_csv(GENE_FEATURES_TSV, sep="\t")
-    X_all = np.load(PROTEOME_FEATURES)  # (2424, 37)
-
-    with open(PROTEOME_COLS) as f:
-        col_meta = json.load(f)
-    feature_names = col_meta["numerical_columns"]
-
-    df = gene_list.merge(feat_df, on="gene", how="left")
-    df["mechanism_3class"] = df["mechanism"].map(MECH_MAP)
+    global RANDOM_STATE
+    RANDOM_STATE = seed
+    print(f"Descriptive report at seed {seed}")
 
     labeled = df[df["mechanism_3class"].notna()].copy()
     print(
@@ -841,8 +845,6 @@ def main(out_dir: Path) -> None:
     labeled_idx = labeled.index.values
     X_labeled = X_all[labeled_idx]
 
-    le = LabelEncoder()
-    le.fit(CLASSES)
     y = le.transform(labeled["mechanism_3class"].values)
 
     families = labeled["pfam_family"].values
@@ -1071,6 +1073,11 @@ if __name__ == "__main__":
     parser.add_argument(
         "--seed", type=int, default=None, help="Single seed (default: all 5 seeds 0-4)"
     )
+    parser.add_argument(
+        "--report",
+        action="store_true",
+        help="Also write the descriptive gene-level report, at the first requested seed",
+    )
     args = parser.parse_args()
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -1093,79 +1100,79 @@ if __name__ == "__main__":
 
     seeds = [args.seed] if args.seed is not None else list(range(N_SEEDS))
 
-    if len(seeds) == 1:
-        # Single-seed path: run full analysis with plots
-        main(OUT_DIR)
-    else:
-        # Multi-seed path: run HI=3 metrics per seed, save per-seed JSONs, aggregate
-        seed_results = []
-        for seed in seeds:
-            print(f"\n{'='*50}\nSEED {seed}\n{'='*50}")
-            sr = run_seed(seed, df, X_all, feature_names, le, OUT_DIR)
-            seed_results.append(sr)
-            sr_path = OUT_DIR / f"hi3_family_split_seed{seed}.json"
-            write_result_json(sr_path, sr, seeds=[seed], indent=2)
-            print(f"  Saved {sr_path.name}")
-            print(
-                f"  GOF AUROC LR_FULL: {sr['H1_GOF_vs_LOF_AUROC_LR_FULL']:.3f}  "
-                f"DN AUROC LR_FULL: {sr['H2_DN_vs_LOF_AUROC_LR_FULL']:.3f}"
-            )
+    if args.report:
+        main(OUT_DIR, seeds[0], df, X_all, feature_names, le)
 
-        metric_keys = {
-            "H1_GOF_AUROC_LR_FULL": "H1_GOF_vs_LOF_AUROC_LR_FULL",
-            "H1_GOF_AUROC_LR_NOMISS": "H1_GOF_vs_LOF_AUROC_LR_NOMISS",
-            "H2_DN_AUROC_LR_FULL": "H2_DN_vs_LOF_AUROC_LR_FULL",
-            "H2_DN_AUROC_LR_NOMISS": "H2_DN_vs_LOF_AUROC_LR_NOMISS",
-            "H3_missingness_delta_GOF": "H3_missingness_delta_GOF",
-            "H3_missingness_delta_DN": "H3_missingness_delta_DN",
-        }
-        aggregates = {
-            output: aggregate_seed_results(
-                seeds,
-                seed_results,
-                lambda result, key=source: result.get(key),
-            ).to_dict()
-            for output, source in metric_keys.items()
-        }
-        baseline_aggregates = {
-            feature: aggregate_seed_results(
-                seeds,
-                seed_results,
-                lambda result, name=feature: result["baselines"].get(name),
-            ).to_dict()
-            for feature in ["mis_z", "paralog_count", "PPI_degree", "pLI", "LOEUF"]
-        }
+    # Every requested seed runs the same path, so one seed goes through the
+    # shared seed contract exactly as five do.
+    seed_results = []
+    for seed in seeds:
+        print(f"\n{'='*50}\nSEED {seed}\n{'='*50}")
+        sr = run_seed(seed, df, X_all, feature_names, le, OUT_DIR)
+        seed_results.append(sr)
+        sr_path = OUT_DIR / f"hi3_family_split_seed{seed}.json"
+        write_result_json(sr_path, sr, seeds=[seed], indent=2)
+        print(f"  Saved {sr_path.name}")
+        print(
+            f"  GOF AUROC LR_FULL: {sr['H1_GOF_vs_LOF_AUROC_LR_FULL']:.3f}  "
+            f"DN AUROC LR_FULL: {sr['H2_DN_vs_LOF_AUROC_LR_FULL']:.3f}"
+        )
 
-        summary = {
-            **aggregate_result_contract(),
-            "seeds": seeds,
-            "metric_seed_aggregates": aggregates,
-            "baseline_seed_aggregates": baseline_aggregates,
-            "per_seed": seed_results,
-        }
+    metric_keys = {
+        "H1_GOF_AUROC_LR_FULL": "H1_GOF_vs_LOF_AUROC_LR_FULL",
+        "H1_GOF_AUROC_LR_NOMISS": "H1_GOF_vs_LOF_AUROC_LR_NOMISS",
+        "H2_DN_AUROC_LR_FULL": "H2_DN_vs_LOF_AUROC_LR_FULL",
+        "H2_DN_AUROC_LR_NOMISS": "H2_DN_vs_LOF_AUROC_LR_NOMISS",
+        "H3_missingness_delta_GOF": "H3_missingness_delta_GOF",
+        "H3_missingness_delta_DN": "H3_missingness_delta_DN",
+    }
+    aggregates = {
+        output: aggregate_seed_results(
+            seeds,
+            seed_results,
+            lambda result, key=source: result.get(key),
+        ).to_dict()
+        for output, source in metric_keys.items()
+    }
+    baseline_aggregates = {
+        feature: aggregate_seed_results(
+            seeds,
+            seed_results,
+            lambda result, name=feature: result["baselines"].get(name),
+        ).to_dict()
+        for feature in ["mis_z", "paralog_count", "PPI_degree", "pLI", "LOEUF"]
+    }
 
-        summary_path = OUT_DIR / "hi3_family_split_summary.json"
-        write_result_json(summary_path, summary, seeds=seeds, indent=2)
+    summary = {
+        **aggregate_result_contract(),
+        "seeds": seeds,
+        "metric_seed_aggregates": aggregates,
+        "baseline_seed_aggregates": baseline_aggregates,
+        "per_seed": seed_results,
+    }
 
-        print(f"\n{'='*60}")
-        print("SUMMARY across seeds")
-        print(f"{'='*60}")
-        def metric_text(name, *, signed=False):
-            metric = read_seed_point_estimate(aggregates[name])
-            if not metric.available:
-                return "Unavailable"
-            value = f"{metric.value:+.3f}" if signed else f"{metric.value:.3f}"
-            spread = "N/A" if metric.spread is None else f"{metric.spread:.3f}"
-            return f"{value} ± {spread}"
+    summary_path = OUT_DIR / "hi3_family_split_summary.json"
+    write_result_json(summary_path, summary, seeds=seeds, indent=2)
 
-        print(f"  H1 GOF AUROC LR FULL:    {metric_text('H1_GOF_AUROC_LR_FULL')}")
-        print(f"  H1 GOF AUROC LR NO-MISS: {metric_text('H1_GOF_AUROC_LR_NOMISS')}")
-        print(f"  H2 DN  AUROC LR FULL:    {metric_text('H2_DN_AUROC_LR_FULL')}")
-        print(f"  H2 DN  AUROC LR NO-MISS: {metric_text('H2_DN_AUROC_LR_NOMISS')}")
-        print(f"  H3 missingness delta GOF: {metric_text('H3_missingness_delta_GOF', signed=True)}")
-        print(f"\n  Baselines (mean across seeds):")
-        for feature, aggregate in baseline_aggregates.items():
-            metric = read_seed_point_estimate(aggregate)
-            value = "Unavailable" if not metric.available else f"{metric.value:.3f}"
-            print(f"    {feature:20s}: {value}")
-        print(f"\nSaved {summary_path.name}")
+    print(f"\n{'='*60}")
+    print("SUMMARY across seeds")
+    print(f"{'='*60}")
+    def metric_text(name, *, signed=False):
+        metric = read_seed_point_estimate(aggregates[name])
+        if not metric.available:
+            return "Unavailable"
+        value = f"{metric.value:+.3f}" if signed else f"{metric.value:.3f}"
+        spread = "N/A" if metric.spread is None else f"{metric.spread:.3f}"
+        return f"{value} ± {spread}"
+
+    print(f"  H1 GOF AUROC LR FULL:    {metric_text('H1_GOF_AUROC_LR_FULL')}")
+    print(f"  H1 GOF AUROC LR NO-MISS: {metric_text('H1_GOF_AUROC_LR_NOMISS')}")
+    print(f"  H2 DN  AUROC LR FULL:    {metric_text('H2_DN_AUROC_LR_FULL')}")
+    print(f"  H2 DN  AUROC LR NO-MISS: {metric_text('H2_DN_AUROC_LR_NOMISS')}")
+    print(f"  H3 missingness delta GOF: {metric_text('H3_missingness_delta_GOF', signed=True)}")
+    print(f"\n  Baselines (mean across seeds):")
+    for feature, aggregate in baseline_aggregates.items():
+        metric = read_seed_point_estimate(aggregate)
+        value = "Unavailable" if not metric.available else f"{metric.value:.3f}"
+        print(f"    {feature:20s}: {value}")
+    print(f"\nSaved {summary_path.name}")

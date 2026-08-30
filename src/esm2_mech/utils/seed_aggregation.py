@@ -91,9 +91,17 @@ _STORED_UNAVAILABLE_REASONS = frozenset(
     }
 )
 
+
 def _is_int(value) -> bool:
     """True for a real integer. A boolean is not an identifier or a count."""
     return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _is_finite_number(value) -> bool:
+    """True for a real finite number. A boolean is not a scientific value."""
+    return (
+        not isinstance(value, bool) and isinstance(value, Real) and math.isfinite(value)
+    )
 
 
 def _check_seed(seed) -> None:
@@ -171,7 +179,10 @@ def _seed_defects(
         (SEED_STATUS_UNSCORABLE, SeedUnavailableReason.UNSCORABLE_SEED),
     ):
         defects.append(
-            (reason, [seed for seed in requested if statuses_by_seed.get(seed) == status])
+            (
+                reason,
+                [seed for seed in requested if statuses_by_seed.get(seed) == status],
+            )
         )
     defects.append((SeedUnavailableReason.INVALID_VALUE, list(invalid_value_seeds)))
 
@@ -207,6 +218,20 @@ class SeedPayloadRecord:
     payload: Any
 
 
+def _envelope_dict(aggregate) -> dict:
+    """The seed-accounting fields every stored aggregate carries."""
+    return {
+        "schema_version": aggregate.schema_version,
+        "state": aggregate.state,
+        "reason": None if aggregate.reason is None else aggregate.reason.value,
+        "requested_seeds": list(aggregate.requested_seeds),
+        "contributing_seeds": list(aggregate.contributing_seeds),
+        "affected_seeds": list(aggregate.affected_seeds),
+        "sampling_unit": aggregate.sampling_unit,
+        "message": aggregate.message,
+    }
+
+
 @dataclass(frozen=True)
 class SeedPayloadAggregate:
     state: str
@@ -224,17 +249,7 @@ class SeedPayloadAggregate:
         return self.state == "available"
 
     def to_dict(self) -> dict:
-        return {
-            "schema_version": self.schema_version,
-            "state": self.state,
-            "reason": None if self.reason is None else self.reason.value,
-            "requested_seeds": list(self.requested_seeds),
-            "contributing_seeds": list(self.contributing_seeds),
-            "affected_seeds": list(self.affected_seeds),
-            "payload": self.payload,
-            "sampling_unit": self.sampling_unit,
-            "message": self.message,
-        }
+        return {**_envelope_dict(self), "payload": self.payload}
 
 
 @dataclass(frozen=True)
@@ -255,18 +270,7 @@ class SeedAggregate:
         return self.state == "available"
 
     def to_dict(self) -> dict:
-        return {
-            "schema_version": self.schema_version,
-            "state": self.state,
-            "reason": None if self.reason is None else self.reason.value,
-            "requested_seeds": list(self.requested_seeds),
-            "contributing_seeds": list(self.contributing_seeds),
-            "affected_seeds": list(self.affected_seeds),
-            "mean": self.mean,
-            "seed_std": self.spread,
-            "sampling_unit": self.sampling_unit,
-            "message": self.message,
-        }
+        return {**_envelope_dict(self), "mean": self.mean, "seed_std": self.spread}
 
 
 def seed_count(value: str) -> int:
@@ -306,8 +310,7 @@ def seed_result_contract(seed: int, *, status: str = SEED_STATUS_SUCCESS) -> dic
     aggregator reads what the run declared rather than inferring a seed's fate
     from whichever inner block it happens to look at first.
     """
-    if isinstance(seed, bool) or not isinstance(seed, int):
-        raise TypeError("seed identifiers must be integers")
+    _check_seed(seed)
     if status not in SEED_STATUSES:
         raise ValueError(f"unsupported seed status {status!r}")
     return {
@@ -405,6 +408,23 @@ def _payload_available(
         sampling_unit=SEED_SAMPLING_UNIT,
         message=None,
     )
+
+
+def _payload_defect(
+    requested: tuple[int, ...],
+    defects: Mapping[SeedUnavailableReason, list[int]],
+) -> SeedPayloadAggregate | None:
+    """Refuse the aggregate when any requested seed's payload is defective.
+
+    The reason is the first defect in the caller's declared order; the affected
+    list names every seed at fault.
+    """
+    affected = sorted({seed for seeds in defects.values() for seed in seeds})
+    if not affected:
+        return None
+    reason = next(reason for reason, seeds in defects.items() if seeds)
+    contributing = [seed for seed in requested if seed not in affected]
+    return _payload_unavailable(reason, requested, contributing, affected)
 
 
 def _validate_payload_seed_contract(
@@ -513,7 +533,7 @@ def aggregate_seed_results(
     records = []
     for result in results:
         seed = result.get("seed")
-        if isinstance(seed, bool) or not isinstance(seed, int):
+        if not _is_int(seed):
             raise ValueError("a per-seed result has no integer seed identifier")
         root_status = read_seed_result_contract(seed, f"seed {seed}", result)
         metric_status = root_status
@@ -541,8 +561,7 @@ def aggregate_seed_vote(
         raise ValueError("comparison must be 'less_than' or 'greater_than'")
     requested = tuple(requested_seeds)
     if (
-        isinstance(minimum_supporting_seeds, bool)
-        or not isinstance(minimum_supporting_seeds, int)
+        not _is_int(minimum_supporting_seeds)
         or minimum_supporting_seeds < 1
         or minimum_supporting_seeds > len(requested)
     ):
@@ -662,11 +681,9 @@ def aggregate_seed_confusion_matrices(
         raw.append(counts)
         normalized.append(counts / row_totals)
 
-    affected = sorted({seed for seeds in defects.values() for seed in seeds})
-    if affected:
-        reason = next(reason for reason, seeds in defects.items() if seeds)
-        contributing = [seed for seed in requested if seed not in affected]
-        return _payload_unavailable(reason, requested, contributing, affected)
+    defect = _payload_defect(requested, defects)
+    if defect is not None:
+        return defect
 
     return _payload_available(
         requested,
@@ -718,7 +735,7 @@ def aggregate_seed_oof(
         or len(set(classes)) != len(classes)
         or not set(labels.tolist()).issubset(set(classes))
         or not fold_ids
-        or any(isinstance(fold, bool) or not isinstance(fold, int) for fold in fold_ids)
+        or not all(_is_int(fold) for fold in fold_ids)
         or len(set(fold_ids)) != len(fold_ids)
     ):
         raise ValueError(
@@ -783,11 +800,9 @@ def aggregate_seed_oof(
             "folds": folds[order],
         }
 
-    affected = sorted({seed for seeds in defects.values() for seed in seeds})
-    if affected:
-        reason = next(reason for reason, seeds in defects.items() if seeds)
-        contributing = [seed for seed in requested if seed not in affected]
-        return _payload_unavailable(reason, requested, contributing, affected)
+    defect = _payload_defect(requested, defects)
+    if defect is not None:
+        return defect
 
     return _payload_available(
         requested,
@@ -802,7 +817,13 @@ def aggregate_seed_oof(
     )
 
 
-def _read_failure(reason: SeedUnavailableReason) -> SeedMetricRead:
+def unavailable_seed_read(reason: SeedUnavailableReason) -> SeedMetricRead:
+    """An unavailable metric read, for a reference this module could not reach.
+
+    Public so a producer whose upstream file has not been written yet reports the
+    absence through the shared read type instead of building one of these states
+    itself.
+    """
     return SeedMetricRead(
         value=None,
         spread=None,
@@ -819,11 +840,7 @@ def _aggregate_fields(
     if not isinstance(aggregate, Mapping):
         return {}, SeedUnavailableReason.INVALID_AGGREGATE
     schema_version = aggregate.get("schema_version")
-    if (
-        isinstance(schema_version, bool)
-        or not isinstance(schema_version, int)
-        or schema_version != SEED_AGGREGATION_SCHEMA_VERSION
-    ):
+    if not _is_int(schema_version) or schema_version != SEED_AGGREGATION_SCHEMA_VERSION:
         return aggregate, SeedUnavailableReason.SCHEMA_MISMATCH
     return aggregate, None
 
@@ -831,7 +848,7 @@ def _aggregate_fields(
 def _seed_id_list(value) -> list[int] | None:
     if not isinstance(value, (list, tuple)):
         return None
-    if any(isinstance(seed, bool) or not isinstance(seed, int) for seed in value):
+    if not all(_is_int(seed) for seed in value):
         return None
     if len(set(value)) != len(value):
         return None
@@ -846,24 +863,24 @@ def read_seed_point_estimate(
     """Read a complete current-schema seed mean without inventing a fallback."""
     fields, failure = _aggregate_fields(aggregate)
     if failure is not None:
-        return _read_failure(failure)
+        return unavailable_seed_read(failure)
     if fields.get("sampling_unit") != expected_sampling_unit:
-        return _read_failure(SeedUnavailableReason.SAMPLING_UNIT_MISMATCH)
+        return unavailable_seed_read(SeedUnavailableReason.SAMPLING_UNIT_MISMATCH)
 
     requested = _seed_id_list(fields.get("requested_seeds"))
     contributing = _seed_id_list(fields.get("contributing_seeds"))
     affected = _seed_id_list(fields.get("affected_seeds"))
     if requested is None or contributing is None or affected is None:
-        return _read_failure(SeedUnavailableReason.INVALID_AGGREGATE)
+        return unavailable_seed_read(SeedUnavailableReason.INVALID_AGGREGATE)
 
     state = fields.get("state")
     if state == "unavailable":
         try:
             reason = SeedUnavailableReason(fields.get("reason"))
         except (TypeError, ValueError):
-            return _read_failure(SeedUnavailableReason.INVALID_AGGREGATE)
+            return unavailable_seed_read(SeedUnavailableReason.INVALID_AGGREGATE)
         if reason not in _STORED_UNAVAILABLE_REASONS or fields.get("mean") is not None:
-            return _read_failure(SeedUnavailableReason.INVALID_AGGREGATE)
+            return unavailable_seed_read(SeedUnavailableReason.INVALID_AGGREGATE)
         message = fields.get("message")
         return SeedMetricRead(
             value=None,
@@ -872,7 +889,7 @@ def read_seed_point_estimate(
             message=message if isinstance(message, str) else _REASON_MESSAGES[reason],
         )
     if state != "available":
-        return _read_failure(SeedUnavailableReason.INVALID_AGGREGATE)
+        return unavailable_seed_read(SeedUnavailableReason.INVALID_AGGREGATE)
 
     if (
         not requested
@@ -881,22 +898,18 @@ def read_seed_point_estimate(
         or fields.get("reason") is not None
         or fields.get("message") is not None
     ):
-        return _read_failure(SeedUnavailableReason.INVALID_AGGREGATE)
+        return unavailable_seed_read(SeedUnavailableReason.INVALID_AGGREGATE)
 
     mean = fields.get("mean")
-    if isinstance(mean, bool) or not isinstance(mean, Real) or not math.isfinite(mean):
-        return _read_failure(SeedUnavailableReason.INVALID_AGGREGATE)
+    if not _is_finite_number(mean):
+        return unavailable_seed_read(SeedUnavailableReason.INVALID_AGGREGATE)
+    # Fewer than three requested seeds carries no spread; three or more must.
     spread = fields.get("seed_std")
     if len(requested) < 3:
         if spread is not None:
-            return _read_failure(SeedUnavailableReason.INVALID_AGGREGATE)
-    elif (
-        isinstance(spread, bool)
-        or not isinstance(spread, Real)
-        or not math.isfinite(spread)
-        or spread < 0
-    ):
-        return _read_failure(SeedUnavailableReason.INVALID_AGGREGATE)
+            return unavailable_seed_read(SeedUnavailableReason.INVALID_AGGREGATE)
+    elif not _is_finite_number(spread) or spread < 0:
+        return unavailable_seed_read(SeedUnavailableReason.INVALID_AGGREGATE)
     return SeedMetricRead(
         value=float(mean),
         spread=None if spread is None else float(spread),
@@ -914,12 +927,9 @@ def read_seed_inference(
     result = read_seed_point_estimate(
         aggregate, expected_sampling_unit=expected_sampling_unit
     )
-    if not result.available:
-        return result
-    fields, _failure = _aggregate_fields(aggregate)
-    requested = fields["requested_seeds"]
-    if len(requested) < 3 or result.spread is None:
-        return _read_failure(SeedUnavailableReason.INSUFFICIENT_SEEDS)
+    # The point reader already ties a missing spread to fewer than three seeds.
+    if result.available and result.spread is None:
+        return unavailable_seed_read(SeedUnavailableReason.INSUFFICIENT_SEEDS)
     return result
 
 
@@ -951,10 +961,7 @@ def load_seed_files(
     otherwise be silently aggregated under the wrong seed number.
     """
     expected_sequence = tuple(expected_seeds)
-    if any(
-        isinstance(seed, bool) or not isinstance(seed, int)
-        for seed in expected_sequence
-    ):
+    if not all(_is_int(seed) for seed in expected_sequence):
         raise TypeError("expected seed identifiers must be integers")
     if len(set(expected_sequence)) != len(expected_sequence):
         raise ValueError("expected_seeds contains duplicate identifiers")
@@ -992,7 +999,7 @@ def load_seed_files(
         recorded_seed = result.get("seed")
         if recorded_seed is None:
             raise ValueError(f"{path}: seed result does not record its seed identifier")
-        if isinstance(recorded_seed, bool) or not isinstance(recorded_seed, int):
+        if not _is_int(recorded_seed):
             raise ValueError(f"{path}: recorded seed identifier must be an integer")
         if recorded_seed != seed:
             raise ValueError(
