@@ -39,10 +39,12 @@ def build_gene_uniprot_map(variants: list[dict]) -> dict[str, str]:
     return g2u
 
 
-def build_lookup(
-    variants: list[dict], g2u: dict[str, str]
-) -> tuple[dict, list, list]:
-    """Build (uniprot, protein_variant) -> vkey index for AM streaming."""
+def build_lookup(variants: list[dict], g2u: dict[str, str]) -> dict:
+    """Build (uniprot, protein_variant) -> vkey index for AM streaming.
+
+    Every dropped variant is reported here with its total, so each caller does
+    not have to remember to report the skip buckets itself.
+    """
     index: dict[tuple[str, str], str] = {}
     skipped_no_uniprot = []
     skipped_key_collision = []
@@ -58,12 +60,19 @@ def build_lookup(
             skipped_key_collision.append(v)
             continue
         index[key] = vkey
+    print(f"variants with UniProt mapping: {len(index):,} / {len(variants):,}")
+    if skipped_no_uniprot:
+        print(
+            f"  {len(skipped_no_uniprot):,} variants dropped with no UniProt mapping. "
+            f"First 5 genes: {[v['gene'] for v in skipped_no_uniprot[:5]]}"
+        )
     if skipped_key_collision:
         print(
-            f"  WARNING: {len(skipped_key_collision)} variants dropped due to duplicate "
-            f"(uniprot, protein_variant) key. First 5: {[v['gene'] for v in skipped_key_collision[:5]]}"
+            f"  {len(skipped_key_collision):,} variants dropped on a duplicate "
+            f"(uniprot, protein_variant) key. "
+            f"First 5 genes: {[v['gene'] for v in skipped_key_collision[:5]]}"
         )
-    return index, skipped_no_uniprot, skipped_key_collision
+    return index
 
 
 def download_am(url: str, dest: Path) -> None:

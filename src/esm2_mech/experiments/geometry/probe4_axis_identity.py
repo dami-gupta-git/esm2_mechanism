@@ -22,6 +22,7 @@ from esm2_mech.utils.seed_aggregation import (
     read_seed_point_estimate,
     seed_count,
 )
+from esm2_mech.utils.metrics import within_seed_summary
 from esm2_mech.utils.probes import auroc_for_clf
 from esm2_mech.utils.splits import family_split_cv
 from esm2_mech.experiments.geometry.axis_analysis import (
@@ -199,20 +200,7 @@ def run(n_seeds=N_SEEDS):
                 sc.transform(X[tr]), y[tr]
             )
             out.append(auroc_for_clf(clf, sc.transform(X[te]), y[te]))
-        values = np.asarray(out, dtype=float)
-        if len(values) != N_FOLDS or not np.isfinite(values).all():
-            return {
-                "mean": None,
-                "fold_std": None,
-                "n": int(len(values)),
-                "sampling_unit": "held_out_fold",
-            }
-        return {
-            "mean": float(np.mean(values)),
-            "fold_std": float(np.std(values)),
-            "n": int(len(values)),
-            "sampling_unit": "held_out_fold",
-        }
+        return within_seed_summary(out, N_FOLDS, "fold_std", "held_out_fold")
 
     requested_seeds = tuple(range(n_seeds))
     per_seed = {}
@@ -236,15 +224,9 @@ def run(n_seeds=N_SEEDS):
     context_free = aggregate("context_free")
     esm2_delta = aggregate("esm2_delta")
     combined = aggregate("esm2_plus_biochem")
-    print(
-        f"  context-free biochem only : {_show_seed_summary(context_free)}"
-    )
-    print(
-        f"  ESM-2 delta only          : {_show_seed_summary(esm2_delta)}"
-    )
-    print(
-        f"  ESM-2 + biochem           : {_show_seed_summary(combined)}"
-    )
+    print(f"  context-free biochem only : {_show_seed_summary(context_free)}")
+    print(f"  ESM-2 delta only          : {_show_seed_summary(esm2_delta)}")
+    print(f"  ESM-2 + biochem           : {_show_seed_summary(combined)}")
 
     result = {
         **aggregate_result_contract(),
@@ -284,7 +266,9 @@ def main():
     import argparse
 
     ap = argparse.ArgumentParser()
-    ap.add_argument("--seeds", type=seed_count, default=N_SEEDS, help="number of seeds (>=1)")
+    ap.add_argument(
+        "--seeds", type=seed_count, default=N_SEEDS, help="number of seeds (>=1)"
+    )
     args = ap.parse_args()
     run(n_seeds=args.seeds)
 

@@ -43,10 +43,7 @@ def main(am_file: Optional[Path] = None, no_download: bool = False, out: Optiona
         variants = json.load(f)
     print(f"Loaded {len(variants):,} pathogenicity variants")
 
-    index, skipped_no_uniprot, skipped_key_collision = build_lookup(variants, g2u)
-    print(f"variants with UniProt mapping: {len(index):,}")
-    if skipped_no_uniprot:
-        print(f"  variants missing UniProt mapping (first 5): {[s['gene'] for s in skipped_no_uniprot[:5]]}")
+    index = build_lookup(variants, g2u)
 
     if not am_file.exists():
         if no_download:

@@ -23,6 +23,7 @@ from esm2_mech.utils.seed_aggregation import (
     read_seed_point_estimate,
     seed_count,
 )
+from esm2_mech.utils.metrics import within_seed_summary
 from esm2_mech.utils.probes import auroc_for_clf
 from esm2_mech.utils.data import embedding_fingerprint
 from esm2_mech.experiments.geometry.data import (
@@ -109,30 +110,14 @@ def transfer_test(delta, y, groups, kind="linear", n_partitions=10, seed=0, min_
             clf = _make_clf(kind, seed).fit(Xtr, y[tr])
             group_cv.append(auroc_for_clf(clf, Xte, y[te]))
 
-    def summarize(values, expected_count, spread_name, sampling_unit):
-        numeric = np.asarray(values, dtype=float)
-        if len(numeric) != expected_count or not np.isfinite(numeric).all():
-            return {
-                "mean": None,
-                spread_name: None,
-                "n": int(len(numeric)),
-                "sampling_unit": sampling_unit,
-            }
-        return {
-            "mean": float(np.mean(numeric)),
-            spread_name: float(np.std(numeric)),
-            "n": int(len(numeric)),
-            "sampling_unit": sampling_unit,
-        }
-
     return {
-        "transfer_auroc": summarize(
+        "transfer_auroc": within_seed_summary(
             transfer,
             2 * n_partitions,
             "partition_direction_std",
             "random_family_partition_direction",
         ),
-        "group_cv_auroc": summarize(
+        "group_cv_auroc": within_seed_summary(
             group_cv, n_splits, "fold_std", "held_out_fold"
         ),
     }
@@ -267,7 +252,9 @@ def main():
     import argparse
 
     ap = argparse.ArgumentParser()
-    ap.add_argument("--seeds", type=seed_count, default=N_SEEDS, help="number of seeds (>=1)")
+    ap.add_argument(
+        "--seeds", type=seed_count, default=N_SEEDS, help="number of seeds (>=1)"
+    )
     ap.add_argument(
         "--stability-dataset",
         choices=list(STABILITY_DATASETS),

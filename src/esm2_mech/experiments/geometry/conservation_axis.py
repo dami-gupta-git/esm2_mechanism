@@ -200,8 +200,7 @@ def extract_conservation(variants, seqs, batch_size=64, ckpt_every=2000):
             and meta.get("fingerprint") == identity["fingerprint"]
             and meta.get("conservation_array_fingerprint")
             == embedding_fingerprint(cached)
-            and meta.get("coverage")
-            == int(np.isfinite(cached).all(axis=1).sum())
+            and meta.get("coverage") == int(np.isfinite(cached).all(axis=1).sum())
         ):
             out = cached
             done = int(np.isfinite(out).all(axis=1).sum())
@@ -301,13 +300,15 @@ def _positive_class_oof(combined):
 def _probe_one_seed(X, y, genes, pfam, seed, return_oof=False):
     """Return one mean held-out-fold AUROC for one model seed."""
     splits = list(family_split_cv(genes, pfam, seed=seed))
-    family_groups = family_or_gene_clusters(
-        genes, pfam, is_family_split=True
-    )
+    family_groups = family_or_gene_clusters(genes, pfam, is_family_split=True)
     contract = validate_complete_classification_splits(
-        splits, requested_folds=5,
+        splits,
+        requested_folds=5,
         eligible_rows=np.concatenate([test for _train, test in splits]),
-        labels=y, classes=[0, 1], groups=family_groups, held_out_unit="family",
+        labels=y,
+        classes=[0, 1],
+        groups=family_groups,
+        held_out_unit="family",
     )
     result = run_logreg_binary_cv(
         X,
@@ -348,9 +349,7 @@ def auroc_family_split(
     aggregate = aggregate_seed_values(
         seeds,
         [
-            make_seed_record(
-                run["seed"], run["fold_mean"], status=run["status"]
-            )
+            make_seed_record(run["seed"], run["fold_mean"], status=run["status"])
             for run, _oof in seed_runs
         ],
     )
@@ -540,7 +539,9 @@ def analyse(compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES):
         None if conservation_ci is None else conservation_ci.get("point")
     )
     delta_added_ci = paired_ci.get("delta_added_value_beyond_conservation")
-    delta_added_ci_point = None if delta_added_ci is None else delta_added_ci.get("point_diff")
+    delta_added_ci_point = (
+        None if delta_added_ci is None else delta_added_ci.get("point_diff")
+    )
     delta_added_ci_passed = (
         bool(delta_added_ci_point >= DELTA_ADDED_VALUE_MIN)
         if delta_added_ci_point is not None and np.isfinite(delta_added_ci_point)
@@ -651,7 +652,9 @@ def analyse(compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES):
     )
     delta_added_value = claims["delta_added_value_beyond_conservation"]["value"]
     delta_added_shown = (
-        f"{delta_added_value:+.3f}" if delta_added_value is not None else "no point estimate"
+        f"{delta_added_value:+.3f}"
+        if delta_added_value is not None
+        else "no point estimate"
     )
     print(
         f"  delta adds over conservation >= {DELTA_ADDED_VALUE_MIN}: {delta_added_shown}"

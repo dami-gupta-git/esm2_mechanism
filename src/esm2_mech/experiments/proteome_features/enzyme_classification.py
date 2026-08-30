@@ -84,16 +84,16 @@ ENZYME_CLASSES = ["kinase", "protease", "oxidoreductase", "non-enzyme"]
 
 def _canonical_fingerprint(value) -> str:
     """Hash a JSON-compatible scientific input with deterministic ordering."""
-    content = json.dumps(
-        value, sort_keys=True, separators=(",", ":"), allow_nan=False
-    )
+    content = json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False)
     return hashlib.sha256(content.encode()).hexdigest()
 
 
 def _load_mechanism_reference_f1() -> float | None:
     """Read the mechanism family-split F1 from the mechanism aggregate result."""
     if not MECHANISM_AGGREGATE_JSON.exists():
-        print(f"  WARNING: {MECHANISM_AGGREGATE_JSON} not found — mechanism reference unavailable")
+        print(
+            f"  WARNING: {MECHANISM_AGGREGATE_JSON} not found — mechanism reference unavailable"
+        )
         return None
     value = read_across_seed_metric(
         str(MECHANISM_AGGREGATE_JSON),
@@ -160,9 +160,7 @@ def _load_mechanism_family_oof_for_seed(seed: int) -> dict | None:
     }
     for key, expected_value in expected.items():
         if expected_value is None or cache.get(key) != expected_value:
-            raise ValueError(
-                f"{cache_path}: cache {key} does not match {result_path}"
-            )
+            raise ValueError(f"{cache_path}: cache {key} does not match {result_path}")
 
     oof = cache.get("features", {}).get("delta_mean", {}).get("family_split")
     required = {"row_ids", "y_true", "pred", "genes", "folds"}
@@ -173,9 +171,7 @@ def _load_mechanism_family_oof_for_seed(seed: int) -> dict | None:
         )
     lengths = {key: len(oof[key]) for key in required}
     if len(set(lengths.values())) != 1:
-        raise ValueError(
-            f"{cache_path} has misaligned mechanism OOF fields: {lengths}"
-        )
+        raise ValueError(f"{cache_path} has misaligned mechanism OOF fields: {lengths}")
     if len(set(int(row) for row in oof["row_ids"])) != lengths["row_ids"]:
         raise ValueError(f"{cache_path} has duplicate mechanism OOF row ids")
     return oof
@@ -238,9 +234,7 @@ def load_mechanism_family_oof_arms(seeds: list[int]) -> tuple | None:
             folds,
             fold_ids,
         )
-        for proba, folds, fold_ids in oof_score_arms(
-            payload, "mechanism family-split"
-        )
+        for proba, folds, fold_ids in oof_score_arms(payload, "mechanism family-split")
     ]
     return observed, genes, arms
 
@@ -317,7 +311,9 @@ def load_enzyme_labels() -> dict:
                         f"{enzyme_class!r} for {gene}"
                     )
                 if gene in labels:
-                    raise ValueError(f"{ENZYME_LABELS_TSV} contains duplicate gene {gene}")
+                    raise ValueError(
+                        f"{ENZYME_LABELS_TSV} contains duplicate gene {gene}"
+                    )
                 labels[gene] = enzyme_class
                 continue
             if (
@@ -330,7 +326,9 @@ def load_enzyme_labels() -> dict:
                 f"{ENZYME_LABELS_TSV} has a blank enzyme class for {gene} "
                 "without a missing or exclusion flag"
             )
-    print(f"Loaded enzyme labels for {len(labels)} genes; excluded {excluded} unlabeled genes")
+    print(
+        f"Loaded enzyme labels for {len(labels)} genes; excluded {excluded} unlabeled genes"
+    )
     return labels
 
 
@@ -382,8 +380,7 @@ def enzyme_input_fingerprints(
         for gene, uniprot_id, label in zip(genes, uniprot_ids, labels)
     ]
     proteome_cohort = [
-        [gene, str(label)]
-        for gene, label in zip(proteome_genes, proteome_labels)
+        [gene, str(label)] for gene, label in zip(proteome_genes, proteome_labels)
     ]
     return {
         "enzyme_labeled_genes": _canonical_fingerprint(labeled_genes),
@@ -434,9 +431,13 @@ def run_multiseed(
 
         gs_splits = gene_split_cv(genes_arr, n_folds=n_folds, seed=seed)
         gs_contract = validate_complete_classification_splits(
-            gs_splits, requested_folds=n_folds,
+            gs_splits,
+            requested_folds=n_folds,
             eligible_rows=np.concatenate([test for _train, test in gs_splits]),
-            labels=y, classes=classes, groups=genes_arr, held_out_unit="gene",
+            labels=y,
+            classes=classes,
+            groups=genes_arr,
+            held_out_unit="gene",
         )
         gs, _ = run_logreg_cv(
             X,
@@ -451,10 +452,14 @@ def run_multiseed(
         )
         try:
             gs_reference = (
-                float(np.mean([
-                    majority_baseline_f1(y[train], y[test], classes)[0]
-                    for train, test in gs_splits
-                ]))
+                float(
+                    np.mean(
+                        [
+                            majority_baseline_f1(y[train], y[test], classes)[0]
+                            for train, test in gs_splits
+                        ]
+                    )
+                )
                 if gs_contract["status"] == "valid"
                 else None
             )
@@ -471,9 +476,13 @@ def run_multiseed(
             genes_arr, pfam_map, is_family_split=True
         )
         fs_contract = validate_complete_classification_splits(
-            fs_splits, requested_folds=n_folds,
+            fs_splits,
+            requested_folds=n_folds,
             eligible_rows=np.concatenate([test for _train, test in fs_splits]),
-            labels=y, classes=classes, groups=family_groups, held_out_unit="family",
+            labels=y,
+            classes=classes,
+            groups=family_groups,
+            held_out_unit="family",
         )
         fs, fs_oof = run_logreg_cv(
             X,
@@ -488,10 +497,14 @@ def run_multiseed(
         )
         try:
             fs_reference = (
-                float(np.mean([
-                    majority_baseline_f1(y[train], y[test], classes)[0]
-                    for train, test in fs_splits
-                ]))
+                float(
+                    np.mean(
+                        [
+                            majority_baseline_f1(y[train], y[test], classes)[0]
+                            for train, test in fs_splits
+                        ]
+                    )
+                )
                 if fs_contract["status"] == "valid"
                 else None
             )
@@ -591,7 +604,9 @@ def run_multiseed(
         leakage_pct = round(
             100.0
             * (metric_reads["logreg_gene"].value - metric_reads["logreg_family"].value)
-            / (metric_reads["logreg_gene"].value - metric_reads["gene_reference"].value),
+            / (
+                metric_reads["logreg_gene"].value - metric_reads["gene_reference"].value
+            ),
             1,
         )
 
@@ -638,9 +653,7 @@ def run_multiseed(
             continue
         paired_logreg_mechanism_results.append(
             {
-                **seed_result_contract(
-                    seed, status=mechanism_result["seed_status"]
-                ),
+                **seed_result_contract(seed, status=mechanism_result["seed_status"]),
                 "enzyme": enzyme_result["logreg_family"],
                 "mechanism": mechanism_result["mechanism"],
             }
@@ -649,8 +662,7 @@ def run_multiseed(
         seeds,
         paired_logreg_mechanism_results,
         lambda result: (
-            result["enzyme"]["macro_f1_mean"]
-            - result["mechanism"]["macro_f1_mean"]
+            result["enzyme"]["macro_f1_mean"] - result["mechanism"]["macro_f1_mean"]
         ),
         status=lambda result: (
             result["enzyme"]["status"]
@@ -754,7 +766,9 @@ def run_multiseed(
                 high = paired_mlp_vs_logreg_ci.get("ci_high")
                 point = paired_mlp_vs_logreg_ci.get("point_diff")
                 if low is not None and high is not None and point is not None:
-                    print(f"    MLP-LogReg diff: {point:+.3f} [{low:+.3f}, {high:+.3f}]")
+                    print(
+                        f"    MLP-LogReg diff: {point:+.3f} [{low:+.3f}, {high:+.3f}]"
+                    )
 
         if mechanism_family_arms is not None:
             print("\n  Computing paired CI: enzyme LogReg minus mechanism...")
@@ -813,7 +827,9 @@ def run_multiseed(
                 f"{paired_logreg_vs_mechanism_ci['n_clusters_b_total']} mechanism"
             )
             if low is not None and high is not None and point is not None:
-                print(f"    enzyme-mechanism diff: {point:+.3f} [{low:+.3f}, {high:+.3f}]")
+                print(
+                    f"    enzyme-mechanism diff: {point:+.3f} [{low:+.3f}, {high:+.3f}]"
+                )
 
     if n_permutations > 0 and permutation_oof is not None:
         print(
@@ -841,7 +857,8 @@ def run_multiseed(
         )
         immovable_text = (
             f"; {permutation_result['n_clusters_immovable']} immovable families"
-            if permutation_result.get("n_clusters_immovable") is not None else ""
+            if permutation_result.get("n_clusters_immovable") is not None
+            else ""
         )
         print(f"    permutation p-value: {p_value_text}{immovable_text}")
 
@@ -903,13 +920,21 @@ def run_multiseed(
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--seeds", type=seed_count, default=N_SEEDS,
-                        help="number of seeds to run; runs 0..seeds-1 (>=1)")
+    parser.add_argument(
+        "--seeds",
+        type=seed_count,
+        default=N_SEEDS,
+        help="number of seeds to run; runs 0..seeds-1 (>=1)",
+    )
     parser.add_argument("--n_folds", type=int, default=5)
-    parser.add_argument("--no_ci", action="store_true", help="skip cluster-bootstrap CIs")
+    parser.add_argument(
+        "--no_ci", action="store_true", help="skip cluster-bootstrap CIs"
+    )
     parser.add_argument("--n_boot", type=int, default=BOOTSTRAP_N_RESAMPLES)
     parser.add_argument(
-        "--n_permutations", type=int, default=0,
+        "--n_permutations",
+        type=int,
+        default=0,
         help="label-permutation reps for OOF macro AUROC (0 = skip)",
     )
     args = parser.parse_args()
@@ -920,7 +945,9 @@ def main():
     ENZYME_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
     print("=== Enzyme Classification from ESM-2 WT Embeddings ===")
-    print(f"Seeds: {seeds}  Folds: {args.n_folds}  CI: {compute_ci}  n_boot: {args.n_boot}")
+    print(
+        f"Seeds: {seeds}  Folds: {args.n_folds}  CI: {compute_ci}  n_boot: {args.n_boot}"
+    )
 
     mechanism_ref_f1 = _load_mechanism_reference_f1()
     mechanism_seed_records = _load_mechanism_seed_records(seeds)
@@ -959,8 +986,15 @@ def main():
     print("PART 1: ESM-2 WT embedding (1280-dim)")
     print("=" * 60)
     emb_results = run_multiseed(
-        X_emb, y, gene_list, pfam_map, le, seeds=seeds, n_folds=args.n_folds,
-        compute_ci=compute_ci, n_boot=args.n_boot,
+        X_emb,
+        y,
+        gene_list,
+        pfam_map,
+        le,
+        seeds=seeds,
+        n_folds=args.n_folds,
+        compute_ci=compute_ci,
+        n_boot=args.n_boot,
         n_permutations=args.n_permutations,
         mechanism_seed_records=mechanism_seed_records,
         mechanism_family_arms=mechanism_family_arms,
@@ -974,7 +1008,9 @@ def main():
     prot_gene_to_idx = {g: i for i, g in enumerate(prot_genes)}
 
     gene_to_emb_idx = {g: i for i, g in enumerate(gene_list)}
-    prot_aligned_idxs = [prot_gene_to_idx[g] for g in gene_list if g in prot_gene_to_idx]
+    prot_aligned_idxs = [
+        prot_gene_to_idx[g] for g in gene_list if g in prot_gene_to_idx
+    ]
     prot_aligned_genes = [g for g in gene_list if g in prot_gene_to_idx]
     prot_aligned_y = y[np.array([gene_to_emb_idx[g] for g in prot_aligned_genes])]
     X_prot_aligned = X_prot[prot_aligned_idxs]
@@ -1060,12 +1096,18 @@ def main():
     )
 
     enzyme_f1_verdict = adjudicate_level(oof_fs_f1, fs_ci, 0.70)
-    enzyme_beats_mechanism_verdict = adjudicate_diff(enzyme_beats_mechanism_gate, mechanism_ci, ENZYME_MECHANISM_MIN_F1_GAP)
-    mlp_logreg_equivalence_verdict = adjudicate_equivalence(mlp_logreg_equivalence_gate, paired_ci, 0.05)
+    enzyme_beats_mechanism_verdict = adjudicate_diff(
+        enzyme_beats_mechanism_gate, mechanism_ci, ENZYME_MECHANISM_MIN_F1_GAP
+    )
+    mlp_logreg_equivalence_verdict = adjudicate_equivalence(
+        mlp_logreg_equivalence_gate, paired_ci, 0.05
+    )
 
     fs_text = "N/A" if oof_fs_f1 is None else f"{oof_fs_f1:.3f}"
-    print(f"\nenzyme family-held-out F1 >= 0.70:  {enzyme_f1_verdict}  "
-        f"(across-seed F1={fs_text})")
+    print(
+        f"\nenzyme family-held-out F1 >= 0.70:  {enzyme_f1_verdict}  "
+        f"(across-seed F1={fs_text})"
+    )
     if oof_mechanism_diff is not None:
         print(
             f"enzyme minus mechanism F1 >= "
@@ -1127,10 +1169,14 @@ def main():
             "mechanism_reference_f1": mechanism_ref_f1,
             "enzyme_minus_mechanism_f1": enzyme_mechanism_diff,
             "note": (
-                "Verdicts adjudicate seed-0 point estimates against seed-0 "
-                "bootstrap intervals; fs_f1, mlp_f1, gs_f1 and "
-                "enzyme_minus_mechanism_f1 are across-seed means and carry no "
-                "interval"
+                "Verdicts adjudicate the across-seed out-of-fold point estimates "
+                "against cluster-bootstrap intervals built on those same "
+                "all-seed out-of-fold predictions, so point and interval "
+                "describe one estimand. fs_f1, mlp_f1, gs_f1 and "
+                "enzyme_minus_mechanism_f1 are the seed aggregates, reported "
+                "beside the verdicts and never compared against an interval "
+                "bound, because a resampling interval and a seed spread are "
+                "different quantities"
             ),
         },
     }

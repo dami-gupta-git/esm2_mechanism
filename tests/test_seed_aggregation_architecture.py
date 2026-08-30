@@ -24,10 +24,8 @@ DIRECT_SEED_REDUCER_ALLOWLIST = {
         "aggregate_seed_confusion_matrices",
     ),
     ("src/esm2_mech/experiments/geometry/axis_analysis.py", "_seed_summary"),
-    (
-        "src/esm2_mech/experiments/geometry/direction_geometry.py",
-        "_within_seed_summary",
-    ),
+    # The one within-seed fold/partition summary the geometry producers share.
+    ("src/esm2_mech/utils/metrics.py", "within_seed_summary"),
 }
 
 

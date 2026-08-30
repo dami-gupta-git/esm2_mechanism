@@ -19,6 +19,7 @@ from esm2_mech.utils.seed_aggregation import (
     read_seed_point_estimate,
     seed_count,
 )
+from esm2_mech.utils.metrics import within_seed_summary
 from esm2_mech.utils.probes import auroc_for_clf
 from esm2_mech.utils.splits import family_split_cv
 from esm2_mech.experiments.geometry.data import (
@@ -31,30 +32,10 @@ print = functools.partial(print, flush=True)
 GEOMETRY_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
 
-def _within_seed_summary(values, expected_count, spread_name, sampling_unit):
-    numeric = np.asarray(values, dtype=float)
-    if len(numeric) != expected_count or not np.isfinite(numeric).all():
-        return {
-            "mean": None,
-            spread_name: None,
-            "n": int(len(numeric)),
-            "sampling_unit": sampling_unit,
-        }
-    return {
-        "mean": float(np.mean(numeric)),
-        spread_name: float(np.std(numeric)),
-        "n": int(len(numeric)),
-        "sampling_unit": sampling_unit,
-    }
-
-
 def _aggregate_within_seed(seeds, summaries_by_seed):
     return aggregate_seed_values(
         seeds,
-        [
-            make_seed_record(seed, summaries_by_seed[seed]["mean"])
-            for seed in seeds
-        ],
+        [make_seed_record(seed, summaries_by_seed[seed]["mean"]) for seed in seeds],
     ).to_dict()
 
 
@@ -86,9 +67,7 @@ def original_space_direction(scaled_direction, scaler):
     return direction / (np.linalg.norm(direction) + 1e-12)
 
 
-def probe1_direction_ablation(
-    delta, y, genes, pfam_map, k_max=5, seeds=range(N_SEEDS)
-):
+def probe1_direction_ablation(delta, y, genes, pfam_map, k_max=5, seeds=range(N_SEEDS)):
     from sklearn.preprocessing import StandardScaler
     from sklearn.linear_model import LogisticRegression
 
@@ -97,9 +76,7 @@ def probe1_direction_ablation(
     print("=" * 60)
 
     requested_seeds = tuple(seeds)
-    decay = {
-        seed: {k: [] for k in range(k_max + 1)} for seed in requested_seeds
-    }
+    decay = {seed: {k: [] for k in range(k_max + 1)} for seed in requested_seeds}
     for seed in requested_seeds:
         fs = family_split_cv(genes, pfam_map, seed=seed)
         for tr, te in fs:
@@ -131,9 +108,7 @@ def probe1_direction_ablation(
 
     per_seed = {
         seed: {
-            k: _within_seed_summary(
-                decay[seed][k], N_FOLDS, "fold_std", "held_out_fold"
-            )
+            k: within_seed_summary(decay[seed][k], N_FOLDS, "fold_std", "held_out_fold")
             for k in range(k_max + 1)
         }
         for seed in requested_seeds
@@ -146,8 +121,7 @@ def probe1_direction_ablation(
         for k in range(k_max + 1)
     }
     full_records = [
-        make_seed_record(seed, per_seed[seed][0]["mean"])
-        for seed in requested_seeds
+        make_seed_record(seed, per_seed[seed][0]["mean"]) for seed in requested_seeds
     ]
     paired_changes = {}
     for k in range(1, k_max + 1):
@@ -196,7 +170,11 @@ def probe2_family_transfer(delta, y, genes, fam, n_partitions=10, seeds=(0,)):
 
     requested_seeds = tuple(seeds)
     per_seed_values = {
-        seed: {"cosine_observed": [], "cosine_null_shuffled": [], "transfer_auroc_AtoB": []}
+        seed: {
+            "cosine_observed": [],
+            "cosine_null_shuffled": [],
+            "transfer_auroc_AtoB": [],
+        }
         for seed in requested_seeds
     }
     for seed in requested_seeds:
@@ -244,7 +222,7 @@ def probe2_family_transfer(delta, y, genes, fam, n_partitions=10, seeds=(0,)):
 
     per_seed = {
         seed: {
-            metric: _within_seed_summary(
+            metric: within_seed_summary(
                 values, n_partitions, "partition_std", "random_family_partition"
             )
             for metric, values in metrics.items()
@@ -271,9 +249,7 @@ def probe2_family_transfer(delta, y, genes, fam, n_partitions=10, seeds=(0,)):
     observed = out["cosine_observed"]
     null = out["cosine_null_shuffled"]
     transfer_summary = out["transfer_auroc_AtoB"]
-    print(
-        f"  cosine(w_A, w_B) observed = {_show_seed_summary(observed)}"
-    )
+    print(f"  cosine(w_A, w_B) observed = {_show_seed_summary(observed)}")
     print(f"  cosine null (shuffled y) = {_show_seed_summary(null)}")
     print(
         f"  transfer AUROC (A's direction -> B) = "
@@ -328,7 +304,9 @@ def main():
     import argparse
 
     ap = argparse.ArgumentParser()
-    ap.add_argument("--seeds", type=seed_count, default=N_SEEDS, help="number of seeds (>=1)")
+    ap.add_argument(
+        "--seeds", type=seed_count, default=N_SEEDS, help="number of seeds (>=1)"
+    )
     args = ap.parse_args()
     result = run(n_seeds=args.seeds)
     ablation = result["iterative_direction_ablation"]
@@ -337,7 +315,9 @@ def main():
     print("\n" + "=" * 60)
     print("READ")
     print("=" * 60)
-    print(f"  Full linear AUROC is {_show_seed_summary(ablation['full_linear_auroc'])}.")
+    print(
+        f"  Full linear AUROC is {_show_seed_summary(ablation['full_linear_auroc'])}."
+    )
     print(
         "  After removing one fitted direction, residual AUROC is "
         f"{_show_seed_summary(ablation['residual_auroc_after_removing_k'][1])}."

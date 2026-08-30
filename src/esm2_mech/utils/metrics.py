@@ -30,6 +30,24 @@ def mean_std_n(values) -> tuple[float, float, int]:
     return float(np.mean(clean)), float(np.std(clean)), len(clean)
 
 
+def within_seed_summary(values, expected_count, spread_name, sampling_unit) -> dict:
+    """Summarize one seed's complete set of within-seed values.
+
+    The spread is stored under a name that states its sampling unit, so a fold or
+    partition spread can never be read as a spread across model seeds. An
+    incomplete or non-finite set yields no estimate rather than a mean of the
+    values that happened to score.
+    """
+    numeric = np.asarray(values, dtype=float)
+    complete = len(numeric) == expected_count and np.isfinite(numeric).all()
+    return {
+        "mean": float(np.mean(numeric)) if complete else None,
+        spread_name: float(np.std(numeric)) if complete else None,
+        "n": int(len(numeric)),
+        "sampling_unit": sampling_unit,
+    }
+
+
 def null_standard_score(observed, null_values) -> dict:
     """Standardize an observation against complete null draws using sample spread."""
     values = np.asarray(null_values, dtype=float)
@@ -85,12 +103,16 @@ def majority_baseline_f1(
     train = np.asarray(y_train)
     test = np.asarray(y_test)
     if len(train) == 0 or len(test) == 0:
-        raise ValueError("majority baseline requires non-empty training and test labels")
+        raise ValueError(
+            "majority baseline requires non-empty training and test labels"
+        )
     validate_observed_labels(train, declared, "y_train")
     validate_observed_labels(test, declared, "y_test")
     counts = Counter(train.tolist())
     largest = max(counts.values())
-    tied = [class_name for class_name in declared if counts.get(class_name, 0) == largest]
+    tied = [
+        class_name for class_name in declared if counts.get(class_name, 0) == largest
+    ]
     if len(tied) != 1:
         raise ValueError(f"training-fold majority class is tied: {tied!r}")
     majority_class = tied[0]
@@ -137,9 +159,13 @@ def _training_class_probabilities(
     if len(train) == 0:
         raise ValueError("training-frequency reference requires training labels")
     if n_test <= 0:
-        raise ValueError(f"training-frequency reference requires test rows, got {n_test}")
+        raise ValueError(
+            f"training-frequency reference requires test rows, got {n_test}"
+        )
     validate_observed_labels(train, declared, "y_train")
-    counts = np.array([(train == class_name).sum() for class_name in declared], dtype=float)
+    counts = np.array(
+        [(train == class_name).sum() for class_name in declared], dtype=float
+    )
     return declared, counts / counts.sum()
 
 
@@ -325,9 +351,13 @@ def _empty_fold_metrics(classes: Sequence[object], reason: str) -> dict:
             "per_class_f1": {class_name: dict(unavailable) for class_name in declared},
             "balanced_accuracy": dict(unavailable),
             "confusion_matrix": dict(unavailable),
-            "per_class_auroc": {class_name: dict(unavailable) for class_name in declared},
+            "per_class_auroc": {
+                class_name: dict(unavailable) for class_name in declared
+            },
             "macro_auroc": dict(unavailable),
-            "per_class_auprc": {class_name: dict(unavailable) for class_name in declared},
+            "per_class_auprc": {
+                class_name: dict(unavailable) for class_name in declared
+            },
         },
         "n": 0,
     }
@@ -417,7 +447,9 @@ def compute_metrics(
         per_class_auroc[class_name] = float(roc_auc_score(binary, scores))
         imbalance = imbalance_metrics(binary, scores)
         if imbalance is None:
-            raise RuntimeError("nonconstant one-vs-rest target produced no imbalance metrics")
+            raise RuntimeError(
+                "nonconstant one-vs-rest target produced no imbalance metrics"
+            )
         per_class_auprc[class_name] = imbalance["auprc"]
         prevalence[class_name] = imbalance["prevalence"]
         ppv[class_name] = imbalance["ppv"]
@@ -455,9 +487,11 @@ def compute_metrics(
             "per_class_auroc": ranking_availability,
             "macro_auroc": _metric_availability(
                 not unavailable_auroc,
-                None
-                if not unavailable_auroc
-                else f"unavailable classes: {unavailable_auroc!r}",
+                (
+                    None
+                    if not unavailable_auroc
+                    else f"unavailable classes: {unavailable_auroc!r}"
+                ),
             ),
             "per_class_auprc": auprc_availability,
         },
@@ -623,7 +657,9 @@ def add_flat_class_metrics(
         fold_metrics[f"auroc_{class_name}"] = float(roc_auc_score(binary, scores))
         imbalance = imbalance_metrics(binary, scores)
         if imbalance is None:
-            raise RuntimeError("nonconstant one-vs-rest target produced no imbalance metrics")
+            raise RuntimeError(
+                "nonconstant one-vs-rest target produced no imbalance metrics"
+            )
         for name in ("auprc", "prevalence", "ppv", "npv"):
             fold_metrics[f"{name}_{class_name}"] = imbalance[name]
 

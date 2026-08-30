@@ -51,14 +51,7 @@ def main(
     with open(AM_PATHOGENICITY_VARIANTS) as f:
         variants = json.load(f)
     print(f"target variants: {len(variants):,}")
-    index, skipped_no_uniprot, skipped_key_collision = build_lookup(variants, g2u)
-    print(f"variants with UniProt mapping: {len(index):,}")
-    if skipped_no_uniprot:
-        print(
-            f"variants missing UniProt mapping (first 5): {[s['gene'] for s in skipped_no_uniprot[:5]]}"
-        )
-    if skipped_key_collision:
-        print(f"variants dropped due to key collision: {len(skipped_key_collision)}")
+    index = build_lookup(variants, g2u)
 
     if not am_file.exists():
         if no_download:
