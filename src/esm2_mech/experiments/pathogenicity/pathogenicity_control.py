@@ -54,6 +54,14 @@ from esm2_mech.utils.paths import (
 from esm2_mech.utils.probes import run_logreg_binary_cv, run_mlp_binary_cv
 from esm2_mech.utils.sequences import apply_missense, window_sequence
 from esm2_mech.utils.splits import family_split_cv, gene_split_cv
+from esm2_mech.utils.seed_aggregation import (
+    aggregate_result_contract,
+    aggregate_seed_results,
+    block_seed_status,
+    read_seed_point_estimate,
+    read_seed_result_contract,
+    seed_result_contract,
+)
 
 print = functools.partial(print, flush=True)
 
@@ -387,6 +395,7 @@ def _seed_cell(probe_result, oof, ci, split_name):
             "fold_std": _finite_or_none(probe_result.get(std_key)),
         }
     return {
+        "status": probe_result.get("status"),
         "metrics": metrics,
         "n_folds": probe_result.get("n_folds"),
         "n_scored": None if oof is None else int(len(oof["y_true"])),
@@ -395,21 +404,23 @@ def _seed_cell(probe_result, oof, ci, split_name):
     }
 
 
-def _aggregate_metric(seed_cells, metric):
-    per_seed = [cell["metrics"][metric]["fold_mean"] for cell in seed_cells]
-    finite = [value for value in per_seed if value is not None]
-    return {
-        "across_seed_mean": float(np.mean(finite)) if finite else None,
-        "across_seed_std": float(np.std(finite)) if finite else None,
-        "per_seed": per_seed,
-        "per_seed_fold_std": [
-            cell["metrics"][metric]["fold_std"] for cell in seed_cells
-        ],
-    }
+def _aggregate_metric(seed_results, requested_seeds, cell_key, metric):
+    return aggregate_seed_results(
+        requested_seeds,
+        seed_results,
+        lambda result: result["cells"][cell_key]["metrics"][metric]["fold_mean"],
+        status=lambda result: block_seed_status(result["cells"][cell_key]),
+    )
 
 
-def _build_claim_2c(seed0_inference):
-    """Adjudicate claim 2C only on its registered seed-0 family-split CI."""
+def _build_claim_2c(seed0_inference, across_seed_point_estimate):
+    """Adjudicate claim 2C on its registered seed-0 family-split CI.
+
+    The interval belongs to seed 0 and is adjudicated against seed 0's own point
+    estimate. The across-seed mean is recorded beside it as a separate field: it
+    summarizes variation between model seeds, which the interval does not
+    describe, so the two are never read as one quantity.
+    """
     point_estimate = seed0_inference["point_estimate"]
     ci = seed0_inference["ci"]
     if (
@@ -430,6 +441,7 @@ def _build_claim_2c(seed0_inference):
         "threshold": CLAIM_2C_THRESHOLD,
         "point_estimate": point_estimate,
         "ci": ci,
+        "across_seed_point_estimate": across_seed_point_estimate,
         "estimate_basis": seed0_inference["estimate_basis"],
         "resampling_unit": seed0_inference["resampling_unit"],
         "n_scored": seed0_inference["n_scored"],
@@ -500,9 +512,11 @@ def probe_phase(
         if seed_path.exists():
             cached_seed_params = None
             try:
-                with open(seed_path) as f:
-                    cached_seed_params = json.load(f).get("_params")
-            except json.JSONDecodeError:
+                with open(seed_path) as handle:
+                    cached_seed_result = json.load(handle)
+                read_seed_result_contract(seed, str(seed_path), cached_seed_result)
+                cached_seed_params = cached_seed_result.get("_params")
+            except (json.JSONDecodeError, ValueError):
                 pass
             if cached_seed_params == seed_params:
                 print(f"  seed {seed}: cached, skipping")
@@ -565,6 +579,8 @@ def probe_phase(
                 clusters = family_or_gene_clusters(
                     oof["genes"], pfam_map, is_family_split=(split_name == "family")
                 )
+                # binary_auroc_cluster_bootstrap_ci stratifies its own draws by
+                # class presence, so the AUROC is defined on every resample.
                 ci = binary_auroc_cluster_bootstrap_ci(
                     oof, n_resamples=n_boot, seed=seed, clusters=clusters
                 )
@@ -578,6 +594,7 @@ def probe_phase(
         )
 
         seed_result = {
+            **seed_result_contract(seed),
             "_params": seed_params,
             "cells": {key: cell for key, cell in outcomes},
         }
@@ -601,9 +618,11 @@ def probe_phase(
             raise ValueError(
                 f"{seed_path} changed between cache validation and aggregation"
             )
+        read_seed_result_contract(seed, str(seed_path), seed_result)
         seed_results.append(seed_result)
 
     results = {
+        **aggregate_result_contract(),
         "result_version": _PROBE_RESULT_VERSION,
         "n_variants": int(len(valid)),
         "n_pathogenic": int(y.sum()),
@@ -635,25 +654,31 @@ def probe_phase(
         for pname in probes:
             for split_name in ("gene", "family"):
                 key = f"{fname}_{pname}_{split_name}"
-                seed_cells = [seed_result["cells"][key] for seed_result in seed_results]
                 metrics = {
-                    metric: _aggregate_metric(seed_cells, metric)
+                    metric: _aggregate_metric(
+                        seed_results, range(n_seeds), key, metric
+                    ).to_dict()
                     for metric in _BINARY_METRICS
                 }
+                seed_cells = [
+                    seed_result["cells"][key] for seed_result in seed_results
+                ]
                 seed0_ci = seed_cells[0]["auroc_ci"]
-                seed0_point = metrics["auroc"]["per_seed"][0]
-                if seed0_ci is not None and not np.isclose(
-                    seed0_ci["point"], seed0_point
+                seed0_point = seed_cells[0]["metrics"]["auroc"]["fold_mean"]
+                if seed0_ci is not None and (
+                    seed0_ci["point"] is None
+                    or seed0_point is None
+                    or not np.isclose(seed0_ci["point"], seed0_point)
                 ):
                     raise ValueError(
                         f"{key} seed-0 CI point {seed0_ci['point']} does not match "
                         f"the seed-0 fold-mean AUROC {seed0_point}"
                     )
                 cell = {
-                    "auroc_mean": metrics["auroc"]["across_seed_mean"],
-                    "auroc_std": metrics["auroc"]["across_seed_std"],
-                    "per_seed": metrics["auroc"]["per_seed"],
                     "metrics": metrics,
+                    # A within-seed resampling interval on seed 0's own estimate.
+                    # It is kept apart from the seed aggregates above, whose
+                    # spread describes variation between model seeds.
                     "seed0_inference": {
                         "point_estimate": seed0_point,
                         "ci": seed0_ci,
@@ -670,8 +695,10 @@ def probe_phase(
                 results["by_feature"][fname][f"{pname}_{split_name}"] = cell
 
     claim_cell = results["by_feature"]["delta_mean"]["mlp_family"]
-    claim_inference = claim_cell["seed0_inference"]
-    results["claim_2c"] = _build_claim_2c(claim_inference)
+    claim_metric = read_seed_point_estimate(claim_cell["metrics"]["auroc"])
+    results["claim_2c"] = _build_claim_2c(
+        claim_cell["seed0_inference"], claim_metric.value
+    )
 
     write_result_json(PATHOGENICITY_CONTROL_JSON, results, seeds=list(range(n_seeds)), indent=2)
     print(f"  Aggregated results written to {PATHOGENICITY_CONTROL_JSON}")
@@ -685,15 +712,19 @@ def _print_headline(results):
 
     def cell(feature, key):
         c = results["by_feature"][feature][key]
-        return c["auroc_mean"], c["auroc_std"]
+        return read_seed_point_estimate(c["metrics"]["auroc"])
 
     for feature in ("delta_mean", "wt_only"):
         for key in ("logreg_gene", "logreg_family", "mlp_gene", "mlp_family"):
-            mean, std = cell(feature, key)
-            if mean is None:
+            metric = cell(feature, key)
+            if not metric.available:
                 print(f"  {feature:11s} {key:14s} AUROC = undefined (no valid fold)")
             else:
-                print(f"  {feature:11s} {key:14s} AUROC = {mean:.3f} ± {std:.3f}")
+                spread = "N/A" if metric.spread is None else f"{metric.spread:.3f}"
+                print(
+                    f"  {feature:11s} {key:14s} AUROC = "
+                    f"{metric.value:.3f} ± {spread}"
+                )
         print()
 
     claim = results["claim_2c"]

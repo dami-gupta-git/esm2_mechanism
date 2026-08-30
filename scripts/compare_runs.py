@@ -1,19 +1,13 @@
 """Diff every number in one run's result files against another's.
 
-run_biorxiv changes error bars, not point estimates, so a point estimate that moves
-materially is either a bug introduced by the wiring or a finding that needs
-explaining. Nothing else in the pipeline would catch the former. The output is also
-the run6 -> run_biorxiv delta note itself, generated rather than transcribed, so it
-cannot drift from the result files.
+Compare point estimates in two current-schema result trees.
 
   python scripts/compare_runs.py run6 run_biorxiv
 
 Every numeric and string leaf in every JSON under `results/<run>/` is compared by its
-dotted path. Movement is judged against the OLD run's own seed spread wherever the
-file carries one: a leaf named `<base>_mean` is material when it moves by more than
-its sibling `<base>_std`, which is the "more than one seed-std" rule. Leaves with no
-sibling std fall back to --abs-threshold, and every such comparison is counted so the
-report says how much of it rested on the flat threshold.
+dotted path. A shared aggregate's `mean` is judged against its `seed_std` only when
+the aggregate declares the current schema and `model_seed` sampling unit. Other
+numeric leaves use --abs-threshold.
 
 Keys present in only one run are reported separately from movement. run_biorxiv adds
 CI keys throughout, so folding additions into the movement count would bury the
@@ -30,6 +24,10 @@ import math
 import sys
 from pathlib import Path
 
+from esm2_mech.utils.seed_aggregation import (
+    SEED_AGGREGATION_SCHEMA_VERSION,
+    SEED_SAMPLING_UNIT,
+)
 from esm2_mech.utils.paths import results_dir_for_run
 
 print = functools.partial(print, flush=True)
@@ -38,8 +36,7 @@ print = functools.partial(print, flush=True)
 # comparison is counted and reported so this never passes silently as a seed-std test.
 DEFAULT_ABS_THRESHOLD = 0.005
 
-MEAN_SUFFIX = "_mean"
-STD_SUFFIX = "_std"
+MEAN_SUFFIX = ".mean"
 
 
 def _flatten(node, prefix: str, out: dict) -> None:
@@ -90,15 +87,21 @@ def _is_number(value) -> bool:
 def _threshold_for(key: str, old: dict, abs_threshold: float) -> tuple[float, bool]:
     """(threshold, used_seed_std) for one metric.
 
-    A `<base>_mean` leaf is judged against its sibling `<base>_std` from the OLD run —
-    the run whose spread is the established baseline. A zero or non-finite std carries
-    no information about spread, so those fall back to the flat threshold rather than
-    flagging every difference.
+    Only a validated shared seed aggregate supplies a spread threshold. Fold,
+    protein, partition, and other spreads must not stand in for seed variation.
     """
     if key.endswith(MEAN_SUFFIX):
-        std = old.get(key[: -len(MEAN_SUFFIX)] + STD_SUFFIX)
-        if _is_number(std) and math.isfinite(std) and std > 0:
-            return float(std), True
+        aggregate_path = key[: -len(MEAN_SUFFIX)]
+        is_seed_aggregate = (
+            old.get(f"{aggregate_path}.schema_version")
+            == SEED_AGGREGATION_SCHEMA_VERSION
+            and old.get(f"{aggregate_path}.state") == "available"
+            and old.get(f"{aggregate_path}.sampling_unit") == SEED_SAMPLING_UNIT
+        )
+        if is_seed_aggregate:
+            spread = old.get(f"{aggregate_path}.seed_std")
+            if _is_number(spread) and math.isfinite(spread) and spread > 0:
+                return float(spread), True
     return abs_threshold, False
 
 
@@ -152,8 +155,8 @@ def format_report(old_run: str, new_run: str, result: dict, abs_threshold: float
         f"# Delta note — {old_run} to {new_run}",
         "",
         f"Compared {result['unchanged'] + len(result['moved']) + len(result['changed'])} "
-        f"shared leaves. Movement is judged against the {old_run} sibling `_std` where "
-        f"one exists, otherwise against an absolute threshold of {abs_threshold}; "
+        f"shared leaves. Movement is judged against the {old_run} shared `seed_std` "
+        f"where one exists, otherwise against an absolute threshold of {abs_threshold}; "
         f"{result['threshold_fallbacks']} numeric comparisons used the absolute "
         "threshold.",
         "",
@@ -167,7 +170,7 @@ def format_report(old_run: str, new_run: str, result: dict, abs_threshold: float
             "|---|---|---|---|---|---|",
         ]
         for key, old_value, new_value, delta, threshold, used_std in result["moved"]:
-            basis = "seed-std" if used_std else "absolute"
+            basis = "seed SD" if used_std else "absolute"
             lines.append(
                 f"| `{key}` | {old_value:.6g} | {new_value:.6g} | {delta:+.6g} | "
                 f"{threshold:.6g} | {basis} |"

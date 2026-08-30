@@ -1,23 +1,37 @@
 """Figure readers preserve explicit unavailable metric values."""
 
 import matplotlib.axes
+import pytest
 
 from esm2_mech.experiments.mechanism import make_figures
 from esm2_mech.experiments.mechanism.seed_results import read_feature_metric
 from esm2_mech.figures import manuscript_figures
 from esm2_mech.utils.constants import SEED_AGGREGATION_SCHEMA_VERSION
+from esm2_mech.utils.seed_aggregation import (
+    aggregate_paired_seed_difference,
+    aggregate_seed_values,
+    make_seed_record,
+)
 
 
 def _unavailable_family_clustering_views():
+    purity = aggregate_seed_values(
+        range(3), [make_seed_record(seed, 0.2) for seed in range(3)]
+    ).to_dict()
+    purity_null = aggregate_seed_values(
+        range(3), [make_seed_record(seed, 0.1) for seed in range(3)]
+    ).to_dict()
+    unavailable = aggregate_seed_values(
+        range(3), [make_seed_record(seed, None) for seed in range(3)]
+    ).to_dict()
     return {
         view: {
-            "knn5_purity": 0.2,
-            "knn5_purity_null": 0.1,
-            "knn5_purity_ci": {"ci_low": 0.15, "ci_high": 0.25},
+            "knn5_purity_seed_aggregate": purity,
+            "knn5_purity_null_seed_aggregate": purity_null,
             "family_probe": {
                 "status": "unavailable",
-                "accuracy": None,
-                "macro_f1": None,
+                "accuracy_seed_aggregate": unavailable,
+                "majority_baseline_accuracy_seed_aggregate": unavailable,
             },
         }
         for view in ("wt_mean", "mut_mean", "delta_mean")
@@ -38,14 +52,32 @@ def test_portfolio_family_figure_accepts_unavailable_probe(monkeypatch):
     assert saved == ["fig5_family_clustering.png"]
 
 
-def test_portfolio_within_family_uses_fold_aware_reference(monkeypatch):
+def test_portfolio_within_family_plots_the_within_seed_paired_lift(monkeypatch):
+    # Both arms move together, so every within-seed difference is the same and the
+    # paired spread is zero — an error bar taken from one arm alone would not be.
+    probe_values = (0.35, 0.40, 0.45)
+    reference_values = (0.30, 0.35, 0.40)
+    score = aggregate_seed_values(
+        range(3), [make_seed_record(seed, value) for seed, value in enumerate(probe_values)]
+    ).to_dict()
+    baseline = aggregate_seed_values(
+        range(3),
+        [make_seed_record(seed, value) for seed, value in enumerate(reference_values)],
+    ).to_dict()
+    lift = aggregate_paired_seed_difference(
+        range(3),
+        [make_seed_record(seed, value) for seed, value in enumerate(probe_values)],
+        [make_seed_record(seed, value) for seed, value in enumerate(reference_values)],
+    )
+    assert lift.spread == pytest.approx(0.0)
     result = {
         "by_family": {
             "PF1": {
                 "n_genes": 8,
                 "gene_class_counts": {"GOF": 4, "LOF": 4},
-                "majority_reference": {"macro_f1_mean": 0.3},
-                "delta": {"mlp": {"macro_f1": {"mean": 0.4, "std": 0.05}}},
+                "majority_reference": {"macro_f1_seed_aggregate": baseline},
+                "delta_mlp_minus_majority_seed_aggregate": lift.to_dict(),
+                "delta": {"mlp": {"macro_f1": score}},
             }
         }
     }
@@ -62,9 +94,9 @@ def test_manuscript_family_figure_accepts_unavailable_probe(monkeypatch):
     clustering = {"by_view": _unavailable_family_clustering_views()}
     aggregate = {
         "claim_2b_split_gap_summary": {
-            "per_seed": [
-                {"seed": 0, "point_diff": 0.1, "ci_low": 0.05, "ci_high": 0.15}
-            ]
+            "gene_minus_family_seed_aggregate": aggregate_seed_values(
+                range(3), [make_seed_record(seed, 0.1) for seed in range(3)]
+            ).to_dict()
         }
     }
     leakage = {
@@ -99,34 +131,31 @@ def test_manuscript_family_figure_accepts_unavailable_probe(monkeypatch):
 
 
 def test_manuscript_enzyme_figure_uses_family_split_reference(monkeypatch):
+    def aggregate(value):
+        return aggregate_seed_values(
+            range(3), [make_seed_record(seed, value) for seed in range(3)]
+        ).to_dict()
+
     enzyme = {
         "esm2_wt_embedding": {
             "majority_reference": {
-                "gene_split": {"macro_f1_mean": 0.21},
-                "family_split": {"macro_f1_mean": 0.34},
+                "gene_split": aggregate(0.21),
+                "family_split": aggregate(0.34),
             },
-            "logreg_gene_split": {"macro_f1_mean": 0.70},
+            "logreg_gene_split": {"macro_f1_seed_aggregate": aggregate(0.70)},
             "logreg_family_split": {
-                "macro_f1_mean": 0.65,
-                "per_class_auroc_mean": {
-                    class_name: 0.8
+                "macro_f1_seed_aggregate": aggregate(0.65),
+                "per_class_auroc_seed_aggregate": {
+                    class_name: aggregate(0.8)
                     for class_name in manuscript_figures.ENZYME_CLASS_ORDER
                 },
             },
-            "paired_ci_logreg_minus_mechanism": {
-                "point_diff": 0.20,
-                "ci_low": 0.10,
-                "ci_high": 0.30,
-            },
-            "paired_ci_mlp_minus_logreg": {
-                "point_diff": 0.01,
-                "ci_low": -0.02,
-                "ci_high": 0.04,
-            },
+            "paired_logreg_minus_mechanism_seed_aggregate": aggregate(0.20),
+            "paired_mlp_minus_logreg_seed_aggregate": aggregate(0.01),
         },
         "proteome_features": {
-            "logreg_gene_split": {"macro_f1_mean": 0.60},
-            "logreg_family_split": {"macro_f1_mean": 0.50},
+            "logreg_gene_split": {"macro_f1_seed_aggregate": aggregate(0.60)},
+            "logreg_family_split": {"macro_f1_seed_aggregate": aggregate(0.50)},
         },
         "gate_evaluation": {"2G_minimum_f1_gap": 0.10},
     }
@@ -211,7 +240,13 @@ def _patch_mechanism_figure_inputs(monkeypatch, aggregate):
             return aggregate
         if path == make_figures.NAIVE_BASELINE_JSON:
             return {
-                "by_strategy": {"most_frequent": {"gene": {"macro_f1_mean": 0.29}}}
+                "by_strategy": {
+                    "most_frequent": {
+                        "gene": {
+                            "macro_f1_seed_aggregate": _seed_aggregate(0.29, 0.01)
+                        }
+                    }
+                }
             }
         raise AssertionError(path)
 

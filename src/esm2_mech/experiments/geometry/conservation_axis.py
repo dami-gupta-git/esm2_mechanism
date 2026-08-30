@@ -43,11 +43,23 @@ from esm2_mech.utils.bootstrap import (
     family_or_gene_clusters,
     paired_oof_diff,
 )
-from esm2_mech.utils.constants import AA_ORDER
-from esm2_mech.utils.metrics import mean_std_n
+from esm2_mech.utils.constants import (
+    AA_ORDER,
+    BOOTSTRAP_N_RESAMPLES,
+    N_FOLDS,
+    N_SEEDS,
+)
+from esm2_mech.utils.seed_aggregation import (
+    aggregate_oof_dicts,
+    aggregate_paired_seed_difference,
+    aggregate_result_contract,
+    aggregate_seed_values,
+    make_seed_record,
+    read_seed_point_estimate,
+)
 from esm2_mech.utils.probes import run_logreg_binary_cv
 from esm2_mech.utils.sequences import window_sequence
-from esm2_mech.utils.splits import family_split_cv
+from esm2_mech.utils.splits import annotated_gene_mask, family_split_cv
 from esm2_mech.utils.classification import validate_complete_classification_splits
 from esm2_mech.experiments.geometry.axis_analysis import (
     family_held_out_axis_analysis,
@@ -252,8 +264,41 @@ def extract_conservation(variants, seqs, batch_size=64, ckpt_every=2000):
     return out
 
 
-def _oof_one_seed(X, y, genes, pfam, seed):
-    """Family-split out-of-fold positive-class probabilities for one seed."""
+def _unavailable_interval(combined_result):
+    """Record why an interval was not computed, without inventing bounds."""
+    return {
+        "ci_low": None,
+        "ci_high": None,
+        "ci_suppressed": True,
+        "missing": True,
+        "reason": combined_result.reason.value,
+        "message": combined_result.message,
+        "affected_seeds": list(combined_result.affected_seeds),
+    }
+
+
+def _positive_class_oof(combined):
+    """Reduce a two-column OOF to the pathogenic-class score an AUROC ranks.
+
+    The bootstrap ranks one score per row while the probe's OOF carries one column
+    per declared class, so the positive column is selected by its index in the
+    declared class order.
+    """
+    positive_column = combined["classes"].index(PATHOGENIC)
+    return {
+        **combined,
+        "oof_by_seed": {
+            seed: {
+                **payload,
+                "proba": np.asarray(payload["proba"])[:, positive_column],
+            }
+            for seed, payload in combined["oof_by_seed"].items()
+        },
+    }
+
+
+def _probe_one_seed(X, y, genes, pfam, seed, return_oof=False):
+    """Return one mean held-out-fold AUROC for one model seed."""
     splits = list(family_split_cv(genes, pfam, seed=seed))
     family_groups = family_or_gene_clusters(
         genes, pfam, is_family_split=True
@@ -263,7 +308,7 @@ def _oof_one_seed(X, y, genes, pfam, seed):
         eligible_rows=np.concatenate([test for _train, test in splits]),
         labels=y, classes=[0, 1], groups=family_groups, held_out_unit="family",
     )
-    aggregate, oof = run_logreg_binary_cv(
+    result = run_logreg_binary_cv(
         X,
         y,
         splits,
@@ -271,57 +316,51 @@ def _oof_one_seed(X, y, genes, pfam, seed):
         contract,
         seed=seed,
         pos_label=PATHOGENIC,
-        genes=genes,
-        return_oof=True,
+        genes=genes if return_oof else None,
+        return_oof=return_oof,
         max_iter=LOGREG_MAX_ITER,
     )
+    aggregate, oof = result if return_oof else (result, None)
     return {
         "seed": int(seed),
+        "status": aggregate["status"],
         "fold_mean": aggregate.get("auroc_mean"),
-        "oof": oof,
-    }
+        "fold_std": aggregate.get("auroc_std"),
+        "sampling_unit": "held_out_fold",
+    }, oof
 
 
-def auroc_family_split(X, y, genes, pfam, seeds=range(5), n_jobs=-1):
-    """Seed-0 family-split inference plus a five-seed descriptive summary."""
+def auroc_family_split(
+    X, y, genes, pfam, seeds=range(N_SEEDS), n_jobs=-1, collect_oof=True
+):
+    """Aggregate one complete family-split estimate per requested model seed.
+
+    Returns the across-seed aggregate, the per-seed fold summaries, and each seed's
+    out-of-fold predictions. The out-of-fold arrays stay out of the summaries
+    because the summaries are written to the result file.
+    """
     seeds = tuple(seeds)
     seed_runs = Parallel(n_jobs=n_jobs)(
-        delayed(_oof_one_seed)(X, y, genes, pfam, seed) for seed in seeds
+        delayed(_probe_one_seed)(X, y, genes, pfam, seed, return_oof=collect_oof)
+        for seed in seeds
     )
-    seed0_run = next((run for run in seed_runs if run["seed"] == 0), None)
-    if seed0_run is None or seed0_run["oof"] is None:
-        raise RuntimeError("conservation inference requires seed-0 OOF predictions")
-
-    seed0_oof = seed0_run["oof"]
-    clusters = family_or_gene_clusters(
-        seed0_oof["genes"], pfam, is_family_split=True
-    )
-    ci = binary_auroc_cluster_bootstrap_ci(seed0_oof, clusters=clusters, seed=0)
-    point = ci["point"]
-    fold_mean = seed0_run["fold_mean"]
-    if point is None or fold_mean is None or not np.isclose(point, fold_mean):
-        raise RuntimeError(
-            "seed-0 conservation AUROC point and bootstrap estimand disagree"
-        )
-
-    per_seed_values = [run["fold_mean"] for run in seed_runs]
-    unavailable = any(value is None for value in per_seed_values)
-    mean = None if unavailable else float(np.mean(per_seed_values))
-    std = None if unavailable else float(np.std(per_seed_values))
-    count = 0 if unavailable else len(per_seed_values)
-    descriptive = {
-        "across_seed_mean": mean,
-        "across_seed_std": std,
-        "n_seeds": count,
-        "per_seed": [
-            {"seed": run["seed"], "fold_mean": run["fold_mean"]}
-            for run in seed_runs
+    aggregate = aggregate_seed_values(
+        seeds,
+        [
+            make_seed_record(
+                run["seed"], run["fold_mean"], status=run["status"]
+            )
+            for run, _oof in seed_runs
         ],
-    }
-    return point, ci, seed0_oof, descriptive
+    )
+    return (
+        aggregate.to_dict(),
+        {run["seed"]: run for run, _oof in seed_runs},
+        {run["seed"]: oof for run, oof in seed_runs},
+    )
 
 
-def analyse():
+def analyse(compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES):
     inputs = load_pathogenicity_geometry_inputs()
     with open(SEQS) as handle:
         seqs = json.load(handle)
@@ -351,120 +390,194 @@ def analyse():
         },
     )
 
-    print("\nRunning family-split AUROCs (5 seeds)...")
+    requested_seeds = tuple(range(N_SEEDS))
+    print(f"\nRunning family-split AUROCs ({len(requested_seeds)} seeds)...")
     feature_sets = {
         "conservation": cons_feats,
         "delta": delta,
         "conservation_plus_delta": np.hstack([cons_feats, delta]),
         "masked_marginal_only": masked_marginal.reshape(-1, 1),
     }
+    scored_rows = np.flatnonzero(annotated_gene_mask(genes, pfam))
     auroc = {}
     auroc_ci = {}
-    auroc_descriptive = {}
+    seed_runs_by_feature = {}
     oof_by_feature = {}
     for name, feat in feature_sets.items():
-        value, ci, oof, descriptive = auroc_family_split(feat, y, genes, pfam)
-        auroc[name] = value
-        auroc_ci[name] = ci
-        auroc_descriptive[name] = descriptive
-        oof_by_feature[name] = oof
-        if ci is None or ci.get("ci_low") is None:
-            print(f"  {name:26s} AUROC = {value:.3f}  (CI suppressed)", flush=True)
+        aggregate, seed_runs, oof_by_seed = auroc_family_split(
+            feat, y, genes, pfam, seeds=requested_seeds, collect_oof=compute_ci
+        )
+        auroc[name] = aggregate
+        seed_runs_by_feature[name] = seed_runs
+        print(f"  {name:26s} AUROC = {_show_seed_summary(aggregate)}", flush=True)
+        if not compute_ci:
+            continue
+        # The interval is a within-seed cluster bootstrap over the pooled
+        # out-of-fold predictions of every requested seed. It is reported in its
+        # own field and never mixed with the across-seed aggregate above.
+        combined_result = aggregate_oof_dicts(
+            requested_seeds,
+            oof_by_seed,
+            declared_row_ids=scored_rows,
+            declared_labels=y[scored_rows],
+            declared_clusters=genes[scored_rows],
+            class_order=[0, 1],
+            declared_fold_ids=range(N_FOLDS),
+        )
+        if not combined_result.available:
+            auroc_ci[name] = _unavailable_interval(combined_result)
+            print(f"    interval unavailable: {combined_result.message}", flush=True)
+            continue
+        combined = _positive_class_oof(combined_result.payload)
+        oof_by_feature[name] = combined
+        clusters = family_or_gene_clusters(
+            combined["genes"], pfam, is_family_split=True
+        )
+        interval = binary_auroc_cluster_bootstrap_ci(
+            combined, n_resamples=n_boot, seed=0, clusters=clusters
+        )
+        auroc_ci[name] = interval
+        if interval.get("ci_low") is None:
+            print("    interval suppressed by the bootstrap", flush=True)
         else:
             print(
-                f"  {name:26s} AUROC = {value:.3f} "
-                f"[{ci['ci_low']:.3f}, {ci['ci_high']:.3f}]",
+                f"    bootstrap {interval['point']:.3f} "
+                f"[{interval['ci_low']:.3f}, {interval['ci_high']:.3f}]",
                 flush=True,
             )
 
-    print("\n=== PAIRED DIFFERENCES (family-cluster bootstrap) ===")
+    print("\n=== PAIRED DIFFERENCES (within model seed, and family-cluster CI) ===")
     contrasts = [
         (
             "2E_delta_beyond_conservation",
             "conservation_plus_delta",
             "conservation",
-            CLAIM_2E_DELTA_ADD_MIN,
         ),
         (
             "descriptive_conservation_beyond_delta",
             "conservation_plus_delta",
             "delta",
-            0.0,
         ),
-        ("descriptive_conservation_vs_delta", "conservation", "delta", 0.0),
+        ("descriptive_conservation_vs_delta", "conservation", "delta"),
     ]
     paired = {}
-    for key, arm_a, arm_b, threshold in contrasts:
+    paired_ci = {}
+    for key, arm_a, arm_b in contrasts:
         label = f"{key}: {arm_a} − {arm_b}"
-        diff = paired_oof_diff(
+        arm_a_records = [
+            make_seed_record(
+                seed,
+                seed_runs_by_feature[arm_a][seed]["fold_mean"],
+                status=seed_runs_by_feature[arm_a][seed]["status"],
+            )
+            for seed in requested_seeds
+        ]
+        arm_b_records = [
+            make_seed_record(
+                seed,
+                seed_runs_by_feature[arm_b][seed]["fold_mean"],
+                status=seed_runs_by_feature[arm_b][seed]["status"],
+            )
+            for seed in requested_seeds
+        ]
+        diff = aggregate_paired_seed_difference(
+            requested_seeds, arm_a_records, arm_b_records
+        ).to_dict()
+        paired[key] = diff
+        print(f"  {label}: {_show_seed_summary(diff)}")
+        if not compute_ci:
+            continue
+        # paired_oof_diff resamples families and stratifies the ranking metric
+        # itself; its interval is a within-seed quantity beside the across-seed
+        # paired difference above, not a replacement for it.
+        diff_ci = paired_oof_diff(
             oof_by_feature.get(arm_a),
             oof_by_feature.get(arm_b),
             pfam,
             label,
             metric="auroc_binary",
             is_family_split=True,
+            n_resamples=n_boot,
         )
-        if diff is None:
+        if diff_ci is None:
             continue
-        paired[key] = diff
-        if diff.get("ci_low") is None:
-            print(f"  {label}: diff={diff['point_diff']:+.4f}  CI suppressed")
+        paired_ci[key] = diff_ci
+        if diff_ci.get("ci_low") is None:
+            print(f"    bootstrap diff={diff_ci['point_diff']:+.4f}  CI suppressed")
         else:
             print(
-                f"  {label}: diff={diff['point_diff']:+.4f}  "
-                f"[{diff['ci_low']:+.4f}, {diff['ci_high']:+.4f}]  "
-                f"({diff['n_clusters']} clusters)"
+                f"    bootstrap diff={diff_ci['point_diff']:+.4f}  "
+                f"[{diff_ci['ci_low']:+.4f}, {diff_ci['ci_high']:+.4f}]  "
+                f"({diff_ci['n_clusters']} clusters)"
             )
 
-    cons_a = auroc["conservation"]
-    both_a = auroc["conservation_plus_delta"]
-    delta_a = auroc["delta"]
+    cons_a = read_seed_point_estimate(auroc["conservation"]).value
+    both_a = read_seed_point_estimate(auroc["conservation_plus_delta"]).value
+    delta_a = read_seed_point_estimate(auroc["delta"]).value
     claim_2d_passed = (
-        bool(cons_a >= CLAIM_2D_CONSERVATION_MIN) if np.isfinite(cons_a) else None
+        bool(cons_a >= CLAIM_2D_CONSERVATION_MIN)
+        if cons_a is not None and np.isfinite(cons_a)
+        else None
     )
     claim_2e_diff = paired.get("2E_delta_beyond_conservation")
+    claim_2e_read = read_seed_point_estimate(claim_2e_diff or {})
     claim_2e_passed = (
-        bool(claim_2e_diff["point_diff"] >= CLAIM_2E_DELTA_ADD_MIN)
-        if claim_2e_diff and claim_2e_diff.get("point_diff") is not None
+        bool(claim_2e_read.value >= CLAIM_2E_DELTA_ADD_MIN)
+        if claim_2e_read.available
+        else None
+    )
+    # A verdict compares an interval with the point estimate that interval was
+    # built around, so it reads the bootstrap's own point rather than the
+    # across-seed mean reported beside it.
+    conservation_ci = auroc_ci.get("conservation")
+    conservation_ci_point = (
+        None if conservation_ci is None else conservation_ci.get("point")
+    )
+    claim_2e_ci = paired_ci.get("2E_delta_beyond_conservation")
+    claim_2e_ci_point = None if claim_2e_ci is None else claim_2e_ci.get("point_diff")
+    claim_2e_ci_passed = (
+        bool(claim_2e_ci_point >= CLAIM_2E_DELTA_ADD_MIN)
+        if claim_2e_ci_point is not None and np.isfinite(claim_2e_ci_point)
         else None
     )
     claims = {
         "2D_conservation_clears_0.85": {
-            "seed": 0,
             "value": cons_a,
             "threshold": CLAIM_2D_CONSERVATION_MIN,
-            "ci": auroc_ci["conservation"],
             "passed": claim_2d_passed,
+            "interval_point_estimate": conservation_ci_point,
+            "ci": conservation_ci,
             "verdict": adjudicate_level(
-                cons_a, auroc_ci["conservation"], CLAIM_2D_CONSERVATION_MIN
+                conservation_ci_point, conservation_ci, CLAIM_2D_CONSERVATION_MIN
             ),
         },
         "2E_delta_beyond_conservation": {
-            "seed": 0,
-            "value": claim_2e_diff["point_diff"] if claim_2e_diff else None,
+            "value": claim_2e_read.value,
             "threshold": CLAIM_2E_DELTA_ADD_MIN,
             "conservation": cons_a,
             "conservation_plus_delta": both_a,
             "paired_diff": claim_2e_diff,
             "passed": claim_2e_passed,
+            "interval_point_estimate": claim_2e_ci_point,
+            "paired_diff_ci": claim_2e_ci,
             "verdict": adjudicate_diff(
-                claim_2e_passed, claim_2e_diff, CLAIM_2E_DELTA_ADD_MIN
+                claim_2e_ci_passed, claim_2e_ci, CLAIM_2E_DELTA_ADD_MIN
             ),
         },
         "descriptive_conservation_beyond_delta": {
-            "value": (
-                paired["descriptive_conservation_beyond_delta"]["point_diff"]
-                if "descriptive_conservation_beyond_delta" in paired
-                else None
-            ),
+            "value": read_seed_point_estimate(
+                paired.get("descriptive_conservation_beyond_delta", {})
+            ).value,
             "delta": delta_a,
             "conservation_plus_delta": both_a,
             "paired_diff": paired.get("descriptive_conservation_beyond_delta"),
+            "paired_diff_ci": paired_ci.get("descriptive_conservation_beyond_delta"),
         },
         "descriptive_conservation_vs_delta": {
             "conservation": cons_a,
             "delta": delta_a,
             "paired_diff": paired.get("descriptive_conservation_vs_delta"),
+            "paired_diff_ci": paired_ci.get("descriptive_conservation_vs_delta"),
         },
     }
 
@@ -481,13 +594,15 @@ def analyse():
         }
     )
     result = {
+        **aggregate_result_contract(),
         "n_valid": int(valid.sum()),
         "axis_conservation_correlations_family_held_out": axis_associations[
             "correlations"
         ],
         "auroc_family_split": auroc,
         "auroc_family_split_ci": auroc_ci,
-        "auroc_family_split_five_seed_descriptive": auroc_descriptive,
+        "auroc_family_split_per_seed_fold_summaries": seed_runs_by_feature,
+        "paired_difference_ci": paired_ci,
         "claims": claims,
         "thresholds": {"2D": CLAIM_2D_CONSERVATION_MIN, "2E": CLAIM_2E_DELTA_ADD_MIN},
         "input_provenance": provenance,
@@ -496,13 +611,16 @@ def analyse():
             "reported AUROCs are not risk estimates (pre-registration §1.4)."
         ),
         "inference": {
-            "seed": 0,
-            "estimate_basis": "mean of seed-0 held-out-fold AUROCs",
-            "resampling_unit": "pfam_family",
-            "five_seed_role": "descriptive",
+            "estimate_basis": "mean of one held-out-fold summary per model seed",
+            "interval_basis": (
+                "family-cluster bootstrap over the pooled out-of-fold predictions "
+                "of every requested seed, scored within fold"
+            ),
+            "interval_resampling_unit": "pfam_family",
+            "interval_computed": bool(compute_ci),
         },
     }
-    write_result_json(CONSERVATION_AXIS_JSON, result, seeds=list(range(5)))
+    write_result_json(CONSERVATION_AXIS_JSON, result, seeds=list(requested_seeds))
 
     print("\n" + "=" * 60)
     print("CONSERVATION DECIDER")
@@ -510,17 +628,16 @@ def analyse():
     print("  Family-held-out axis correlations:")
     for name, summary in axis_associations["correlations"].items():
         print(f"    {name:20s} rho = {format_axis_summary(summary)}")
-    print("\n  AUROC (family-split, seed-0 inference):")
-    for name, value in auroc.items():
-        ci = auroc_ci.get(name)
-        interval = (
-            f"[{ci['ci_low']:.3f}, {ci['ci_high']:.3f}]"
-            if ci and ci.get("ci_low") is not None
-            else "(CI suppressed)"
+    print("\n  AUROC (family-split across model seeds, and bootstrap interval):")
+    for name, summary in auroc.items():
+        print(
+            f"    {name:26s} {_show_seed_summary(summary)}  "
+            f"{_show_interval(auroc_ci.get(name))}"
         )
-        print(f"    {name:26s} {value:.3f} {interval}")
     print(
-        f"\n  2D conservation-alone >= {CLAIM_2D_CONSERVATION_MIN}: {cons_a:.3f} -> "
+        f"\n  2D conservation-alone >= {CLAIM_2D_CONSERVATION_MIN}: "
+        f"{_show_seed_summary(auroc['conservation'])} "
+        f"{_show_interval(conservation_ci)} -> "
         f"{claims['2D_conservation_clears_0.85']['verdict']}"
     )
     claim_2e_value = claims["2E_delta_beyond_conservation"]["value"]
@@ -534,6 +651,24 @@ def analyse():
     print(f"\nResults -> {CONSERVATION_AXIS_JSON}")
 
 
+def _show_seed_summary(summary):
+    metric = read_seed_point_estimate(summary)
+    if not metric.available:
+        return f"unavailable ({metric.message})"
+    if metric.spread is None:
+        return f"{metric.value:.3f} (seed spread unavailable)"
+    return f"{metric.value:.3f} ± {metric.spread:.3f} seed SD"
+
+
+def _show_interval(interval):
+    """Render one bootstrap interval, which is not the seed spread beside it."""
+    if interval is None:
+        return "(no interval computed)"
+    if interval.get("ci_low") is None:
+        return "(CI suppressed)"
+    return f"[{interval['ci_low']:.3f}, {interval['ci_high']:.3f}]"
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument(
@@ -542,6 +677,10 @@ def main():
         help="Phase 1 masked-LL extraction (needs GPU)",
     )
     ap.add_argument("--batch_size", type=int, default=128)
+    ap.add_argument(
+        "--no_ci", action="store_true", help="skip the family-cluster bootstrap CIs"
+    )
+    ap.add_argument("--n_boot", type=int, default=BOOTSTRAP_N_RESAMPLES)
     args = ap.parse_args()
 
     if args.extract:
@@ -552,7 +691,7 @@ def main():
         print(f"Variants: {len(variants)}  Sequences available: {len(seqs)}")
         extract_conservation(variants, seqs, batch_size=args.batch_size)
         return
-    analyse()
+    analyse(compute_ci=not args.no_ci, n_boot=args.n_boot)
 
 
 if __name__ == "__main__":

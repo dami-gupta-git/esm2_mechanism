@@ -15,9 +15,14 @@ from esm2_mech.experiments.mechanism.mechanism_delta_probe import _load_alphamis
 from esm2_mech.utils.data import load_variants, validate_embedding_variant_identity
 from esm2_mech.utils.io import write_result_json
 from esm2_mech.utils.seed_aggregation import (
+    SEED_STATUS_SUCCESS,
+    SEED_STATUS_UNSCORABLE,
+    aggregate_seed_values,
     aggregate_seed_vote,
+    block_seed_status,
     load_seed_files,
     make_seed_record,
+    read_seed_point_estimate,
 )
 from esm2_mech.experiments.mechanism.seed_results import (
     aggregate_across_seeds,
@@ -27,13 +32,11 @@ from esm2_mech.experiments.mechanism.seed_results import (
 from esm2_mech.utils.constants import (
     BOOTSTRAP_N_RESAMPLES,
     MECHANISM_NULL_FLOOR_MARGIN,
-    MECHANISM_NULL_MIN_AFFIRMING_SEEDS,
     MECHANISM_CLASSES,
     N_SEEDS,
     PERMUTATION_MIN_SIGNIFICANT_SEEDS,
     PERMUTATION_SIGNIFICANCE_THRESHOLD,
     SEED_RESULT_GLOB,
-    SPLIT_GAP_MIN_SUPPORTING_SEEDS,
 )
 from esm2_mech.utils.paths import (
     EMB_WT_MEAN,
@@ -53,99 +56,69 @@ OUT_DIR = RESULTS_DIR
 
 
 def summarize_split_gap(
-    seed_results: list[tuple[int, str, dict]], feature: str = "wt_only_mean"
+    seed_results: list[tuple[int, str, dict]],
+    requested_seeds,
+    feature: str = "wt_only_mean",
 ) -> dict:
-    """Apply claim 2B's positive-gap interval rule across all five seeds."""
-    per_seed = []
-    contradictory_seeds = []
-    vote_records = []
+    """Aggregate the row-aligned gene-minus-family point estimate by model seed."""
+    gap_records = []
     for seed, filename, result in seed_results:
-        gap = result.get("family_split", {}).get(feature, {}).get("split_gap_paired")
-        if gap is None or gap.get("ci_low") is None or gap.get("ci_high") is None:
-            vote_records.append(make_seed_record(seed, None))
-            per_seed.append({"seed": seed, "source_file": filename, "split_gap_paired": gap})
-            continue
-        contradicts_positive_gap = gap["ci_high"] < 0
-        vote_records.append(make_seed_record(seed, gap["ci_low"]))
-        if contradicts_positive_gap:
-            contradictory_seeds.append(seed)
-        per_seed.append({
-            "seed": seed,
-            "source_file": filename,
-            "point_diff": gap.get("point_diff"),
-            "ci_low": gap["ci_low"],
-            "ci_high": gap["ci_high"],
-            "n_clusters": gap.get("n_clusters"),
-            "contradicts_positive_gene_minus_family_gap": contradicts_positive_gap,
-        })
-
-    vote = aggregate_seed_vote(
-        range(N_SEEDS),
-        vote_records,
-        threshold=0.0,
-        minimum_supporting_seeds=SPLIT_GAP_MIN_SUPPORTING_SEEDS,
-        comparison="greater_than",
+        family_result = result.get("family_split", {}).get(feature, {})
+        paired_gap = family_result.get("split_gap_paired", {})
+        point_difference = paired_gap.get("point_diff")
+        # A feature block that failed keeps saying so; only a block that ran and
+        # still produced no difference is unscorable.
+        status = block_seed_status(family_result)
+        if status == SEED_STATUS_SUCCESS and point_difference is None:
+            status = SEED_STATUS_UNSCORABLE
+        gap_records.append(
+            make_seed_record(seed, point_difference, status=status)
+        )
+    difference = aggregate_seed_values(
+        requested_seeds, gap_records
     )
     return {
-        "seed_vote": vote.to_dict(),
         "feature": feature,
-        "per_seed": per_seed,
-        "contradictory_seeds": contradictory_seeds,
-        "required_seed_count": N_SEEDS,
-        "required_supporting_seed_count": SPLIT_GAP_MIN_SUPPORTING_SEEDS,
-        "preregistered_rule_evaluable": vote.available,
-        "meets_claim_2b_interval_rule": (
-            vote.payload["decision"] if vote.available else None
-        ),
+        "gene_minus_family_seed_aggregate": difference.to_dict(),
+        # Each seed's own paired bootstrap interval, kept per seed. Averaging
+        # interval bounds across seeds would describe neither the within-seed
+        # resampling uncertainty nor the spread between seeds.
+        "per_seed_interval": [
+            {
+                "seed": seed,
+                "source_file": filename,
+                **{
+                    key: result.get("family_split", {})
+                    .get(feature, {})
+                    .get("split_gap_paired", {})
+                    .get(key)
+                    for key in ("point_diff", "ci_low", "ci_high", "n_clusters")
+                },
+            }
+            for seed, filename, result in seed_results
+        ],
     }
 
 
-def summarize_mechanism_null_ci(
-    seed_results: list[tuple[int, str, dict]], family_chance_floor: float
-) -> dict:
-    """Apply claim 2A's three-of-five rule to its seed-specific intervals."""
-    threshold = family_chance_floor + MECHANISM_NULL_FLOOR_MARGIN
-    per_seed = []
-    vote_records = []
-    for seed, filename, result in seed_results:
-        ci = (
-            result.get("family_split", {})
-            .get("delta_mean", {})
-            .get("ci", {})
-            .get("macro_f1")
-        )
-        if ci is None or ci.get("ci_low") is None or ci.get("ci_high") is None:
-            vote_records.append(make_seed_record(seed, None))
-            per_seed.append({"seed": seed, "source_file": filename, "ci": ci})
-            continue
-        vote_records.append(make_seed_record(seed, ci["ci_high"]))
-        per_seed.append({
-            "seed": seed,
-            "source_file": filename,
-            "point": ci.get("point"),
-            "ci_low": ci["ci_low"],
-            "ci_high": ci["ci_high"],
-            "n_clusters": ci.get("n_clusters"),
-        })
-    vote = aggregate_seed_vote(
-        range(N_SEEDS),
-        vote_records,
-        threshold=threshold,
-        minimum_supporting_seeds=MECHANISM_NULL_MIN_AFFIRMING_SEEDS,
-    )
+def mechanism_null_assessment(family_chance_floor: float) -> dict:
+    """Report the claim 2A chance floor and threshold with no interval verdict.
+
+    The only interval available here is one seed's family-resampled bootstrap. It
+    describes that seed, not the across-seed macro-F1 this claim reports, so it is
+    neither attached to the claim nor used to adjudicate it. The floor and
+    threshold stay reportable because each satisfies its own contract.
+    """
     return {
-        "seed_vote": vote.to_dict(),
         "feature": "delta_mean",
         "family_chance_floor": family_chance_floor,
         "floor_margin": MECHANISM_NULL_FLOOR_MARGIN,
-        "threshold": threshold,
-        "per_seed": per_seed,
-        "required_seed_count": N_SEEDS,
-        "required_affirming_seed_count": MECHANISM_NULL_MIN_AFFIRMING_SEEDS,
-        "preregistered_rule_evaluable": vote.available,
-        "meets_claim_2a_interval_rule": (
-            vote.payload["decision"] if vote.available else None
+        "threshold": family_chance_floor + MECHANISM_NULL_FLOOR_MARGIN,
+        "interval": None,
+        "interval_reason": (
+            "an interval for the across-seed macro-F1 is unavailable pending audit "
+            "item 1.4; a single-seed bootstrap is not a substitute"
         ),
+        "interval_dependent_verdict": None,
     }
 
 
@@ -342,7 +315,7 @@ def main():
         requested_seeds,
         confusion_matrix_class_order=MECHANISM_CLASSES,
     )
-    split_gap_summary = summarize_split_gap(seed_results)
+    split_gap_summary = summarize_split_gap(seed_results, requested_seeds)
     permutation_summary = (
         aggregate_permutation_results(seed_results)
         if args.n_permutations > 0 else None
@@ -365,27 +338,36 @@ def main():
             for key in ("labeled_variants", "pfam_assignments")
         )
         if matching_floor:
-            family_floor = float(
-                naive_result["by_strategy"]["most_frequent"]["family"]["macro_f1_mean"]
+            family_floor_read = read_seed_point_estimate(
+                naive_result["by_strategy"]["most_frequent"]["family"][
+                    "macro_f1_seed_aggregate"
+                ]
             )
-            aggregate_payload["claim_2a_ci_summary"] = summarize_mechanism_null_ci(
-                seed_results, family_floor
-            )
-            aggregate_payload["claim_2a_ci_summary_missing"] = False
-            aggregate_payload["claim_2a_ci_summary_missing_reason"] = None
+            if family_floor_read.available:
+                aggregate_payload["claim_2a_interval_assessment"] = (
+                    mechanism_null_assessment(family_floor_read.value)
+                )
+            else:
+                aggregate_payload["claim_2a_interval_assessment"] = {
+                    "interval": None,
+                    "interval_reason": family_floor_read.message,
+                    "interval_dependent_verdict": None,
+                }
         else:
-            aggregate_payload["claim_2a_ci_summary"] = None
-            aggregate_payload["claim_2a_ci_summary_missing"] = True
-            aggregate_payload["claim_2a_ci_summary_missing_reason"] = (
-                "the available naive baseline was produced from different or "
-                "unfingerprinted inputs"
-            )
+            aggregate_payload["claim_2a_interval_assessment"] = {
+                "interval": None,
+                "interval_reason": (
+                    "the available naive baseline was produced from different or "
+                    "unfingerprinted inputs"
+                ),
+                "interval_dependent_verdict": None,
+            }
     else:
-        aggregate_payload["claim_2a_ci_summary"] = None
-        aggregate_payload["claim_2a_ci_summary_missing"] = True
-        aggregate_payload["claim_2a_ci_summary_missing_reason"] = (
-            "the naive baseline result does not exist"
-        )
+        aggregate_payload["claim_2a_interval_assessment"] = {
+            "interval": None,
+            "interval_reason": "the naive baseline result does not exist",
+            "interval_dependent_verdict": None,
+        }
     if permutation_summary is not None:
         aggregate_payload["permutation_summary"] = permutation_summary
     write_result_json(
@@ -394,6 +376,16 @@ def main():
         seeds=list(range(args.seeds)),
     )
     print_table(aggregated)
+    split_gap = read_seed_point_estimate(
+        split_gap_summary["gene_minus_family_seed_aggregate"]
+    )
+    if split_gap.available:
+        print(
+            f"\nRow-aligned gene-minus-family macro-F1: "
+            f"{split_gap.value:+.3f}"
+        )
+    else:
+        print(f"\nRow-aligned split gap is unavailable ({split_gap.message}).")
     if permutation_summary is not None:
         print_permutation_summary(permutation_summary)
     print(f"\nWrote {MECHANISM_AGGREGATE_JSON}")

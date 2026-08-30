@@ -27,11 +27,14 @@ import pytest
 
 from esm2_mech.utils.seed_aggregation import (
     SEED_SAMPLING_UNIT,
+    SEED_STATUS_FAILED,
     SeedUnavailableReason,
+    aggregate_seed_results,
     aggregate_seed_values as aggregate_seed_records,
     make_seed_record,
     read_seed_inference,
     read_seed_point_estimate,
+    seed_result_contract,
 )
 
 # ---------------------------------------------------------------------------
@@ -63,6 +66,17 @@ def _assert_refused(aggregate, reason, affected):
     assert aggregate.spread is None
     assert aggregate.reason is reason
     assert sorted(aggregate.affected_seeds) == sorted(affected)
+
+
+def test_result_adapter_uses_declared_seed_identity_and_root_status():
+    results = [
+        {**seed_result_contract(0), "metric": 0.2},
+        seed_result_contract(1, status=SEED_STATUS_FAILED),
+    ]
+    aggregate = aggregate_seed_results(
+        (0, 1), results, lambda result: result["metric"]
+    )
+    _assert_refused(aggregate, SeedUnavailableReason.FAILED_SEED, [1])
 
 
 # ---------------------------------------------------------------------------

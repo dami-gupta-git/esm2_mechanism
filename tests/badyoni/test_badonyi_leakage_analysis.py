@@ -33,6 +33,7 @@ from esm2_mech.experiments.badonyi.badonyi_leakage_analysis import (
     run_regime,
     run_seed,
 )
+from esm2_mech.utils.seed_aggregation import seed_result_contract
 
 
 class TestBroadcast:
@@ -137,7 +138,11 @@ class TestRunRegime:
             pfam_map={},
         )
 
-        assert result == {"skipped": True, "n_variants": n}
+        assert result == {
+            "skipped": True,
+            "reason": "fewer_than_30_variants",
+            "n_variants": n,
+        }
         assert "V_bad" not in result
 
     def test_regime_reports_the_masked_cohort_size(self, monkeypatch):
@@ -269,7 +274,7 @@ def _seed_result(
         }
 
     return {
-        "seed": seed,
+        **seed_result_contract(seed),
         "regimes": {name: _regime_block() for name in regimes},
     }
 
@@ -277,35 +282,43 @@ def _seed_result(
 class TestAggregateSeeds:
 
     def test_averages_across_seeds(self):
-        seeds = [_seed_result(0, macro_f1=0.4), _seed_result(1, macro_f1=0.6)]
+        seeds = [
+            _seed_result(0, macro_f1=0.4),
+            _seed_result(1, macro_f1=0.5),
+            _seed_result(2, macro_f1=0.6),
+        ]
 
-        summary = aggregate_seeds(seeds)
+        summary = aggregate_seeds(seeds, range(3))
 
-        assert summary["n_seeds"] == 2
         all_regime = summary["regimes"]["ALL"]
-        assert all_regime["n_seeds_present"] == 2
-        assert all_regime["V2_macro_f1_mean"] == pytest.approx(0.5)
-        assert all_regime["V2_macro_f1_std"] == pytest.approx(0.1)
+        aggregate = all_regime["V2_macro_f1_seed_aggregate"]
+        assert aggregate["mean"] == pytest.approx(0.5)
+        assert aggregate["seed_std"] == pytest.approx(0.1)
 
     def test_skipped_regime_stays_skipped_with_no_numbers(self):
         seeds = [_seed_result(0)]
-        seeds[0]["regimes"]["IN"] = {"skipped": True, "n_variants": 12}
+        seeds[0]["regimes"]["IN"] = {
+            "skipped": True,
+            "reason": "fewer_than_30_variants",
+            "n_variants": 12,
+        }
 
-        summary = aggregate_seeds(seeds)
+        summary = aggregate_seeds(seeds, [0])
 
-        assert summary["regimes"]["IN"] == {"skipped": True}
-        assert summary["regimes"]["OUT"]["V2_macro_f1_mean"] is not None
+        assert summary["regimes"]["IN"]["status"] == "excluded"
+        assert summary["regimes"]["OUT"]["V2_macro_f1_seed_aggregate"]["mean"] is not None
 
-    def test_a_seed_that_skipped_a_regime_does_not_count_toward_it(self):
+    def test_regime_eligibility_cannot_change_across_seeds(self):
         skipped = _seed_result(0)
-        skipped["regimes"]["IN"] = {"skipped": True, "n_variants": 12}
+        skipped["regimes"]["IN"] = {
+            "skipped": True,
+            "reason": "fewer_than_30_variants",
+            "n_variants": 12,
+        }
         seeds = [skipped, _seed_result(1, macro_f1=0.8)]
 
-        summary = aggregate_seeds(seeds)
-
-        assert summary["regimes"]["IN"]["n_seeds_present"] == 1
-        assert summary["regimes"]["IN"]["V2_macro_f1_mean"] == pytest.approx(0.8)
-        assert summary["regimes"]["ALL"]["n_seeds_present"] == 2
+        with pytest.raises(ValueError, match="eligibility changed"):
+            aggregate_seeds(seeds, range(2))
 
     def test_metric_no_seed_reported_is_absent_not_zero(self):
         seeds = [_seed_result(0)]
@@ -313,31 +326,31 @@ class TestAggregateSeeds:
             for arm in ("V2", "V_bad", "V2_bad"):
                 regime[arm].pop("per_gene_f1_mean")
 
-        summary = aggregate_seeds(seeds)
+        summary = aggregate_seeds(seeds, [0])
 
-        assert "V2_per_gene_f1_mean" not in summary["regimes"]["ALL"]
-        assert "V2_macro_f1_mean" in summary["regimes"]["ALL"]
+        assert summary["regimes"]["ALL"]["V2_per_gene_f1_seed_aggregate"]["state"] == "unavailable"
+        assert summary["regimes"]["ALL"]["V2_macro_f1_seed_aggregate"]["state"] == "available"
 
     def test_none_valued_metric_is_not_averaged_as_a_number(self):
         seeds = [_seed_result(0), _seed_result(1, macro_f1=None)]
 
-        summary = aggregate_seeds(seeds)
+        summary = aggregate_seeds(seeds, range(2))
 
-        assert summary["regimes"]["ALL"]["V2_macro_f1_mean"] == pytest.approx(0.5)
+        assert summary["regimes"]["ALL"]["V2_macro_f1_seed_aggregate"]["state"] == "unavailable"
 
     def test_suppressed_ci_bounds_are_left_out_of_the_pooled_interval(self):
         seeds = [_seed_result(0, ci=(0.2, 0.8)), _seed_result(1, ci=None)]
 
-        summary = aggregate_seeds(seeds)
+        summary = aggregate_seeds(seeds, range(2))
 
         all_regime = summary["regimes"]["ALL"]
-        assert all_regime["V2_macro_f1_ci_low_seed_mean"] == pytest.approx(0.2)
-        assert all_regime["V2_macro_f1_ci_high_seed_mean"] == pytest.approx(0.8)
+        assert "V2_macro_f1_ci_low_seed_mean" not in all_regime
+        assert "V2_macro_f1_ci_high_seed_mean" not in all_regime
 
     def test_all_ci_suppressed_leaves_no_pooled_interval(self):
         seeds = [_seed_result(0, ci=None)]
 
-        summary = aggregate_seeds(seeds)
+        summary = aggregate_seeds(seeds, [0])
 
         assert "V2_macro_f1_ci_low_seed_mean" not in summary["regimes"]["ALL"]
 
@@ -346,9 +359,13 @@ class TestPrintTable:
 
     def test_prints_a_skipped_regime_without_error(self, capsys):
         seeds = [_seed_result(0)]
-        seeds[0]["regimes"]["IN"] = {"skipped": True, "n_variants": 12}
+        seeds[0]["regimes"]["IN"] = {
+            "skipped": True,
+            "reason": "fewer_than_30_variants",
+            "n_variants": 12,
+        }
 
-        print_table(aggregate_seeds(seeds))
+        print_table(aggregate_seeds(seeds, [0]))
 
         printed = capsys.readouterr().out
         assert "IN" in printed
@@ -360,6 +377,6 @@ class TestPrintTable:
             for arm in ("V2", "V_bad", "V2_bad"):
                 regime[arm].pop("per_gene_f1_mean")
 
-        print_table(aggregate_seeds(seeds))
+        print_table(aggregate_seeds(seeds, [0]))
 
         assert "N/A" in capsys.readouterr().out

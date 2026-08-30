@@ -176,26 +176,25 @@ class TestPooledGofTest:
         assert out["chance_auroc"] == 0.5
         assert out["logreg"]["n_genes"] == 12 + 9
 
-    def test_recovers_planted_signal_with_interval_gated(self):
+    def test_recovers_planted_signal_with_its_interval(self):
         rng = np.random.RandomState(2)
         delta_oof = {
             "FAMA": _synthetic_family_oof("FAMA", 12, gof_signal=2.5, rng=rng),
             "FAMB": _synthetic_family_oof("FAMB", 9, gof_signal=2.5, rng=rng),
         }
         out = wf.pooled_gof_test(delta_oof, {}, n_seeds=3, n_folds=5, compute_ci=True)
+        interval = out["logreg"]["ci"]
         assert out["logreg"]["point"] > 0.5
-        assert out["logreg"]["ci"]["ci_low"] is None
-        assert out["logreg"]["ci"]["reason"] == "blocked_by_audit_1_4"
+        assert interval["ci_low"] <= interval["point"] <= interval["ci_high"]
+        assert interval["ci_low"] > 0.5
 
-    def test_no_signal_interval_is_also_gated(self):
+    def test_no_signal_interval_straddles_chance(self):
         # gof_signal=0 -> GOF proba is pure noise -> AUROC ~0.5, CI straddles it.
         rng = np.random.RandomState(4)
         delta_oof = {"FAMA": _synthetic_family_oof("FAMA", 15, gof_signal=0.0, rng=rng)}
         out = wf.pooled_gof_test(delta_oof, {}, n_seeds=3, n_folds=5, compute_ci=True)
-        ci = out["logreg"]["ci"]
-        assert ci["ci_low"] is None
-        assert ci["ci_high"] is None
-        assert ci["reason"] == "blocked_by_audit_1_4"
+        interval = out["logreg"]["ci"]
+        assert interval["ci_low"] < 0.5 < interval["ci_high"]
 
     def test_compute_ci_false_omits_ci_block(self):
         rng = np.random.RandomState(4)

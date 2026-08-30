@@ -69,11 +69,17 @@ from esm2_mech.utils.metrics import (
     aggregate_folds,
     compute_metrics,
     empty_aggregate_metrics,
-    imbalance_metrics,
     majority_baseline_f1,
     mean_std_n,
     standardize,
 )
+from esm2_mech.utils.seed_aggregation import (
+    aggregate_seed_results,
+    block_seed_status,
+    read_seed_inference,
+    seed_result_contract,
+)
+from esm2_mech.experiments.mechanism.seed_results import aggregate_result_contract
 from esm2_mech.utils.paths import (
     CASCADE_MECHANISM_AGGREGATE_JSON,
     CASCADE_MECHANISM_DIR,
@@ -943,7 +949,7 @@ def run_seed(
             )
 
     result = {
-        "seed": seed,
+        **seed_result_contract(seed),
         "arms": arms,
         "input_fingerprints": input_fingerprints,
         "analysis_parameters": analysis_parameters(args),
@@ -990,32 +996,13 @@ def analysis_parameters(args) -> dict:
 # ── Across-seed aggregation ──────────────────────────────────────────────────
 
 
-def aggregate_seeds(seed_results: list[dict]) -> dict:
+def aggregate_seeds(seed_results: list[dict], requested_seeds) -> dict:
     """Mean and standard deviation of each arm's headline metrics across seeds."""
     arm_keys = sorted({key for result in seed_results for key in result["arms"]})
     across: dict[str, dict] = {}
     for arm_key in arm_keys:
-        arm_results = [
-            result["arms"][arm_key]
-            for result in seed_results
-            if result["arms"].get(arm_key, {}).get("cascade") is not None
-        ]
-        seeds_present = [
-            result["seed"] for result in seed_results if arm_key in result["arms"]
-        ]
-        if len(arm_results) != len(seeds_present) or any(
-            arm.get("status") != "success" for arm in arm_results
-        ):
-            across[arm_key] = {
-                "n_seeds_scored": 0,
-                "seeds_requested": seeds_present,
-                "unscorable_reason": "one or more required seeds were unavailable",
-            }
-            continue
-        summary: dict = {
-            "n_seeds_scored": len(arm_results),
-            "seeds_requested": seeds_present,
-        }
+        requested = tuple(requested_seeds)
+        summary: dict = {"requested_seeds": list(requested)}
         headline = [
             ("cascade", "macro_f1_mean"),
             ("cascade", "majority_baseline_macro_f1_mean"),
@@ -1030,16 +1017,22 @@ def aggregate_seeds(seed_results: list[dict]) -> dict:
             (CASCADE_STAGE_B, "prevalence_mean"),
         ]
         for section, metric in headline:
-            values = [
-                arm[section][metric]
-                for arm in arm_results
-            ]
-            unavailable = any(value is None for value in values)
-            summary[f"{section}.{metric}"] = {
-                "mean": None if unavailable else float(np.mean(values)),
-                "std": None if unavailable else float(np.std(values)),
-                "n_seeds": 0 if unavailable else len(values),
-            }
+            def arm_status(result, arm_name=arm_key):
+                return block_seed_status(result.get("arms", {}).get(arm_name))
+
+            def arm_value(result, arm_name=arm_key, section_name=section, name=metric):
+                arm = result.get("arms", {}).get(arm_name)
+                if not isinstance(arm, dict):
+                    return None
+                section_result = arm.get(section_name)
+                return section_result.get(name) if isinstance(section_result, dict) else None
+
+            summary[f"{section}.{metric}"] = aggregate_seed_results(
+                requested,
+                seed_results,
+                arm_value,
+                status=arm_status,
+            ).to_dict()
         across[arm_key] = summary
     return across
 
@@ -1051,15 +1044,16 @@ def print_summary(across: dict) -> None:
     print("-" * len(header))
     for arm_key in sorted(across):
         summary = across[arm_key]
-        if summary["n_seeds_scored"] == 0:
+        cascade = read_seed_inference(summary["cascade.macro_f1_mean"])
+        if not cascade.available:
             print(f"{arm_key:<32} {'not scorable':>12}")
             continue
 
         def cell(key: str) -> str:
-            entry = summary.get(key, {})
-            if entry.get("mean") is None:
+            entry = read_seed_inference(summary.get(key, {}))
+            if not entry.available:
                 return "NA"
-            return f"{entry['mean']:.3f}±{entry['std']:.3f}"
+            return f"{entry.value:.3f}±{entry.spread:.3f}"
 
         print(
             f"{arm_key:<32} {cell('cascade.macro_f1_mean'):>12} "
@@ -1145,11 +1139,13 @@ def main():
         if result["input_fingerprints"] != input_fingerprints:
             raise ValueError(f"seed {result['seed']} was produced from different inputs")
 
-    across = aggregate_seeds(seed_results)
+    requested_seeds = tuple(range(args.seeds))
+    across = aggregate_seeds(seed_results, requested_seeds)
     aggregate_path = output_dir(args) / CASCADE_MECHANISM_AGGREGATE_JSON.name
     write_result_json(
         aggregate_path,
         {
+            **aggregate_result_contract(),
             "n_seeds": len(seed_results),
             "seed_files": [f"cascade_seed{result['seed']}.json" for result in seed_results],
             "input_fingerprints": input_fingerprints,

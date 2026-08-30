@@ -17,7 +17,7 @@ from sklearn.neighbors import KNeighborsClassifier
 import functools
 
 from esm2_mech.utils.bootstrap import attach_mechanism_ci
-from esm2_mech.utils.constants import BOOTSTRAP_N_RESAMPLES, MECHANISM_CLASSES
+from esm2_mech.utils.constants import BOOTSTRAP_N_RESAMPLES, MECHANISM_CLASSES, N_SEEDS
 from esm2_mech.utils.io import load_variants_and_delta, write_result_json
 from esm2_mech.utils.data import load_pfam_map
 from esm2_mech.utils.classification import validate_classification_splits
@@ -38,6 +38,11 @@ from esm2_mech.utils.paths import (
     RESULTS_DIR,
     VALID_VARIANTS_JSON,
 )
+from esm2_mech.utils.seed_aggregation import (
+    aggregate_seed_results,
+    read_seed_point_estimate,
+)
+from esm2_mech.experiments.mechanism.seed_results import read_across_seed_metric
 
 print = functools.partial(print, flush=True)
 
@@ -87,8 +92,6 @@ def evaluate_probe(clf, X_test, y_test, le):
     """Returns (results, proba_aligned) with proba columns aligned to MECHANISM_CLASSES."""
     pred = clf.predict(X_test)
     proba = clf.predict_proba(X_test)
-    classes = list(clf.classes_)
-
     clf_str_classes = np.array(le.inverse_transform(clf.classes_))
     proba_aligned = align_proba(
         proba,
@@ -112,22 +115,34 @@ def evaluate_probe(clf, X_test, y_test, le):
 
 def _read_live_family_split_refs():
     """Read live family-split F1 floors from MLP and contrastive result files. None if not yet produced."""
+    requested_seeds = tuple(range(N_SEEDS))
+    mlp_results = []
+    for seed in requested_seeds:
+        mlp_path = str(NONLINEAR_RESULTS_SEED_JSON).format(seed=seed)
+        if not os.path.exists(mlp_path):
+            mlp_results = []
+            break
+        with open(mlp_path) as handle:
+            mlp_results.append(json.load(handle))
     mlp_f1 = None
-    mlp_path = str(NONLINEAR_RESULTS_SEED_JSON).format(seed=0)
-    if os.path.exists(mlp_path):
-        with open(mlp_path) as f:
-            mlp_results = json.load(f)
-        mlp_f1 = mlp_results.get("mlp_delta_mean_family", {}).get("macro_f1_mean")
+    if mlp_results:
+        metric = read_seed_point_estimate(
+            aggregate_seed_results(
+                requested_seeds,
+                mlp_results,
+                lambda result: result.get("mlp_delta_mean_family", {}).get(
+                    "macro_f1_mean"
+                ),
+            )
+        )
+        mlp_f1 = metric.value if metric.available else None
 
     contrastive_f1 = None
     if CONTRASTIVE_AGGREGATE_JSON.exists():
-        with open(CONTRASTIVE_AGGREGATE_JSON) as f:
-            contrastive_results = json.load(f)
-        contrastive_f1 = (
-            contrastive_results.get("across_seed", {})
-            .get("family_split", {})
-            .get("contrastive_knn", {})
-            .get("macro_f1_seed_mean")
+        contrastive_f1 = read_across_seed_metric(
+            str(CONTRASTIVE_AGGREGATE_JSON),
+            "family_split",
+            "contrastive_knn",
         )
     return mlp_f1, contrastive_f1
 
@@ -135,8 +150,6 @@ def _read_live_family_split_refs():
 def run_clan_holdout(delta, labels, genes, gene_clan, clan_names, le, seed=42, n_boot=BOOTSTRAP_N_RESAMPLES):
     """Leave-one-clan-out CV with clan-resampled cluster-bootstrap CI."""
     y = le.transform(labels)
-    all_classes = list(le.classes_)
-
     clan_to_idx = defaultdict(list)
     for i, g in enumerate(genes):
         clan = gene_clan.get(g)
@@ -531,7 +544,12 @@ def main():
             f"(n_clusters={ci['macro_f1']['n_clusters']})"
         )
     elif ci is not None:
-        print("\nClan-resampled CI: unavailable (blocked_by_audit_1_4)")
+        interval = ci["macro_f1"]
+        print(
+            "\nClan-resampled CI: not reported — "
+            f"{interval['n_resamples']}/{interval['n_resamples_total']} resamples "
+            f"were scorable ({interval.get('reason', 'no reason recorded')})"
+        )
 
     results = {
         "description": (

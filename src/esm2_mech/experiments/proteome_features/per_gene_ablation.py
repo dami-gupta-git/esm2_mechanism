@@ -39,7 +39,20 @@ from esm2_mech.utils.paths import (
     BADONYI_FEATURE_COLUMNS_JSON,
     BADONYI_FEATURES_TSV,
 )
-from esm2_mech.utils.constants import MECHANISM_CLASSES, MIN_TRAIN_CLASSES, N_FOLDS
+from esm2_mech.utils.constants import (
+    MECHANISM_CLASSES,
+    MIN_TRAIN_CLASSES,
+    N_FOLDS,
+    N_SEEDS,
+)
+from esm2_mech.utils.io import write_result_json
+from esm2_mech.utils.seed_aggregation import (
+    aggregate_result_contract,
+    aggregate_seed_results,
+    block_seed_status,
+    read_seed_point_estimate,
+    seed_result_contract,
+)
 import functools
 
 print = functools.partial(print, flush=True)
@@ -353,11 +366,14 @@ def run_per_gene_cv(
             f"V3={v3_folds[-1]['macro_f1']:.3f}"
         )
 
-    return {
+    results = {
         "V1_per_gene": aggregate_folds(v1_folds, CLASSES, N_FOLDS),
         "V2_per_gene": aggregate_folds(v2_folds, CLASSES, N_FOLDS),
         "V3_per_gene": aggregate_folds(v3_folds, CLASSES, N_FOLDS),
     }
+    for result in results.values():
+        result["status"] = "success"
+    return results
 
 
 def run_v2_ablation(
@@ -485,7 +501,7 @@ def main():
     y_g_f = np.asarray(gene_df_f["mech3"].values)
     groups_g = gene_pfam_g[has_fam_g]
 
-    seeds = [args.seed] if args.seed is not None else list(range(5))
+    seeds = [args.seed] if args.seed is not None else list(range(N_SEEDS))
 
     if not args.skip_t2:
         print("\n=== T2: Per-gene scoring ===")
@@ -502,11 +518,10 @@ def main():
                 pfam_map=pfam_map,
                 seed=seed,
             )
-            res["seed"] = seed
+            res.update(seed_result_contract(seed))
             t2_seed_results.append(res)
             out_path = OUT_DIR / f"per_gene_seed{seed}.json"
-            with open(out_path, "w") as f:
-                json.dump(res, f, indent=2)
+            write_result_json(out_path, res, seeds=[seed], indent=2)
             print(f"  Saved {out_path.name}")
             for v in ["V1_per_gene", "V2_per_gene", "V3_per_gene"]:
                 f1 = res[v].get("macro_f1_mean")
@@ -515,44 +530,33 @@ def main():
                     else f"  {v}: macro_f1=N/A"
                 )
 
-        t2_summary = {}
+        t2_summary = {**aggregate_result_contract()}
         for v in ["V1_per_gene", "V2_per_gene", "V3_per_gene"]:
-            f1s = [
-                r[v].get("macro_f1_mean")
-                for r in t2_seed_results
-                if r[v].get("macro_f1_mean") is not None
-            ]
-            t2_summary[v] = {
-                "macro_f1_mean": float(np.mean(f1s)) if f1s else None,
-                "macro_f1_std": float(np.std(f1s)) if f1s else None,
-            }
-            for cls in CLASSES:
-                vals = [
-                    r[v].get(f"auroc_{cls}_mean")
-                    for r in t2_seed_results
-                    if r[v].get(f"auroc_{cls}_mean") is not None
-                ]
-                t2_summary[v][f"auroc_{cls}_mean"] = (
-                    float(np.mean(vals)) if vals else None
+            metric_names = ["macro_f1_mean", *[f"auroc_{cls}_mean" for cls in CLASSES]]
+            t2_summary[v] = {}
+            for metric_name in metric_names:
+                aggregate = aggregate_seed_results(
+                    seeds,
+                    t2_seed_results,
+                    lambda result, arm=v, metric=metric_name: result[arm].get(metric),
+                    status=lambda result, arm=v: block_seed_status(result[arm]),
                 )
-                t2_summary[v][f"auroc_{cls}_std"] = (
-                    float(np.std(vals)) if vals else None
+                t2_summary[v][f"{metric_name.removesuffix('_mean')}_seed_aggregate"] = (
+                    aggregate.to_dict()
                 )
 
         t2_sum_path = OUT_DIR / "per_gene_summary.json"
-        with open(t2_sum_path, "w") as f:
-            json.dump(t2_summary, f, indent=2)
+        write_result_json(t2_sum_path, t2_summary, seeds=seeds, indent=2)
 
         print("\n=== T2 SUMMARY (per-gene, mean ± std across seeds) ===")
         for v in ["V1_per_gene", "V2_per_gene", "V3_per_gene"]:
-            m = t2_summary[v].get("macro_f1_mean")
-            s = t2_summary[v].get("macro_f1_std")
-            dn = t2_summary[v].get("auroc_DN_mean")
-            print(
-                f"  {v}: macro_f1={m:.4f}±{s:.4f}  DN_AUROC={dn:.3f}"
-                if m is not None and s is not None and dn is not None
-                else f"  {v}: N/A"
-            )
+            f1 = read_seed_point_estimate(t2_summary[v]["macro_f1_seed_aggregate"])
+            dn = read_seed_point_estimate(t2_summary[v]["auroc_DN_seed_aggregate"])
+            if not f1.available or not dn.available:
+                print(f"  {v}: N/A")
+                continue
+            spread = "N/A" if f1.spread is None else f"{f1.spread:.4f}"
+            print(f"  {v}: macro_f1={f1.value:.4f}±{spread}  DN_AUROC={dn.value:.3f}")
 
     if not args.skip_t4:
         print("\n=== T4: V2 Feature-class ablation ===")
@@ -560,72 +564,60 @@ def main():
         for seed in seeds:
             print(f"\n--- Seed {seed} ---")
             res = run_v2_ablation(X_prot_g_f, y_g_f, groups_g, feature_names, seed)
-            res["seed"] = seed
+            res.update(seed_result_contract(seed))
             t4_seed_results.append(res)
             out_path = OUT_DIR / f"v2_ablation_seed{seed}.json"
-            with open(out_path, "w") as f:
-                json.dump(res, f, indent=2)
+            write_result_json(out_path, res, seeds=[seed], indent=2)
             print(f"  Saved {out_path.name}")
 
         # Aggregate T4
-        t4_summary = {"FULL": {}}
-        full_f1s = [
-            r["FULL"].get("macro_f1_mean")
-            for r in t4_seed_results
-            if r["FULL"].get("macro_f1_mean") is not None
-        ]
-        t4_summary["FULL"]["macro_f1_mean"] = (
-            float(np.mean(full_f1s)) if full_f1s else None
+        t4_summary = {**aggregate_result_contract(), "FULL": {}}
+        full_aggregate = aggregate_seed_results(
+            seeds,
+            t4_seed_results,
+            lambda result: result["FULL"].get("macro_f1_mean"),
+            status=lambda result: block_seed_status(result["FULL"]),
         )
-        t4_summary["FULL"]["macro_f1_std"] = (
-            float(np.std(full_f1s)) if full_f1s else None
-        )
+        t4_summary["FULL"]["macro_f1_seed_aggregate"] = full_aggregate.to_dict()
 
         for cls_name in FEATURE_CLASSES:
-            delta_f1s = [
-                r[cls_name]["delta_f1"]
-                for r in t4_seed_results
-                if cls_name in r and r[cls_name].get("delta_f1") is not None
-            ]
-            delta_dns = [
-                r[cls_name]["delta_auroc_DN"]
-                for r in t4_seed_results
-                if cls_name in r and r[cls_name].get("delta_auroc_DN") is not None
-            ]
-            abl_f1s = [
-                r[cls_name].get("macro_f1_mean")
-                for r in t4_seed_results
-                if cls_name in r and r[cls_name].get("macro_f1_mean") is not None
-            ]
-            t4_summary[cls_name] = {
-                "macro_f1_mean": float(np.mean(abl_f1s)) if abl_f1s else None,
-                "macro_f1_std": float(np.std(abl_f1s)) if abl_f1s else None,
-                "delta_f1_mean": float(np.mean(delta_f1s)) if delta_f1s else None,
-                "delta_f1_std": float(np.std(delta_f1s)) if delta_f1s else None,
-                "delta_auroc_DN_mean": float(np.mean(delta_dns)) if delta_dns else None,
-                "delta_auroc_DN_std": float(np.std(delta_dns)) if delta_dns else None,
-            }
+            t4_summary[cls_name] = {}
+            for metric_name in ("macro_f1_mean", "delta_f1", "delta_auroc_DN"):
+                aggregate = aggregate_seed_results(
+                    seeds,
+                    t4_seed_results,
+                    lambda result, arm=cls_name, metric=metric_name: result[arm].get(metric),
+                    status=lambda result, arm=cls_name: block_seed_status(
+                        result[arm]
+                    ),
+                )
+                stem = metric_name.removesuffix("_mean")
+                t4_summary[cls_name][f"{stem}_seed_aggregate"] = aggregate.to_dict()
 
         t4_sum_path = OUT_DIR / "v2_ablation_summary.json"
-        with open(t4_sum_path, "w") as f:
-            json.dump(t4_summary, f, indent=2)
+        write_result_json(t4_sum_path, t4_summary, seeds=seeds, indent=2)
 
         print("\n=== T4 SUMMARY (V2 ablation, mean ± std across seeds) ===")
-        full_m = t4_summary["FULL"].get("macro_f1_mean")
-        full_s = t4_summary["FULL"].get("macro_f1_std")
-        if full_m is None:
+        full = read_seed_point_estimate(t4_summary["FULL"]["macro_f1_seed_aggregate"])
+        if not full.available:
             print("  V2 FULL:  N/A")
         else:
-            print(f"  V2 FULL:  {full_m:.4f} ± {full_s:.4f}")
+            spread = "N/A" if full.spread is None else f"{full.spread:.4f}"
+            print(f"  V2 FULL:  {full.value:.4f} ± {spread}")
         print(f"  {'Class':<14}  {'Abl F1':>8}  {'ΔF1':>8}  {'ΔDN AUROC':>10}")
         for cls_name in FEATURE_CLASSES:
-            m = t4_summary[cls_name].get("macro_f1_mean")
-            df = t4_summary[cls_name].get("delta_f1_mean")
-            ddn = t4_summary[cls_name].get("delta_auroc_DN_mean")
-            ds = t4_summary[cls_name].get("delta_f1_std")
-            m_s = f"{m:.4f}" if m is not None else "  N/A  "
-            df_s = f"{df:+.4f}±{ds:.4f}" if df is not None else "  N/A  "
-            ddn_s = f"{ddn:+.4f}" if ddn is not None else "  N/A  "
+            m = read_seed_point_estimate(t4_summary[cls_name]["macro_f1_seed_aggregate"])
+            delta_f1 = read_seed_point_estimate(t4_summary[cls_name]["delta_f1_seed_aggregate"])
+            delta_dn = read_seed_point_estimate(t4_summary[cls_name]["delta_auroc_DN_seed_aggregate"])
+            m_s = f"{m.value:.4f}" if m.available else "  N/A  "
+            delta_spread = (
+                "N/A" if delta_f1.spread is None else f"{delta_f1.spread:.4f}"
+            )
+            df_s = (
+                f"{delta_f1.value:+.4f}±{delta_spread}"
+                if delta_f1.available else "  N/A  "
+            )
+            ddn_s = f"{delta_dn.value:+.4f}" if delta_dn.available else "  N/A  "
             print(f"  minus {cls_name:<12}  {m_s}  {df_s}  {ddn_s}")
 
 

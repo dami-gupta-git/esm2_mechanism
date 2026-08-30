@@ -6,26 +6,28 @@ import argparse
 import json
 import warnings
 from collections import Counter
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from esm2_mech.utils.constants import MECHANISM_CLASSES, BOOTSTRAP_N_RESAMPLES
+from esm2_mech.utils.constants import MECHANISM_CLASSES, BOOTSTRAP_N_RESAMPLES, N_SEEDS
 from esm2_mech.utils.data import build_gene_to_row as _build_gene_to_row, load_pfam_map
 from esm2_mech.utils.splits import family_split_indices
 from esm2_mech.utils.probes import run_histgb_cv
 from esm2_mech.utils.bootstrap import attach_mechanism_ci, family_or_gene_clusters
 from esm2_mech.utils.classification import validate_complete_classification_splits
+from esm2_mech.utils.seed_aggregation import (
+    aggregate_seed_results,
+    read_seed_inference,
+    read_seed_point_estimate,
+    seed_result_contract,
+)
+from esm2_mech.experiments.mechanism.seed_results import aggregate_result_contract
 from esm2_mech.utils.paths import (
     BADONYI_CACHE_DIR,
     GENE_UNIVERSE,
     PFAM_JSON,
     PROTEOME_FEATURES_ALIGNED,
-    PROTEOME_FEATURE_COLUMNS_JSON,
-    PROTEOME_FEATURES_TSV,
     BADONYI_FEATURES_ALIGNED,
-    BADONYI_FEATURE_COLUMNS_JSON,
-    BADONYI_FEATURES_TSV,
     RESULTS_DIR,
     VALID_VARIANTS_JSON,
 )
@@ -145,7 +147,11 @@ def run_regime(
     n_var = int(mask.sum())
     if n_var < 100:
         print(f"  [{regime_name}] skipped: only {n_var} variants")
-        return {"skipped": True, "n_variants": n_var}
+        return {
+            "skipped": True,
+            "reason": "fewer_than_30_variants",
+            "n_variants": n_var,
+        }
 
     X_p = X_prot[mask]
     X_b = X_bad[mask]
@@ -213,7 +219,7 @@ def run_seed(
     print(f"  IN  : {int(mask_in.sum())}  (gene was in Badonyi's training set)")
     print(f"  OUT : {int(mask_out.sum())}  (gene was NOT in Badonyi's training)")
 
-    seed_results = {"seed": seed, "regimes": {}}
+    seed_results = {**seed_result_contract(seed), "regimes": {}}
     for name, mask in [("ALL", mask_all), ("IN", mask_in), ("OUT", mask_out)]:
         seed_results["regimes"][name] = run_regime(
             name, mask, X_prot, X_bad, y, genes, gene_pfam, n_folds, seed, pfam_map,
@@ -222,59 +228,51 @@ def run_seed(
     return seed_results
 
 
-def aggregate_seeds(all_seed):
+def aggregate_seeds(all_seed, requested_seeds):
     """Aggregate macro-F1, per-gene-F1, and AUROC across seeds per regime and variant."""
-    summary = {"n_seeds": len(all_seed), "regimes": {}}
+    summary = {
+        **aggregate_result_contract(),
+        "requested_seeds": list(requested_seeds),
+        "regimes": {},
+    }
     regimes = ["ALL", "IN", "OUT"]
     variants = ["V2", "V_bad", "V2_bad"]
 
     for r in regimes:
-        rs = []
-        for s in all_seed:
-            if s["regimes"][r].get("skipped"):
-                continue
-            rs.append(s["regimes"][r])
-        if not rs:
-            summary["regimes"][r] = {"skipped": True}
+        regime_results = [result["regimes"][r] for result in all_seed]
+        skipped = [bool(result.get("skipped")) for result in regime_results]
+        if any(skipped):
+            if not all(skipped):
+                raise ValueError(f"regime {r} eligibility changed across seeds")
+            summary["regimes"][r] = {
+                "status": "excluded",
+                "reason": regime_results[0].get("reason"),
+            }
             continue
         out = {
-            "n_seeds_present": len(rs),
-            "n_variants_first": rs[0]["n_variants"],
-            "n_genes_first": rs[0]["n_genes"],
-            "class_dist_first": rs[0]["class_dist_variants"],
+            "status": "included",
+            "n_variants": regime_results[0]["n_variants"],
+            "n_genes": regime_results[0]["n_genes"],
+            "class_dist": regime_results[0]["class_dist_variants"],
         }
         for v in variants:
             for metric in ["macro_f1_mean", "per_gene_f1_mean"]:
-                vals = [
-                    x[v].get(metric)
-                    for x in rs
-                    if v in x and x[v].get(metric) is not None
-                ]
                 stem = f"{v}_{metric.replace('_mean','')}"
-                if vals:
-                    out[f"{stem}_mean"] = float(np.mean(vals))
-                    out[f"{stem}_std"] = float(np.std(vals))
+                out[f"{stem}_seed_aggregate"] = aggregate_seed_results(
+                    requested_seeds,
+                    all_seed,
+                    lambda result, regime=r, arm=v, name=metric: result[
+                        "regimes"
+                    ][regime].get(arm, {}).get(name),
+                ).to_dict()
             for cls in CLASSES:
-                vals = [
-                    x[v].get(f"auroc_{cls}_mean")
-                    for x in rs
-                    if v in x and x[v].get(f"auroc_{cls}_mean") is not None
-                ]
-                if vals:
-                    out[f"{v}_auroc_{cls}_mean"] = float(np.mean(vals))
-                    out[f"{v}_auroc_{cls}_std"] = float(np.std(vals))
-
-            # CI bounds pooled across seeds — separate from seed-to-seed std.
-            for bound in ("ci_low", "ci_high"):
-                vals = [
-                    x[v]["ci"]["macro_f1"].get(bound)
-                    for x in rs
-                    if v in x
-                    and x[v].get("ci", {}).get("macro_f1")
-                    and not x[v]["ci"]["macro_f1"].get("ci_suppressed")
-                ]
-                if vals:
-                    out[f"{v}_macro_f1_{bound}_seed_mean"] = float(np.mean(vals))
+                out[f"{v}_auroc_{cls}_seed_aggregate"] = aggregate_seed_results(
+                    requested_seeds,
+                    all_seed,
+                    lambda result, regime=r, arm=v, label=cls: result[
+                        "regimes"
+                    ][regime].get(arm, {}).get(f"auroc_{label}_mean"),
+                ).to_dict()
         summary["regimes"][r] = out
     return summary
 
@@ -288,20 +286,19 @@ def print_table(summary):
     )
     print("-" * 84)
     for r in ["ALL", "IN", "OUT"]:
-        if "skipped" in summary["regimes"].get(r, {}):
+        if summary["regimes"].get(r, {}).get("status") == "excluded":
             print(f"{r:<6} SKIPPED")
             continue
         x = summary["regimes"][r]
 
         def f(k):
-            m = x.get(f"{k}_per_gene_f1_mean")
-            s = x.get(f"{k}_per_gene_f1_std")
-            if m is None:
+            metric = read_seed_inference(x.get(f"{k}_per_gene_f1_seed_aggregate", {}))
+            if not metric.available:
                 return "   N/A   "
-            return f"{m:.3f}±{s:.3f}"
+            return f"{metric.value:.3f}±{metric.spread:.3f}"
 
         print(
-            f"{r:<6} {x['n_variants_first']:>6} {x['n_genes_first']:>7}  "
+            f"{r:<6} {x['n_variants']:>6} {x['n_genes']:>7}  "
             f"{f('V2'):>14} {f('V_bad'):>14} {f('V2_bad'):>14}"
         )
 
@@ -309,16 +306,15 @@ def print_table(summary):
     print(f"{'Regime':<6}  {'V2':>14} {'V_bad':>14} {'V2+bad':>14}")
     print("-" * 60)
     for r in ["ALL", "IN", "OUT"]:
-        if "skipped" in summary["regimes"].get(r, {}):
+        if summary["regimes"].get(r, {}).get("status") == "excluded":
             continue
         x = summary["regimes"][r]
 
         def f(k):
-            m = x.get(f"{k}_auroc_DN_mean")
-            s = x.get(f"{k}_auroc_DN_std")
-            if m is None:
+            metric = read_seed_inference(x.get(f"{k}_auroc_DN_seed_aggregate", {}))
+            if not metric.available:
                 return "   N/A   "
-            return f"{m:.3f}±{s:.3f}"
+            return f"{metric.value:.3f}±{metric.spread:.3f}"
 
         print(f"{r:<6}  {f('V2'):>14} {f('V_bad'):>14} {f('V2_bad'):>14}")
 
@@ -326,39 +322,38 @@ def print_table(summary):
     print(f"{'Regime':<6}  {'V2':>14} {'V_bad':>14} {'V2+bad':>14}")
     print("-" * 60)
     for r in ["ALL", "IN", "OUT"]:
-        if "skipped" in summary["regimes"].get(r, {}):
+        if summary["regimes"].get(r, {}).get("status") == "excluded":
             continue
         x = summary["regimes"][r]
 
         def f(k):
-            m = x.get(f"{k}_auroc_GOF_mean")
-            s = x.get(f"{k}_auroc_GOF_std")
-            if m is None:
+            metric = read_seed_inference(x.get(f"{k}_auroc_GOF_seed_aggregate", {}))
+            if not metric.available:
                 return "   N/A   "
-            return f"{m:.3f}±{s:.3f}"
+            return f"{metric.value:.3f}±{metric.spread:.3f}"
 
         print(f"{r:<6}  {f('V2'):>14} {f('V_bad'):>14} {f('V2_bad'):>14}")
 
     # Leakage gauge
     print("\nLeakage gauge (IN − OUT, V_bad):")
-    if not summary["regimes"].get("IN", {}).get("skipped") and not summary[
+    if summary["regimes"].get("IN", {}).get("status") == "included" and summary[
         "regimes"
-    ].get("OUT", {}).get("skipped"):
+    ].get("OUT", {}).get("status") == "included":
         i = summary["regimes"]["IN"]
         o = summary["regimes"]["OUT"]
         for metric_name, key in [
-            ("per-gene F1", "V_bad_per_gene_f1_mean"),
-            ("macro-F1", "V_bad_macro_f1_mean"),
-            ("DN AUROC", "V_bad_auroc_DN_mean"),
-            ("GOF AUROC", "V_bad_auroc_GOF_mean"),
-            ("LOF AUROC", "V_bad_auroc_LOF_mean"),
+            ("per-gene F1", "V_bad_per_gene_f1_seed_aggregate"),
+            ("macro-F1", "V_bad_macro_f1_seed_aggregate"),
+            ("DN AUROC", "V_bad_auroc_DN_seed_aggregate"),
+            ("GOF AUROC", "V_bad_auroc_GOF_seed_aggregate"),
+            ("LOF AUROC", "V_bad_auroc_LOF_seed_aggregate"),
         ]:
-            iv = i.get(key)
-            ov = o.get(key)
-            if iv is not None and ov is not None:
+            iv = read_seed_point_estimate(i.get(key, {}))
+            ov = read_seed_point_estimate(o.get(key, {}))
+            if iv.available and ov.available:
                 print(
-                    f"  {metric_name:<14}: IN={iv:.3f}  OUT={ov:.3f}  "
-                    f"Δ(IN−OUT)={iv-ov:+.3f}"
+                    f"  {metric_name:<14}: IN={iv.value:.3f}  OUT={ov.value:.3f}  "
+                    f"Δ(IN−OUT)={iv.value-ov.value:+.3f}"
                 )
     print("=" * 84)
 
@@ -371,7 +366,7 @@ def main():
     ap.add_argument("--n_boot", type=int, default=BOOTSTRAP_N_RESAMPLES)
     args = ap.parse_args()
 
-    seeds = [args.seed] if args.seed is not None else list(range(5))
+    seeds = [args.seed] if args.seed is not None else list(range(N_SEEDS))
     OUT_DIR.mkdir(parents=True, exist_ok=True)
 
     print("=== Loading data ===")
@@ -424,7 +419,7 @@ def main():
         path.write_text(json.dumps(sr, indent=2))
         print(f"  Saved per-seed: {path}")
 
-    summary = aggregate_seeds(all_seed_results)
+    summary = aggregate_seeds(all_seed_results, seeds)
     summary_path = OUT_DIR / "leakage_summary.json"
     summary_path.write_text(json.dumps(summary, indent=2))
     print(f"\nSaved summary: {summary_path}")

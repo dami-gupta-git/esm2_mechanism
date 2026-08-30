@@ -3,7 +3,7 @@
 Compares scan features against baselines under gene-split and family-split CV.
 """
 
-import functools
+import argparse, functools
 import json, os, sys, numpy as np
 from pathlib import Path
 
@@ -23,8 +23,14 @@ from esm2_mech.utils.paths import (
 from esm2_mech.utils.splits import gene_split_cv, family_split_cv
 from esm2_mech.utils.embed import load_gene_delta
 from esm2_mech.utils.probes import run_logreg_cv, run_histgb_cv
-from esm2_mech.utils.constants import MECHANISM_CLASSES
+from esm2_mech.utils.constants import MECHANISM_CLASSES, N_SEEDS
 from esm2_mech.utils.classification import validate_complete_classification_splits
+from esm2_mech.utils.io import write_result_json
+from esm2_mech.utils.seed_aggregation import aggregate_result_contract, seed_result_contract
+from esm2_mech.experiments.perturbation.seed_summary import (
+    aggregate_probe_results,
+    read_probe_metric,
+)
 
 print = functools.partial(print, flush=True)
 OUT = _RESULTS_DIR / "perturbation_scan"
@@ -32,9 +38,9 @@ OUT.mkdir(parents=True, exist_ok=True)
 
 
 DECISION_RULES = {
-    "G1": ("scan_only_family_split", "macro_f1_mean", 0.368),
-    "G2": ("scan_delta_family_split", "macro_f1_mean", 0.419),
-    "G3": ("scan_proteome_family_split", "macro_f1_mean", 0.405),
+    "G1": ("scan_only_family_split", "macro_f1", 0.368),
+    "G2": ("scan_delta_family_split", "macro_f1", 0.419),
+    "G3": ("scan_proteome_family_split", "macro_f1", 0.405),
 }
 
 
@@ -117,7 +123,16 @@ def run_probe(X, labels, splits, groups, held_out_unit, seed=42, combo_name=""):
     )
 
 
-def main():
+def _show_metric(metric):
+    if not metric.available:
+        return f"unavailable ({metric.message})"
+    if metric.spread is None:
+        return f"{metric.value:.3f}"
+    return f"{metric.value:.3f}±{metric.spread:.3f} seed SD"
+
+
+def main(n_seeds=N_SEEDS):
+    requested_seeds = tuple(range(n_seeds))
     print("=== Loading data ===")
 
     with open(VALID_VARIANTS_JSON) as f:
@@ -162,10 +177,18 @@ def main():
             np.hstack([scan_X, proteome_X]) if proteome_X is not None else None
         ),
     }
+    declared_arms = [
+        f"{combo_name}_{split_name}"
+        for combo_name in combos
+        for split_name in ("gene_split", "family_split")
+    ]
+    for combo_name, matrix in combos.items():
+        if matrix is None:
+            print(f"  [unavailable {combo_name}: its feature block was not loaded]")
     combos = {k: v for k, v in combos.items() if v is not None}
 
     all_results = {}
-    for seed in range(5):
+    for seed in requested_seeds:
         print(f"\n=== Seed {seed} ===")
         gs = gene_split_cv(gene_list_scan, seed=seed)
         fs = family_split_cv(gene_list_scan, pfam_map, seed=seed)
@@ -186,42 +209,35 @@ def main():
                     seed=seed, combo_name=combo_name
                 )
                 seed_res[key] = r
-                f1 = r.get("macro_f1_mean", float("nan"))
-                gof = r.get("auroc_GOF_mean", float("nan"))
-                print(f"  {key}: F1={f1:.3f}  GOF={gof:.3f}")
-        all_results[seed] = seed_res
-
-    print("\n=== 5-SEED SUMMARY ===")
-    summary = {}
-    for key in all_results[0].keys():
-        f1_vals = [
-            all_results[s][key].get("macro_f1_mean", float("nan")) for s in range(5)
-        ]
-        gof_vals = [
-            all_results[s][key].get("auroc_GOF_mean", float("nan")) for s in range(5)
-        ]
-        unavailable = any(value is None or not np.isfinite(value) for value in f1_vals + gof_vals)
-        summary[key] = {
-            "status": "unavailable" if unavailable else "success",
-            "macro_f1_mean": None if unavailable else float(np.mean(f1_vals)),
-            "macro_f1_std": None if unavailable else float(np.std(f1_vals)),
-            "auroc_GOF_mean": None if unavailable else float(np.mean(gof_vals)),
-            "auroc_GOF_std": None if unavailable else float(np.std(gof_vals)),
+                f1 = r.get("macro_f1_mean")
+                gof = r.get("auroc_GOF_mean")
+                f1_text = "unavailable" if f1 is None else f"{f1:.3f}"
+                gof_text = "unavailable" if gof is None else f"{gof:.3f}"
+                print(f"  {key}: F1={f1_text}  GOF={gof_text}")
+        all_results[seed] = {
+            **seed_result_contract(seed),
+            "results": seed_res,
         }
-        if unavailable:
-            print(f"  {key}: Unscorable")
-        else:
-            print(
-                f"  {key}: F1={summary[key]['macro_f1_mean']:.3f}±{summary[key]['macro_f1_std']:.3f}"
-                f"  GOF={summary[key]['auroc_GOF_mean']:.3f}±{summary[key]['auroc_GOF_std']:.3f}"
-            )
+
+    print(f"\n=== {n_seeds}-SEED SUMMARY ===")
+    summary = aggregate_probe_results(requested_seeds, all_results, declared_arms)
+    for key in summary:
+        f1 = read_probe_metric(summary, key, "macro_f1")
+        gof = read_probe_metric(summary, key, "auroc_GOF")
+        print(f"  {key}: F1={_show_metric(f1)}  GOF={_show_metric(gof)}")
 
     print("\n=== DECISION RULES ===")
     gate_results = {}
     for gate, (key, metric, threshold) in DECISION_RULES.items():
-        val = summary.get(key, {}).get(metric, float("nan"))
-        passed = None if val is None or not np.isfinite(val) else val > threshold
-        gate_results[gate] = {"value": val, "threshold": threshold, "passed": passed}
+        result = read_probe_metric(summary, key, metric)
+        val = result.value
+        passed = None if not result.available else val > threshold
+        gate_results[gate] = {
+            "metric": summary[key][metric],
+            "value": val,
+            "threshold": threshold,
+            "passed": passed,
+        }
         if passed is None:
             print(f"  {gate}: {key} {metric} = Unscorable")
         else:
@@ -231,24 +247,29 @@ def main():
                 f"(threshold {threshold:.3f}) → {status}"
             )
 
-    if not gate_results.get("G1", {}).get("passed"):
+    if gate_results["G1"]["passed"] is False:
         print(
             "\n  G1 failed — scan features do not improve on ClinVar-pattern baseline."
         )
         print("  Do not proceed to G2/G3 analysis.")
+    elif gate_results["G1"]["passed"] is None:
+        print("\n  G1 could not be evaluated because its seed summary is unavailable.")
 
     out = {
+        **aggregate_result_contract(),
         "summary": summary,
         "gate_results": gate_results,
-        "per_seed": {str(s): all_results[s] for s in range(5)},
+        "per_seed": {str(seed): all_results[seed] for seed in requested_seeds},
         "n_genes": int(len(gene_list_scan)),
         "feature_combos": list(combos.keys()),
     }
     out_path = OUT / "probe_results.json"
-    with open(out_path, "w") as f:
-        json.dump(out, f, indent=2)
+    write_result_json(out_path, out, seeds=list(requested_seeds))
     print(f"\nResults → {out_path}")
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--seeds", type=int, default=N_SEEDS)
+    arguments = parser.parse_args()
+    main(n_seeds=arguments.seeds)

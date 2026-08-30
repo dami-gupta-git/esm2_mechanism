@@ -22,6 +22,7 @@ from esm2_mech.utils.constants import MECHANISM_CLASSES
 from esm2_mech.utils.splits import gene_split_cv, family_split_cv
 from esm2_mech.utils.probes import run_logreg_cv
 from esm2_mech.utils.classification import validate_complete_classification_splits
+from esm2_mech.utils.metrics import null_standard_score
 from esm2_mech.utils.io import (
     atomic_write_json,
     load_json_or_discard,
@@ -419,20 +420,30 @@ def probe_direction_orthogonality(
                     continue
                 null_cosines.append(float(np.dot(shuf_weights[k1], shuf_weights[k2])))
 
-    null_mean = float(np.mean(null_cosines)) if null_cosines else float("nan")
-    null_std = float(np.std(null_cosines)) if null_cosines else float("nan")
-
     distinguishable = {}
+    null_summaries = {}
     for pair, real_cos in cosine_matrix.items():
-        if null_cosines and null_std > 0:
-            z = (real_cos - null_mean) / null_std
-            distinguishable[pair] = bool(abs(z) > 2.0)
+        null_summary = null_standard_score(real_cos, null_cosines)
+        null_summaries[pair] = null_summary
+        z_score = null_summary["z_score"]
+        distinguishable[pair] = (
+            None if z_score is None else bool(abs(z_score) > 2.0)
+        )
+
+    first_null_summary = next(iter(null_summaries.values()), None)
 
     return {
         "cosine_matrix": cosine_matrix,
         "stability_cosines": stability_cosines,
-        "null_cosine_mean": null_mean,
-        "null_cosine_std": null_std,
+        "null_cosine_mean": (
+            None if first_null_summary is None else first_null_summary["null_mean"]
+        ),
+        "null_cosine_std": (
+            None
+            if first_null_summary is None
+            else first_null_summary["null_draw_std"]
+        ),
+        "null_score_summaries": null_summaries,
         "distinguishable_from_null": distinguishable,
         "path": "A" if stability_subspace is not None else "B",
     }
@@ -889,9 +900,12 @@ def run(
         seed=seed,
     )
     print(f"  Cosine matrix: {ortho_results['cosine_matrix']}")
-    print(
-        f"  Null cosine mean: {ortho_results['null_cosine_mean']:.3f} ± {ortho_results['null_cosine_std']:.3f}"
-    )
+    null_mean = ortho_results["null_cosine_mean"]
+    null_std = ortho_results["null_cosine_std"]
+    if null_mean is None or null_std is None:
+        print("  Null cosine summary: unavailable")
+    else:
+        print(f"  Null cosine mean: {null_mean:.3f} ± {null_std:.3f} null-draw SD")
 
     # ------------------------------------------------------------------
     # 11. Compile and save results

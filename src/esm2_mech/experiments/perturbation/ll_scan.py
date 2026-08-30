@@ -8,7 +8,13 @@ from collections import defaultdict
 from pathlib import Path
 
 from esm2_mech.utils.paths import EMB_MUT_MEAN, EMB_WT_MEAN, LL_CKPT_JSON, RESULTS_DIR as _RESULTS_DIR, SCAN_FEATURES_META_JSON, SCAN_FEATURES_NPY, SCAN_PROBE_CACHE_JSON, SEQUENCES_EXTENDED_JSON, SEQUENCES_JSON, VALID_VARIANTS_JSON
-from esm2_mech.utils.constants import AA_ORDER, MECHANISM_CLASSES
+from esm2_mech.utils.constants import AA_ORDER, MECHANISM_CLASSES, N_SEEDS
+from esm2_mech.utils.io import write_result_json
+from esm2_mech.utils.seed_aggregation import aggregate_result_contract, seed_result_contract
+from esm2_mech.experiments.perturbation.seed_summary import (
+    aggregate_probe_results,
+    read_probe_metric,
+)
 from esm2_mech.utils.embed import load_esm2_model, load_gene_delta, masked_aa_log_probs
 from esm2_mech.utils.probes import run_logreg_cv
 from esm2_mech.utils.classification import validate_complete_classification_splits
@@ -220,16 +226,25 @@ def save_features(gene_list, X, feature_names):
     print(f"Saved ll_features.npy ({X.shape})")
 
 
-def run_probe_analysis():
+def _show_metric(metric):
+    if not metric.available:
+        return f"unavailable ({metric.message})"
+    if metric.spread is None:
+        return f"{metric.value:.3f}"
+    return f"{metric.value:.3f}±{metric.spread:.3f} seed SD"
+
+
+def run_probe_analysis(n_seeds=N_SEEDS):
     """Logistic regression probe across ll-only, ll+delta, ll+scan, ll+scan+delta."""
     from collections import Counter
 
     from esm2_mech.utils.splits import gene_split_cv, family_split_cv
 
     DECISION_RULES = {
-        "G1": ("ll_only_family_split", "macro_f1_mean", 0.282),
-        "G2": ("ll_delta_family_split", "macro_f1_mean", 0.385),
+        "G1": ("ll_only_family_split", "macro_f1", 0.282),
+        "G2": ("ll_delta_family_split", "macro_f1", 0.385),
     }
+    requested_seeds = tuple(range(n_seeds))
 
     print("=== Loading data ===")
     with open(VALID_VARIANTS_JSON) as f:
@@ -287,6 +302,13 @@ def run_probe_analysis():
     if scan_X is not None and scan_mask.all():
         combos["ll_scan"] = np.hstack([ll_X_aligned, scan_X])
         combos["ll_scan_delta"] = np.hstack([ll_X_aligned, scan_X, delta_X])
+    # Declared before any arm is skipped, so an arm whose features are absent is
+    # reported unavailable rather than dropping out of the summary unnoticed.
+    declared_arms = [
+        f"{combo_name}_{split_name}"
+        for combo_name in ("ll_only", "ll_delta", "ll_scan", "ll_scan_delta")
+        for split_name in ("gene_split", "family_split")
+    ]
 
     with open(DATA / "pfam_families.json") as f:
         pfam_map = json.load(f)
@@ -303,7 +325,7 @@ def run_probe_analysis():
         )
 
     all_results = {}
-    for seed in range(5):
+    for seed in requested_seeds:
         print(f"\n=== Seed {seed} ===")
         gs = gene_split_cv(gene_list, seed=seed)
         fs = family_split_cv(gene_list, pfam_map, seed=seed)
@@ -321,42 +343,35 @@ def run_probe_analysis():
                 key = f"{combo_name}_{split_name}"
                 r = run_probe(X, labels, splits, groups, held_out_unit, seed=seed)
                 seed_res[key] = r
-                f1 = r.get("macro_f1_mean", float("nan"))
-                gof = r.get("auroc_GOF_mean", float("nan"))
-                print(f"  {key}: F1={f1:.3f}  GOF={gof:.3f}")
-        all_results[seed] = seed_res
-
-    print("\n=== 5-SEED SUMMARY ===")
-    summary = {}
-    for key in all_results[0].keys():
-        f1_vals = [
-            all_results[s][key].get("macro_f1_mean") for s in range(5)
-        ]
-        gof_vals = [
-            all_results[s][key].get("auroc_GOF_mean") for s in range(5)
-        ]
-        unavailable = any(value is None for value in f1_vals + gof_vals)
-        summary[key] = {
-            "status": "unavailable" if unavailable else "success",
-            "macro_f1_mean": None if unavailable else float(np.mean(f1_vals)),
-            "macro_f1_std": None if unavailable else float(np.std(f1_vals)),
-            "auroc_GOF_mean": None if unavailable else float(np.mean(gof_vals)),
-            "auroc_GOF_std": None if unavailable else float(np.std(gof_vals)),
+                f1 = r.get("macro_f1_mean")
+                gof = r.get("auroc_GOF_mean")
+                f1_text = "unavailable" if f1 is None else f"{f1:.3f}"
+                gof_text = "unavailable" if gof is None else f"{gof:.3f}"
+                print(f"  {key}: F1={f1_text}  GOF={gof_text}")
+        all_results[seed] = {
+            **seed_result_contract(seed),
+            "results": seed_res,
         }
-        if unavailable:
-            print(f"  {key}: Unscorable")
-            continue
-        print(
-            f"  {key}: F1={summary[key]['macro_f1_mean']:.3f}±{summary[key]['macro_f1_std']:.3f}"
-            f"  GOF={summary[key]['auroc_GOF_mean']:.3f}±{summary[key]['auroc_GOF_std']:.3f}"
-        )
+
+    print(f"\n=== {n_seeds}-SEED SUMMARY ===")
+    summary = aggregate_probe_results(requested_seeds, all_results, declared_arms)
+    for key in summary:
+        f1 = read_probe_metric(summary, key, "macro_f1")
+        gof = read_probe_metric(summary, key, "auroc_GOF")
+        print(f"  {key}: F1={_show_metric(f1)}  GOF={_show_metric(gof)}")
 
     print("\n=== DECISION RULES ===")
     gate_results = {}
     for gate, (key, metric, threshold) in DECISION_RULES.items():
-        val = summary.get(key, {}).get(metric)
-        passed = None if val is None else val > threshold
-        gate_results[gate] = {"value": val, "threshold": threshold, "passed": passed}
+        result = read_probe_metric(summary, key, metric)
+        val = result.value
+        passed = None if not result.available else val > threshold
+        gate_results[gate] = {
+            "metric": summary[key][metric],
+            "value": val,
+            "threshold": threshold,
+            "passed": passed,
+        }
         if passed is None:
             print(f"  {gate}: {key} {metric} = Unscorable")
             continue
@@ -366,14 +381,13 @@ def run_probe_analysis():
         )
 
     # G3: complementarity
-    ll_only_f1 = summary.get("ll_only_family_split", {}).get(
-        "macro_f1_mean"
-    )
-    scan_only_f1 = None
     g3_threshold = None
-    ll_scan_f1 = summary.get("ll_scan_family_split", {}).get(
-        "macro_f1_mean"
+    ll_scan_result = (
+        read_probe_metric(summary, "ll_scan_family_split", "macro_f1")
+        if "ll_scan_family_split" in summary
+        else None
     )
+    ll_scan_f1 = None if ll_scan_result is None else ll_scan_result.value
     g3_passed = None
     gate_results["G3"] = {
         "value": ll_scan_f1,
@@ -391,15 +405,15 @@ def run_probe_analysis():
         )
 
     out = {
+        **aggregate_result_contract(),
         "summary": summary,
         "gate_results": gate_results,
-        "per_seed": {str(s): all_results[s] for s in range(5)},
+        "per_seed": {str(seed): all_results[seed] for seed in requested_seeds},
         "n_genes": int(len(gene_list)),
         "feature_combos": list(combos.keys()),
     }
     out_path = OUT / "probe_results.json"
-    with open(out_path, "w") as f:
-        json.dump(out, f, indent=2)
+    write_result_json(out_path, out, seeds=list(requested_seeds))
     print(f"\nResults → {out_path}")
 
 
@@ -411,6 +425,7 @@ def main():
         help="Phases to run: '2', '3', '23' (default: 23). Phase 2=GPU extraction, 3=features+probe",
     )
     parser.add_argument("--batch_size", type=int, default=32)
+    parser.add_argument("--seeds", type=int, default=N_SEEDS)
     args = parser.parse_args()
 
     phases = set(args.run_phase)
@@ -438,7 +453,7 @@ def main():
         save_features(gene_list, X, feature_names)
 
         print("\n=== Phase 4: probe runs ===")
-        run_probe_analysis()
+        run_probe_analysis(n_seeds=args.seeds)
 
 
 if __name__ == "__main__":

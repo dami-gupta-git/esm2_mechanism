@@ -30,6 +30,47 @@ def mean_std_n(values) -> tuple[float, float, int]:
     return float(np.mean(clean)), float(np.std(clean)), len(clean)
 
 
+def null_standard_score(observed, null_values) -> dict:
+    """Standardize an observation against complete null draws using sample spread."""
+    values = np.asarray(null_values, dtype=float)
+    if (
+        observed is None
+        or not np.isfinite(observed)
+        or len(values) < 3
+        or not np.isfinite(values).all()
+    ):
+        return {
+            "state": "unavailable",
+            "reason": "invalid_or_insufficient_null_draws",
+            "z_score": None,
+            "null_mean": None,
+            "null_draw_std": None,
+            "n_null_draws": int(len(values)),
+            "sampling_unit": "null_draw",
+        }
+    null_mean = float(np.mean(values))
+    null_spread = float(np.std(values, ddof=1))
+    if null_spread == 0:
+        return {
+            "state": "unavailable",
+            "reason": "zero_null_draw_spread",
+            "z_score": None,
+            "null_mean": null_mean,
+            "null_draw_std": 0.0,
+            "n_null_draws": int(len(values)),
+            "sampling_unit": "null_draw",
+        }
+    return {
+        "state": "available",
+        "reason": None,
+        "z_score": float((observed - null_mean) / null_spread),
+        "null_mean": null_mean,
+        "null_draw_std": null_spread,
+        "n_null_draws": int(len(values)),
+        "sampling_unit": "null_draw",
+    }
+
+
 def _metric_availability(available: bool, reason: str | None = None) -> dict:
     return {"available": available, "missing": not available, "reason": reason}
 

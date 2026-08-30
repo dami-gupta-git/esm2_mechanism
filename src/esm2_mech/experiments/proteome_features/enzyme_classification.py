@@ -9,7 +9,6 @@ import functools
 import hashlib
 import json
 from collections import Counter
-from pathlib import Path
 
 import numpy as np
 from sklearn.preprocessing import LabelEncoder
@@ -38,16 +37,31 @@ from esm2_mech.utils.io import write_result_json
 from esm2_mech.utils.probes import run_logreg_cv, run_mlp_cv
 from esm2_mech.utils.classification import validate_complete_classification_splits
 from esm2_mech.utils.bootstrap import (
-    attach_mechanism_ci,
-    folds_to_arms,
-    score_within_folds,
-    adjudicate_equivalence,
     adjudicate_diff,
+    adjudicate_equivalence,
     adjudicate_level,
+    attach_mechanism_ci,
     family_or_gene_clusters,
     oof_permutation_pvalue,
+    oof_score_arms,
+    paired_cluster_bootstrap_diff_shared_clusters,
     paired_oof_diff,
+    score_within_folds,
 )
+from esm2_mech.utils.seed_aggregation import (
+    SEED_STATUS_SUCCESS,
+    SEED_STATUS_UNSCORABLE,
+    aggregate_oof_dicts,
+    aggregate_paired_seed_difference,
+    aggregate_result_contract,
+    aggregate_seed_results,
+    block_seed_status,
+    make_seed_record,
+    read_seed_point_estimate,
+    read_seed_result_contract,
+    seed_result_contract,
+)
+from esm2_mech.experiments.mechanism.seed_results import read_across_seed_metric
 from esm2_mech.utils.paths import (
     EMB_WT_MEAN,
     EMB_VALID_VARIANTS_JSON,
@@ -81,45 +95,53 @@ def _load_mechanism_reference_f1() -> float | None:
     if not MECHANISM_AGGREGATE_JSON.exists():
         print(f"  WARNING: {MECHANISM_AGGREGATE_JSON} not found — mechanism reference unavailable")
         return None
-    result_path = RESULTS_DIR / seed_result_filename(0)
-    if not result_path.exists():
-        raise FileNotFoundError(
-            f"{result_path} is missing; the mechanism aggregate cannot be validated"
-        )
-    with open(MECHANISM_AGGREGATE_JSON) as fh:
-        agg = json.load(fh)
-    with open(result_path) as fh:
-        result = json.load(fh)
-    for key in ("input_fingerprints", "analysis_parameters"):
-        if result.get(key) is None or agg.get(key) != result.get(key):
-            raise ValueError(
-                f"{MECHANISM_AGGREGATE_JSON}: {key} does not match {result_path}"
-            )
-    val = (
-        agg.get("across_seed", {})
-        .get("family_split", {})
-        .get("delta_mean", {})
-        .get("macro_f1_seed_mean")
+    value = read_across_seed_metric(
+        str(MECHANISM_AGGREGATE_JSON),
+        "family_split",
+        "delta_mean",
     )
-    if val is None:
-        print("  WARNING: macro_f1_seed_mean not found in mechanism aggregate — reference unavailable")
-    return val
+    if value is None:
+        print("  WARNING: mechanism family-split reference is unavailable")
+    return value
 
 
-def _load_mechanism_family_oof() -> dict | None:
-    """Load the OOF cache bound to the exact completed seed-0 mechanism run."""
-    cache_path = RESULTS_DIR / mechanism_oof_cache_filename(0)
-    result_path = RESULTS_DIR / seed_result_filename(0)
+def _load_mechanism_seed_records(seeds: list[int]) -> list:
+    """Load the mechanism family-split value for each available requested seed."""
+    records = []
+    for seed in seeds:
+        result_path = RESULTS_DIR / seed_result_filename(seed)
+        if not result_path.exists():
+            print(
+                f"  WARNING: mechanism seed {seed} result file is missing: "
+                f"{result_path}"
+            )
+            continue
+        with open(result_path) as handle:
+            result = json.load(handle)
+        root_status = read_seed_result_contract(seed, str(result_path), result)
+        block = result.get("family_split", {}).get("delta_mean", {})
+        status = root_status
+        if root_status == SEED_STATUS_SUCCESS:
+            status = block_seed_status(block)
+        value = block.get("macro_f1_mean") if status == SEED_STATUS_SUCCESS else None
+        records.append(make_seed_record(seed, value, status=status))
+    return records
+
+
+def _load_mechanism_family_oof_for_seed(seed: int) -> dict | None:
+    """Load one seed's mechanism family-split OOF, bound to that seed's result."""
+    cache_path = RESULTS_DIR / mechanism_oof_cache_filename(seed)
+    result_path = RESULTS_DIR / seed_result_filename(seed)
     if not cache_path.exists() and not result_path.exists():
         print(
-            "  WARNING: seed-0 mechanism result and OOF cache not found — "
+            f"  WARNING: mechanism seed {seed} result and OOF cache not found — "
             "enzyme/mechanism difference CI unavailable"
         )
         return None
     if not cache_path.exists() or not result_path.exists():
         missing = cache_path if not cache_path.exists() else result_path
         raise FileNotFoundError(
-            f"{missing} is missing; the seed-0 result and OOF cache must be "
+            f"{missing} is missing; the seed {seed} result and OOF cache must be "
             "regenerated together"
         )
 
@@ -130,7 +152,7 @@ def _load_mechanism_family_oof() -> dict | None:
 
     expected = {
         "cache_schema_version": MECHANISM_OOF_CACHE_SCHEMA_VERSION,
-        "seed": 0,
+        "seed": seed,
         "analysis_run_id": result.get("analysis_run_id"),
         "input_fingerprints": result.get("input_fingerprints"),
         "analysis_parameters": result.get("analysis_parameters"),
@@ -158,66 +180,60 @@ def _load_mechanism_family_oof() -> dict | None:
     return oof
 
 
+def load_mechanism_family_oof_arms(seeds: list[int]) -> tuple | None:
+    """Every requested seed's mechanism OOF, aligned on one shared row order.
+
+    The enzyme-minus-mechanism effect is averaged over model seeds inside each
+    bootstrap draw, so the mechanism arm contributes one scoring block per seed,
+    all indexed by the same rows. A seed whose cache is missing makes the whole
+    comparison unavailable rather than reducing it to the seeds that survived.
+    """
+    per_seed = {}
+    for seed in seeds:
+        oof = _load_mechanism_family_oof_for_seed(seed)
+        if oof is None:
+            return None
+        per_seed[seed] = oof
+
+    first = per_seed[seeds[0]]
+    row_order = [int(row) for row in first["row_ids"]]
+    observed = np.asarray(first["y_true"], dtype=object)
+    genes = np.asarray(first["genes"], dtype=object)
+    arms = []
+    for seed in seeds:
+        oof = per_seed[seed]
+        position = {int(row): index for index, row in enumerate(oof["row_ids"])}
+        if set(position) != set(row_order):
+            raise ValueError(
+                f"mechanism seed {seed} OOF covers different rows than seed "
+                f"{seeds[0]}"
+            )
+        order = np.array([position[row] for row in row_order], dtype=int)
+        if not np.array_equal(
+            np.asarray(oof["y_true"], dtype=object)[order], observed
+        ) or not np.array_equal(
+            np.asarray(oof["genes"], dtype=object)[order], genes
+        ):
+            raise ValueError(
+                f"mechanism seed {seed} OOF disagrees with seed {seeds[0]} on "
+                "labels or genes for the same rows"
+            )
+        folds = np.asarray(oof["folds"], dtype=int)[order]
+        arms.append(
+            (np.asarray(oof["pred"], dtype=object)[order], folds, np.unique(folds))
+        )
+    return observed, genes, arms
+
+
 def _mechanism_reference_fingerprints() -> dict:
-    """Fingerprint the validated mechanism result and OOF values used by 2G."""
-    aggregate_path = MECHANISM_AGGREGATE_JSON
-    result_path = RESULTS_DIR / seed_result_filename(0)
-    cache_path = RESULTS_DIR / mechanism_oof_cache_filename(0)
-    missing = [
-        str(path)
-        for path in (aggregate_path, result_path, cache_path)
-        if not path.exists()
-    ]
-    if missing:
-        raise FileNotFoundError(
-            "enzyme claim 2G requires missing mechanism reference files: "
-            + ", ".join(missing)
-        )
-    with open(aggregate_path) as handle:
+    """Fingerprint the mechanism aggregate when the optional 2G input exists."""
+    if not MECHANISM_AGGREGATE_JSON.exists():
+        return {"content": None, "content_missing": True}
+    with open(MECHANISM_AGGREGATE_JSON) as handle:
         aggregate = json.load(handle)
-    with open(result_path) as handle:
-        result = json.load(handle)
-    with open(cache_path) as handle:
-        cache = json.load(handle)
-    for key in ("input_fingerprints", "analysis_parameters"):
-        if result.get(key) is None or aggregate.get(key) != result.get(key):
-            raise ValueError(
-                f"{aggregate_path}: {key} does not match {result_path}"
-            )
-    expected_cache = {
-        "cache_schema_version": MECHANISM_OOF_CACHE_SCHEMA_VERSION,
-        "seed": 0,
-        "analysis_run_id": result.get("analysis_run_id"),
-        "input_fingerprints": result.get("input_fingerprints"),
-        "analysis_parameters": result.get("analysis_parameters"),
-    }
-    for key, expected_value in expected_cache.items():
-        if expected_value is None or cache.get(key) != expected_value:
-            raise ValueError(
-                f"{cache_path}: cache {key} does not match {result_path}"
-            )
-    reference = {
-        "analysis_run_id": result.get("analysis_run_id"),
-        "input_fingerprints": result.get("input_fingerprints"),
-        "analysis_parameters": result.get("analysis_parameters"),
-        "aggregate_family_delta_mean": aggregate.get("across_seed", {})
-        .get("family_split", {})
-        .get("delta_mean"),
-        "seed0_family_delta_mean_oof": cache.get("features", {})
-        .get("delta_mean", {})
-        .get("family_split"),
-    }
-    missing_values = [key for key, value in reference.items() if value is None]
-    if missing_values:
-        raise ValueError(
-            "mechanism reference lacks required scientific values "
-            f"{missing_values}"
-        )
     return {
-        "content": _canonical_fingerprint(reference),
-        "analysis_run_id": reference["analysis_run_id"],
-        "input_fingerprints": reference["input_fingerprints"],
-        "analysis_parameters": reference["analysis_parameters"],
+        "content": _canonical_fingerprint(aggregate),
+        "content_missing": False,
     }
 
 
@@ -371,7 +387,8 @@ def run_multiseed(
     compute_ci: bool = True,
     n_boot: int = BOOTSTRAP_N_RESAMPLES,
     n_permutations: int = 0,
-    mechanism_family_oof: dict | None = None,
+    mechanism_seed_records: list | None = None,
+    mechanism_family_arms: tuple | None = None,
 ) -> dict:
     """Run shared linear and nonlinear probes across seeds.
 
@@ -387,14 +404,10 @@ def run_multiseed(
     print(f"\nClasses: {classes}")
     print(f"Class distribution: {dict(Counter(y.tolist()))}")
 
-    gs_f1s, fs_f1s, mlp_f1s = [], [], []
-    gs_reference_f1s, fs_reference_f1s = [], []
-    gs_aurocs = {c: [] for c in classes}
-    fs_aurocs = {c: [] for c in classes}
-    mlp_aurocs = {c: [] for c in classes}
-
-    seed0_fs_oof = None
-    seed0_mlp_fs_oof = None
+    seed_runs = []
+    permutation_oof = None
+    logreg_family_oof_by_seed = {}
+    mlp_family_oof_by_seed = {}
 
     for seed in seeds:
         print(f"\n  Seed {seed}:")
@@ -427,11 +440,6 @@ def run_multiseed(
             )
         except ValueError:
             gs_reference = None
-        gs_reference_f1s.append(gs_reference)
-        gs_f1s.append(gs["macro_f1_mean"])
-        for c in classes:
-            v = gs.get(f"auroc_{c}_mean")
-            gs_aurocs[c].append(v)
         print(
             f"    LogReg gene-split  F1={gs['macro_f1_mean']:.3f}"
             if gs["status"] == "success"
@@ -469,11 +477,6 @@ def run_multiseed(
             )
         except ValueError:
             fs_reference = None
-        fs_reference_f1s.append(fs_reference)
-        fs_f1s.append(fs["macro_f1_mean"])
-        for c in classes:
-            v = fs.get(f"auroc_{c}_mean")
-            fs_aurocs[c].append(v)
         if fs["status"] == "success":
             print(
                 f"    LogReg family-split F1={fs['macro_f1_mean']:.3f}  AUROC: "
@@ -481,9 +484,6 @@ def run_multiseed(
             )
         else:
             print(f"    LogReg family-split {fs['status']}")
-
-        if seed == seeds[0]:
-            seed0_fs_oof = fs_oof
 
         mlp, mlp_oof = run_mlp_cv(
             X,
@@ -504,91 +504,173 @@ def run_multiseed(
             oversample=False,
             balanced_sample_weight=True,
         )
-        mlp_f1s.append(mlp["macro_f1_mean"])
-        for c in classes:
-            v = mlp.get(f"auroc_{c}_mean")
-            mlp_aurocs[c].append(v)
         print(
             f"    MLP    family-split F1={mlp['macro_f1_mean']:.3f}"
             if mlp["status"] == "success"
             else f"    MLP    family-split {mlp['status']}"
         )
 
+        seed_runs.append(
+            {
+                **seed_result_contract(seed),
+                "gene_reference": gs_reference,
+                "family_reference": fs_reference,
+                "logreg_gene": gs,
+                "logreg_family": fs,
+                "mlp_family": mlp,
+            }
+        )
+        logreg_family_oof_by_seed[seed] = fs_oof
+        mlp_family_oof_by_seed[seed] = mlp_oof
         if seed == seeds[0]:
-            seed0_mlp_fs_oof = mlp_oof
+            permutation_oof = fs_oof
 
-    def _agg(vals):
-        if len(vals) != len(seeds) or any(value is None for value in vals):
-            return None, None
-        arr = np.asarray(vals, dtype=float)
-        return float(np.mean(arr)), float(np.std(arr))
+    def arm_aggregate(arm, metric):
+        return aggregate_seed_results(
+            seeds,
+            seed_runs,
+            lambda result: result[arm].get(metric),
+            status=lambda result: block_seed_status(result[arm]),
+        )
 
-    gs_mean, gs_std = _agg(gs_f1s)
-    fs_mean, fs_std = _agg(fs_f1s)
-    mlp_mean, mlp_std = _agg(mlp_f1s)
-    gs_reference_mean, gs_reference_std = _agg(gs_reference_f1s)
-    fs_reference_mean, fs_reference_std = _agg(fs_reference_f1s)
+    def reference_aggregate(key):
+        return aggregate_seed_results(
+            seeds,
+            seed_runs,
+            lambda result: result.get(key),
+            status=lambda result: (
+                SEED_STATUS_SUCCESS
+                if result.get(key) is not None
+                else SEED_STATUS_UNSCORABLE
+            ),
+        )
+
+    aggregates = {
+        "gene_reference": reference_aggregate("gene_reference"),
+        "family_reference": reference_aggregate("family_reference"),
+        "logreg_gene": arm_aggregate("logreg_gene", "macro_f1_mean"),
+        "logreg_family": arm_aggregate("logreg_family", "macro_f1_mean"),
+        "mlp_family": arm_aggregate("mlp_family", "macro_f1_mean"),
+    }
+    metric_reads = {
+        key: read_seed_point_estimate(aggregate)
+        for key, aggregate in aggregates.items()
+    }
 
     leakage_pct = None
     if (
-        gs_mean is not None
-        and fs_mean is not None
-        and gs_reference_mean is not None
-        and gs_mean > gs_reference_mean
+        metric_reads["logreg_gene"].available
+        and metric_reads["logreg_family"].available
+        and metric_reads["gene_reference"].available
+        and metric_reads["logreg_gene"].value > metric_reads["gene_reference"].value
     ):
         leakage_pct = round(
-            100.0 * (gs_mean - fs_mean) / (gs_mean - gs_reference_mean), 1
+            100.0
+            * (metric_reads["logreg_gene"].value - metric_reads["logreg_family"].value)
+            / (metric_reads["logreg_gene"].value - metric_reads["gene_reference"].value),
+            1,
         )
 
     print(f"\n  Results ({len(seeds)} seeds):")
-    for summary_label, mean, std in (
-        ("Gene-split reference", gs_reference_mean, gs_reference_std),
-        ("Family-split reference", fs_reference_mean, fs_reference_std),
-        ("LogReg gene-split", gs_mean, gs_std),
-        ("LogReg family-split", fs_mean, fs_std),
-        ("MLP family-split", mlp_mean, mlp_std),
+    for summary_label, key in (
+        ("Gene-split reference", "gene_reference"),
+        ("Family-split reference", "family_reference"),
+        ("LogReg gene-split", "logreg_gene"),
+        ("LogReg family-split", "logreg_family"),
+        ("MLP family-split", "mlp_family"),
     ):
-        if mean is None:
+        metric = metric_reads[key]
+        if not metric.available:
             print(f"    {summary_label}: Unscorable")
         else:
-            print(f"    {summary_label}: F1={mean:.3f} +/- {std:.3f}")
+            spread = "N/A" if metric.spread is None else f"{metric.spread:.3f}"
+            print(f"    {summary_label}: F1={metric.value:.3f} +/- {spread}")
     if leakage_pct is not None:
         print(f"    Leakage fraction:        {leakage_pct:.1f}%")
 
-    ci_result = None
     permutation_result = None
+    def arm_records(arm):
+        return [
+            make_seed_record(
+                result["seed"],
+                result[arm].get("macro_f1_mean"),
+                status=block_seed_status(result[arm]),
+            )
+            for result in seed_runs
+        ]
+
+    paired_mlp_vs_logreg = aggregate_paired_seed_difference(
+        seeds,
+        arm_records("mlp_family"),
+        arm_records("logreg_family"),
+    )
+    paired_logreg_vs_mechanism = aggregate_paired_seed_difference(
+        seeds,
+        arm_records("logreg_family"),
+        mechanism_seed_records or [],
+    )
+
+    # Interval block. Each bootstrap draw selects families once, both arms and
+    # every model seed are scored on that same draw, and the effect is the mean
+    # over seeds. The intervals below are therefore across-seed quantities, kept
+    # in their own keys beside the seed aggregates whose spread describes
+    # variation between seeds.
+    ci_result = None
+    paired_mlp_vs_logreg_ci = None
+    paired_logreg_vs_mechanism_ci = None
     oof_fs_f1 = None
     oof_mlp_f1 = None
-    paired_mlp_vs_logreg = None
-    paired_logreg_vs_mechanism = None
+
+    def _combined_oof(oof_by_seed):
+        combined = aggregate_oof_dicts(
+            seeds,
+            oof_by_seed,
+            declared_row_ids=np.arange(len(y)),
+            declared_labels=y,
+            declared_clusters=genes_arr,
+            class_order=classes,
+            declared_fold_ids=range(n_folds),
+        )
+        return combined.payload if combined.available else None
+
+    logreg_family_oof = _combined_oof(logreg_family_oof_by_seed)
+    mlp_family_oof = _combined_oof(mlp_family_oof_by_seed)
 
     def _oof_macro_f1(oof):
-        """Seed-0 out-of-fold macro-F1, scored per fold and averaged."""
-        y_str = np.asarray(oof["y_true"])
-        pred = np.array([classes[col] for col in oof["proba"].argmax(axis=1)])
-        arms = folds_to_arms(pred, oof["folds"])
+        """Out-of-fold macro-F1, scored per fold and per seed, then averaged."""
+        observed = np.asarray(oof["y_true"])
+        arms = [
+            (
+                np.array([classes[col] for col in np.asarray(proba).argmax(axis=1)]),
+                np.asarray(folds),
+                fold_ids,
+            )
+            for proba, folds, fold_ids in oof_score_arms(oof, "enzyme family-split")
+        ]
 
         def _fold_f1(block, arm_pred):
-            return fold_macro_f1(y_str, block, arm_pred, classes)
-        return y_str, score_within_folds(np.arange(len(y_str)), arms, _fold_f1)
+            return fold_macro_f1(observed, block, arm_pred, classes)
 
-    if seed0_fs_oof is not None:
-        oof_y_str, oof_fs_f1 = _oof_macro_f1(seed0_fs_oof)
-        print(f"\n  Seed-0 OOF LogReg family-split F1: {oof_fs_f1:.3f}")
+        return arms, score_within_folds(np.arange(len(observed)), arms, _fold_f1)
 
-    if seed0_mlp_fs_oof is not None:
-        mlp_oof_y_str, oof_mlp_f1 = _oof_macro_f1(seed0_mlp_fs_oof)
-        print(f"  Seed-0 OOF MLP family-split F1: {oof_mlp_f1:.3f}")
+    logreg_arms = None
+    if logreg_family_oof is not None:
+        logreg_arms, oof_fs_f1 = _oof_macro_f1(logreg_family_oof)
+        print(f"\n  Across-seed OOF LogReg family-split F1: {oof_fs_f1:.3f}")
+    if mlp_family_oof is not None:
+        _mlp_arms, oof_mlp_f1 = _oof_macro_f1(mlp_family_oof)
+        print(f"  Across-seed OOF MLP family-split F1: {oof_mlp_f1:.3f}")
 
-    if compute_ci and seed0_fs_oof is not None:
-        print("\n  Computing cluster-bootstrap CIs (seed 0, family-split)...")
+    if compute_ci and logreg_family_oof is not None:
+        print("\n  Computing cluster-bootstrap CIs (all seeds, family-split)...")
         clusters = family_or_gene_clusters(
-            seed0_fs_oof["genes"], pfam_map, is_family_split=True
+            np.asarray(logreg_family_oof["genes"]), pfam_map, is_family_split=True
         )
         ci_container: dict = {}
+        # attach_mechanism_ci stratifies the ranking metrics' draws itself.
         attach_mechanism_ci(
             ci_container,
-            {**seed0_fs_oof, "y_true": oof_y_str},
+            logreg_family_oof,
             clusters,
             compute_ci=True,
             classes=classes,
@@ -597,20 +679,19 @@ def run_multiseed(
             seed=0,
         )
         ci_result = ci_container["ci"]
-        for metric_name, ci in ci_result.items():
-            lo = ci.get("ci_lower")
-            hi = ci.get("ci_upper")
-            pt = ci.get("point")
-            if lo is not None and hi is not None and pt is not None:
-                print(f"    {metric_name}: {pt:.3f} [{lo:.3f}, {hi:.3f}]")
+        for metric_name, interval in ci_result.items():
+            low = interval.get("ci_low")
+            high = interval.get("ci_high")
+            point = interval.get("point")
+            if low is not None and high is not None and point is not None:
+                print(f"    {metric_name}: {point:.3f} [{low:.3f}, {high:.3f}]")
 
-        if seed0_mlp_fs_oof is not None:
+        if mlp_family_oof is not None:
             print("\n  Computing paired CI: MLP minus LogReg (family-split)...")
-            mlp_oof_for_diff = {**seed0_mlp_fs_oof, "y_true": mlp_oof_y_str}
-            lr_oof_for_diff = {**seed0_fs_oof, "y_true": oof_y_str}
-            paired_mlp_vs_logreg = paired_oof_diff(
-                oof_a=mlp_oof_for_diff,
-                oof_b=lr_oof_for_diff,
+            # paired_oof_diff stratifies its own draws where the metric needs it.
+            paired_mlp_vs_logreg_ci = paired_oof_diff(
+                oof_a=mlp_family_oof,
+                oof_b=logreg_family_oof,
                 pfam_map=pfam_map,
                 label="2H MLP-LogReg",
                 classes=classes,
@@ -619,28 +700,38 @@ def run_multiseed(
                 n_resamples=n_boot,
                 seed=0,
             )
-            if paired_mlp_vs_logreg is not None:
-                lo = paired_mlp_vs_logreg.get("ci_low")
-                hi = paired_mlp_vs_logreg.get("ci_high")
-                pt = paired_mlp_vs_logreg.get("point_diff")
-                if lo is not None and hi is not None and pt is not None:
-                    print(f"    MLP-LogReg diff: {pt:+.3f} [{lo:+.3f}, {hi:+.3f}]")
+            if paired_mlp_vs_logreg_ci is not None:
+                low = paired_mlp_vs_logreg_ci.get("ci_low")
+                high = paired_mlp_vs_logreg_ci.get("ci_high")
+                point = paired_mlp_vs_logreg_ci.get("point_diff")
+                if low is not None and high is not None and point is not None:
+                    print(f"    MLP-LogReg diff: {point:+.3f} [{low:+.3f}, {high:+.3f}]")
 
-        if mechanism_family_oof is not None:
+        if mechanism_family_arms is not None:
             print("\n  Computing paired CI: enzyme LogReg minus mechanism...")
-            enzyme_pred = np.array([classes[col] for col in seed0_fs_oof["proba"].argmax(axis=1)])
-            mechanism_y = np.asarray(mechanism_family_oof["y_true"])
-            mechanism_pred = np.asarray(mechanism_family_oof["pred"])
-            enzyme_arms = folds_to_arms(enzyme_pred, seed0_fs_oof["folds"])
-            mechanism_arms = folds_to_arms(
-                mechanism_pred, mechanism_family_oof["folds"]
+            # The two tasks score different rows — genes here, variants there —
+            # but they share Pfam families. One draw of the families present in
+            # both cohorts selects each arm's own rows, so the difference is a
+            # task difference rather than a difference between two family
+            # populations. Both arms are macro-F1 with a fixed class denominator,
+            # scored within fold and averaged over seeds.
+            mechanism_y, mechanism_genes, mechanism_arms = mechanism_family_arms
+            enzyme_observed = np.asarray(logreg_family_oof["y_true"])
+            enzyme_clusters = family_or_gene_clusters(
+                np.asarray(logreg_family_oof["genes"]),
+                pfam_map,
+                is_family_split=True,
             )
+            mechanism_clusters = family_or_gene_clusters(
+                mechanism_genes, pfam_map, is_family_split=True
+            )
+
             def _enzyme_f1(rows):
                 return score_within_folds(
                     rows,
-                    enzyme_arms,
+                    logreg_arms,
                     lambda block, arm_pred: fold_macro_f1(
-                        oof_y_str, block, arm_pred, classes
+                        enzyme_observed, block, arm_pred, classes
                     ),
                 )
 
@@ -653,99 +744,108 @@ def run_multiseed(
                     ),
                 )
 
-            enzyme_point = _enzyme_f1(np.arange(len(oof_y_str)))
-            mechanism_point = _mechanism_f1(np.arange(len(mechanism_y)))
-            point_difference = enzyme_point - mechanism_point
-            paired_logreg_vs_mechanism = {
-                "point_a": enzyme_point,
-                "point_b": mechanism_point,
-                "point_diff": point_difference,
-                "point": point_difference,
-                "ci_low": None,
-                "ci_high": None,
-                "ci_suppressed": True,
-                "missing": True,
-                "reason": "blocked_by_audit_1_4",
-            }
-            lo = paired_logreg_vs_mechanism.get("ci_low")
-            hi = paired_logreg_vs_mechanism.get("ci_high")
-            point = paired_logreg_vs_mechanism.get("point_diff")
-            if lo is not None and hi is not None and point is not None:
-                print(f"    enzyme-mechanism diff: {point:+.3f} [{lo:+.3f}, {hi:+.3f}]")
+            paired_logreg_vs_mechanism_ci = (
+                paired_cluster_bootstrap_diff_shared_clusters(
+                    enzyme_clusters,
+                    mechanism_clusters,
+                    _enzyme_f1,
+                    _mechanism_f1,
+                    n_resamples=n_boot,
+                    seed=0,
+                )
+            )
+            low = paired_logreg_vs_mechanism_ci.get("ci_low")
+            high = paired_logreg_vs_mechanism_ci.get("ci_high")
+            point = paired_logreg_vs_mechanism_ci.get("point_diff")
+            print(
+                f"    shared families: "
+                f"{paired_logreg_vs_mechanism_ci['n_clusters_shared']} of "
+                f"{paired_logreg_vs_mechanism_ci['n_clusters_a_total']} enzyme and "
+                f"{paired_logreg_vs_mechanism_ci['n_clusters_b_total']} mechanism"
+            )
+            if low is not None and high is not None and point is not None:
+                print(f"    enzyme-mechanism diff: {point:+.3f} [{low:+.3f}, {high:+.3f}]")
 
-        if n_permutations > 0:
-            print(f"\n  Computing permutation p-value ({n_permutations} reps)...")
-            permutation_result = oof_permutation_pvalue(
-                y_true=oof_y_str,
-                proba=seed0_fs_oof["proba"],
-                folds=seed0_fs_oof["folds"],
-                groups=seed0_fs_oof["genes"],
-                clusters=clusters,
-                classes=classes,
-                n_permutations=n_permutations,
-                seed=0,
-            )
-            p_value_text = (
-                f"unresolved at resolution {permutation_result['p_value_resolution']}"
-                if permutation_result.get("resolution_limited")
-                else str(permutation_result.get("p_value"))
-            )
-            immovable_text = (
-                f"; {permutation_result['n_clusters_immovable']} immovable families"
-                if permutation_result.get("n_clusters_immovable") is not None else ""
-            )
-            print(f"    permutation p-value: {p_value_text}{immovable_text}")
+    if n_permutations > 0 and permutation_oof is not None:
+        print(
+            f"\n  Computing permutation p-value ({n_permutations} reps) "
+            f"for seed {seeds[0]}..."
+        )
+        clusters = family_or_gene_clusters(
+            permutation_oof["genes"], pfam_map, is_family_split=True
+        )
+        permutation_result = oof_permutation_pvalue(
+            y_true=np.asarray(permutation_oof["y_true"]),
+            proba=permutation_oof["proba"],
+            folds=permutation_oof["folds"],
+            groups=permutation_oof["genes"],
+            clusters=clusters,
+            classes=classes,
+            n_permutations=n_permutations,
+            seed=seeds[0],
+        )
+        permutation_result["seed"] = seeds[0]
+        p_value_text = (
+            f"unresolved at resolution {permutation_result['p_value_resolution']}"
+            if permutation_result.get("resolution_limited")
+            else str(permutation_result.get("p_value"))
+        )
+        immovable_text = (
+            f"; {permutation_result['n_clusters_immovable']} immovable families"
+            if permutation_result.get("n_clusters_immovable") is not None else ""
+        )
+        print(f"    permutation p-value: {p_value_text}{immovable_text}")
 
     result = {
+        **aggregate_result_contract(),
         "majority_reference": {
-            "gene_split": {
-                "macro_f1_mean": gs_reference_mean,
-                "macro_f1_std": gs_reference_std,
-                "per_seed": gs_reference_f1s,
-            },
-            "family_split": {
-                "macro_f1_mean": fs_reference_mean,
-                "macro_f1_std": fs_reference_std,
-                "per_seed": fs_reference_f1s,
-            },
+            "gene_split": aggregates["gene_reference"].to_dict(),
+            "family_split": aggregates["family_reference"].to_dict(),
         },
         "logreg_gene_split": {
-            "macro_f1_mean": gs_mean,
-            "macro_f1_std": gs_std,
-            "per_class_auroc_mean": {
-                c: _agg(v)[0] for c, v in gs_aurocs.items()
+            "macro_f1_seed_aggregate": aggregates["logreg_gene"].to_dict(),
+            "per_class_auroc_seed_aggregate": {
+                class_name: arm_aggregate(
+                    "logreg_gene", f"auroc_{class_name}_mean"
+                ).to_dict()
+                for class_name in classes
             },
-            "n_seeds": len(seeds),
         },
         "logreg_family_split": {
-            "macro_f1_mean": fs_mean,
-            "macro_f1_std": fs_std,
-            "per_class_auroc_mean": {
-                c: _agg(v)[0] for c, v in fs_aurocs.items()
+            "macro_f1_seed_aggregate": aggregates["logreg_family"].to_dict(),
+            "per_class_auroc_seed_aggregate": {
+                class_name: arm_aggregate(
+                    "logreg_family", f"auroc_{class_name}_mean"
+                ).to_dict()
+                for class_name in classes
             },
-            "n_seeds": len(seeds),
         },
         "mlp_family_split": {
-            "macro_f1_mean": mlp_mean,
-            "macro_f1_std": mlp_std,
-            "per_class_auroc_mean": {
-                c: _agg(v)[0] for c, v in mlp_aurocs.items()
+            "macro_f1_seed_aggregate": aggregates["mlp_family"].to_dict(),
+            "per_class_auroc_seed_aggregate": {
+                class_name: arm_aggregate(
+                    "mlp_family", f"auroc_{class_name}_mean"
+                ).to_dict()
+                for class_name in classes
             },
-            "n_seeds": len(seeds),
         },
+        "paired_mlp_minus_logreg_seed_aggregate": paired_mlp_vs_logreg.to_dict(),
+        "paired_logreg_minus_mechanism_seed_aggregate": (
+            paired_logreg_vs_mechanism.to_dict()
+        ),
         "leakage_pct": leakage_pct,
     }
 
     if oof_fs_f1 is not None:
-        result["logreg_family_split"]["oof_macro_f1"] = oof_fs_f1
+        result["logreg_family_split"]["across_seed_oof_macro_f1"] = oof_fs_f1
     if oof_mlp_f1 is not None:
-        result["mlp_family_split"]["oof_macro_f1"] = oof_mlp_f1
+        result["mlp_family_split"]["across_seed_oof_macro_f1"] = oof_mlp_f1
     if ci_result is not None:
         result["bootstrap_ci"] = ci_result
-    if paired_mlp_vs_logreg is not None:
-        result["paired_ci_mlp_minus_logreg"] = paired_mlp_vs_logreg
-    if paired_logreg_vs_mechanism is not None:
-        result["paired_ci_logreg_minus_mechanism"] = paired_logreg_vs_mechanism
+    if paired_mlp_vs_logreg_ci is not None:
+        result["paired_ci_mlp_minus_logreg"] = paired_mlp_vs_logreg_ci
+    if paired_logreg_vs_mechanism_ci is not None:
+        result["paired_ci_logreg_minus_mechanism"] = paired_logreg_vs_mechanism_ci
     if permutation_result is not None:
         result["permutation_test"] = permutation_result
 
@@ -776,7 +876,10 @@ def main():
     print(f"Seeds: {seeds}  Folds: {args.n_folds}  CI: {compute_ci}  n_boot: {args.n_boot}")
 
     mechanism_ref_f1 = _load_mechanism_reference_f1()
-    mechanism_family_oof = _load_mechanism_family_oof()
+    mechanism_seed_records = _load_mechanism_seed_records(seeds)
+    mechanism_family_arms = (
+        load_mechanism_family_oof_arms(seeds) if compute_ci else None
+    )
 
     X_emb, gene_list, gene_uniprot_ids = load_gene_embeddings()
     enzyme_labels = load_enzyme_labels()
@@ -810,8 +913,10 @@ def main():
     print("=" * 60)
     emb_results = run_multiseed(
         X_emb, y, gene_list, pfam_map, le, seeds=seeds, n_folds=args.n_folds,
-        compute_ci=compute_ci, n_boot=args.n_boot, n_permutations=args.n_permutations,
-        mechanism_family_oof=mechanism_family_oof,
+        compute_ci=compute_ci, n_boot=args.n_boot,
+        n_permutations=args.n_permutations,
+        mechanism_seed_records=mechanism_seed_records,
+        mechanism_family_arms=mechanism_family_arms,
     )
 
     print("\n" + "=" * 60)
@@ -863,57 +968,74 @@ def main():
     print("DECISION RULES (PREREGISTRATION_run_biorxiv.md, 2F-2H)")
     print("=" * 60)
 
-    fs_f1 = emb_results["logreg_family_split"].get("oof_macro_f1")
-    mlp_f1 = emb_results["mlp_family_split"].get("oof_macro_f1")
-    gs_f1 = emb_results["logreg_gene_split"]["macro_f1_mean"]
+    fs_metric = read_seed_point_estimate(
+        emb_results["logreg_family_split"]["macro_f1_seed_aggregate"]
+    )
+    mlp_metric = read_seed_point_estimate(
+        emb_results["mlp_family_split"]["macro_f1_seed_aggregate"]
+    )
+    gs_metric = read_seed_point_estimate(
+        emb_results["logreg_gene_split"]["macro_f1_seed_aggregate"]
+    )
+    mechanism_difference = read_seed_point_estimate(
+        emb_results["paired_logreg_minus_mechanism_seed_aggregate"]
+    )
+    fs_f1 = fs_metric.value
+    mlp_f1 = mlp_metric.value
+    gs_f1 = gs_metric.value
+    enzyme_mechanism_diff = mechanism_difference.value
+
+    # Each gate is adjudicated on the point its own interval was built around:
+    # the effect averaged over model seeds within each bootstrap draw. The seed
+    # aggregates above are reported beside them and are never compared against an
+    # interval bound, because a resampling interval and a seed spread are
+    # different quantities.
+    oof_fs_f1 = emb_results["logreg_family_split"].get("across_seed_oof_macro_f1")
+    oof_mlp_f1 = emb_results["mlp_family_split"].get("across_seed_oof_macro_f1")
     fs_ci = (emb_results.get("bootstrap_ci") or {}).get("macro_f1")
     paired_ci = emb_results.get("paired_ci_mlp_minus_logreg")
-    paired_mechanism_ci = emb_results.get("paired_ci_logreg_minus_mechanism")
+    mechanism_ci = emb_results.get("paired_ci_logreg_minus_mechanism")
+    oof_mechanism_diff = (
+        mechanism_ci.get("point_diff") if mechanism_ci is not None else None
+    )
+    mechanism_point = mechanism_ci.get("point_b") if mechanism_ci is not None else None
 
-    gate_2f = fs_f1 is not None and fs_f1 >= 0.70
-    mechanism_point = (
-        paired_mechanism_ci.get("point_b")
-        if paired_mechanism_ci is not None
-        else None
-    )
-    enzyme_mechanism_diff = (
-        paired_mechanism_ci.get("point_diff")
-        if paired_mechanism_ci is not None
-        else None
-    )
+    gate_2f = oof_fs_f1 >= 0.70 if oof_fs_f1 is not None else None
     gate_2g = (
-        bool(enzyme_mechanism_diff >= ENZYME_MECHANISM_MIN_F1_GAP)
-        if enzyme_mechanism_diff is not None
+        bool(oof_mechanism_diff >= ENZYME_MECHANISM_MIN_F1_GAP)
+        if oof_mechanism_diff is not None
         else None
     )
-    gate_2h = mlp_f1 is not None and fs_f1 is not None and abs(mlp_f1 - fs_f1) < 0.05
-
-    verdict_2f = adjudicate_level(fs_f1, fs_ci, 0.70)
-    verdict_2g = adjudicate_diff(
-        gate_2g,
-        paired_mechanism_ci,
-        ENZYME_MECHANISM_MIN_F1_GAP,
+    gate_2h = (
+        abs(oof_mlp_f1 - oof_fs_f1) < 0.05
+        if oof_mlp_f1 is not None and oof_fs_f1 is not None
+        else None
     )
+
+    verdict_2f = adjudicate_level(oof_fs_f1, fs_ci, 0.70)
+    verdict_2g = adjudicate_diff(gate_2g, mechanism_ci, ENZYME_MECHANISM_MIN_F1_GAP)
     verdict_2h = adjudicate_equivalence(gate_2h, paired_ci, 0.05)
 
-    print(f"\n2F — family-split F1 >= 0.70:  {verdict_2f}  (F1={fs_f1:.3f})")
-    if enzyme_mechanism_diff is not None:
+    fs_text = "N/A" if oof_fs_f1 is None else f"{oof_fs_f1:.3f}"
+    print(f"\n2F — family-split F1 >= 0.70:  {verdict_2f}  (across-seed F1={fs_text})")
+    if oof_mechanism_diff is not None:
         print(
             f"2G — enzyme minus mechanism F1 >= "
             f"{ENZYME_MECHANISM_MIN_F1_GAP:.2f}:  {verdict_2g}  "
-            f"(delta={enzyme_mechanism_diff:+.3f})"
+            f"(across-seed delta={oof_mechanism_diff:+.3f}, paired on shared families)"
         )
     else:
-        print("2G — not adjudicated (paired enzyme-mechanism difference unavailable)")
-    if mlp_f1 is not None and fs_f1 is not None:
+        print("2G — not adjudicated (enzyme-mechanism difference unavailable)")
+    if oof_mlp_f1 is not None and oof_fs_f1 is not None:
         print(
             f"2H — MLP approx LogReg family-split:  {verdict_2h}  "
-            f"(delta_MLP-LR={mlp_f1 - fs_f1:+.3f})"
+            f"(across-seed delta_MLP-LR={oof_mlp_f1 - oof_fs_f1:+.3f})"
         )
     else:
         print("2H — MLP approx LogReg family-split:  SKIPPED (missing OOF)")
 
     output = {
+        **aggregate_result_contract(),
         "description": (
             "Enzyme type classification (kinase/protease/oxidoreductase/non-enzyme) "
             "from ESM-2 WT mean-pooled embeddings. Positive control paralleling the "
@@ -921,13 +1043,13 @@ def main():
         ),
         "seeds": seeds,
         "n_folds": args.n_folds,
-        "compute_ci": compute_ci,
-        "n_boot": args.n_boot if compute_ci else None,
         "n_permutations": args.n_permutations,
         "n_genes": len(gene_list),
         "class_distribution": dict(Counter(y_str)),
         "classes": list(le.classes_),
         "input_fingerprints": input_fingerprints,
+        "compute_ci": compute_ci,
+        "n_boot": args.n_boot if compute_ci else None,
         "analysis_parameters": {
             "seeds": seeds,
             "n_folds": args.n_folds,
@@ -938,20 +1060,29 @@ def main():
         "esm2_wt_embedding": emb_results,
         "proteome_features": proteome_results,
         "gate_evaluation": {
-            "2F_family_split_f1_ge_0.70": bool(gate_2f),
+            "2F_family_split_f1_ge_0.70": gate_2f,
             "2F_verdict": verdict_2f,
             "2G_enzyme_beats_mechanism": gate_2g,
             "2G_verdict": verdict_2g,
             "2G_minimum_f1_gap": ENZYME_MECHANISM_MIN_F1_GAP,
-            "2H_mlp_approx_logreg": bool(gate_2h),
+            "2H_mlp_approx_logreg": gate_2h,
             "2H_verdict": verdict_2h,
+            "adjudicated_on": "across_seed_out_of_fold_estimates",
+            "across_seed_fs_f1": oof_fs_f1,
+            "across_seed_mlp_f1": oof_mlp_f1,
+            "across_seed_mechanism_oof_f1": mechanism_point,
+            "across_seed_enzyme_minus_mechanism_f1": oof_mechanism_diff,
             "fs_f1": fs_f1,
             "mlp_f1": mlp_f1,
             "gs_f1": gs_f1,
             "mechanism_reference_f1": mechanism_ref_f1,
-            "mechanism_seed0_oof_f1": mechanism_point,
             "enzyme_minus_mechanism_f1": enzyme_mechanism_diff,
-            "note": "Gate point estimates and bootstrap CIs use fold-aware macro-F1",
+            "note": (
+                "Verdicts adjudicate seed-0 point estimates against seed-0 "
+                "bootstrap intervals; fs_f1, mlp_f1, gs_f1 and "
+                "enzyme_minus_mechanism_f1 are across-seed means and carry no "
+                "interval"
+            ),
         },
     }
 

@@ -49,6 +49,8 @@ Invariants:
 import numpy as np
 import pytest
 
+from sklearn.metrics import roc_auc_score
+
 from esm2_mech.utils.bootstrap import (
     adjudicate_diff,
     adjudicate_equivalence,
@@ -59,6 +61,8 @@ from esm2_mech.utils.bootstrap import (
     cluster_bootstrap_ci,
     cluster_bootstrap_ci_multi,
     cluster_subsample_ci,
+    class_presence_strata,
+    score_within_folds,
     independent_cluster_bootstrap_diff,
     count_immovable_clusters,
     label_permutation_pvalue,
@@ -73,7 +77,13 @@ from esm2_mech.utils.bootstrap import (
     _permute_labels_by_cluster,
     _DEFAULT_DISCARD_REASON,
 )
-from esm2_mech.utils.constants import MECHANISM_CLASSES, GOF, DN, LOF
+from esm2_mech.utils.constants import (
+    BOOTSTRAP_MAX_DISCARD_FRAC,
+    MECHANISM_CLASSES,
+    GOF,
+    DN,
+    LOF,
+)
 
 # ---------------------------------------------------------------------------
 # helpers
@@ -133,7 +143,7 @@ class TestClusterBootstrapCI:
         assert 2 not in seen_sizes
         assert seen_sizes  # metric was actually called
 
-    def test_few_undefined_resamples_dropped_ci_still_built(self):
+    def test_discard_rate_above_tolerance_suppresses_interval(self):
         # "Undefined" must be a pure function of the drawn rows (like a rare class
         # being absent from a resample in the real metric functions) rather than an
         # external call counter: joblib's process-based backend batches and
@@ -141,7 +151,7 @@ class TestClusterBootstrapCI:
         # does not reliably track a global call count across replicates.
         clusters = np.array([f"G{i}" for i in range(30) for _ in range(4)])
         # Undefined only when NEITHER of two sentinel genes' rows are drawn —
-        # empirically ~12% of resamples, comfortably above the 0.8 valid threshold.
+        # empirically about 12% of resamples, well above the 1% tolerance.
         sentinel_rows = set(
             np.where((clusters == "G0") | (clusters == "G1"))[0].tolist()
         )
@@ -152,13 +162,13 @@ class TestClusterBootstrapCI:
         out = cluster_bootstrap_ci(clusters, metric, n_resamples=200, seed=0)
         # n_resamples counts only the contributing (non-None) draws.
         assert out["n_resamples"] < 200
-        assert out["valid_frac"] >= 0.8
-        assert out["ci_suppressed"] is False
-        assert out["ci_low"] is not None
+        assert out["discard_frac"] > BOOTSTRAP_MAX_DISCARD_FRAC
+        assert out["ci_suppressed"] is True
+        assert out["ci_low"] is None and out["ci_high"] is None
 
     def test_ci_suppressed_when_too_many_undefined(self):
         # Same rows-content-based approach as above, but with a single sentinel
-        # gene: undefined on ~36% of resamples, below the 0.8 valid threshold.
+        # gene: undefined on about 36% of resamples.
         clusters = np.array([f"G{i}" for i in range(30) for _ in range(4)])
         sentinel_rows = set(np.where(clusters == "G0")[0].tolist())
 
@@ -469,16 +479,14 @@ class TestBootstrapMechanismMetrics:
         assert lift["point"] == pytest.approx(
             out["auprc_GOF"]["point"] - out["prevalence_GOF"]["point"], abs=1e-9
         )
-        assert lift["ci_low"] is None
-        assert lift["reason"] == "blocked_by_audit_1_4"
+        assert lift["ci_low"] > 0  # planted signal beats its own prevalence baseline
 
     def test_recovers_gof_signal_above_chance(self):
         y, proba, genes, folds = self._signal_data()
         out = bootstrap_mechanism_metrics(y, proba, genes, folds, n_resamples=300)
         gof = out["auroc_GOF"]
         assert gof["point"] > 0.9
-        assert gof["ci_low"] is None
-        assert gof["reason"] == "blocked_by_audit_1_4"
+        assert gof["ci_low"] > 0.5  # CI excludes chance
 
     def test_clusters_are_genes(self):
         y, proba, genes, folds = self._signal_data()
@@ -1560,8 +1568,7 @@ class TestPairedOofDiff:
             arm_a, arm_b, pfam_map, "planted", classes=classes, n_resamples=200
         )
         assert out["point_diff"] > 0
-        assert out["ci_low"] is None
-        assert out["reason"] == "blocked_by_audit_1_4"
+        assert out["ci_low"] > 0, "a large planted difference must exclude zero"
         assert out["n_shared"] == 120
 
     def test_identical_arms_give_exactly_zero_difference(self):
@@ -1572,8 +1579,8 @@ class TestPairedOofDiff:
         # The pairing is what makes this exact: both arms see the same drawn rows on
         # every replicate, so an identical arm cancels to zero in each one.
         assert out["point_diff"] == pytest.approx(0.0)
-        assert out["ci_low"] is None
-        assert out["ci_high"] is None
+        assert out["ci_low"] == pytest.approx(0.0)
+        assert out["ci_high"] == pytest.approx(0.0)
 
     def test_family_split_resamples_families_not_genes(self):
         arm_a, arm_b, pfam_map, classes = self._arms(n_genes=20, n_families=5)
@@ -1665,18 +1672,11 @@ class TestPairedOofDiff:
         arm_b = _mechanism_oof(row_ids, genes, y_true, weak)
 
         dn = paired_oof_diff(
-            arm_a,
-            arm_b,
-            pfam_map,
-            "dn",
-            classes=classes,
-            metric="auroc_one_vs_rest",
-            pos_class=DN,
-            n_resamples=200,
+            arm_a, arm_b, pfam_map, "dn", classes=classes,
+            metric="auroc_one_vs_rest", pos_class=DN, n_resamples=200,
         )
         assert dn["point_a"] > 0.95
-        assert dn["ci_low"] is None
-        assert dn["reason"] == "blocked_by_audit_1_4"
+        assert dn["ci_low"] > 0
 
     def test_one_vs_rest_requires_a_pos_class_in_classes(self):
         arm_a, arm_b, pfam_map, classes = self._arms()
@@ -1747,7 +1747,7 @@ class TestPairedOofDiff:
         )
         assert out["point_a"] == pytest.approx(1.0)
         assert out["point_diff"] > 0
-        assert out["ci_low"] is None
+        assert out["ci_low"] > 0
 
     def test_cross_partition_resamples_families_and_adds_gene_sensitivity(self):
         arm_a, arm_b, pfam_map, classes = self._arms(n_genes=20, n_families=5)
@@ -1767,33 +1767,25 @@ class TestPairedOofDiff:
 
     def test_cross_partition_family_interval_is_wider_than_gene(self):
         arm_a, arm_b, pfam_map, classes = self._arms(
-            n=400,
-            n_genes=40,
-            n_families=8,
-            a_correct=0.8,
-            b_correct=0.6,
+            n=400, n_genes=40, n_families=8, a_correct=0.8, b_correct=0.6,
             correctness_by_family=True,
         )
         out = paired_oof_diff(
-            arm_a,
-            arm_b,
-            pfam_map,
-            "gap",
-            classes=classes,
-            cross_partition=True,
-            n_resamples=400,
+            arm_a, arm_b, pfam_map, "gap", classes=classes,
+            cross_partition=True, n_resamples=400,
         )
-        assert out["ci_low"] is None
-        assert out["ci_high"] is None
+        family_width = out["ci_high"] - out["ci_low"]
         gene = out["gene_resampled_sensitivity"]
-        assert gene["ci_low"] is None
-        assert gene["reason"] == "blocked_by_audit_1_4"
+        gene_width = gene["ci_high"] - gene["ci_low"]
+        # Fewer effective clusters means a wider interval. A gene-resampled gap
+        # understates the family-split arm's variance, which is why it is only ever
+        # reported as a sensitivity check.
+        assert family_width > gene_width
 
 
 # ---------------------------------------------------------------------------
 # adjudicate_diff / adjudicate_level (pre-registration §1.1 verdicts)
 # ---------------------------------------------------------------------------
-
 
 class TestAdjudicateDiff:
     def test_pass_with_ci_above_zero_is_established(self):
@@ -2038,3 +2030,77 @@ class TestRankingIsFoldAware:
         proba[:, MECHANISM_CLASSES.index(LOF)] = 1.0 - scores
         out = bootstrap_mechanism_metrics(y_true, proba, genes, folds, n_resamples=50)
         assert out["auroc_GOF"]["point"] == pytest.approx(1.0)
+
+
+class TestClassStratifiedResampling:
+    """A ranking metric stays defined on every draw instead of conditioning on
+    the draws where a rare class happened to survive."""
+
+    def _rare_class_arms(self):
+        rng = np.random.RandomState(3)
+        n_folds, genes_per_fold = 4, 12
+        genes, folds, target = [], [], []
+        for fold in range(n_folds):
+            for index in range(genes_per_fold):
+                gene = f"F{fold}G{index}"
+                for _row in range(4):
+                    genes.append(gene)
+                    folds.append(fold)
+                    target.append(1 if index == 0 else 0)
+        genes = np.array(genes, dtype=object)
+        folds = np.array(folds, dtype=int)
+        target = np.array(target, dtype=int)
+        scores = rng.rand(len(target)).reshape(-1, 1)
+        arms = [(scores, folds, np.unique(folds))]
+
+        def metric(rows):
+            def fold_auroc(block, column):
+                y_bin = target[block]
+                if len(np.unique(y_bin)) < 2:
+                    return None
+                return float(roc_auc_score(y_bin, column[block, 0]))
+
+            return score_within_folds(rows, arms, fold_auroc)
+
+        return genes, folds, target, metric
+
+    def test_plain_draw_loses_the_rare_class_and_suppresses_the_interval(self):
+        genes, _folds, _target, metric = self._rare_class_arms()
+        out = cluster_bootstrap_ci(
+            genes, metric, n_resamples=200, seed=0, n_jobs=1, metric_name="auroc"
+        )
+        assert out["n_discarded"] > 0
+        assert out["ci_suppressed"] is True
+
+    def test_stratified_draw_keeps_the_class_and_reports_an_interval(self):
+        genes, folds, target, metric = self._rare_class_arms()
+        out = cluster_bootstrap_ci(
+            genes,
+            metric,
+            n_resamples=200,
+            seed=0,
+            n_jobs=1,
+            metric_name="auroc",
+            cluster_strata=class_presence_strata(genes, [folds], target),
+        )
+        assert out["n_discarded"] == 0
+        assert out["ci_low"] is not None and out["ci_high"] is not None
+        assert out["ci_low"] <= out["point"] <= out["ci_high"]
+
+    def test_clusters_in_one_fold_carrying_one_class_share_a_stratum(self):
+        clusters = np.array(["A", "A", "B", "B", "C", "C"], dtype=object)
+        folds = np.array([0, 0, 0, 0, 0, 0], dtype=int)
+        labels = np.array([1, 0, 1, 0, 0, 0])
+        strata = class_presence_strata(clusters, [folds], labels)
+        assert strata[0] == strata[1] == strata[2] == strata[3]
+        assert strata[4] == strata[5] != strata[0]
+
+    def test_a_cluster_spanning_folds_gives_no_strata_rather_than_narrow_ones(self):
+        # A Pfam family against a gene-split arm's folds touches several of them.
+        # Keying on the whole set would leave most clusters alone in a stratum,
+        # and a stratum of one always resamples itself, so the draw is left
+        # unstratified and the discard fraction reports what that costs.
+        clusters = np.array(["A", "A", "B", "B"], dtype=object)
+        folds = np.array([0, 1, 0, 1], dtype=int)
+        labels = np.array([1, 0, 1, 0])
+        assert class_presence_strata(clusters, [folds], labels) is None

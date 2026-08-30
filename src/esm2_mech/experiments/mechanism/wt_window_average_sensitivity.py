@@ -38,11 +38,9 @@ from esm2_mech.experiments.mechanism.mechanism_delta_family_split import (
     run as run_family_split,
 )
 from esm2_mech.utils.bootstrap import (
-    INTERVAL_GATE_REASON,
     family_or_gene_clusters,
     folds_to_arms,
     paired_cluster_bootstrap_diff,
-    paired_cluster_bootstrap_diff_cross_partition,
     score_within_folds,
 )
 from esm2_mech.utils.constants import (
@@ -69,7 +67,11 @@ from esm2_mech.utils.paths import (
     WT_WINDOW_AVERAGE_DIR,
     WT_WINDOW_AVERAGE_ORIGINAL_DIR,
 )
-from esm2_mech.utils.seed_aggregation import load_seed_files
+from esm2_mech.utils.seed_aggregation import (
+    aggregate_seed_values,
+    load_seed_files,
+    make_seed_record,
+)
 from esm2_mech.experiments.mechanism.seed_results import (
     aggregate_across_seeds,
     aggregate_result_contract,
@@ -209,15 +211,20 @@ def _load_validated_condition(
     return seed_results, oof_by_seed
 
 
-def _align_cached_arms(arms: dict[str, dict], label: str) -> dict[str, dict]:
-    """Restrict cached prediction arms to one validated row-id intersection."""
+def _align_cached_arms(
+    arms: dict[str, dict], label: str, declared_rows
+) -> dict[str, dict]:
+    """Align cached prediction arms to a caller-declared row set."""
     row_maps = {
         name: {int(row): pos for pos, row in enumerate(arm["row_ids"])}
         for name, arm in arms.items()
     }
-    shared_rows = sorted(set.intersection(*(set(rows) for rows in row_maps.values())))
-    if not shared_rows:
-        raise ValueError(f"{label}: cached arms share no OOF rows")
+    shared_rows = tuple(int(row) for row in declared_rows)
+    if not shared_rows or len(set(shared_rows)) != len(shared_rows):
+        raise ValueError(f"{label}: declared OOF rows are empty or duplicated")
+    for name, row_map in row_maps.items():
+        if not set(shared_rows).issubset(row_map):
+            raise ValueError(f"{label}: arm {name} misses declared OOF rows")
 
     aligned = {}
     for name, arm in arms.items():
@@ -258,41 +265,44 @@ def compare_conditions_for_seed(
     n_jobs: int = -1,
 ) -> dict:
     """Paired OOF comparisons for score levels and the split-gap change."""
-    def _gate_interval(result):
-        result["ci_low"] = None
-        result["ci_high"] = None
-        result["ci_suppressed"] = True
-        result["missing"] = True
-        result["reason"] = INTERVAL_GATE_REASON
-        result["n_resamples"] = 0
-        result["n_resamples_total"] = 0
-        return result
-
+    # Both conditions are scored on the same drawn rows, so the difference is
+    # paired within the draw. Macro-F1 has a fixed class denominator and is
+    # defined on every draw, so the draws need no stratification.
+    method_discard_reason = (
+        "a fold's resampled rows lost every row in one of the two conditions"
+    )
     output = {}
     for split, is_family_split in (("gene_split", False), ("family_split", True)):
+        declared_rows = tuple(int(row) for row in original[split]["row_ids"])
+        if set(declared_rows) != set(int(row) for row in averaged[split]["row_ids"]):
+            raise ValueError(f"{split}: conditions have different declared OOF rows")
         aligned = _align_cached_arms(
             {"averaged": averaged[split], "original": original[split]},
             f"{split} averaged versus original",
+            declared_rows,
         )
         genes = np.asarray(aligned["averaged"]["genes"], dtype=object)
         clusters = family_or_gene_clusters(genes, pfam_map, is_family_split)
-        all_rows = np.arange(len(genes))
-        averaged_point = _macro_f1_scorer(aligned["averaged"])(all_rows)
-        original_point = _macro_f1_scorer(aligned["original"])(all_rows)
-        comparison = _gate_interval(
-            {
-                "point_diff": (
-                    None
-                    if averaged_point is None or original_point is None
-                    else averaged_point - original_point
-                ),
-                "n_clusters": int(len(np.unique(clusters))),
-            }
+        comparison = paired_cluster_bootstrap_diff(
+            clusters,
+            _macro_f1_scorer(aligned["averaged"]),
+            _macro_f1_scorer(aligned["original"]),
+            n_resamples=n_resamples,
+            seed=seed,
+            n_jobs=n_jobs,
+            discard_reason=method_discard_reason,
         )
         comparison["n_shared"] = len(genes)
         comparison["contrast"] = "protein_window_average_minus_variant_centered"
         output[f"{split}_method_difference"] = comparison
 
+    declared_family_rows = tuple(
+        int(row) for row in original["family_split"]["row_ids"]
+    )
+    if set(declared_family_rows) != set(
+        int(row) for row in averaged["family_split"]["row_ids"]
+    ):
+        raise ValueError("conditions have different family-eligible OOF rows")
     gap_arms = _align_cached_arms(
         {
             "averaged_gene": averaged["gene_split"],
@@ -301,6 +311,7 @@ def compare_conditions_for_seed(
             "original_family": original["family_split"],
         },
         "change in gene-minus-family gap",
+        declared_family_rows,
     )
     genes = np.asarray(gap_arms["averaged_gene"]["genes"], dtype=object)
     scorers = {name: _macro_f1_scorer(arm) for name, arm in gap_arms.items()}
@@ -319,21 +330,20 @@ def compare_conditions_for_seed(
             return None
         return gene_value - family_value
 
-    all_rows = np.arange(len(genes))
-    averaged_gap_point = _averaged_gap(all_rows)
-    original_gap_point = _original_gap(all_rows)
     partition_clusters = family_or_gene_clusters(
         genes, pfam_map, is_family_split=True
     )
-    gap_comparison = _gate_interval(
-        {
-            "point_diff": (
-                None
-                if averaged_gap_point is None or original_gap_point is None
-                else averaged_gap_point - original_gap_point
-            ),
-            "n_clusters": int(len(np.unique(partition_clusters))),
-        }
+    gap_comparison = paired_cluster_bootstrap_diff(
+        partition_clusters,
+        _averaged_gap,
+        _original_gap,
+        n_resamples=n_resamples,
+        seed=seed,
+        n_jobs=n_jobs,
+        discard_reason=(
+            "a fold's resampled rows lost every row in one of the four arms the "
+            "two gaps are built from"
+        ),
     )
     gap_comparison["n_shared"] = len(genes)
     gap_comparison["contrast"] = (
@@ -344,6 +354,26 @@ def compare_conditions_for_seed(
     return output
 
 
+def _section_4_conclusion() -> dict:
+    """Report the Section 4 conclusion as unavailable while intervals are suppressed.
+
+    Section 4 rests on whether switching the WT vector moves the gene-minus-family
+    gap, and that verdict was previously read off one seed's paired interval. A
+    one-seed interval describes that seed rather than the across-seed change
+    reported for this section, so the conclusion is withheld instead. The
+    across-seed point estimate of the change stays available in the comparison
+    summary.
+    """
+    return {
+        "section_4_conclusion_changed": None,
+        "section_4_conclusion_reason": (
+            "the conclusion depends on an interval for the across-seed change in "
+            "the gene-minus-family gap, which is unavailable pending audit item "
+            "1.4; a single-seed paired interval is not a substitute"
+        ),
+    }
+
+
 def _comparison_summary(per_seed: list[dict]) -> dict:
     summary = {}
     for comparison_name in (
@@ -351,24 +381,13 @@ def _comparison_summary(per_seed: list[dict]) -> dict:
         "family_split_method_difference",
         "split_gap_method_difference",
     ):
-        valid = []
-        positive = []
-        negative = []
-        for row in per_seed:
-            result = row[comparison_name]
-            if result.get("ci_low") is None or result.get("ci_high") is None:
-                continue
-            valid.append(row["seed"])
-            if result["ci_low"] > 0:
-                positive.append(row["seed"])
-            if result["ci_high"] < 0:
-                negative.append(row["seed"])
-        summary[comparison_name] = {
-            "valid_ci_seeds": valid,
-            "positive_difference_seeds": positive,
-            "negative_difference_seeds": negative,
-            "note": "Post hoc sensitivity; no across-seed decision rule was preregistered.",
-        }
+        summary[comparison_name] = aggregate_seed_values(
+            [row["seed"] for row in per_seed],
+            [
+                make_seed_record(row["seed"], row[comparison_name].get("point_diff"))
+                for row in per_seed
+            ],
+        ).to_dict()
     return summary
 
 
@@ -450,8 +469,8 @@ def main() -> None:
         expected_seeds,
         confusion_matrix_class_order=MECHANISM_CLASSES,
     )
-    original_gap = summarize_split_gap(original_results)
-    averaged_gap = summarize_split_gap(averaged_results)
+    original_gap = summarize_split_gap(original_results, expected_seeds)
+    averaged_gap = summarize_split_gap(averaged_results, expected_seeds)
     original_result_by_seed = {
         seed: result for seed, _filename, result in original_results
     }
@@ -529,13 +548,7 @@ def main() -> None:
             "per_seed": per_seed_comparisons,
             "summary": _comparison_summary(per_seed_comparisons),
         },
-        "section_4_conclusion_changed": (
-            original_gap["meets_claim_2b_interval_rule"]
-            != averaged_gap["meets_claim_2b_interval_rule"]
-            if original_gap["preregistered_rule_evaluable"]
-            and averaged_gap["preregistered_rule_evaluable"]
-            else None
-        ),
+        **_section_4_conclusion(),
     }
     write_result_json(
         WT_WINDOW_AVERAGE_AGGREGATE_JSON,

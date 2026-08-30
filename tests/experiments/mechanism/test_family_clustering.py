@@ -17,11 +17,23 @@ import numpy as np
 import pytest
 
 from esm2_mech.experiments.mechanism.family_clustering import (
+    _read_inference_metric,
+    _show_metric,
     family_probe,
     gene_level_embeddings,
     knn_family_purity,
     within_between_ratio,
 )
+
+
+def test_show_metric_marks_missing_value_unavailable():
+    assert _show_metric(None) == "unavailable"
+
+
+def test_read_inference_metric_marks_missing_key_unavailable():
+    metric = _read_inference_metric({"status": "unavailable"}, "missing")
+
+    assert not metric.available
 
 
 # ---------------------------------------------------------------------------

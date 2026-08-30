@@ -30,16 +30,18 @@ UNANNOTATED_CLUSTER_PREFIX = "__no_pfam__:"
 
 
 def _blocked_classification_interval(
-    point: float | None, n_clusters: int | None
+    point: float | None,
+    n_clusters: int | None,
+    reason: str = INTERVAL_GATE_REASON,
 ) -> dict:
-    """Represent a classification interval withheld pending audit item 1.4."""
+    """Represent a classification interval that was not computed, and say why."""
     return {
         "point": point,
         "ci_low": None,
         "ci_high": None,
         "ci_suppressed": True,
         "missing": True,
-        "reason": INTERVAL_GATE_REASON,
+        "reason": reason,
         "n_resamples": 0,
         "n_resamples_total": 0,
         "valid_frac": None,
@@ -184,14 +186,94 @@ def _evaluate_metric_fns(
 def _multi_bootstrap_resample_values(
     metric_fns: list[Callable[[np.ndarray], dict]],
     cluster_rows: list[np.ndarray],
-    n_clusters: int,
+    stratum_members: list[np.ndarray] | None,
     child_seed: int,
 ) -> tuple[dict, dict]:
     """Draw once and return metric values plus worker-side rejection reasons."""
     rng = np.random.RandomState(child_seed)
-    drawn = rng.randint(0, n_clusters, size=n_clusters)
-    rows = np.concatenate([cluster_rows[i] for i in drawn])
+    if stratum_members is None:
+        n_clusters = len(cluster_rows)
+        drawn = rng.randint(0, n_clusters, size=n_clusters)
+    else:
+        drawn = np.concatenate(
+            [
+                members[rng.randint(0, len(members), size=len(members))]
+                for members in stratum_members
+            ]
+        )
+    rows = np.concatenate([cluster_rows[index] for index in drawn])
     return _evaluate_metric_fns(metric_fns, rows)
+
+
+def class_presence_strata(
+    clusters: np.ndarray,
+    folds_by_arm: list[np.ndarray],
+    labels: np.ndarray,
+) -> np.ndarray | None:
+    """Per-row strata that keep every class present in every fold of every draw.
+
+    A cluster's stratum is the fold it occupies in each arm plus the set of
+    classes it carries. Every cluster holding a class then sits in a stratum whose
+    members all hold that class in the same fold, and a stratified draw keeps each
+    stratum's cluster count, so the class cannot vanish from that fold. A ranking
+    metric is defined on every resample instead of only on the draws where the
+    class happened to survive.
+
+    Returns None when a cluster spans several folds of an arm, which happens when
+    the resampling unit and the partition differ — a Pfam family against a
+    gene-split arm's folds, say. Keying on the whole set of folds a cluster
+    touches would leave most clusters alone in a stratum, and a stratum of one
+    always resamples itself, which understates the spread and yields an interval
+    that is too narrow. The caller then draws without strata and reports the
+    resulting discard fraction rather than reporting a narrow interval.
+    """
+    clusters = np.asarray(clusters)
+    labels = np.asarray(labels)
+    _unique, cluster_rows = _cluster_to_rows(clusters)
+    strata = np.empty(len(clusters), dtype=object)
+    for rows in cluster_rows:
+        fold_key = []
+        for folds in folds_by_arm:
+            occupied = {int(fold) for fold in np.asarray(folds)[rows]}
+            if len(occupied) != 1:
+                print(
+                    "  [bootstrap] class-stratified draws are unavailable: a "
+                    "resampling cluster spans "
+                    f"{len(occupied)} folds of one arm. Drawing without strata; "
+                    "read the reported discard fraction."
+                )
+                return None
+            fold_key.append(occupied.pop())
+        present = tuple(sorted({str(label) for label in labels[rows]}))
+        stratum = (tuple(fold_key), present)
+        for row in rows:
+            strata[row] = stratum
+    return strata
+
+
+def _cluster_strata_members(
+    cluster_rows: list[np.ndarray], strata: np.ndarray
+) -> list[np.ndarray]:
+    """Group cluster indices by their stratum, requiring one stratum per cluster.
+
+    A stratified draw keeps each stratum's cluster count fixed, so a stratum that
+    carries the only rows of a class cannot vanish from a draw. That is what keeps
+    a ranking metric defined on every resample instead of leaving the interval
+    conditioned on the draws where the class happened to survive.
+    """
+    stratum_of_cluster = []
+    for rows in cluster_rows:
+        values = {strata[row] for row in rows}
+        if len(values) != 1:
+            raise ValueError(
+                "a bootstrap cluster spans more than one stratum: "
+                f"{sorted(map(repr, values))}"
+            )
+        stratum_of_cluster.append(values.pop())
+    members: dict = {}
+    for index, stratum in enumerate(stratum_of_cluster):
+        members.setdefault(stratum, []).append(index)
+    return [np.array(indices, dtype=int) for indices in members.values()]
 
 
 def _summarize_bootstrap(
@@ -286,8 +368,14 @@ def cluster_bootstrap_ci_multi(
     seed: int = 0,
     n_jobs: int = -1,
     discard_reasons: dict[str, str | Callable[[], str]] | None = None,
+    cluster_strata: np.ndarray | None = None,
 ) -> dict:
     """Cluster-bootstrap CIs for several metrics over one shared set of resamples.
+
+    `cluster_strata` is a per-row stratum label, constant within each cluster. When
+    given, clusters are drawn with replacement inside each stratum and each
+    stratum keeps its cluster count, so a stratum holding a rare class survives
+    every draw. Pass it for a metric that is undefined when a class disappears.
 
     `discard_reasons` lets a caller name, per metric, why its metric_fn returns
     None on a resample. Different metric_fns fail for different reasons (a fold
@@ -299,13 +387,18 @@ def cluster_bootstrap_ci_multi(
     n_clusters = len(unique)
     all_rows = np.arange(len(clusters))
     points, point_reasons = _evaluate_metric_fns(metric_fns, all_rows)
+    stratum_members = (
+        None
+        if cluster_strata is None
+        else _cluster_strata_members(cluster_rows, np.asarray(cluster_strata))
+    )
 
     child_seqs = np.random.SeedSequence(seed).spawn(n_resamples)
     child_seeds = [int(s.generate_state(1)[0]) for s in child_seqs]
 
     replicates = Parallel(n_jobs=n_jobs)(
         delayed(_multi_bootstrap_resample_values)(
-            metric_fns, cluster_rows, n_clusters, child_seed
+            metric_fns, cluster_rows, stratum_members, child_seed
         )
         for child_seed in child_seeds
     )
@@ -398,6 +491,7 @@ def cluster_bootstrap_ci(
     n_jobs: int = -1,
     discard_reason: str | Callable[[], str] | None = None,
     metric_name: str = "metric",
+    cluster_strata: np.ndarray | None = None,
 ) -> dict:
     """Single-metric front end to cluster_bootstrap_ci_multi.
 
@@ -415,6 +509,7 @@ def cluster_bootstrap_ci(
         seed=seed,
         n_jobs=n_jobs,
         discard_reasons={key: discard_reason} if discard_reason else None,
+        cluster_strata=cluster_strata,
     )
     return out[key]
 
@@ -489,13 +584,22 @@ def _paired_bootstrap_resample_values(
     metric_fn_a: Callable[[np.ndarray], float | None],
     metric_fn_b: Callable[[np.ndarray], float | None],
     cluster_rows: list[np.ndarray],
-    n_clusters: int,
+    stratum_members: list[np.ndarray] | None,
     child_seed: int,
 ) -> tuple[float | None, float | None]:
     """Draw one cluster resample and score both arms on the identical drawn rows."""
     rng = np.random.RandomState(child_seed)
-    drawn = rng.randint(0, n_clusters, size=n_clusters)
-    rows = np.concatenate([cluster_rows[i] for i in drawn])
+    if stratum_members is None:
+        n_clusters = len(cluster_rows)
+        drawn = rng.randint(0, n_clusters, size=n_clusters)
+    else:
+        drawn = np.concatenate(
+            [
+                members[rng.randint(0, len(members), size=len(members))]
+                for members in stratum_members
+            ]
+        )
+    rows = np.concatenate([cluster_rows[index] for index in drawn])
     value_a = metric_fn_a(rows)
     value_b = metric_fn_b(rows)
     value_a = float(value_a) if value_a is not None and np.isfinite(value_a) else None
@@ -513,10 +617,16 @@ def _paired_cluster_bootstrap_diff_ci(
     seed: int,
     n_jobs: int,
     discard_reason: str | Callable[[], str] | None,
+    cluster_strata: np.ndarray | None = None,
 ) -> dict:
     """Shared resampling machinery for both pairing modes."""
     unique, cluster_rows = _cluster_to_rows(np.asarray(resample_clusters))
     n_clusters = len(unique)
+    stratum_members = (
+        None
+        if cluster_strata is None
+        else _cluster_strata_members(cluster_rows, np.asarray(cluster_strata))
+    )
     all_rows = np.arange(len(resample_clusters))
     point_a = metric_fn_a(all_rows)
     point_b = metric_fn_b(all_rows)
@@ -531,7 +641,7 @@ def _paired_cluster_bootstrap_diff_ci(
 
     paired_values = Parallel(n_jobs=n_jobs)(
         delayed(_paired_bootstrap_resample_values)(
-            metric_fn_a, metric_fn_b, cluster_rows, n_clusters, child_seed
+            metric_fn_a, metric_fn_b, cluster_rows, stratum_members, child_seed
         )
         for child_seed in child_seeds
     )
@@ -576,6 +686,7 @@ def paired_cluster_bootstrap_diff(
     seed: int = 0,
     n_jobs: int = -1,
     discard_reason: str | Callable[[], str] | None = None,
+    cluster_strata: np.ndarray | None = None,
 ) -> dict:
     """Paired CI on metric_a minus metric_b under one shared fold assignment."""
     return _paired_cluster_bootstrap_diff_ci(
@@ -588,6 +699,7 @@ def paired_cluster_bootstrap_diff(
         seed=seed,
         n_jobs=n_jobs,
         discard_reason=discard_reason,
+        cluster_strata=cluster_strata,
     )
 
 
@@ -736,6 +848,8 @@ def paired_cluster_bootstrap_diff_cross_partition(
     seed: int = 0,
     n_jobs: int = -1,
     discard_reason: str | Callable[[], str] | None = None,
+    cluster_strata: np.ndarray | None = None,
+    sensitivity_cluster_strata: np.ndarray | None = None,
 ) -> dict:
     """Paired CI on a difference between arms scored under different CV partitions.
 
@@ -752,6 +866,7 @@ def paired_cluster_bootstrap_diff_cross_partition(
         seed=seed,
         n_jobs=n_jobs,
         discard_reason=discard_reason,
+        cluster_strata=cluster_strata,
     )
     if sensitivity_clusters is not None:
         primary["gene_resampled_sensitivity"] = _paired_cluster_bootstrap_diff_ci(
@@ -764,6 +879,7 @@ def paired_cluster_bootstrap_diff_cross_partition(
             seed=seed,
             n_jobs=n_jobs,
             discard_reason=discard_reason,
+            cluster_strata=sensitivity_cluster_strata,
         )
     return primary
 
@@ -857,18 +973,56 @@ def bootstrap_mechanism_metrics_from_oof(
             )
         }
 
-    metric_fns = [_macro_f1] + [
+    class_metric_fns = [
         functools.partial(_class_metrics, _col=col_idx, _cls=cls)
         for col_idx, cls in enumerate(classes)
     ]
-    all_rows = np.arange(len(y_true), dtype=int)
-    points: dict[str, float | None] = {}
-    for metric_fn in metric_fns:
-        points.update(metric_fn(all_rows))
-    return {
-        metric_name: _blocked_classification_interval(point, len(np.unique(clusters)))
-        for metric_name, point in points.items()
-    }
+    # Macro-F1 has a fixed class denominator, so it is defined on every draw and
+    # takes the plain cluster bootstrap. The per-class ranking metrics are undefined
+    # in a fold that loses the class, so they take the class-stratified draw, which
+    # keeps the class present rather than dropping the draw and conditioning the
+    # interval on the survivors.
+    out = cluster_bootstrap_ci_multi(
+        clusters,
+        [_macro_f1],
+        n_resamples=n_resamples,
+        ci_level=ci_level,
+        seed=seed,
+        discard_reasons={"macro_f1": "a fold's resampled rows lost every row"},
+    )
+    class_metric_reason = "a fold's resampled rows lost the class"
+    discard_reasons = {}
+    for cls in classes:
+        discard_reasons.update(
+            {
+                f"auroc_{cls}": class_metric_reason,
+                f"auprc_{cls}": class_metric_reason,
+                f"prevalence_{cls}": class_metric_reason,
+                f"auprc_lift_{cls}": class_metric_reason,
+            }
+        )
+    out.update(
+        cluster_bootstrap_ci_multi(
+            clusters,
+            class_metric_fns,
+            n_resamples=n_resamples,
+            ci_level=ci_level,
+            seed=seed,
+            discard_reasons=discard_reasons,
+            cluster_strata=class_presence_strata(
+                clusters, [folds for _proba, folds, _ids in arms], y_true
+            ),
+        )
+    )
+
+    for metric_name, interval in out.items():
+        if interval.get("ci_suppressed"):
+            print(
+                f"  [bootstrap] {metric_name}: CI suppressed — only "
+                f"{interval['n_resamples']}/{interval['n_resamples_total']} "
+                f"resamples valid ({interval['valid_frac']:.0%}). No CI reported."
+            )
+    return out
 
 
 def attach_mechanism_ci(
@@ -897,7 +1051,9 @@ def attach_mechanism_ci(
             points[f"auroc_{class_name}"] = result.get(f"auroc_{class_name}_mean")
             points[f"auprc_{class_name}"] = result.get(f"auprc_{class_name}_mean")
         result["ci"] = {
-            metric_name: _blocked_classification_interval(point, None)
+            metric_name: _blocked_classification_interval(
+                point, None, "no out-of-fold predictions to resample"
+            )
             for metric_name, point in points.items()
         }
         return result
@@ -1065,28 +1221,62 @@ def paired_oof_diff(
         return _auroc
 
     fn_a, fn_b = _metric_fn(oof_a, idx_a), _metric_fn(oof_b, idx_b)
-    all_rows = np.arange(len(idx_a), dtype=int)
-    point_a = fn_a(all_rows)
-    point_b = fn_b(all_rows)
-    point_diff = (
-        None if point_a is None or point_b is None else float(point_a - point_b)
-    )
+    shared_genes = np.asarray(oof_a["genes"], dtype=object)[idx_a]
     cluster_values = family_or_gene_clusters(
-        np.asarray(oof_a["genes"], dtype=object)[idx_a],
+        shared_genes,
         pfam_map,
         is_family_split=True if cross_partition else is_family_split,
     )
-    out = _blocked_classification_interval(point_diff, len(np.unique(cluster_values)))
-    out.update({"point_a": point_a, "point_b": point_b, "point_diff": point_diff})
+    # Macro-F1 has a fixed class denominator and is defined on every draw, so it
+    # needs no stratification; a ranking metric does. Each arm keeps its own fold
+    # assignment on the shared rows, so both arms' folds go into the key.
+    shared_folds = [
+        np.asarray(folds)[idx]
+        for oof, idx in ((oof_a, idx_a), (oof_b, idx_b))
+        for _proba, folds, _ids in oof_score_arms(oof, label)
+    ]
+    if metric == "macro_f1":
+        discard_reason = (
+            "at least one arm's fold lost every row of the shared resample"
+        )
+        cluster_strata = None
+        sensitivity_strata = None
+    else:
+        discard_reason = (
+            "at least one arm's fold lost the one-vs-rest positive or negative "
+            "class on the shared resample"
+        )
+        binary_labels = (
+            y_true == pos_class if metric == "auroc_one_vs_rest" else y_true
+        )
+        cluster_strata = class_presence_strata(
+            cluster_values, shared_folds, binary_labels
+        )
+        sensitivity_strata = class_presence_strata(
+            shared_genes, shared_folds, binary_labels
+        )
     if cross_partition:
-        shared_genes = np.asarray(oof_a["genes"], dtype=object)[idx_a]
-        sensitivity = _blocked_classification_interval(
-            point_diff, len(np.unique(shared_genes))
+        out = paired_cluster_bootstrap_diff_cross_partition(
+            cluster_values,
+            fn_a,
+            fn_b,
+            sensitivity_clusters=shared_genes,
+            n_resamples=n_resamples,
+            seed=seed,
+            discard_reason=discard_reason,
+            cluster_strata=cluster_strata,
+            sensitivity_cluster_strata=sensitivity_strata,
         )
-        sensitivity.update(
-            {"point_a": point_a, "point_b": point_b, "point_diff": point_diff}
+    else:
+        out = paired_cluster_bootstrap_diff(
+            cluster_values,
+            fn_a,
+            fn_b,
+            n_resamples=n_resamples,
+            seed=seed,
+            discard_reason=discard_reason,
+            cluster_strata=cluster_strata,
         )
-        out["gene_resampled_sensitivity"] = sensitivity
     out["n_shared"] = len(idx_a)
     return out
 
@@ -1179,9 +1369,19 @@ def binary_auroc_cluster_bootstrap_ci(
     def _auroc(rows: np.ndarray) -> float | None:
         return score_within_folds(rows, arms, _fold_auroc)
 
-    point = _auroc(np.arange(len(y_true), dtype=int))
     resample_unit = oof["genes"] if clusters is None else clusters
-    return _blocked_classification_interval(point, len(np.unique(resample_unit)))
+    return cluster_bootstrap_ci(
+        resample_unit,
+        _auroc,
+        n_resamples=n_resamples,
+        ci_level=ci_level,
+        seed=seed,
+        discard_reason="a fold's resampled rows lost the positive or the negative class",
+        metric_name="binary_auroc",
+        cluster_strata=class_presence_strata(
+            resample_unit, [folds for _proba, folds, _ids in arms], y_true
+        ),
+    )
 
 
 def _fold_of_each_unit(units: np.ndarray, folds: np.ndarray, what: str) -> dict:

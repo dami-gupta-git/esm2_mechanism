@@ -7,7 +7,7 @@ against the ESM-2 axis. Does not cover position-specific conservation (see conse
 import numpy as np
 import functools
 
-from esm2_mech.utils.constants import N_SEEDS
+from esm2_mech.utils.constants import N_FOLDS, N_SEEDS
 from esm2_mech.utils.data import load_pfam_map
 from esm2_mech.utils.io import write_result_json
 from esm2_mech.utils.paths import (
@@ -15,7 +15,12 @@ from esm2_mech.utils.paths import (
     PROBE4_AXIS_IDENTITY_JSON,
     PFAM_JSON,
 )
-from esm2_mech.utils.metrics import mean_std_n
+from esm2_mech.utils.seed_aggregation import (
+    aggregate_result_contract,
+    aggregate_seed_values,
+    make_seed_record,
+    read_seed_point_estimate,
+)
 from esm2_mech.utils.probes import auroc_for_clf
 from esm2_mech.utils.splits import family_split_cv
 from esm2_mech.experiments.geometry.axis_analysis import (
@@ -193,41 +198,62 @@ def run(n_seeds=N_SEEDS):
                 sc.transform(X[tr]), y[tr]
             )
             out.append(auroc_for_clf(clf, sc.transform(X[te]), y[te]))
-        return out
+        values = np.asarray(out, dtype=float)
+        if len(values) != N_FOLDS or not np.isfinite(values).all():
+            return {
+                "mean": None,
+                "fold_std": None,
+                "n": int(len(values)),
+                "sampling_unit": "held_out_fold",
+            }
+        return {
+            "mean": float(np.mean(values)),
+            "fold_std": float(np.std(values)),
+            "n": int(len(values)),
+            "sampling_unit": "held_out_fold",
+        }
 
-    cf, esm, both = [], [], []
-    for seed in range(n_seeds):
+    requested_seeds = tuple(range(n_seeds))
+    per_seed = {}
+    for seed in requested_seeds:
         fs = family_split_cv(genes, pfam, seed=seed)
-        cf += auroc_cv(bio, fs, seed)
-        esm += auroc_cv(delta, fs, seed)
-        both += auroc_cv(np.hstack([delta, bio]), fs, seed)
+        per_seed[seed] = {
+            "context_free": auroc_cv(bio, fs, seed),
+            "esm2_delta": auroc_cv(delta, fs, seed),
+            "esm2_plus_biochem": auroc_cv(np.hstack([delta, bio]), fs, seed),
+        }
 
-    def agg(a):
-        mean, std, n = mean_std_n(a)
-        return {"mean": mean, "std": std, "n": n}
+    def aggregate(metric):
+        return aggregate_seed_values(
+            requested_seeds,
+            [
+                make_seed_record(seed, per_seed[seed][metric]["mean"])
+                for seed in requested_seeds
+            ],
+        ).to_dict()
 
-    context_free = agg(cf)
-    esm2_delta = agg(esm)
-    combined = agg(both)
+    context_free = aggregate("context_free")
+    esm2_delta = aggregate("esm2_delta")
+    combined = aggregate("esm2_plus_biochem")
     print(
-        f"  context-free biochem only : {context_free['mean']:.3f} "
-        f"± {context_free['std']:.3f}"
+        f"  context-free biochem only : {_show_seed_summary(context_free)}"
     )
     print(
-        f"  ESM-2 delta only          : {esm2_delta['mean']:.3f} "
-        f"± {esm2_delta['std']:.3f}"
+        f"  ESM-2 delta only          : {_show_seed_summary(esm2_delta)}"
     )
     print(
-        f"  ESM-2 + biochem           : {combined['mean']:.3f} ± {combined['std']:.3f}"
+        f"  ESM-2 + biochem           : {_show_seed_summary(combined)}"
     )
 
     result = {
+        **aggregate_result_contract(),
         "n": int(len(keep)),
         "axis_analysis_family_held_out": axis_analysis,
         "pathogenicity_auroc_family_split": {
             "context_free": context_free,
             "esm2_delta": esm2_delta,
             "esm2_plus_biochem": combined,
+            "per_seed_fold_summaries": per_seed,
         },
         "analysis_status": "exploratory",
         "input_provenance": pathogenicity_geometry_provenance(inputs, pfam),
@@ -238,10 +264,19 @@ def run(n_seeds=N_SEEDS):
     print("\n=== DESCRIPTIVE SUMMARY ===")
     print(f"  Family-held-out R^2(axis ~ biochem) = {format_axis_summary(r2)}")
     print(
-        f"  Context-free biochemistry AUROC = {context_free['mean']:.3f}; "
-        f"ESM-2 delta AUROC = {esm2_delta['mean']:.3f}."
+        f"  Context-free biochemistry AUROC = {_show_seed_summary(context_free)}; "
+        f"ESM-2 delta AUROC = {_show_seed_summary(esm2_delta)}."
     )
     return result
+
+
+def _show_seed_summary(summary):
+    metric = read_seed_point_estimate(summary)
+    if not metric.available:
+        return f"unavailable ({metric.message})"
+    if metric.spread is None:
+        return f"{metric.value:.3f} (seed spread unavailable)"
+    return f"{metric.value:.3f} ± {metric.spread:.3f} seed SD"
 
 
 def main():

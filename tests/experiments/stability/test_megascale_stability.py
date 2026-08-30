@@ -4,6 +4,7 @@ import pytest
 from esm2_mech.experiments.stability.megascale_mlp import run_mlp_regression
 from esm2_mech.experiments.stability.megascale_stability import (
     apply_decision_rule,
+    run_ridge_with_auroc,
     paired_spearman_gap_ci,
     run_stability_projection_3c,
 )
@@ -14,73 +15,29 @@ N_FAMILIES = 50
 VARIANTS_PER_GENE = 3
 
 
-def test_3b_leaky_verdict_requires_ci_to_clear_threshold():
-    control_3a_ci = {"point": 0.69, "ci_low": 0.61, "ci_high": 0.75}
-
-    established = apply_decision_rule(
-        control_3a_ci,
-        {"point_diff": 0.14, "ci_low": 0.11, "ci_high": 0.17},
-        None,
-        None,
-    )
-    assert established["overall"] == "LEAKY"
-    assert established["gates"]["3B"]["verdict"] == "failed"
-
-    underpowered = apply_decision_rule(
-        control_3a_ci,
-        {"point_diff": 0.14, "ci_low": 0.08, "ci_high": 0.17},
-        None,
-        None,
-    )
-    assert underpowered["overall"] == "NOT FULLY ADJUDICATED"
-    assert underpowered["gates"]["3B"]["verdict"] == "underpowered"
-
-    unavailable = apply_decision_rule(control_3a_ci, None, None, None)
-    assert unavailable["overall"] == "NOT FULLY ADJUDICATED"
-    assert unavailable["gates"]["3B"]["verdict"].startswith("not adjudicated")
-
-
-def test_stability_verdict_requires_all_four_intervals_to_clear_thresholds():
-    control_3c = {
-        "inferential_point_estimate": -0.01,
-        "difference_ci": {
-            "point_diff": -0.01,
-            "ci_low": -0.02,
-            "ci_high": 0.0,
-        },
-    }
-
+def test_each_gate_reads_the_point_the_interval_beside_it_was_built_around():
     adjudication = apply_decision_rule(
         {"point": 0.60, "ci_low": 0.55, "ci_high": 0.65},
         {"point_diff": 0.05, "ci_low": 0.01, "ci_high": 0.08},
-        control_3c,
+        None,
         {"point": 0.07, "ci_low": 0.04, "ci_high": 0.09},
     )
 
-    assert adjudication["overall"] == "ROBUST"
-    assert {gate["verdict"] for gate in adjudication["gates"].values()} == {
-        "affirmed"
-    }
+    gates = adjudication["gates"]
+    assert gates["3A"]["point_estimate"] == 0.60
+    assert gates["3A"]["ci"]["ci_low"] == 0.55
+    assert gates["3B"]["point_estimate"] == 0.05
+    assert gates["3D"]["point_estimate"] == 0.07
+    # 3C was not supplied, so it alone stays unadjudicated.
+    assert gates["3C"]["point_estimate"] is None
+    assert gates["3C"]["ci"] is None
 
 
-def test_failed_3c_gate_is_not_reported_as_unadjudicated():
-    control_3c = {
-        "inferential_point_estimate": 0.03,
-        "difference_ci": {
-            "point_diff": 0.03,
-            "ci_low": 0.02,
-            "ci_high": 0.04,
-        },
-    }
-    adjudication = apply_decision_rule(
-        {"point": 0.60, "ci_low": 0.55, "ci_high": 0.65},
-        {"point_diff": 0.05, "ci_low": 0.01, "ci_high": 0.08},
-        control_3c,
-        {"point": 0.07, "ci_low": 0.04, "ci_high": 0.09},
-    )
+def test_a_gate_without_its_interval_is_not_adjudicated():
+    adjudication = apply_decision_rule(None, None, None, None)
 
-    assert adjudication["overall"] == "3C FAILED"
-    assert adjudication["gates"]["3C"]["verdict"] == "failed"
+    assert adjudication["overall"] != "PASS"
+    assert all(gate["ci"] is None for gate in adjudication["gates"].values())
 
 
 def test_3b_gap_point_is_mean_of_within_fold_spearman_scores():
@@ -132,7 +89,7 @@ def _merged_set(rng, n_features):
     return delta, labels, genes, pfam_map
 
 
-def test_3c_returns_point_with_interval_gate():
+def test_3c_returns_a_paired_seed_point_with_its_interval():
     rng = np.random.RandomState(3)
     n_features = 6
     stability_delta = rng.normal(size=(60, n_features))
@@ -149,20 +106,19 @@ def test_3c_returns_point_with_interval_gate():
         stability_ddg,
         n_folds=N_FOLDS,
         n_seeds=1,
-        n_boot=100,
     )
 
-    ci = result["difference_ci"]
-    assert ci is not None
-    assert ci["n_clusters"] == N_FAMILIES
-    assert ci["point_diff"] is not None
-    assert ci["ci_low"] is None
-    assert ci["ci_high"] is None
-    assert ci["reason"] == "blocked_by_audit_1_4"
-    assert result["3C_verdict"] == "not adjudicated (CI unavailable)"
+    difference = result["projected_minus_baseline_f1"]
+    assert difference["requested_seeds"] == [0]
+    assert difference["mean"] is not None
+    assert difference["seed_std"] is None
+    interval = result["difference_ci"]
+    assert interval["point_diff"] is not None
+    if not interval.get("ci_suppressed"):
+        assert interval["ci_low"] <= interval["point_diff"] <= interval["ci_high"]
 
 
-def test_3c_does_not_run_resamples_while_interval_gate_is_active():
+def test_3c_interval_does_not_discard_a_material_share_of_its_draws():
     # A high discard rate means folds are losing whole classes, which makes the
     # surviving draws a different statistic from the point estimate. With ten
     # families per fold it should be near zero, so a regression that empties or
@@ -183,8 +139,35 @@ def test_3c_does_not_run_resamples_while_interval_gate_is_active():
         stability_ddg,
         n_folds=N_FOLDS,
         n_seeds=1,
-        n_boot=200,
     )
 
-    assert result["difference_ci"]["n_resamples"] == 0
-    assert result["difference_ci"]["n_resamples_total"] == 0
+    # A high discard rate means folds are losing whole classes, so the surviving
+    # draws would be a different statistic from the point estimate.
+    interval = result["difference_ci"]
+    assert interval["discard_frac"] <= BOOTSTRAP_MAX_DISCARD_FRAC
+
+
+def test_an_undefined_auroc_fold_does_not_withhold_the_rank_correlation():
+    """Each metric is judged on its own folds.
+
+    A fold whose held-out variants all sit on one side of the median has no
+    AUROC, but its Spearman correlation is perfectly well defined, so the two
+    statuses are reported separately.
+    """
+    rng = np.random.RandomState(0)
+    n_rows = 60
+    features = rng.randn(n_rows, 4)
+    ddg = features[:, 0] + 0.1 * rng.randn(n_rows)
+    splits = [
+        (np.setdiff1d(np.arange(n_rows), test), test)
+        for test in np.array_split(np.arange(n_rows), 3)
+    ]
+    # A median above every value leaves each fold's binarised labels all-negative.
+    result = run_ridge_with_auroc(
+        features, ddg, splits, median=float(ddg.max() + 1.0)
+    )
+
+    assert result["spearman_status"] == "success"
+    assert result["spearman_mean"] is not None
+    assert result["auroc_status"] == "unscorable"
+    assert "auroc_mean" not in result

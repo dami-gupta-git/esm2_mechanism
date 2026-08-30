@@ -19,6 +19,7 @@ from esm2_mech.utils.seed_aggregation import (
     SEED_STATUS_SUCCESS,
     SEED_STATUS_UNSCORABLE,
     SeedMetricRead,
+    aggregate_result_contract as _aggregate_result_contract,
     aggregate_seed_confusion_matrices,
     aggregate_seed_values,
     make_seed_payload_record,
@@ -30,13 +31,12 @@ from esm2_mech.utils.seed_aggregation import (
 
 print = functools.partial(print, flush=True)
 
+aggregate_result_contract = _aggregate_result_contract
+
 GENE_SPLIT = "gene_split"
 FAMILY_SPLIT = "family_split"
 SPLITS = [GENE_SPLIT, FAMILY_SPLIT]
 HEADLINE_METRIC = "macro_f1"
-
-# Per-feature mean computed across seeds is stored under "<metric>_seed_mean".
-SEED_MEAN_SUFFIX = "_seed_mean"
 
 # Top-level key under which the across-seed aggregate is nested in the run's
 # aggregate result file (written by classify_by_mechanism).
@@ -70,8 +70,7 @@ def aggregate_across_seeds(
     result, or a result for a seed nobody asked for, makes the affected aggregate
     unavailable; the seed set is never taken from whichever files happened to load.
 
-    Reads each per-seed `<metric>_mean` value. Returns nested dict:
-        {split: {feature: {<metric>_seed_mean, <metric>_seed_std, n_seeds}}}
+    Reads each per-seed `<metric>_mean` value and stores only the shared aggregate.
     """
     requested = tuple(requested_seeds)
     if len(set(requested)) != len(requested):
@@ -116,21 +115,7 @@ def aggregate_across_seeds(
                     if key.endswith("_mean")
                 }
             )
-            feature_out: dict = {
-                "required_seeds": list(requested),
-                "status": "success",
-            }
-            unavailable_seeds = sorted(
-                set(requested).symmetric_difference(received_seeds)
-                | {
-                    seed
-                    for seed, status in statuses.items()
-                    if status != SEED_STATUS_SUCCESS
-                }
-            )
-            if unavailable_seeds:
-                feature_out["status"] = "unavailable"
-                feature_out["unavailable_seeds"] = unavailable_seeds
+            feature_out: dict = {}
 
             for base_metric in metric_names:
                 records = []
@@ -146,18 +131,6 @@ def aggregate_across_seeds(
                     )
                 aggregate = aggregate_seed_values(requested, records)
                 feature_out[f"{base_metric}_seed_aggregate"] = aggregate.to_dict()
-                feature_out[f"{base_metric}_n_seeds"] = len(
-                    aggregate.contributing_seeds
-                )
-                feature_out[f"{base_metric}_missing"] = not aggregate.available
-                feature_out[f"{base_metric}_missing_seeds"] = list(
-                    aggregate.affected_seeds
-                )
-                feature_out[f"{base_metric}{SEED_MEAN_SUFFIX}"] = aggregate.mean
-                feature_out[f"{base_metric}_seed_std"] = aggregate.spread
-                feature_out[f"{base_metric}_reason"] = aggregate.message
-                if not aggregate.available:
-                    feature_out["status"] = "unavailable"
 
             has_matrix = any(
                 isinstance(block, dict) and "confusion_matrix" in block
@@ -206,30 +179,6 @@ def _aggregate_confusion_matrices(
         requested_seeds, declared_classes, records
     )
     output["confusion_matrix_seed_aggregate"] = aggregate.to_dict()
-    output["confusion_matrix_class_order"] = list(declared_classes)
-    output["confusion_matrix_n_seeds"] = len(aggregate.contributing_seeds)
-    output["confusion_matrix_missing_seeds"] = list(aggregate.affected_seeds)
-    if not aggregate.available:
-        output["confusion_matrix_raw_by_seed"] = {}
-        output["confusion_matrix_normalized_by_seed"] = {}
-        output["confusion_matrix_pooled_raw"] = None
-        output["confusion_matrix_seed_mean"] = None
-        return
-    output["confusion_matrix_raw_by_seed"] = aggregate.payload["raw_by_seed"]
-    output["confusion_matrix_normalized_by_seed"] = aggregate.payload[
-        "normalized_by_seed"
-    ]
-    output["confusion_matrix_pooled_raw"] = aggregate.payload["pooled_raw"]
-    output["confusion_matrix_seed_mean"] = aggregate.payload["normalized_seed_mean"]
-
-
-def aggregate_result_contract() -> dict:
-    """Root field every across-seed aggregate result file declares.
-
-    The file states the schema its aggregates were written under, so a reader
-    rejects a stale file outright rather than trusting individual numbers in it.
-    """
-    return {SEED_SCHEMA_KEY: SEED_AGGREGATION_SCHEMA_VERSION}
 
 
 def read_across_seed_metric(
@@ -286,31 +235,27 @@ def print_table(aggregated: dict[str, dict[str, dict]]) -> None:
     family = aggregated.get(FAMILY_SPLIT, {})
     features = sorted(set(gene) | set(family))
 
-    mean_key = f"{HEADLINE_METRIC}_seed_mean"
-    std_key = f"{HEADLINE_METRIC}_seed_std"
-    n_key = f"{HEADLINE_METRIC}_n_seeds"
-
     print(f"\n=== {HEADLINE_METRIC} across seeds (mean ± std) ===")
-    print(
-        f"{'feature':<20} {'gene-split':>18} {'family-split':>18} {'Δ(gene−fam)':>14}"
-    )
+    print(f"{'feature':<20} {'gene-split':>18} {'family-split':>18}")
     for feature in features:
-        gene_metrics = gene.get(feature, {})
-        family_metrics = family.get(feature, {})
-        gene_mean = gene_metrics.get(mean_key)
-        gene_std = gene_metrics.get(std_key)
-        family_mean = family_metrics.get(mean_key)
-        family_std = family_metrics.get(std_key)
-        n_seeds = gene_metrics.get(n_key, family_metrics.get(n_key, 0))
-        if None in (gene_mean, gene_std, family_mean, family_std):
+        if feature not in gene or feature not in family:
             print(
-                f"{feature:<20} {'Unscorable':>18} {'Unscorable':>18} {'NA':>14}  (n_seeds={n_seeds})"
+                f"{feature:<20} {'Unscorable':>18} {'Unscorable':>18}"
             )
             continue
-        delta = gene_mean - family_mean
+        gene_metric = read_feature_metric(
+            aggregated, GENE_SPLIT, feature, HEADLINE_METRIC, require_spread=True
+        )
+        family_metric = read_feature_metric(
+            aggregated, FAMILY_SPLIT, feature, HEADLINE_METRIC, require_spread=True
+        )
+        if not gene_metric.available or not family_metric.available:
+            print(
+                f"{feature:<20} {'Unscorable':>18} {'Unscorable':>18}"
+            )
+            continue
         print(
             f"{feature:<20} "
-            f"{gene_mean:>8.3f} ± {gene_std:<6.3f} "
-            f"{family_mean:>8.3f} ± {family_std:<6.3f} "
-            f"{delta:>+13.3f}  (n_seeds={n_seeds})"
+            f"{gene_metric.value:>8.3f} ± {gene_metric.spread:<6.3f} "
+            f"{family_metric.value:>8.3f} ± {family_metric.spread:<6.3f}"
         )

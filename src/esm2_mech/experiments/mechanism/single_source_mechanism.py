@@ -58,15 +58,12 @@ from esm2_mech.utils.paths import (
     SINGLE_SOURCE_DIR,
     SINGLE_SOURCE_NAIVE_BASELINE_JSON,
 )
-from esm2_mech.utils.seed_aggregation import load_seed_files
+from esm2_mech.utils.seed_aggregation import load_seed_files, read_seed_point_estimate
 from esm2_mech.experiments.mechanism.seed_results import (
-    FAMILY_SPLIT,
-    GENE_SPLIT,
-    HEADLINE_METRIC,
-    SEED_MEAN_SUFFIX,
     aggregate_across_seeds,
     aggregate_result_contract,
     print_table,
+    read_feature_metric,
 )
 
 print = functools.partial(print, flush=True)
@@ -90,10 +87,18 @@ def compute_subset_floor(
             "most_frequent", "family", labels, genes, pfam_map, n_seeds=n_seeds, n_folds=n_folds
         ),
     }
+    gene_floor = read_seed_point_estimate(
+        floor["gene_split"]["macro_f1_seed_aggregate"]
+    )
+    family_floor = read_seed_point_estimate(
+        floor["family_split"]["macro_f1_seed_aggregate"]
+    )
+    if not gene_floor.available or not family_floor.available:
+        raise ValueError("subset majority-class floor is unavailable")
     print(
         f"Subset majority-class floor: "
-        f"gene-split {floor['gene_split']['macro_f1_mean']:.3f}, "
-        f"family-split {floor['family_split']['macro_f1_mean']:.3f}"
+        f"gene-split {gene_floor.value:.3f}, "
+        f"family-split {family_floor.value:.3f}"
     )
     return floor
 
@@ -187,14 +192,20 @@ def main() -> None:
     print(f"\nWrote {SINGLE_SOURCE_AGGREGATE_JSON}")
 
     print("\n=== Robustness read (compare to merged-dataset Section 2) ===")
-    mean_key = f"{HEADLINE_METRIC}{SEED_MEAN_SUFFIX}"
-    family_floor = floor["family_split"]["macro_f1_mean"]
+    family_floor = read_seed_point_estimate(
+        floor["family_split"]["macro_f1_seed_aggregate"]
+    )
+    if not family_floor.available:
+        raise ValueError(f"subset family floor is unavailable: {family_floor.message}")
     for feature in ["wt_only_mean", "delta_mean"]:
-        gene = aggregated.get(GENE_SPLIT, {}).get(feature, {}).get(mean_key, float("nan"))
-        family = aggregated.get(FAMILY_SPLIT, {}).get(feature, {}).get(mean_key, float("nan"))
+        gene = read_feature_metric(aggregated, "gene_split", feature)
+        family = read_feature_metric(aggregated, "family_split", feature)
+        if not gene.available or not family.available:
+            raise ValueError(f"{feature}: single-source aggregate is unavailable")
         print(
-            f"  {feature:14} gene-split {gene:.3f} → family-split {family:.3f} "
-            f"(Δ {gene - family:+.3f}); subset family-split floor {family_floor:.3f}"
+            f"  {feature:14} gene-split {gene.value:.3f} → "
+            f"family-split {family.value:.3f} "
+            f"subset family-split floor {family_floor.value:.3f}"
         )
 
 

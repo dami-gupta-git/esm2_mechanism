@@ -18,7 +18,6 @@ from esm2_mech.utils.bootstrap import (
     score_within_folds,
 )
 from esm2_mech.utils.constants import (
-    BOOTSTRAP_MAX_DISCARD_FRAC,
     BOOTSTRAP_N_RESAMPLES,
     MECHANISM_CLASSES,
     MECHANISM_OOF_CACHE_SCHEMA_VERSION,
@@ -28,7 +27,7 @@ from esm2_mech.utils.constants import (
 )
 from esm2_mech.utils.data import load_pfam_map
 from esm2_mech.utils.io import write_result_json
-from esm2_mech.utils.metrics import fold_macro_f1, mean_std_n
+from esm2_mech.utils.metrics import fold_macro_f1
 from esm2_mech.utils.paths import (
     FAMILY_CLUSTERING_JSON,
     LEAKAGE_FRACTION_JSON,
@@ -36,7 +35,14 @@ from esm2_mech.utils.paths import (
     PFAM_JSON,
     RESULTS_DIR,
 )
-from esm2_mech.utils.seed_aggregation import load_seed_files
+from esm2_mech.utils.seed_aggregation import (
+    aggregate_paired_seed_difference,
+    aggregate_seed_values,
+    load_seed_files,
+    make_seed_record,
+    read_seed_point_estimate,
+)
+from esm2_mech.experiments.mechanism.seed_results import aggregate_result_contract
 
 print = functools.partial(print, flush=True)
 
@@ -50,7 +56,9 @@ def _measured_chance_result():
         return json.load(fh)
 
 
-def leakage_fraction_per_feature(feature, chance, oof_cache_entries=None):
+def leakage_fraction_per_feature(
+    feature, chance, requested_seeds, oof_cache_entries=None
+):
     """Leakage fraction for one feature, from seed-averaged macro-F1.
 
     The gene-split arm's macro-F1 in the per-seed baseline files is scored over
@@ -58,72 +66,68 @@ def leakage_fraction_per_feature(feature, chance, oof_cache_entries=None):
     gene has a Pfam annotation (family_split_cv excludes the rest). Reading both
     straight from the baseline files therefore compares two arms over different row
     sets. When this feature's OOF cache is available, both arms are instead
-    rescored on the rows they share — the same row-alignment leakage_fraction_ci
-    already uses — so the headline and the interval describe the same quantity.
-    A cache is required. Falling back to the per-seed files would compare arms
-    scored on different row sets and would therefore be a different estimand.
+    rescored on the family-eligible rows declared by every requested seed. A cache
+    is required. Falling back to the per-seed files would compare arms scored on
+    different row sets and would therefore be a different estimand.
     """
     if oof_cache_entries is None:
         raise ValueError(f"{feature}: OOF caches are required for leakage analysis")
+    requested_seeds = tuple(requested_seeds)
     aligned = _align_seed_arms(oof_cache_entries)
     if aligned is None:
         raise ValueError(f"{feature}: seed OOF caches have no shared scored rows")
     per_seed, _ = aligned
-    n_shared = len(per_seed[0]["gene"]["y_true"])
-    n_total = len(oof_cache_entries[0]["gene_split"]["row_ids"])
+    first_seed = next(iter(per_seed))
+    n_shared = len(per_seed[first_seed]["gene"]["y_true"])
+    n_total = len(oof_cache_entries[first_seed]["gene_split"]["row_ids"])
     n_excluded = n_total - n_shared
     rows = np.arange(n_shared)
-    gene_f1 = [_arm_macro_f1(seed_arms["gene"], rows) for seed_arms in per_seed]
-    family_f1 = [_arm_macro_f1(seed_arms["family"], rows) for seed_arms in per_seed]
-
-    if any(value is None for value in gene_f1 + family_f1):
-        return {
-            "gene_macro_f1_mean": None,
-            "gene_macro_f1_std": None,
-            "family_macro_f1_mean": None,
-            "family_macro_f1_std": None,
-            "drop_mean": None,
-            "n_excluded_unannotated": n_excluded,
-            "chance_macro_f1": chance,
-            "status": "unscorable",
-        }
-    gene_mean = float(np.mean(gene_f1))
-    gene_std = float(np.std(gene_f1))
-    gene_n = len(gene_f1)
-    family_mean = float(np.mean(family_f1))
-    family_std = float(np.std(family_f1))
+    gene_records = [
+        make_seed_record(seed, _arm_macro_f1(arms["gene"], rows))
+        for seed, arms in per_seed.items()
+    ]
+    family_records = [
+        make_seed_record(seed, _arm_macro_f1(arms["family"], rows))
+        for seed, arms in per_seed.items()
+    ]
+    gene = aggregate_seed_values(requested_seeds, gene_records)
+    family = aggregate_seed_values(requested_seeds, family_records)
+    drop = aggregate_paired_seed_difference(
+        requested_seeds, gene_records, family_records
+    )
 
     result = {
-        "gene_macro_f1_mean": gene_mean,
-        "gene_macro_f1_std": gene_std,
-        "family_macro_f1_mean": family_mean,
-        "family_macro_f1_std": family_std,
-        "drop_mean": gene_mean - family_mean,
-        "status": "success",
+        "gene_macro_f1_seed_aggregate": gene.to_dict(),
+        "family_macro_f1_seed_aggregate": family.to_dict(),
+        "drop_seed_aggregate": drop.to_dict(),
+        "status": "success" if gene.available and family.available else "unscorable",
     }
     result["n_excluded_unannotated"] = n_excluded
     result["chance_macro_f1"] = chance
-    if gene_n == 0:
+    if not gene.available or not family.available:
         result["leakage_fraction"] = None
-        result["note"] = "no scorable gene-split seed; LF undefined"
+        result["note"] = "one or more requested seeds are unscorable"
         return result
-    denom = gene_mean - chance
+    denom = gene.mean - chance
     if denom > MIN_ABOVE_CHANCE:
-        result["leakage_fraction"] = (gene_mean - family_mean) / denom
+        result["leakage_fraction"] = (gene.mean - family.mean) / denom
     else:
         result["leakage_fraction"] = None
         result["note"] = "gene-split score not meaningfully above chance; LF undefined"
     return result
 
 
-def aligned_majority_chance(oof_cache_entries: list[dict]) -> float:
+def aligned_majority_chance(
+    requested_seeds, oof_cache_entries: dict[int, dict]
+) -> float:
     """Five-seed majority floor on the same rows and folds as one feature."""
+    requested_seeds = tuple(requested_seeds)
     aligned = _align_seed_arms(oof_cache_entries)
     if aligned is None:
         raise ValueError("cannot compute an aligned chance floor without shared OOF rows")
     per_seed, _ = aligned
-    per_seed_floor = []
-    for seed_arms in per_seed:
+    floor_records = []
+    for seed, seed_arms in per_seed.items():
         gene_arm = seed_arms["gene"]
         y_true = np.asarray(gene_arm["y_true"])
         folds = np.asarray(gene_arm["folds"])
@@ -143,13 +147,16 @@ def aligned_majority_chance(oof_cache_entries: list[dict]) -> float:
             raise RuntimeError(
                 "aligned majority floor cannot score every mechanism class in every fold"
             )
-        per_seed_floor.append(value)
-    return float(np.mean(per_seed_floor))
+        floor_records.append(make_seed_record(seed, value))
+    floor = aggregate_seed_values(requested_seeds, floor_records)
+    if not floor.available:
+        raise RuntimeError(floor.message)
+    return floor.mean
 
 
-def _load_validated_oof_caches(seed_results: list[tuple[int, str, dict]]) -> list[dict]:
+def _load_validated_oof_caches(seed_results: list[tuple[int, str, dict]]) -> dict[int, dict]:
     """Load caches that belong to the exact executions producing the seed results."""
-    caches = []
+    caches = {}
     for seed, _filename, result in seed_results:
         path = os.path.join(RESULTS_DIR, mechanism_oof_cache_filename(seed))
         if not os.path.exists(path):
@@ -173,7 +180,7 @@ def _load_validated_oof_caches(seed_results: list[tuple[int, str, dict]]) -> lis
         features = cache.get("features")
         if not isinstance(features, dict) or not features:
             raise ValueError(f"{path}: cache has no feature OOF predictions")
-        caches.append(features)
+        caches[seed] = features
     return caches
 
 
@@ -189,15 +196,13 @@ def _arm_macro_f1(arm: dict, rows: np.ndarray) -> float | None:
     return score_within_folds(rows, arms, _fold_f1)
 
 
-def _align_seed_arms(oof_cache_entries: list[dict]) -> tuple[list[dict], np.ndarray] | None:
-    """Restrict every seed's two arms to the variants all of them scored.
-
-    Each seed reshuffles the folds, so a variant can be scored by one seed's split and
-    dropped by another's. Resampling has to index one shared row space, and the gene
-    names used for clustering have to come from that same space.
-    """
-    per_seed = []
-    for seed_index, entry in enumerate(oof_cache_entries):
+def _align_seed_arms(
+    oof_cache_entries: dict[int, dict],
+) -> tuple[dict[int, dict], np.ndarray] | None:
+    """Align every seed to the family arm's declared eligible row set."""
+    per_seed = {}
+    declared_rows = None
+    for seed, entry in oof_cache_entries.items():
         gene_arm, family_arm = entry["gene_split"], entry["family_split"]
         for arm_name, arm in (("gene", gene_arm), ("family", family_arm)):
             lengths = {
@@ -206,38 +211,43 @@ def _align_seed_arms(oof_cache_entries: list[dict]) -> tuple[list[dict], np.ndar
             }
             if len(set(lengths.values())) != 1:
                 raise ValueError(
-                    f"seed cache {seed_index} {arm_name} arm has misaligned fields {lengths}"
+                    f"seed cache {seed} {arm_name} arm has misaligned fields {lengths}"
                 )
             if len(set(int(row) for row in arm["row_ids"])) != lengths["row_ids"]:
                 raise ValueError(
-                    f"seed cache {seed_index} {arm_name} arm has duplicate row ids"
+                    f"seed cache {seed} {arm_name} arm has duplicate row ids"
                 )
-        per_seed.append((
+        family_rows = tuple(sorted(int(row) for row in family_arm["row_ids"]))
+        if declared_rows is None:
+            declared_rows = family_rows
+        elif family_rows != declared_rows:
+            raise ValueError(f"seed cache {seed} has a different family-eligible row set")
+        per_seed[seed] = (
             {int(row): pos for pos, row in enumerate(gene_arm["row_ids"])},
             {int(row): pos for pos, row in enumerate(family_arm["row_ids"])},
             gene_arm,
             family_arm,
-        ))
-    shared = sorted(
-        set.intersection(*[set(g) & set(f) for g, f, _, _ in per_seed])
-    )
-    if not shared:
+        )
+    if not declared_rows:
         return None
 
-    aligned = []
+    aligned = {}
     reference_labels = None
     reference_genes = None
-    for seed_index, (gene_pos, family_pos, gene_arm, family_arm) in enumerate(per_seed):
-        gene_idx = np.array([gene_pos[row] for row in shared], dtype=int)
-        family_idx = np.array([family_pos[row] for row in shared], dtype=int)
+    for seed, (gene_pos, family_pos, gene_arm, family_arm) in per_seed.items():
+        missing_gene_rows = sorted(set(declared_rows) - set(gene_pos))
+        if missing_gene_rows:
+            raise ValueError(f"seed cache {seed} gene arm misses declared eligible rows")
+        gene_idx = np.array([gene_pos[row] for row in declared_rows], dtype=int)
+        family_idx = np.array([family_pos[row] for row in declared_rows], dtype=int)
         gene_labels = np.asarray(gene_arm["y_true"])[gene_idx]
         family_labels = np.asarray(family_arm["y_true"])[family_idx]
         gene_names = np.asarray(gene_arm["genes"])[gene_idx]
         family_genes = np.asarray(family_arm["genes"])[family_idx]
         if not np.array_equal(gene_labels, family_labels):
-            raise ValueError(f"seed cache {seed_index} arms disagree on shared labels")
+            raise ValueError(f"seed cache {seed} arms disagree on declared labels")
         if not np.array_equal(gene_names, family_genes):
-            raise ValueError(f"seed cache {seed_index} arms disagree on shared genes")
+            raise ValueError(f"seed cache {seed} arms disagree on declared genes")
         if reference_labels is None:
             reference_labels = gene_labels
             reference_genes = gene_names
@@ -245,14 +255,14 @@ def _align_seed_arms(oof_cache_entries: list[dict]) -> tuple[list[dict], np.ndar
             reference_genes, gene_names
         ):
             raise ValueError(
-                f"seed cache {seed_index} does not describe the same shared variants"
+                f"seed cache {seed} does not describe the same declared variants"
             )
-        aligned.append({
+        aligned[seed] = {
             "gene": {key: np.asarray(gene_arm[key])[gene_idx] for key in
                      ("y_true", "pred", "folds")},
             "family": {key: np.asarray(family_arm[key])[family_idx] for key in
                        ("y_true", "pred", "folds")},
-        })
+        }
     return aligned, reference_genes
 
 
@@ -260,36 +270,52 @@ def leakage_fraction_ci(
     oof_cache_entries,
     pfam_map,
     chance,
+    requested_seeds,
     n_resamples,
     seed=0,
     metric_name="leakage_fraction",
 ):
     """Cluster-bootstrap CI on the leakage fraction, matching the headline exactly.
 
-    The headline averages the per-fold macro-F1 of both arms over every seed and
-    divides by the distance from a floor taken once from the naive baseline. This
-    computes the same expression on each resample: same seeds, same per-fold basis,
-    same fixed floor. Previously the headline used five seeds and a fixed floor while
-    the interval used one seed and recomputed the floor on every draw, so the interval
-    did not bracket the number it was printed beside.
+    The headline averages the per-fold macro-F1 of both arms over every requested
+    seed and divides by the distance from a floor taken once from the aligned
+    majority baseline. This computes the same expression on each resample: same
+    seeds, same per-fold basis, same fixed floor, so the interval brackets the
+    number printed beside it.
+
+    The interval is a within-seed-set resampling uncertainty on that one ratio. It
+    is stored under its own key and never mixed with the seed aggregates, whose
+    spread describes variation between model seeds instead.
+
+    Macro-F1 has a fixed class denominator, so a resample only fails when a fold
+    loses every one of its rows or when the ratio's own denominator collapses.
+    Neither depends on which class survives a draw, so no class stratification is
+    needed here.
     """
     aligned = _align_seed_arms(oof_cache_entries)
     if aligned is None:
         return None
     if n_resamples <= 0:
         raise ValueError("n_resamples must be positive")
+    requested_seeds = tuple(requested_seeds)
     per_seed, gene_names = aligned
+    missing_seeds = [seed_id for seed_id in requested_seeds if seed_id not in per_seed]
+    if missing_seeds:
+        raise ValueError(
+            f"{metric_name}: no aligned OOF arms for requested seeds {missing_seeds}"
+        )
     # Cluster on Pfam family; orphan genes become singleton clusters.
     clusters = np.array([pfam_map.get(g) or f"__orphan__{g}" for g in gene_names])
     all_rows = np.arange(len(gene_names))
 
     def _ratio(rows):
         gene_values, family_values = [], []
-        for arms in per_seed:
+        for seed_id in requested_seeds:
+            arms = per_seed[seed_id]
             gene_f1 = _arm_macro_f1(arms["gene"], rows)
             family_f1 = _arm_macro_f1(arms["family"], rows)
             if gene_f1 is None or family_f1 is None:
-                return BootstrapMetricResult(None, "fold_lost_class")
+                return BootstrapMetricResult(None, "fold_lost_every_row")
             gene_values.append(gene_f1)
             family_values.append(family_f1)
         gene_mean = float(np.mean(gene_values))
@@ -301,9 +327,9 @@ def leakage_fraction_ci(
 
     # The headline ratio (full data, no resampling) is undefined for a feature
     # at the chance floor. Bootstrapping it anyway produces a near-100% discard
-    # rate that the shared warning then blames on class loss, when the real
-    # cause is that almost every resample's own denominator is undefined too —
-    # a fault report about a quantity that was never going to exist.
+    # rate whose real cause is that almost every resample's own denominator is
+    # undefined too — a fault report about a quantity that was never going to
+    # exist.
     point = _ratio(all_rows)
     if point.discard_reason == "denominator_below_threshold":
         return None
@@ -313,17 +339,13 @@ def leakage_fraction_ci(
             "in every seed/fold"
         )
 
-    return {
-        "point": point.value,
-        "ci_low": None,
-        "ci_high": None,
-        "ci_suppressed": True,
-        "missing": True,
-        "reason": "blocked_by_audit_1_4",
-        "n_resamples": 0,
-        "n_resamples_total": 0,
-        "n_clusters": int(len(np.unique(clusters))),
-    }
+    return cluster_bootstrap_ci(
+        clusters,
+        _ratio,
+        n_resamples=n_resamples,
+        seed=seed,
+        metric_name=metric_name,
+    )
 
 
 def main(compute_ci: bool = True, n_boot: int = BOOTSTRAP_N_RESAMPLES) -> None:
@@ -333,9 +355,14 @@ def main(compute_ci: bool = True, n_boot: int = BOOTSTRAP_N_RESAMPLES) -> None:
     seed_numbers = [seed for seed, _filename, _result in seed_results]
     seeds = [result for _seed, _filename, result in seed_results]
     naive_result = _measured_chance_result()
-    reference_chance = float(
-        naive_result["by_strategy"]["most_frequent"]["gene"]["macro_f1_mean"]
+    reference_read = read_seed_point_estimate(
+        naive_result["by_strategy"]["most_frequent"]["gene"][
+            "macro_f1_seed_aggregate"
+        ]
     )
+    if not reference_read.available:
+        raise ValueError(f"naive baseline is unavailable: {reference_read.message}")
+    reference_chance = reference_read.value
     common_fingerprints = seeds[0].get("input_fingerprints")
     common_parameters = seeds[0].get("analysis_parameters")
     if common_fingerprints is None:
@@ -360,6 +387,7 @@ def main(compute_ci: bool = True, n_boot: int = BOOTSTRAP_N_RESAMPLES) -> None:
 
     meta = seeds[0]
     results = {
+        **aggregate_result_contract(),
         "n_variants": int(meta["n_variants"]),
         "n_genes": int(meta["n_genes"]),
         "n_families": int(meta["n_families"]),
@@ -413,31 +441,37 @@ def main(compute_ci: bool = True, n_boot: int = BOOTSTRAP_N_RESAMPLES) -> None:
     print(f"{'feature':18} {'gene':>6} {'family':>7} {'drop':>6} {'leakage_fraction':>20}")
 
     for feature in features:
-        if not all(feature in cache for cache in oof_caches):
+        if not all(feature in cache for cache in oof_caches.values()):
             missing_seeds = [
-                seed_numbers[index]
-                for index, cache in enumerate(oof_caches)
+                seed
+                for seed, cache in oof_caches.items()
                 if feature not in cache
             ]
             raise ValueError(f"{feature}: OOF cache missing for seeds {missing_seeds}")
-        feature_caches = [cache[feature] for cache in oof_caches]
-        chance = aligned_majority_chance(feature_caches)
-        cell = leakage_fraction_per_feature(feature, chance, feature_caches)
+        feature_caches = {seed: cache[feature] for seed, cache in oof_caches.items()}
+        chance = aligned_majority_chance(seed_numbers, feature_caches)
+        cell = leakage_fraction_per_feature(
+            feature, chance, seed_numbers, feature_caches
+        )
         if compute_ci:
             ci = leakage_fraction_ci(
                 feature_caches,
                 pfam_map,
                 chance,
+                seed_numbers,
                 n_boot,
                 seed=0,
                 metric_name=f"{feature}_leakage_fraction",
             )
             if ci is not None:
-                cell["ci"] = ci
+                cell["leakage_fraction_ci"] = ci
         results["by_feature"][feature] = cell
         lf = cell["leakage_fraction"]
         lf_str = f"{lf:.1%}" if lf is not None else "undefined (at floor)"
-        ci = cell.get("ci") or {}
+        gene_metric = read_seed_point_estimate(cell["gene_macro_f1_seed_aggregate"])
+        family_metric = read_seed_point_estimate(cell["family_macro_f1_seed_aggregate"])
+        drop_metric = read_seed_point_estimate(cell["drop_seed_aggregate"])
+        ci = cell.get("leakage_fraction_ci") or {}
         ci_str = ""
         if ci.get("ci_low") is not None:
             ci_str = f"  [{ci['ci_low']:+.1%}, {ci['ci_high']:+.1%}]"
@@ -445,9 +479,12 @@ def main(compute_ci: bool = True, n_boot: int = BOOTSTRAP_N_RESAMPLES) -> None:
                 ci_str += " (includes zero)"
         elif ci:
             ci_str = "  CI suppressed"
+        if not gene_metric.available or not family_metric.available or not drop_metric.available:
+            print(f"{feature:18} {'unscorable':>41} {lf_str:>20}{ci_str}")
+            continue
         print(
-            f"{feature:18} {cell['gene_macro_f1_mean']:6.3f} "
-            f"{cell['family_macro_f1_mean']:7.3f} {cell['drop_mean']:6.3f} "
+            f"{feature:18} {gene_metric.value:6.3f} "
+            f"{family_metric.value:7.3f} {drop_metric.value:6.3f} "
             f"{lf_str:>20}{ci_str}"
         )
 
@@ -458,7 +495,9 @@ def main(compute_ci: bool = True, n_boot: int = BOOTSTRAP_N_RESAMPLES) -> None:
 
 def _cli():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--no_ci", action="store_true", help="skip the leakage-fraction ratio CI")
+    parser.add_argument(
+        "--no_ci", action="store_true", help="skip the leakage-fraction ratio CI"
+    )
     parser.add_argument("--n_boot", type=int, default=BOOTSTRAP_N_RESAMPLES)
     args = parser.parse_args()
     main(compute_ci=not args.no_ci, n_boot=args.n_boot)

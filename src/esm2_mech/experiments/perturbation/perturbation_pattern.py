@@ -3,7 +3,7 @@
 Builds gene-level spatial features from per-residue delta embeddings and probes for mechanism signal.
 """
 
-import functools, json, os, sys, numpy as np
+import argparse, functools, json, os, sys, numpy as np
 from collections import Counter, defaultdict
 
 from esm2_mech.utils.paths import (
@@ -19,8 +19,19 @@ from esm2_mech.utils.paths import (
 print = functools.partial(print, flush=True)
 from esm2_mech.utils.splits import family_split_cv, gene_split_cv
 from esm2_mech.utils.probes import run_logreg_cv
-from esm2_mech.utils.constants import MECHANISM_CLASSES
+from esm2_mech.utils.constants import MECHANISM_CLASSES, N_SEEDS
 from esm2_mech.utils.classification import validate_complete_classification_splits
+from esm2_mech.utils.io import write_result_json
+from esm2_mech.utils.seed_aggregation import (
+    aggregate_paired_seed_difference,
+    aggregate_result_contract,
+    make_seed_record,
+    seed_result_contract,
+)
+from esm2_mech.experiments.perturbation.seed_summary import (
+    aggregate_probe_results,
+    read_probe_metric,
+)
 
 DATA = str(_DATA_DIR)
 OUT = str(_RESULTS_DIR / "perturbation_pattern")
@@ -148,7 +159,16 @@ def run_probe(X, labels, splits, groups, held_out_unit, seed=42):
     )
 
 
-def main():
+def _show_metric(metric):
+    if not metric.available:
+        return f"unavailable ({metric.message})"
+    if metric.spread is None:
+        return f"{metric.value:.3f} (seed spread unavailable)"
+    return f"{metric.value:.3f} ± {metric.spread:.3f} seed SD"
+
+
+def main(n_seeds=N_SEEDS):
+    requested_seeds = tuple(range(n_seeds))
     print("=== Loading data ===")
     variants, delta_pos, delta_mean = load_data()
 
@@ -166,7 +186,7 @@ def main():
         pfam_map = json.load(f)
 
     all_results = {}
-    for seed in range(5):
+    for seed in requested_seeds:
         print(f"\n=== Seed {seed} ===")
         gs = gene_split_cv(gene_list, seed=seed)
         fs = family_split_cv(gene_list, pfam_map, seed=seed)
@@ -199,64 +219,99 @@ def main():
                 else:
                     gof_text = "NA" if gof is None else f"{gof:.3f}"
                     print(f"  {key}: F1={f1:.3f}  GOF={gof_text}")
-        all_results[seed] = seed_res
-
-    print("\n=== 5-SEED SUMMARY ===")
-    summary = {}
-    keys = list(all_results[0].keys())
-    for key in keys:
-        f1_vals = [
-            all_results[s][key].get("macro_f1_mean") for s in range(5)
-        ]
-        gof_vals = [
-            all_results[s][key].get("auroc_GOF_mean") for s in range(5)
-        ]
-        unavailable = any(value is None for value in f1_vals + gof_vals)
-        summary[key] = {
-            "status": "unavailable" if unavailable else "success",
-            "macro_f1_mean": None if unavailable else float(np.mean(f1_vals)),
-            "macro_f1_std": None if unavailable else float(np.std(f1_vals)),
-            "auroc_GOF_mean": None if unavailable else float(np.mean(gof_vals)),
-            "auroc_GOF_std": None if unavailable else float(np.std(gof_vals)),
+        all_results[seed] = {
+            **seed_result_contract(seed),
+            "results": seed_res,
         }
-        if unavailable:
+
+    print(f"\n=== {n_seeds}-SEED SUMMARY ===")
+    declared_arms = [
+        f"{feat_name}_{split_name}"
+        for feat_name in ("baseline_delta_mean", "scalar_pattern", "combined")
+        for split_name in ("gene_split", "family_split")
+    ]
+    summary = aggregate_probe_results(requested_seeds, all_results, declared_arms)
+    for key in summary:
+        f1 = read_probe_metric(summary, key, "macro_f1")
+        gof = read_probe_metric(summary, key, "auroc_GOF")
+        if not f1.available or not gof.available:
             print(f"  {key}: Unscorable")
             continue
         print(f"  {key}:")
-        print(
-            f'    F1  = {summary[key]["macro_f1_mean"]:.3f} ± {summary[key]["macro_f1_std"]:.3f}'
-        )
-        print(
-            f'    GOF = {summary[key]["auroc_GOF_mean"]:.3f} ± {summary[key]["auroc_GOF_std"]:.3f}'
-        )
+        print(f"    F1  = {_show_metric(f1)}")
+        print(f"    GOF = {_show_metric(gof)}")
 
-    out = {"summary": summary, "per_seed": {str(s): all_results[s] for s in range(5)}}
+    delta = aggregate_paired_seed_difference(
+        requested_seeds,
+        [
+            make_seed_record(
+                seed,
+                all_results[seed]["results"]["combined_family_split"].get(
+                    "macro_f1_mean"
+                ),
+                status=all_results[seed]["results"]["combined_family_split"]["status"],
+            )
+            for seed in requested_seeds
+        ],
+        [
+            make_seed_record(
+                seed,
+                all_results[seed]["results"]["baseline_delta_mean_family_split"].get(
+                    "macro_f1_mean"
+                ),
+                status=all_results[seed]["results"]["baseline_delta_mean_family_split"]["status"],
+            )
+            for seed in requested_seeds
+        ],
+    )
+    out = {
+        **aggregate_result_contract(),
+        "summary": summary,
+        "per_seed": {str(seed): all_results[seed] for seed in requested_seeds},
+        "combined_minus_baseline_macro_f1": delta.to_dict(),
+    }
     out_path = os.path.join(OUT, "results.json")
-    with open(out_path, "w") as f:
-        json.dump(out, f, indent=2)
+    write_result_json(out_path, out, seeds=list(requested_seeds))
     print(f"\nResults -> {out_path}")
 
     # Key comparison
     print("\n=== KEY COMPARISON (family-split) ===")
-    baseline = summary["baseline_delta_mean_family_split"]
-    scalar = summary["scalar_pattern_family_split"]
-    combined = summary["combined_family_split"]
-    if any(
-        cell["status"] != "success" for cell in (baseline, scalar, combined)
+    baseline_f1 = read_probe_metric(summary, "baseline_delta_mean_family_split", "macro_f1")
+    baseline_gof = read_probe_metric(summary, "baseline_delta_mean_family_split", "auroc_GOF")
+    scalar_f1 = read_probe_metric(summary, "scalar_pattern_family_split", "macro_f1")
+    scalar_gof = read_probe_metric(summary, "scalar_pattern_family_split", "auroc_GOF")
+    combined_f1 = read_probe_metric(summary, "combined_family_split", "macro_f1")
+    combined_gof = read_probe_metric(summary, "combined_family_split", "auroc_GOF")
+    if not all(
+        metric.available
+        for metric in (
+            baseline_f1,
+            baseline_gof,
+            scalar_f1,
+            scalar_gof,
+            combined_f1,
+            combined_gof,
+        )
     ):
         print("  Key comparison: Unscorable")
         return
     print(
-        f'  Baseline (mean-pooled delta): F1={baseline["macro_f1_mean"]:.3f}  GOF={baseline["auroc_GOF_mean"]:.3f}'
+        f"  Baseline (mean-pooled delta): F1={baseline_f1.value:.3f}  "
+        f"GOF={baseline_gof.value:.3f}"
     )
     print(
-        f'  Scalar pattern features:      F1={scalar["macro_f1_mean"]:.3f}  GOF={scalar["auroc_GOF_mean"]:.3f}'
+        f"  Scalar pattern features:      F1={scalar_f1.value:.3f}  "
+        f"GOF={scalar_gof.value:.3f}"
     )
     print(
-        f'  Combined (scalar + delta):    F1={combined["macro_f1_mean"]:.3f}  GOF={combined["auroc_GOF_mean"]:.3f}'
+        f"  Combined (scalar + delta):    F1={combined_f1.value:.3f}  "
+        f"GOF={combined_gof.value:.3f}"
     )
 
-    delta_f1 = combined["macro_f1_mean"] - baseline["macro_f1_mean"]
+    delta_f1 = delta.mean
+    if delta_f1 is None:
+        print("\n  Lift from adding perturbation pattern: unavailable")
+        return
     print(f"\n  Lift from adding perturbation pattern: ΔF1 = {delta_f1:+.3f}")
     if delta_f1 > 0.02:
         print("  => Perturbation pattern adds signal beyond mean-pooled delta")
@@ -267,4 +322,7 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--seeds", type=int, default=N_SEEDS)
+    arguments = parser.parse_args()
+    main(n_seeds=arguments.seeds)

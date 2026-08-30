@@ -94,16 +94,18 @@ CONTRASTIVE_AGGREGATE_JSON = RESULTS_DIR / "contrastive_aggregate.json"
 # run_biorxiv deliverables alongside the default Pfam-family split. Lives in its
 # own subdir so the panel JSON never clobbers the per-module seed files.
 HOMOLOGY_PARTITION_PANEL_DIR = RESULTS_DIR / "homology_partition_panel"
-HOMOLOGY_PARTITION_PANEL_JSON = HOMOLOGY_PARTITION_PANEL_DIR / "panel.json"
+
+
+def homology_partition_panel_json(seed: int):
+    """Panel file for one seed, so a rerun on another seed cannot overwrite it."""
+    return HOMOLOGY_PARTITION_PANEL_DIR / f"panel_seed{seed}.json"
+
+
 MMSEQS_CLUSTERS_JSON = DATA_DIR / "mmseqs_clusters.json"
 # PFAM_CLANS_TSV_GZ is defined below, once DOWNLOADS_DIR exists.
 
 # ── V1 multi-seed replication (multiseed_v1.py) ───────────────────────────────
 V1_MULTISEED_DIR = RESULTS_DIR / "v1_multiseed"
-# Seed-0 numbers are sourced from a frozen prior baseline run, not recomputed
-# under the current RUN_NAME — hence the literal run directory rather than a
-# RESULTS_DIR-derived path.
-V1_MULTISEED_SEED0_DIR = PROJECT_ROOT / "results" / "20260524_baseline_run" / "run_0"
 
 # ── Single-source robustness check (Gerasimavicius-only mechanism re-run) ─────
 # Re-runs the gene/family-split mechanism probe on the single-source subset to

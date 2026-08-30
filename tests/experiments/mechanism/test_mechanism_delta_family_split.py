@@ -196,11 +196,18 @@ def test_run_fits_only_requested_feature(tmp_path, monkeypatch):
     }
     splits = [(np.array([0, 1, 2]), np.array([3, 4, 5]))]
     calls = []
+    oof = {
+        "row_ids": np.array([3, 4, 5]),
+        "y_true": labels[[3, 4, 5]],
+        "proba": np.eye(3),
+        "genes": genes[[3, 4, 5]],
+        "folds": np.zeros(3, dtype=int),
+    }
 
     def fake_probe(X, y, cv_splits, *args, **kwargs):
         calls.append(kwargs["label"])
         return {"status": "success", "macro_f1_mean": 0.4, "macro_f1_std": 0.0,
-                "auroc_GOF_mean": 0.5, "auroc_DN_mean": 0.5, "auroc_LOF_mean": 0.5}, None
+                "auroc_GOF_mean": 0.5, "auroc_DN_mean": 0.5, "auroc_LOF_mean": 0.5}, oof
 
     pfam_path = tmp_path / "pfam.json"
     pfam_path.write_text("{}")
@@ -212,6 +219,15 @@ def test_run_fits_only_requested_feature(tmp_path, monkeypatch):
     monkeypatch.setattr(family_probe, "family_split_cv", lambda *args, **kwargs: splits)
     monkeypatch.setattr(family_probe, "run_logreg_pca_cv", fake_probe)
     monkeypatch.setattr(family_probe, "attach_mechanism_ci", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        family_probe,
+        "paired_oof_diff",
+        lambda *args, **kwargs: {
+            "point_diff": 0.125,
+            "ci_low": None,
+            "n_clusters": 3,
+        },
+    )
 
     result = run(
         data,
@@ -224,6 +240,10 @@ def test_run_fits_only_requested_feature(tmp_path, monkeypatch):
     assert calls == ["wt_only_mean gene", "wt_only_mean family"]
     assert set(result["gene_split"]) == {"wt_only_mean"}
     assert set(result["family_split"]) == {"wt_only_mean"}
+    assert (
+        result["family_split"]["wt_only_mean"]["split_gap_paired"]["point_diff"]
+        == pytest.approx(0.125)
+    )
 
 
 def test_result_and_oof_cache_share_exact_execution_binding(tmp_path, monkeypatch):

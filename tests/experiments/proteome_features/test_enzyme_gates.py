@@ -2,16 +2,11 @@
 Tests for enzyme gate evaluation in enzyme_classification.run_multiseed.
 
 Invariants:
-- The enzyme module has no private CV loop; LogReg and MLP delegate to the shared
-  probe runners.
-- The gate point estimates (fs_f1, mlp_f1) come from the seed-0 out-of-fold
-  predictions, scored within each fold and averaged — the same basis the
-  bootstrap CI uses, so the point estimate matches what the CI is attached to.
-- When CIs are computed, a paired CI on MLP minus LogReg is present
-  (paired_ci_mlp_minus_logreg key). Without it the preregistered decision
-  rule cannot be applied.
-- The seed-0 OOF macro-F1 is stored in both logreg_family_split and
-  mlp_family_split result dicts, under oof_macro_f1.
+- LogReg and MLP delegate to the shared probe runners.
+- Every requested seed contributes through the shared seed contract.
+- MLP-minus-LogReg differences are paired by seed before aggregation.
+- An inferential interval targets the complete across-seed estimate.
+- Enzyme-versus-mechanism inference is paired over their shared Pfam families.
 """
 
 import json
@@ -26,7 +21,7 @@ from esm2_mech.experiments.proteome_features.enzyme_classification import (
     enzyme_input_fingerprints,
     run_multiseed,
 )
-from esm2_mech.utils.constants import MECHANISM_OOF_CACHE_SCHEMA_VERSION
+from esm2_mech.utils.seed_aggregation import read_seed_point_estimate, seed_result_contract
 
 
 def _synthetic_data(n_genes=200, dim=32, seed=42):
@@ -56,49 +51,46 @@ def test_enzyme_cv_uses_shared_probe_runners():
     assert hasattr(enzyme_classification, "run_mlp_cv")
 
 
-def _write_mechanism_seed_and_cache(tmp_path, cache_run_id="run-1"):
+def _write_mechanism_seed(tmp_path, recorded_seed=0):
     result = {
+        **seed_result_contract(recorded_seed),
         "analysis_run_id": "run-1",
         "input_fingerprints": {"labeled_variants": "variants-1"},
         "analysis_parameters": {"n_folds": 5},
-    }
-    cache = {
-        "cache_schema_version": MECHANISM_OOF_CACHE_SCHEMA_VERSION,
-        "seed": 0,
-        "analysis_run_id": cache_run_id,
-        "input_fingerprints": result["input_fingerprints"],
-        "analysis_parameters": result["analysis_parameters"],
-        "features": {
-            "delta_mean": {
-                "family_split": {
-                    "row_ids": [0, 1, 2],
-                    "y_true": ["GOF", "DN", "LOF"],
-                    "pred": ["GOF", "DN", "LOF"],
-                    "genes": ["G1", "G2", "G3"],
-                    "folds": [0, 1, 2],
-                }
-            }
+        "family_split": {
+            "delta_mean": {"status": "success", "macro_f1_mean": 0.4}
         },
     }
     (tmp_path / "family_split_baselines_seed0.json").write_text(json.dumps(result))
-    (tmp_path / "mechanism_oof_cache_seed0.json").write_text(json.dumps(cache))
 
 
-def test_enzyme_reader_accepts_cache_bound_to_seed_result(tmp_path, monkeypatch):
-    _write_mechanism_seed_and_cache(tmp_path)
+def test_enzyme_reader_accepts_current_seed_result(tmp_path, monkeypatch):
+    _write_mechanism_seed(tmp_path)
     monkeypatch.setattr(enzyme_classification, "RESULTS_DIR", tmp_path)
 
-    oof = enzyme_classification._load_mechanism_family_oof()
+    records = enzyme_classification._load_mechanism_seed_records([0])
 
-    assert oof["row_ids"] == [0, 1, 2]
+    assert records[0].seed == 0
+    assert records[0].value == pytest.approx(0.4)
 
 
-def test_enzyme_reader_rejects_cache_from_another_execution(tmp_path, monkeypatch):
-    _write_mechanism_seed_and_cache(tmp_path, cache_run_id="run-2")
+def test_enzyme_reader_reports_missing_seed_file(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(enzyme_classification, "RESULTS_DIR", tmp_path)
 
-    with pytest.raises(ValueError, match="analysis_run_id"):
-        enzyme_classification._load_mechanism_family_oof()
+    records = enzyme_classification._load_mechanism_seed_records([3])
+
+    assert records == []
+    output = capsys.readouterr().out
+    assert "mechanism seed 3 result file is missing" in output
+    assert str(tmp_path / "family_split_baselines_seed3.json") in output
+
+
+def test_enzyme_reader_rejects_wrong_seed_identity(tmp_path, monkeypatch):
+    _write_mechanism_seed(tmp_path, recorded_seed=1)
+    monkeypatch.setattr(enzyme_classification, "RESULTS_DIR", tmp_path)
+
+    with pytest.raises(ValueError, match="declares seed 1"):
+        enzyme_classification._load_mechanism_seed_records([0])
 
 
 def _fingerprint_inputs():
@@ -169,61 +161,109 @@ def test_enzyme_input_fingerprints_reject_misaligned_rows():
         enzyme_input_fingerprints(**inputs)
 
 
-class TestOofMacroF1Consistency:
+class TestSeedAggregation:
 
-    def test_oof_macro_f1_present(self):
-        """run_multiseed should include oof_macro_f1 in both logreg and mlp results."""
+    def test_family_scores_use_shared_seed_aggregates(self):
         X, y, genes, pfam_map, le = _synthetic_data()
         result = run_multiseed(
             X, y, genes, pfam_map, le, seeds=[0], n_folds=3,
-            compute_ci=False, n_boot=50,
-        )
-        assert "oof_macro_f1" in result["logreg_family_split"]
-        assert "oof_macro_f1" in result["mlp_family_split"]
-
-    def test_oof_macro_f1_equals_the_fold_mean_on_a_single_seed(self):
-        """With one seed, the OOF score and the reported fold mean are the same
-        average over the same folds, so they must agree to floating point.
-
-        This is what distinguishes the two computations. Scoring the concatenated
-        out-of-fold predictions as one block gives a different number on imbalanced
-        data, so a return to pooling breaks this equality.
-        """
-        X, y, genes, pfam_map, le = _synthetic_data()
-        result = run_multiseed(
-            X, y, genes, pfam_map, le, seeds=[0], n_folds=3,
-            compute_ci=False, n_boot=50,
         )
         for arm in ("logreg_family_split", "mlp_family_split"):
-            oof_f1 = result[arm]["oof_macro_f1"]
-            fold_mean = result[arm]["macro_f1_mean"]
-            assert oof_f1 is not None
-            assert fold_mean is not None
-            assert oof_f1 == pytest.approx(fold_mean)
+            metric = read_seed_point_estimate(
+                result[arm]["macro_f1_seed_aggregate"]
+            )
+            assert metric.available
+            assert metric.spread is None
+        paired = read_seed_point_estimate(
+            result["paired_mlp_minus_logreg_seed_aggregate"]
+        )
+        assert paired.available
+        missing_reference = result["paired_logreg_minus_mechanism_seed_aggregate"]
+        assert missing_reference["state"] == "unavailable"
+        assert missing_reference["reason"] == "missing_seed"
 
 
-class TestPairedCiPresence:
+class TestIntervals:
 
-    def test_paired_ci_computed_when_ci_enabled(self):
-        """When compute_ci=True, paired_ci_mlp_minus_logreg must be present."""
+    def test_single_seed_interval_is_computed_and_contains_its_own_point(self):
         X, y, genes, pfam_map, le = _synthetic_data()
         result = run_multiseed(
-            X, y, genes, pfam_map, le, seeds=[0], n_folds=3,
-            compute_ci=True, n_boot=50,
+            X, y, genes, pfam_map, le, seeds=[0], n_folds=3, n_boot=40,
         )
-        assert "paired_ci_mlp_minus_logreg" in result, (
-            "Gate 2H requires a paired CI on MLP-LogReg difference"
-        )
-        ci = result["paired_ci_mlp_minus_logreg"]
-        assert ci is not None
-        assert "ci_low" in ci or "ci_suppressed" in ci
+        interval = result["bootstrap_ci"]["macro_f1"]
+        assert interval["point"] is not None
+        if not interval["ci_suppressed"]:
+            assert interval["ci_low"] <= interval["point"] <= interval["ci_high"]
 
-    def test_no_paired_ci_when_ci_disabled(self):
-        """When compute_ci=False, no CI keys should be present."""
+    def test_multiseed_interval_targets_the_across_seed_point(self):
+        X, y, genes, pfam_map, le = _synthetic_data(n_genes=120, dim=8)
+        requested_seeds = [0, 1, 2]
+        result = run_multiseed(
+            X,
+            y,
+            genes,
+            pfam_map,
+            le,
+            seeds=requested_seeds,
+            n_folds=3,
+            n_boot=20,
+        )
+        aggregate = read_seed_point_estimate(
+            result["logreg_family_split"]["macro_f1_seed_aggregate"]
+        )
+        interval = result["bootstrap_ci"]["macro_f1"]
+
+        assert aggregate.available
+        assert interval["point"] == pytest.approx(aggregate.value)
+
+    def test_enzyme_mechanism_interval_uses_shared_families(self):
+        X, y, genes, pfam_map, le = _synthetic_data(n_genes=120, dim=8)
+        mechanism_genes = np.array(genes[20:100])
+        mechanism_labels = np.resize(
+            np.array(["LOF", "GOF", "DN"], dtype=object),
+            len(mechanism_genes),
+        )
+        mechanism_predictions = mechanism_labels.copy()
+        mechanism_oof = {
+            "y_true": mechanism_labels,
+            "pred": mechanism_predictions,
+            "genes": mechanism_genes,
+            "folds": np.arange(len(mechanism_genes)) % 3,
+        }
+        mechanism_arms = (
+            mechanism_labels,
+            mechanism_genes,
+            [
+                (
+                    mechanism_predictions,
+                    mechanism_oof["folds"],
+                    np.unique(mechanism_oof["folds"]),
+                )
+            ],
+        )
+
+        result = run_multiseed(
+            X,
+            y,
+            genes,
+            pfam_map,
+            le,
+            seeds=[0],
+            n_folds=3,
+            n_boot=20,
+            mechanism_family_arms=mechanism_arms,
+        )
+
+        interval = result["paired_ci_logreg_minus_mechanism"]
+        enzyme_families = {pfam_map[gene] for gene in genes}
+        mechanism_families = {pfam_map[gene] for gene in mechanism_genes}
+        assert interval["n_clusters_shared"] == len(
+            enzyme_families & mechanism_families
+        )
+
+    def test_no_interval_is_produced_when_intervals_are_switched_off(self):
         X, y, genes, pfam_map, le = _synthetic_data()
         result = run_multiseed(
-            X, y, genes, pfam_map, le, seeds=[0], n_folds=3,
-            compute_ci=False, n_boot=50,
+            X, y, genes, pfam_map, le, seeds=[0], n_folds=3, compute_ci=False,
         )
-        assert "paired_ci_mlp_minus_logreg" not in result
         assert "bootstrap_ci" not in result

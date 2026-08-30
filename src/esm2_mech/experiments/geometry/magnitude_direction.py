@@ -13,11 +13,18 @@ import functools
 from joblib import Parallel, delayed
 
 from esm2_mech.utils.bootstrap import (
-    binary_auroc_cluster_bootstrap_ci,
     attach_mechanism_ci,
+    binary_auroc_cluster_bootstrap_ci,
     family_or_gene_clusters,
 )
-from esm2_mech.utils.seed_aggregation import aggregate_oof_dicts
+from esm2_mech.utils.seed_aggregation import (
+    SeedUnavailableReason,
+    aggregate_oof_dicts,
+    aggregate_result_contract,
+    aggregate_seed_values,
+    make_seed_record,
+    read_seed_point_estimate,
+)
 from esm2_mech.utils.constants import (
     BOOTSTRAP_N_RESAMPLES,
     MECHANISM_CLASSES,
@@ -33,7 +40,6 @@ from esm2_mech.utils.paths import (
     PFAM_JSON,
 )
 from esm2_mech.experiments.mechanism.loaders import load_merged
-from esm2_mech.utils.metrics import mean_std_n
 from esm2_mech.utils.splits import (
     annotated_gene_mask,
     gene_split_cv,
@@ -115,23 +121,64 @@ def _read_chance_floor(strategy="most_frequent"):
     with open(NAIVE_BASELINE_JSON) as handle:
         nb = json.load(handle)
     strat = nb["by_strategy"][strategy]
+    result = {}
+    for output_name, source_name in (
+        ("gene_split", "gene"),
+        ("family_split", "family"),
+    ):
+        aggregate = strat[source_name]["macro_f1_seed_aggregate"]
+        metric = read_seed_point_estimate(aggregate)
+        if metric.reason in {
+            SeedUnavailableReason.INVALID_AGGREGATE,
+            SeedUnavailableReason.SAMPLING_UNIT_MISMATCH,
+            SeedUnavailableReason.SCHEMA_MISMATCH,
+        }:
+            raise ValueError(
+                f"naive baseline {source_name} macro-F1 is invalid: "
+                f"{metric.message}"
+            )
+        result[output_name] = aggregate
+    return result
+
+
+def _aggregate_seed_cells(seeds, cells_by_seed):
+    records = [
+        make_seed_record(seed, cells_by_seed[seed]["value"], status=cells_by_seed[seed]["status"])
+        for seed in seeds
+    ]
+    return aggregate_seed_values(seeds, records).to_dict()
+
+
+def _unavailable_interval(combined_result):
+    """Record why an interval was not computed, without inventing bounds."""
     return {
-        "gene_split": {
-            "mean": strat["gene"]["macro_f1_mean"],
-            "std": strat["gene"]["macro_f1_std"],
-        },
-        "family_split": {
-            "mean": strat["family"]["macro_f1_mean"],
-            "std": strat["family"]["macro_f1_std"],
-        },
+        "ci_low": None,
+        "ci_high": None,
+        "ci_suppressed": True,
+        "missing": True,
+        "reason": combined_result.reason.value,
+        "message": combined_result.message,
+        "affected_seeds": list(combined_result.affected_seeds),
     }
 
 
-def agg_seeds(per_seed_vals):
-    if any(value is None or not np.isfinite(value) for value in per_seed_vals):
-        return {"mean": None, "std": None, "n": len([v for v in per_seed_vals if v is not None])}
-    mean, std, n = mean_std_n(per_seed_vals)
-    return {"mean": mean, "std": std, "n": n}
+def _positive_class_oof(combined, positive_column):
+    """Reduce a two-column OOF to the positive-class score an AUROC ranks.
+
+    The binary bootstrap ranks one score per row, while the probe's OOF carries one
+    column per declared class. Selecting the positive column by its index in the
+    declared class order keeps the ranked score tied to the class it belongs to.
+    """
+    return {
+        **combined,
+        "oof_by_seed": {
+            seed: {
+                **payload,
+                "proba": np.asarray(payload["proba"])[:, positive_column],
+            }
+            for seed, payload in combined["oof_by_seed"].items()
+        },
+    }
 
 
 def _pathogenicity_one_seed(seed, feats, y, genes, pfam_map):
@@ -155,10 +202,14 @@ def _pathogenicity_one_seed(seed, feats, y, genes, pfam_map):
             )
             lr_agg, lr_oof = run_logreg_binary_cv(
                 X, y, splits, [0, 1], contract,
-                seed=seed, genes=genes, return_oof=True
+                seed=seed, genes=genes, return_oof=True,
             )
             lr = lr_agg.get("auroc_mean")
-            res[(fname, split_name, "logreg")] = (lr, lr_oof)
+            res[(fname, split_name, "logreg")] = {
+                "value": lr,
+                "status": lr_agg["status"],
+                "oof": lr_oof,
+            }
             mlp_agg, mlp_oof = run_mlp_binary_cv(
                 X,
                 y,
@@ -173,7 +224,11 @@ def _pathogenicity_one_seed(seed, feats, y, genes, pfam_map):
                 return_oof=True,
             )
             mlp = mlp_agg.get("auroc_mean")
-            res[(fname, split_name, "mlp")] = (mlp, mlp_oof)
+            res[(fname, split_name, "mlp")] = {
+                "value": mlp,
+                "status": mlp_agg["status"],
+                "oof": mlp_oof,
+            }
             print(
                 f"    [pathogenicity seed {seed}] {fname:4s} {split_name:12s} "
                 f"logreg={_f(lr)} mlp={_f(mlp)}",
@@ -202,49 +257,63 @@ def run_pathogenicity(
         for seed in seeds
     )
 
-    collect = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
+    collect = defaultdict(lambda: defaultdict(lambda: defaultdict(dict)))
     oof_collect = defaultdict(lambda: defaultdict(lambda: defaultdict(dict)))
     for seed, res in zip(seeds, per_seed):
-        for (fname, split_name, probe), (auroc, oof) in res.items():
-            collect[fname][split_name][probe].append(auroc)
-            oof_collect[fname][split_name][probe][seed] = oof
-            print(f"  seed{seed} {fname:4s} {split_name:12s} {probe}={_f(auroc)}")
+        for (fname, split_name, probe), cell in res.items():
+            collect[fname][split_name][probe][seed] = cell
+            oof_collect[fname][split_name][probe][seed] = cell["oof"]
+            print(
+                f"  seed{seed} {fname:4s} {split_name:12s} "
+                f"{probe}={_f(cell['value'])}"
+            )
 
     out = {}
     for fname in feats:
         out[fname] = {}
         for split_name in ("gene_split", "family_split"):
             out[fname][split_name] = {
-                "logreg_auroc": agg_seeds(collect[fname][split_name]["logreg"]),
-                "mlp_auroc": agg_seeds(collect[fname][split_name]["mlp"]),
+                "logreg_auroc": _aggregate_seed_cells(
+                    seeds, collect[fname][split_name]["logreg"]
+                ),
+                "mlp_auroc": _aggregate_seed_cells(
+                    seeds, collect[fname][split_name]["mlp"]
+                ),
             }
-            if compute_ci:
-                rows = scored_rows(split_name, genes, pfam_map)
-                for probe in ("logreg", "mlp"):
-                    combined_result = aggregate_oof_dicts(
-                        seeds,
-                        oof_collect[fname][split_name][probe],
-                        declared_row_ids=rows,
-                        declared_labels=y[rows],
-                        declared_clusters=genes[rows],
-                        class_order=[0, 1],
-                        declared_fold_ids=range(N_FOLDS),
+            if not compute_ci:
+                continue
+            rows = scored_rows(split_name, genes, pfam_map)
+            for probe in ("logreg", "mlp"):
+                # The interval is a within-seed bootstrap over the pooled OOF of
+                # every requested seed, and stays a separate field from the
+                # across-seed aggregate beside it.
+                combined_result = aggregate_oof_dicts(
+                    seeds,
+                    oof_collect[fname][split_name][probe],
+                    declared_row_ids=rows,
+                    declared_labels=y[rows],
+                    declared_clusters=genes[rows],
+                    class_order=[0, 1],
+                    declared_fold_ids=range(N_FOLDS),
+                )
+                ci_key = f"{probe}_auroc_ci"
+                if not combined_result.available:
+                    out[fname][split_name][ci_key] = _unavailable_interval(
+                        combined_result
                     )
-                    combined = combined_result.payload
-                    if combined_result.available:
-                        clusters = family_or_gene_clusters(
-                            combined["genes"],
-                            pfam_map,
-                            is_family_split=(split_name == "family_split"),
-                        )
-                        out[fname][split_name][f"{probe}_auroc"]["ci"] = (
-                            binary_auroc_cluster_bootstrap_ci(
-                                combined,
-                                n_resamples=n_boot,
-                                seed=0,
-                                clusters=clusters,
-                            )
-                        )
+                    continue
+                combined = combined_result.payload
+                clusters = family_or_gene_clusters(
+                    combined["genes"],
+                    pfam_map,
+                    is_family_split=(split_name == "family_split"),
+                )
+                out[fname][split_name][ci_key] = binary_auroc_cluster_bootstrap_ci(
+                    _positive_class_oof(combined, combined["classes"].index(1)),
+                    n_resamples=n_boot,
+                    seed=0,
+                    clusters=clusters,
+                )
     return out
 
 
@@ -289,10 +358,10 @@ def _mechanism_one_seed(seed, feats, labels, genes, pfam_map):
                 return_oof=True,
             )
             res[(fname, split_name)] = {
-                "logreg_f1": lr.get("macro_f1_mean"),
-                "mlp_f1": mlp.get("macro_f1_mean"),
-                "logreg_gof": lr.get("auroc_GOF_mean"),
-                "mlp_gof": mlp.get("auroc_GOF_mean"),
+                "logreg_f1": {"value": lr.get("macro_f1_mean"), "status": lr["status"]},
+                "mlp_f1": {"value": mlp.get("macro_f1_mean"), "status": mlp["status"]},
+                "logreg_gof": {"value": lr.get("auroc_GOF_mean"), "status": lr["status"]},
+                "mlp_gof": {"value": mlp.get("auroc_GOF_mean"), "status": mlp["status"]},
                 "logreg_oof": lr_oof,
                 "mlp_oof": mlp_oof,
             }
@@ -319,17 +388,18 @@ def run_mechanism(
         for seed in seeds
     )
 
-    collect = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
+    collect = defaultdict(lambda: defaultdict(lambda: defaultdict(dict)))
     oof_collect = defaultdict(lambda: defaultdict(lambda: defaultdict(dict)))
     for seed, res in zip(seeds, per_seed):
         for (fname, split_name), cell in res.items():
             for key in ("logreg_f1", "mlp_f1", "logreg_gof", "mlp_gof"):
-                collect[fname][split_name][key].append(cell[key])
+                collect[fname][split_name][key][seed] = cell[key]
             oof_collect[fname][split_name]["logreg"][seed] = cell["logreg_oof"]
             oof_collect[fname][split_name]["mlp"][seed] = cell["mlp_oof"]
             print(
                 f"  seed{seed} {fname:4s} {split_name:12s} "
-                f"F1(lr={_f(cell['logreg_f1'])} mlp={_f(cell['mlp_f1'])})"
+                f"F1(lr={_f(cell['logreg_f1']['value'])} "
+                f"mlp={_f(cell['mlp_f1']['value'])})"
             )
 
     out = {
@@ -341,17 +411,14 @@ def run_mechanism(
         for split_name in ("gene_split", "family_split"):
             c = collect[fname][split_name]
             cell = {
-                "logreg_macro_f1": agg_seeds(c["logreg_f1"]),
-                "mlp_macro_f1": agg_seeds(c["mlp_f1"]),
-                "logreg_gof_auroc": agg_seeds(c["logreg_gof"]),
-                "mlp_gof_auroc": agg_seeds(c["mlp_gof"]),
+                "logreg_macro_f1": _aggregate_seed_cells(seeds, c["logreg_f1"]),
+                "mlp_macro_f1": _aggregate_seed_cells(seeds, c["mlp_f1"]),
+                "logreg_gof_auroc": _aggregate_seed_cells(seeds, c["logreg_gof"]),
+                "mlp_gof_auroc": _aggregate_seed_cells(seeds, c["mlp_gof"]),
             }
             if compute_ci:
                 rows = scored_rows(split_name, genes, pfam_map)
-                for probe, out_key in (
-                    ("logreg", "logreg_macro_f1"),
-                    ("mlp", "mlp_macro_f1"),
-                ):
+                for probe in ("logreg", "mlp"):
                     combined_result = aggregate_oof_dicts(
                         seeds,
                         oof_collect[fname][split_name][probe],
@@ -361,21 +428,29 @@ def run_mechanism(
                         class_order=MECHANISM_CLASSES,
                         declared_fold_ids=range(N_FOLDS),
                     )
+                    # One field per probe holding the macro-F1 and per-class
+                    # ranking intervals for that probe.
+                    ci_key = f"{probe}_mechanism_ci"
+                    if not combined_result.available:
+                        cell[ci_key] = _unavailable_interval(combined_result)
+                        continue
                     combined = combined_result.payload
-                    if combined_result.available:
-                        clusters = family_or_gene_clusters(
-                            combined["genes"],
-                            pfam_map,
-                            is_family_split=(split_name == "family_split"),
-                        )
-                        attach_mechanism_ci(
-                            cell[out_key],
-                            combined,
-                            clusters,
-                            compute_ci=True,
-                            n_resamples=n_boot,
-                            seed=0,
-                        )
+                    clusters = family_or_gene_clusters(
+                        combined["genes"],
+                        pfam_map,
+                        is_family_split=(split_name == "family_split"),
+                    )
+                    # attach_mechanism_ci stratifies the ranking metrics itself;
+                    # the intervals land in their own field, beside but not inside
+                    # the across-seed aggregate.
+                    cell[ci_key] = attach_mechanism_ci(
+                        {},
+                        combined,
+                        clusters,
+                        compute_ci=True,
+                        n_resamples=n_boot,
+                        seed=0,
+                    )["ci"]
             out[fname][split_name] = cell
     return out
 
@@ -413,7 +488,7 @@ def run_biophysical_direction(seeds, stability_dataset=DEFAULT_STABILITY_DATASET
     y_sign = (ddg > 0).astype(int)
     c2 = {}
     for fname in ("full", "dir"):
-        per_seed = []
+        per_seed = {}
         for seed in seeds:
             splits = gene_split_cv(proteins, seed=seed)  # group-holdout by protein
             contract = validate_complete_classification_splits(
@@ -425,8 +500,11 @@ def run_biophysical_direction(seeds, stability_dataset=DEFAULT_STABILITY_DATASET
             r = run_logreg_binary_cv(
                 feats[fname], y_sign, splits, [0, 1], contract, seed=seed
             )
-            per_seed.append(r.get("auroc_mean"))
-        c2[fname] = agg_seeds(per_seed)
+            per_seed[seed] = {
+                "value": r.get("auroc_mean"),
+                "status": r["status"],
+            }
+        c2[fname] = _aggregate_seed_cells(seeds, per_seed)
 
     print(f"  Spearman(||d||, |ddG|) = {c1_rho:.3f}")
     print(
@@ -447,7 +525,11 @@ def run_biophysical_direction(seeds, stability_dataset=DEFAULT_STABILITY_DATASET
 
 
 def _f(x):
-    return "nan" if x is None or (isinstance(x, float) and np.isnan(x)) else f"{x:.3f}"
+    return (
+        "unavailable"
+        if x is None or (isinstance(x, float) and np.isnan(x))
+        else f"{x:.3f}"
+    )
 
 
 def run(
@@ -507,28 +589,39 @@ def _run_seeds(
     print("=" * 60)
 
     def pa(feat, probe):
-        return path_res[feat]["family_split"][probe]["mean"]
+        return read_seed_point_estimate(
+            path_res[feat]["family_split"][probe]
+        ).value
 
     def me(feat):
-        return mech_res[feat]["family_split"]["mlp_macro_f1"]["mean"]
+        return read_seed_point_estimate(
+            mech_res[feat]["family_split"]["mlp_macro_f1"]
+        ).value
 
     print("  Pathogenicity AUROC (family-split):")
     print(
-        f"    full delta   logreg={pa('full', 'logreg_auroc'):.3f}  mlp={pa('full', 'mlp_auroc'):.3f}"
+        f"    full delta   logreg={_f(pa('full', 'logreg_auroc'))}  "
+        f"mlp={_f(pa('full', 'mlp_auroc'))}"
     )
     print(
-        f"    magnitude    logreg={pa('mag', 'logreg_auroc'):.3f}  mlp={pa('mag', 'mlp_auroc'):.3f}"
+        f"    magnitude    logreg={_f(pa('mag', 'logreg_auroc'))}  "
+        f"mlp={_f(pa('mag', 'mlp_auroc'))}"
     )
     print(
-        f"    direction    logreg={pa('dir', 'logreg_auroc'):.3f}  mlp={pa('dir', 'mlp_auroc'):.3f}"
+        f"    direction    logreg={_f(pa('dir', 'logreg_auroc'))}  "
+        f"mlp={_f(pa('dir', 'mlp_auroc'))}"
     )
     print("  Mechanism macro-F1 (family-split, MLP):")
-    print(f"    chance floor = {mech_res['chance_floor']['family_split']['mean']:.3f}")
-    print(f"    full delta   = {me('full'):.3f}")
-    print(f"    magnitude    = {me('mag'):.3f}")
-    print(f"    direction    = {me('dir'):.3f}")
+    print(
+        "    chance floor = "
+        f"{_f(mech_res['chance_floor']['family_split']['mean'])}"
+    )
+    print(f"    full delta   = {_f(me('full'))}")
+    print(f"    magnitude    = {_f(me('mag'))}")
+    print(f"    direction    = {_f(me('dir'))}")
 
     result = {
+        **aggregate_result_contract(),
         "seeds": list(seeds),
         "pathogenicity": path_res,
         "mechanism": mech_res,

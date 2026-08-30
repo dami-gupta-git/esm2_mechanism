@@ -16,7 +16,12 @@ from esm2_mech.utils.paths import (
 )
 from esm2_mech.experiments.mechanism.loaders import load_merged
 from esm2_mech.utils.constants import GOF, N_SEEDS
-from esm2_mech.utils.metrics import mean_std_n
+from esm2_mech.utils.seed_aggregation import (
+    aggregate_result_contract,
+    aggregate_seed_values,
+    make_seed_record,
+    read_seed_point_estimate,
+)
 from esm2_mech.utils.probes import auroc_for_clf
 from esm2_mech.utils.data import embedding_fingerprint
 from esm2_mech.experiments.geometry.data import (
@@ -103,11 +108,33 @@ def transfer_test(delta, y, groups, kind="linear", n_partitions=10, seed=0, min_
             clf = _make_clf(kind, seed).fit(Xtr, y[tr])
             group_cv.append(auroc_for_clf(clf, Xte, y[te]))
 
-    def agg(v):
-        mean, std, n = mean_std_n(v)
-        return {"mean": mean, "std": std, "n": n}
+    def summarize(values, expected_count, spread_name, sampling_unit):
+        numeric = np.asarray(values, dtype=float)
+        if len(numeric) != expected_count or not np.isfinite(numeric).all():
+            return {
+                "mean": None,
+                spread_name: None,
+                "n": int(len(numeric)),
+                "sampling_unit": sampling_unit,
+            }
+        return {
+            "mean": float(np.mean(numeric)),
+            spread_name: float(np.std(numeric)),
+            "n": int(len(numeric)),
+            "sampling_unit": sampling_unit,
+        }
 
-    return {"transfer_auroc": agg(transfer), "group_cv_auroc": agg(group_cv)}
+    return {
+        "transfer_auroc": summarize(
+            transfer,
+            2 * n_partitions,
+            "partition_direction_std",
+            "random_family_partition_direction",
+        ),
+        "group_cv_auroc": summarize(
+            group_cv, n_splits, "fold_std", "held_out_fold"
+        ),
+    }
 
 
 def load_pathogenicity(inputs, pfam):
@@ -150,6 +177,7 @@ def load_mechanism_gof():
 
 
 def run(n_seeds=N_SEEDS, stability_dataset=DEFAULT_STABILITY_DATASET):
+    requested_seeds = tuple(range(n_seeds))
     tasks = {}
     pfam = load_pfam_map(PFAM_JSON)
     pathogenicity_inputs = load_pathogenicity_geometry_inputs()
@@ -179,25 +207,38 @@ def run(n_seeds=N_SEEDS, stability_dataset=DEFAULT_STABILITY_DATASET):
         results[name] = {}
         npart = 5 if len(y) > 5000 else 10
         for kind in ("linear", "gbm"):
-            transfer_vals, group_cv_vals = [], []
-            for seed in range(n_seeds):
+            per_seed = {}
+            for seed in requested_seeds:
                 r = transfer_test(
                     delta, y, groups, kind=kind, n_partitions=npart, seed=seed
                 )
-                transfer_vals.append(r["transfer_auroc"]["mean"])
-                group_cv_vals.append(r["group_cv_auroc"]["mean"])
-            tm, ts, tn = mean_std_n(transfer_vals)
-            gm, gs, gn = mean_std_n(group_cv_vals)
+                per_seed[seed] = r
+            transfer_aggregate = aggregate_seed_values(
+                requested_seeds,
+                [
+                    make_seed_record(seed, per_seed[seed]["transfer_auroc"]["mean"])
+                    for seed in requested_seeds
+                ],
+            ).to_dict()
+            group_cv_aggregate = aggregate_seed_values(
+                requested_seeds,
+                [
+                    make_seed_record(seed, per_seed[seed]["group_cv_auroc"]["mean"])
+                    for seed in requested_seeds
+                ],
+            ).to_dict()
             results[name][kind] = {
-                "half_group_transfer_auroc": {"mean": tm, "std": ts, "n": tn},
-                "group_cv_auroc": {"mean": gm, "std": gs, "n": gn},
+                "half_group_transfer_auroc": transfer_aggregate,
+                "group_cv_auroc": group_cv_aggregate,
+                "per_seed_within_seed_summaries": per_seed,
             }
             print(
-                f"{name:42s} {kind:7s} {gm:.3f}±{gs:.3f}  "
-                f"{tm:.3f}±{ts:.3f}  (seeds={n_seeds})"
+                f"{name:42s} {kind:7s} {_show(group_cv_aggregate):>12s}  "
+                f"{_show(transfer_aggregate):>13s}  (seeds={n_seeds})"
             )
 
     result = {
+        **aggregate_result_contract(),
         "tasks": results,
         "analysis_status": "exploratory",
         "interpretation_note": (
@@ -210,6 +251,15 @@ def run(n_seeds=N_SEEDS, stability_dataset=DEFAULT_STABILITY_DATASET):
     write_result_json(TRANSFER_CONTRAST_JSON, result, seeds=list(range(n_seeds)))
     print(f"\nResults -> {TRANSFER_CONTRAST_JSON}")
     return result
+
+
+def _show(summary):
+    metric = read_seed_point_estimate(summary)
+    if not metric.available:
+        return "unavailable"
+    if metric.spread is None:
+        return f"{metric.value:.3f}"
+    return f"{metric.value:.3f}±{metric.spread:.3f}"
 
 
 def main():

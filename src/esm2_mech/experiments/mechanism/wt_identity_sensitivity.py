@@ -57,7 +57,7 @@ from esm2_mech.utils.paths import (
     WT_IDENTITY_SENSITIVITY_AGGREGATE_JSON,
     WT_IDENTITY_SENSITIVITY_DIR,
 )
-from esm2_mech.utils.seed_aggregation import load_seed_files
+from esm2_mech.utils.seed_aggregation import load_seed_files, read_seed_point_estimate
 from esm2_mech.experiments.mechanism.seed_results import (
     aggregate_across_seeds,
     aggregate_result_contract,
@@ -106,6 +106,7 @@ def main() -> None:
     )
     parser.add_argument("--n_folds", type=int, default=N_FOLDS)
     parser.add_argument("--n_boot", type=int, default=BOOTSTRAP_N_RESAMPLES)
+    parser.add_argument("--no_ci", action="store_true", help="skip cluster-bootstrap CIs")
     args = parser.parse_args()
     if args.seeds < 1:
         parser.error("--seeds must be >= 1")
@@ -149,7 +150,7 @@ def main() -> None:
             out_dir=str(WT_IDENTITY_SENSITIVITY_DIR),
             seed=seed,
             n_folds=args.n_folds,
-            compute_ci=True,
+            compute_ci=not args.no_ci,
             n_boot=args.n_boot,
             n_permutations=0,
             feature_names=(WT_ONLY_FEATURE,),
@@ -166,7 +167,7 @@ def main() -> None:
         requested_seeds,
         confusion_matrix_class_order=MECHANISM_CLASSES,
     )
-    split_gap_summary = summarize_split_gap(seed_results)
+    split_gap_summary = summarize_split_gap(seed_results, requested_seeds)
     payload = {
         **aggregate_result_contract(),
         "analysis": "WT-only gene-minus-family split gap on unwindowed proteins",
@@ -211,18 +212,17 @@ def main() -> None:
         indent=2,
     )
     print_table(aggregated)
-    vote = split_gap_summary["seed_vote"]
-    if split_gap_summary["preregistered_rule_evaluable"]:
+    split_gap = read_seed_point_estimate(
+        split_gap_summary["gene_minus_family_seed_aggregate"]
+    )
+    if split_gap.available:
         print(
-            f"\nClaim 2B sensitivity: {vote['payload']['n_supporting_seeds']}/"
-            f"{N_SEEDS} seed intervals exclude zero; "
-            f"meets interval rule {split_gap_summary['meets_claim_2b_interval_rule']}"
+            f"\nClaim 2B sensitivity: gene-minus-family macro-F1 = "
+            f"{split_gap.value:.3f} (seed mean of the row-aligned paired gap); "
+            "each seed's own interval is in per_seed_interval."
         )
     else:
-        print(
-            f"\nClaim 2B sensitivity: interval rule unavailable "
-            f"({vote['message']})"
-        )
+        print(f"\nClaim 2B sensitivity is unavailable ({split_gap.message}).")
     print(f"Wrote {WT_IDENTITY_SENSITIVITY_AGGREGATE_JSON}")
 
 

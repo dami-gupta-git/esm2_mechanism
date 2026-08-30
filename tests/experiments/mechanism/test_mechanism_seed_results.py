@@ -2,7 +2,7 @@
 Tests for esm2_mech.experiments.mechanism.seed_results.
 
 Invariants:
-- aggregate_across_seeds: mean/std/n_seeds computed across seeds per split→feature→metric
+- aggregate_across_seeds: one shared aggregate is stored per split→feature→metric
 - aggregate_across_seeds: only <metric>_mean keys are aggregated (others ignored)
 - aggregate_across_seeds: None, NaN, failed seeds, and missing features make the aggregate unavailable
 - aggregate_across_seeds: a per-seed file must declare the shared root contract
@@ -113,18 +113,18 @@ class TestAggregateAcrossSeeds:
         ]
         agg = _aggregate(seed_results)
         feature = agg["gene_split"]["esm2"]
-        assert feature["macro_f1_seed_mean"] == pytest.approx(0.5)
-        assert feature["macro_f1_seed_std"] == pytest.approx(0.1)
-        assert feature["macro_f1_n_seeds"] == 3
-        assert feature["macro_f1_seed_aggregate"]["sampling_unit"] == "model_seed"
+        metric = feature["macro_f1_seed_aggregate"]
+        assert metric["mean"] == pytest.approx(0.5)
+        assert metric["seed_std"] == pytest.approx(0.1)
+        assert metric["contributing_seeds"] == [0, 1, 2]
+        assert metric["sampling_unit"] == "model_seed"
 
     def test_only_mean_keys_aggregated(self):
         # macro_f1_std is present per seed but must NOT be aggregated as a metric.
         seed_results = [("seed0.json", _seed_result(0.5))]
         agg = _aggregate(seed_results)
         feature = agg["gene_split"]["esm2"]
-        assert "macro_f1_seed_mean" in feature
-        assert "macro_f1_std_seed_mean" not in feature
+        assert set(feature) == {"macro_f1_seed_aggregate"}
 
     def test_none_value_makes_metric_unavailable(self):
         seed_results = [
@@ -133,9 +133,10 @@ class TestAggregateAcrossSeeds:
         ]
         agg = _aggregate(seed_results)
         feature = agg["gene_split"]["esm2"]
-        assert feature["macro_f1_seed_mean"] is None
-        assert feature["macro_f1_n_seeds"] == 1
-        assert feature["macro_f1_missing_seeds"] == [1]
+        metric = feature["macro_f1_seed_aggregate"]
+        assert metric["mean"] is None
+        assert metric["contributing_seeds"] == [0]
+        assert metric["affected_seeds"] == [1]
 
     def test_nan_value_makes_metric_unavailable(self):
         seed_results = [
@@ -144,8 +145,9 @@ class TestAggregateAcrossSeeds:
         ]
         agg = _aggregate(seed_results)
         feature = agg["gene_split"]["esm2"]
-        assert feature["macro_f1_seed_mean"] is None
-        assert feature["macro_f1_n_seeds"] == 1
+        metric = feature["macro_f1_seed_aggregate"]
+        assert metric["mean"] is None
+        assert metric["contributing_seeds"] == [0]
 
     def test_n_seeds_counts_contributors_only(self):
         seed_results = [
@@ -154,7 +156,8 @@ class TestAggregateAcrossSeeds:
             ("seed2.json", _seed_result(None)),
         ]
         agg = _aggregate(seed_results)
-        assert agg["gene_split"]["esm2"]["macro_f1_n_seeds"] == 2
+        metric = agg["gene_split"]["esm2"]["macro_f1_seed_aggregate"]
+        assert metric["contributing_seeds"] == [0, 1]
 
     def test_feature_present_in_some_seeds_is_unavailable(self):
         # esm2 in both seeds, esm3 only in seed1.
@@ -171,10 +174,11 @@ class TestAggregateAcrossSeeds:
             ),
         ]
         agg = _aggregate(seed_results)
-        assert agg["gene_split"]["esm2"]["macro_f1_n_seeds"] == 2
-        assert agg["gene_split"]["esm3"]["macro_f1_n_seeds"] == 1
-        assert agg["gene_split"]["esm3"]["macro_f1_seed_mean"] is None
-        assert agg["gene_split"]["esm3"]["status"] == "unavailable"
+        assert agg["gene_split"]["esm2"]["macro_f1_seed_aggregate"]["state"] == "available"
+        esm3 = agg["gene_split"]["esm3"]["macro_f1_seed_aggregate"]
+        assert esm3["contributing_seeds"] == [1]
+        assert esm3["mean"] is None
+        assert esm3["state"] == "unavailable"
 
     def test_unknown_seed_status_is_not_relabelled_as_failed(self):
         result = _seed_result(0.5)
@@ -202,10 +206,10 @@ class TestAggregateAcrossSeeds:
         ]
         agg = _aggregate(seed_results, statuses={1: "failed"})
         feature = agg["gene_split"]["esm2"]
-        assert feature["status"] == "unavailable"
-        assert feature["unavailable_seeds"] == [1]
-        assert feature["macro_f1_seed_mean"] is None
-        assert feature["macro_f1_seed_aggregate"]["reason"] == "failed_seed"
+        metric = feature["macro_f1_seed_aggregate"]
+        assert metric["affected_seeds"] == [1]
+        assert metric["mean"] is None
+        assert metric["reason"] == "failed_seed"
 
     def test_a_requested_seed_with_no_result_is_unavailable(self):
         seed_results = [
@@ -214,11 +218,11 @@ class TestAggregateAcrossSeeds:
         ]
         agg = _aggregate(seed_results, requested=range(3))
         feature = agg["gene_split"]["esm2"]
-        assert feature["required_seeds"] == [0, 1, 2]
-        assert feature["status"] == "unavailable"
-        assert feature["macro_f1_seed_mean"] is None
-        assert feature["macro_f1_seed_aggregate"]["reason"] == "missing_seed"
-        assert feature["macro_f1_missing_seeds"] == [2]
+        metric = feature["macro_f1_seed_aggregate"]
+        assert metric["requested_seeds"] == [0, 1, 2]
+        assert metric["mean"] is None
+        assert metric["reason"] == "missing_seed"
+        assert metric["affected_seeds"] == [2]
 
     def test_a_result_for_an_unrequested_seed_is_unavailable(self):
         seed_results = [
@@ -227,9 +231,9 @@ class TestAggregateAcrossSeeds:
         ]
         agg = _aggregate(seed_results, requested=[0])
         feature = agg["gene_split"]["esm2"]
-        assert feature["status"] == "unavailable"
-        assert feature["macro_f1_seed_mean"] is None
-        assert feature["macro_f1_seed_aggregate"]["reason"] == "unexpected_seed"
+        metric = feature["macro_f1_seed_aggregate"]
+        assert metric["mean"] is None
+        assert metric["reason"] == "unexpected_seed"
 
     def test_both_splits_in_output(self):
         seed_results = [("seed0.json", _seed_result(0.5))]
@@ -271,8 +275,8 @@ class TestAggregateAcrossSeeds:
         ]
         agg = _aggregate(seed_results)
         feature = agg["gene_split"]["esm2"]
-        assert feature["macro_f1_seed_mean"] == pytest.approx(0.5)
-        assert feature["auroc_GOF_seed_mean"] == pytest.approx(0.85)
+        assert feature["macro_f1_seed_aggregate"]["mean"] == pytest.approx(0.5)
+        assert feature["auroc_GOF_seed_aggregate"]["mean"] == pytest.approx(0.85)
 
     def test_failed_seed_prevents_reduced_seed_aggregate(self):
         successful = _seed_result(0.6)
@@ -282,9 +286,10 @@ class TestAggregateAcrossSeeds:
             [("seed0.json", successful), ("seed1.json", failed)]
         )
         feature = aggregate["gene_split"]["esm2"]
-        assert feature["status"] == "unavailable"
-        assert feature["macro_f1_seed_mean"] is None
-        assert feature["unavailable_seeds"] == [1]
+        metric = feature["macro_f1_seed_aggregate"]
+        assert metric["state"] == "unavailable"
+        assert metric["mean"] is None
+        assert metric["affected_seeds"] == [1]
 
     def test_confusion_matrix_is_normalized_per_seed_before_average(self):
         first = _seed_result(0.5)
@@ -308,7 +313,9 @@ class TestAggregateAcrossSeeds:
             confusion_matrix_class_order=["A", "B"],
         )["gene_split"]["esm2"]
         assert np.allclose(
-            aggregate["confusion_matrix_seed_mean"],
+            aggregate["confusion_matrix_seed_aggregate"]["payload"][
+                "normalized_seed_mean"
+            ],
             [[0.45, 0.55], [0.25, 0.75]],
         )
 
@@ -334,16 +341,16 @@ class TestPrintTable:
         agg = {
             "gene_split": {
                 "esm2": {
-                    "macro_f1_seed_mean": 0.5,
-                    "macro_f1_seed_std": 0.0,
-                    "macro_f1_n_seeds": 2,
+                    "macro_f1_seed_aggregate": _available_seed_aggregate(
+                        0.5, seeds=(0, 1, 2)
+                    ),
                 }
             },
             "family_split": {
                 "esm3": {
-                    "macro_f1_seed_mean": 0.4,
-                    "macro_f1_seed_std": 0.0,
-                    "macro_f1_n_seeds": 2,
+                    "macro_f1_seed_aggregate": _available_seed_aggregate(
+                        0.4, seeds=(0, 1, 2)
+                    ),
                 }
             },
         }

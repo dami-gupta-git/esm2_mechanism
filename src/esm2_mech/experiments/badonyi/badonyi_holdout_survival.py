@@ -15,8 +15,17 @@ import functools
 
 print = functools.partial(print, flush=True)
 
-from esm2_mech.utils.constants import MECHANISM_CLASSES, N_FOLDS, BOOTSTRAP_N_RESAMPLES
+from esm2_mech.utils.constants import MECHANISM_CLASSES, N_FOLDS, N_SEEDS, BOOTSTRAP_N_RESAMPLES
 from esm2_mech.utils.bootstrap import binary_auroc_cluster_bootstrap_ci
+from esm2_mech.utils.seed_aggregation import (
+    aggregate_paired_seed_difference,
+    aggregate_seed_results,
+    make_seed_record,
+    read_seed_inference,
+    read_seed_point_estimate,
+    seed_result_contract,
+)
+from esm2_mech.experiments.mechanism.seed_results import aggregate_result_contract
 from esm2_mech.utils.paths import BADONYI_CACHE_DIR, DATA_DIR, GENE_LIST_TSV, RESULTS_DIR
 
 warnings.filterwarnings("ignore")
@@ -193,10 +202,13 @@ def run_holdout(df, group_col, n_folds, seed, compute_ci=True, n_boot=BOOTSTRAP_
     fold_mean = {}
     for key in ["DN_vs_LOF", "GOF_vs_LOF", "LOF_vs_nonLOF"]:
         vals = [f[key] for f in fold_results if f.get(key) is not None]
-        if vals:
+        fold_mean[key + "_n_folds_valid"] = len(vals)
+        if len(vals) == n_folds and np.isfinite(vals).all():
             fold_mean[key + "_fold_mean"] = float(np.mean(vals))
             fold_mean[key + "_fold_std"] = float(np.std(vals))
-            fold_mean[key + "_n_folds_valid"] = len(vals)
+        else:
+            fold_mean[key + "_fold_mean"] = None
+            fold_mean[key + "_fold_std"] = None
 
     return {
         "all_holdout": agg,
@@ -210,17 +222,47 @@ def _fmt(v):
     return f"{v:.3f}" if v is not None else "N/A"
 
 
+def compute_fixed_arms(df, compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES):
+    """The arms that have no fold assignment, so no dependence on the model seed.
+
+    Badonyi's predictions are published, not refitted here, and these three arms
+    score them on a fixed set of rows. Running them once per seed would repeat
+    one number five times and report its zero spread as seed stability, so they
+    are computed once and carry their cluster-bootstrap interval instead.
+    """
+    fixed = {}
+    print("\nSeed-independent arms (no holdout, no fold assignment)")
+    print("  Baseline (no holdout) — Badonyi raw on whole labeled set")
+    fixed["baseline_no_holdout"] = compute_aurocs(
+        df, compute_ci=compute_ci, n_boot=n_boot, seed=0
+    )
+    print(f"    DN-vs-LOF: {_fmt(fixed['baseline_no_holdout']['DN_vs_LOF'])}")
+    print(f"    GOF-vs-LOF: {_fmt(fixed['baseline_no_holdout']['GOF_vs_LOF'])}")
+    print(f"    LOF-vs-nonLOF: {_fmt(fixed['baseline_no_holdout']['LOF_vs_nonLOF'])}")
+
+    print("\n  Stratified by Badonyi training-set membership (in any classifier)")
+    fixed["badonyi_in_train"] = compute_aurocs(
+        df, mask=df["in_any"] == 1, compute_ci=compute_ci, n_boot=n_boot, seed=0
+    )
+    fixed["badonyi_out_train"] = compute_aurocs(
+        df, mask=df["in_any"] == 0, compute_ci=compute_ci, n_boot=n_boot, seed=0
+    )
+    for name, label in (
+        ("badonyi_in_train", "IN-Badonyi"),
+        ("badonyi_out_train", "OUT-Badonyi"),
+    ):
+        arm = fixed[name]
+        print(
+            f"    {label}: n={arm['n_total']}, "
+            f"DN={_fmt(arm['DN_vs_LOF'])}, GOF={_fmt(arm['GOF_vs_LOF'])}, "
+            f"LOF={_fmt(arm['LOF_vs_nonLOF'])}"
+        )
+    return fixed
+
+
 def run_seed(df, seed, n_folds, compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES):
     print(f"\n{'='*72}\nSEED {seed}\n{'='*72}")
-    out = {"seed": seed}
-
-    # Baseline: no holdout (whole-set AUROC with Badonyi predictions). CI
-    # resamples genes directly — no partition scheme to match.
-    print("  Baseline (no holdout) — Badonyi raw on whole labeled set")
-    out["baseline_no_holdout"] = compute_aurocs(df, compute_ci=compute_ci, n_boot=n_boot, seed=seed)
-    print(f"    DN-vs-LOF: {_fmt(out['baseline_no_holdout']['DN_vs_LOF'])}")
-    print(f"    GOF-vs-LOF: {_fmt(out['baseline_no_holdout']['GOF_vs_LOF'])}")
-    print(f"    LOF-vs-nonLOF: {_fmt(out['baseline_no_holdout']['LOF_vs_nonLOF'])}")
+    out = {**seed_result_contract(seed)}
 
     # Family-split holdout
     print("\n  Pfam family-split holdout")
@@ -240,86 +282,55 @@ def run_seed(df, seed, n_folds, compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES):
         f"GOF={_fmt(ma['GOF_vs_LOF'])}  LOF={_fmt(ma['LOF_vs_nonLOF'])}"
     )
 
-    # Stratified: IN vs OUT of Badonyi training. CI resamples genes directly —
-    # this stratification isn't a holdout scheme either.
-    print("\n  Stratified by Badonyi training-set membership (in any classifier)")
-    in_mask = df["in_any"] == 1
-    out_mask = df["in_any"] == 0
-    out["badonyi_in_train"] = compute_aurocs(df, mask=in_mask, compute_ci=compute_ci, n_boot=n_boot, seed=seed)
-    out["badonyi_out_train"] = compute_aurocs(df, mask=out_mask, compute_ci=compute_ci, n_boot=n_boot, seed=seed)
-    print(
-        f"    IN-Badonyi: n={out['badonyi_in_train']['n_total']}, "
-        f"DN={out['badonyi_in_train'].get('DN_vs_LOF', 'NA')}, "
-        f"GOF={out['badonyi_in_train'].get('GOF_vs_LOF', 'NA')}, "
-        f"LOF={out['badonyi_in_train'].get('LOF_vs_nonLOF', 'NA')}"
-    )
-    print(
-        f"    OUT-Badonyi: n={out['badonyi_out_train']['n_total']}, "
-        f"DN={out['badonyi_out_train'].get('DN_vs_LOF', 'NA')}, "
-        f"GOF={out['badonyi_out_train'].get('GOF_vs_LOF', 'NA')}, "
-        f"LOF={out['badonyi_out_train'].get('LOF_vs_nonLOF', 'NA')}"
-    )
-
     return out
 
 
-def aggregate_seeds(all_seed):
-    """Mean +/- std of the all_holdout AUROC across seeds, per holdout."""
-    summary = {"n_seeds": len(all_seed)}
+def aggregate_seeds(all_seed, requested_seeds, fixed_arms):
+    """Mean +/- std across seeds for the holdout arms; fixed arms pass through.
 
-    for key, label in [
-        ("baseline_no_holdout", "baseline_no_holdout"),
-        ("family_holdout", "family_holdout"),
-        ("mmseqs_holdout", "mmseqs_holdout"),
-        ("badonyi_in_train", "badonyi_in_train"),
-        ("badonyi_out_train", "badonyi_out_train"),
-    ]:
+    Only the holdout arms depend on the seed, through their fold assignment. The
+    fixed arms are stored as the single value they are, with their interval.
+    """
+    summary = {
+        **aggregate_result_contract(),
+        "requested_seeds": list(requested_seeds),
+        "seed_independent_arms": fixed_arms,
+    }
+
+    for key in ["family_holdout", "mmseqs_holdout"]:
         cur = {}
         for metric in ["DN_vs_LOF", "GOF_vs_LOF", "LOF_vs_nonLOF"]:
-            vals = []
-            for s in all_seed:
-                payload = s[key]
-                # Family/MMseqs go through "all_holdout"
-                if "all_holdout" in payload:
-                    payload = payload["all_holdout"]
-                v = payload.get(metric)
-                if v is not None:
-                    vals.append(v)
-            if vals:
-                cur[f"{metric}_mean"] = float(np.mean(vals))
-                cur[f"{metric}_std"] = float(np.std(vals))
-                cur[f"{metric}_n_seeds"] = len(vals)
-
-            # CI bounds pooled across seeds — separate from seed-to-seed std.
-            for bound in ("ci_low", "ci_high"):
-                ci_vals = []
-                for s in all_seed:
-                    payload = s[key]
-                    if "all_holdout" in payload:
-                        payload = payload["all_holdout"]
-                    ci = payload.get(f"{metric}_ci")
-                    if ci and not ci.get("ci_suppressed"):
-                        ci_vals.append(ci.get(bound))
-                ci_vals = [v for v in ci_vals if v is not None]
-                if ci_vals:
-                    cur[f"{metric}_{bound}_seed_mean"] = float(np.mean(ci_vals))
+            cur[f"{metric}_seed_aggregate"] = aggregate_seed_results(
+                requested_seeds,
+                all_seed,
+                lambda result, holdout=key, name=metric: (
+                    result[holdout]["all_holdout"].get(name)
+                ),
+            ).to_dict()
         # Also keep ns for context (from first seed only)
-        first_payload = all_seed[0][key]
-        if "all_holdout" in first_payload:
-            first_payload = first_payload["all_holdout"]
-        cur["n_total_first"] = first_payload.get("n_total")
-        summary[label] = cur
+        cur["n_total_first"] = all_seed[0][key]["all_holdout"].get("n_total")
+        summary[key] = cur
 
-    # Deltas vs baseline
-    base = summary["baseline_no_holdout"]
+    # Deltas vs baseline. The baseline is one number, so each seed's difference
+    # is that seed's holdout value minus the same constant.
     deltas = {}
     for h_key in ["family_holdout", "mmseqs_holdout"]:
         d = {}
         for metric in ["DN_vs_LOF", "GOF_vs_LOF", "LOF_vs_nonLOF"]:
-            bm = base.get(f"{metric}_mean")
-            hm = summary[h_key].get(f"{metric}_mean")
-            if bm is not None and hm is not None:
-                d[f"delta_{metric}"] = float(hm - bm)
+            baseline_value = fixed_arms["baseline_no_holdout"].get(metric)
+            baseline_records = [
+                make_seed_record(result["seed"], baseline_value)
+                for result in all_seed
+            ]
+            holdout_records = [
+                make_seed_record(
+                    result["seed"], result[h_key]["all_holdout"].get(metric)
+                )
+                for result in all_seed
+            ]
+            d[f"delta_{metric}_seed_aggregate"] = aggregate_paired_seed_difference(
+                requested_seeds, holdout_records, baseline_records
+            ).to_dict()
         deltas[h_key] = d
     summary["deltas_vs_baseline"] = deltas
 
@@ -328,24 +339,45 @@ def aggregate_seeds(all_seed):
 
 def print_table(summary):
     print("\n" + "=" * 100)
-    print("BADONYI SURVIVAL — 5-seed mean ± std AUROC under different holdouts")
+    print(
+        "BADONYI SURVIVAL — AUROC under different holdouts. The holdout rows are "
+        "mean ± std across model seeds; the rows without a holdout have no fold "
+        "assignment, so they carry their bootstrap interval instead."
+    )
     print("=" * 100)
     print(f"{'Holdout':<28} {'DN-vs-LOF':<22} {'GOF-vs-LOF':<22} {'LOF-vs-nonLOF':<22}")
     print("-" * 100)
 
     def fmt(d, key):
-        m = d.get(f"{key}_mean")
-        s = d.get(f"{key}_std")
-        if m is None:
+        metric = read_seed_inference(d.get(f"{key}_seed_aggregate", {}))
+        if not metric.available:
             return "      N/A      "
-        return f"{m:.3f} ± {s:.3f}"
+        return f"{metric.value:.3f} ± {metric.spread:.3f}"
 
-    for h, label in [
+    def fmt_fixed(arm, key):
+        value = arm.get(key)
+        if value is None:
+            return "      N/A      "
+        interval = arm.get(f"{key}_ci")
+        if not interval or interval.get("ci_low") is None:
+            return f"{value:.3f}"
+        return f"{value:.3f} [{interval['ci_low']:.3f}, {interval['ci_high']:.3f}]"
+
+    for arm_key, label in [
         ("baseline_no_holdout", "none (whole labeled set)"),
-        ("family_holdout", "Pfam family-split"),
-        ("mmseqs_holdout", "MMseqs2-20 cluster-split"),
         ("badonyi_in_train", "Badonyi IN-train (no h-out)"),
         ("badonyi_out_train", "Badonyi OUT-train (no h-out)"),
+    ]:
+        arm = summary["seed_independent_arms"][arm_key]
+        print(
+            f"{label:<28} {fmt_fixed(arm,'DN_vs_LOF'):<22} "
+            f"{fmt_fixed(arm,'GOF_vs_LOF'):<22} "
+            f"{fmt_fixed(arm,'LOF_vs_nonLOF'):<22}  n={arm.get('n_total', '—')}"
+        )
+
+    for h, label in [
+        ("family_holdout", "Pfam family-split"),
+        ("mmseqs_holdout", "MMseqs2-20 cluster-split"),
     ]:
         d = summary[h]
         n = d.get("n_total_first", "—")
@@ -364,9 +396,12 @@ def print_table(summary):
         d = summary["deltas_vs_baseline"][h_key]
 
         def f(k):
-            v = d.get(f"delta_{k}")
-            if v is None:
+            metric = read_seed_point_estimate(
+                d.get(f"delta_{k}_seed_aggregate", {})
+            )
+            if not metric.available:
                 return "    N/A    "
+            v = metric.value
             tag = ""
             if v >= -0.03:
                 tag = "  ROBUST"
@@ -391,9 +426,13 @@ def main():
     args = ap.parse_args()
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    seeds = [args.seed] if args.seed is not None else list(range(5))
+    seeds = [args.seed] if args.seed is not None else list(range(N_SEEDS))
 
     df = load_gene_table()
+
+    fixed_arms = compute_fixed_arms(
+        df, compute_ci=not args.no_ci, n_boot=args.n_boot
+    )
 
     all_seed_results = []
     for s in seeds:
@@ -403,8 +442,14 @@ def main():
         path.write_text(json.dumps(sr, indent=2))
         print(f"  Saved: {path}")
 
-    summary = aggregate_seeds(all_seed_results)
-    spath = OUT_DIR / "badonyi_survival_summary.json"
+    summary = aggregate_seeds(all_seed_results, seeds, fixed_arms)
+    # A single-seed run is a spot check, not the multi-seed deliverable, so it
+    # writes its own file rather than replacing the full summary.
+    spath = OUT_DIR / (
+        f"badonyi_survival_summary_seed{args.seed}.json"
+        if args.seed is not None
+        else "badonyi_survival_summary.json"
+    )
     spath.write_text(json.dumps(summary, indent=2))
     print(f"\nSaved summary: {spath}")
     print_table(summary)

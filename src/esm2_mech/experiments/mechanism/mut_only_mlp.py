@@ -222,14 +222,6 @@ def main():
                 print(f"  macro_f1 = {fs['macro_f1_mean']:.3f}  {ranking}")
             else:
                 print(f"  {fs['status']}")
-            if gs["macro_f1_mean"] is not None and fs["macro_f1_mean"] is not None:
-                delta_macro = gs["macro_f1_mean"] - fs["macro_f1_mean"]
-                print(
-                    f"  Δ(gene − family) macro-F1 = {delta_macro:+.3f}  "
-                    f"← positive ⇒ homology leakage"
-                )
-            else:
-                print("  Δ(gene − family) macro-F1 = Unscorable")
 
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
     write_result_json(args.out, results, seeds=[args.seed], indent=2)

@@ -21,8 +21,9 @@ cited alongside as a cross-check, never as the row's own CI source.
 The analysis plan assigns each row the unit held out by that split: Pfam families,
 Pfam clans, or MMseqs2 clusters. The leakage-fraction point is
 LF = (gene_split_f1 - partition_split_f1) / (gene_split_f1 - chance) on rows
-shared by both arms. Classification intervals remain unavailable until audit
-item 1.4 defines the resampling procedure.
+shared by both arms, resampled over the row's own held-out unit. Each draw
+recomputes its own chance floor, so numerator and denominator always come from
+the same draw.
 
 Output: results/<RUN_NAME>/homology_partition_panel/panel.json
 
@@ -46,28 +47,33 @@ from esm2_mech.experiments.mechanism.clan_holdout import (
 )
 from esm2_mech.experiments.mechanism.leakage_fraction import MIN_ABOVE_CHANCE
 from esm2_mech.experiments.mechanism.mmseqs_cluster_holdout import (
-    cluster_split_indices,
     load_clusters,
     run_mlp as run_mmseqs_mlp,
 )
 from esm2_mech.utils.bootstrap import (
     attach_mechanism_ci,
+    cluster_bootstrap_ci,
     family_or_gene_clusters,
+    score_within_folds,
 )
 from esm2_mech.utils.constants import BOOTSTRAP_N_RESAMPLES, MECHANISM_CLASSES
 from esm2_mech.utils.data import load_pfam_map
-from esm2_mech.utils.metrics import fold_macro_f1
+from esm2_mech.utils.metrics import fold_macro_f1, majority_baseline_f1
 from esm2_mech.utils.io import load_variants_and_delta, write_result_json
 from esm2_mech.utils.paths import (
     EMB_MUT_MEAN,
     EMB_VALID_VARIANTS_JSON,
     EMB_WT_MEAN,
     HOMOLOGY_PARTITION_PANEL_DIR,
-    HOMOLOGY_PARTITION_PANEL_JSON,
+    homology_partition_panel_json,
     NAIVE_BASELINE_JSON,
     NONLINEAR_RESULTS_SEED_JSON,
     PFAM_JSON,
     VALID_VARIANTS_JSON,
+)
+from esm2_mech.utils.seed_aggregation import (
+    read_seed_point_estimate,
+    read_seed_result_contract,
 )
 from esm2_mech.utils.probes import run_mlp_cv
 from esm2_mech.utils.splits import family_split_cv, gene_split_cv
@@ -100,8 +106,16 @@ def _measured_chance_floors():
     """
     with open(NAIVE_BASELINE_JSON) as f:
         nb = json.load(f)
-    gene_chance = nb["by_strategy"]["most_frequent"]["gene"]["macro_f1_mean"]
-    family_chance = nb["by_strategy"]["most_frequent"]["family"]["macro_f1_mean"]
+    gene = read_seed_point_estimate(
+        nb["by_strategy"]["most_frequent"]["gene"]["macro_f1_seed_aggregate"]
+    )
+    family = read_seed_point_estimate(
+        nb["by_strategy"]["most_frequent"]["family"]["macro_f1_seed_aggregate"]
+    )
+    if not gene.available or not family.available:
+        raise ValueError("measured chance floors are unavailable")
+    gene_chance = gene.value
+    family_chance = family.value
     return gene_chance, family_chance
 
 
@@ -114,7 +128,13 @@ def _live_mlp_py_family_reference(seed):
             d = json.load(f)
     except FileNotFoundError:
         return None
-    return d.get("mlp_delta_mean_family", {}).get("macro_f1_mean")
+    status = read_seed_result_contract(seed, path, d)
+    if status != "success":
+        return None
+    value = d.get("mlp_delta_mean_family", {}).get("macro_f1_mean")
+    if not isinstance(value, (int, float)) or not np.isfinite(value):
+        return None
+    return float(value)
 
 
 def _pred_from_proba(proba):
@@ -167,28 +187,81 @@ def leakage_fraction_ci_for_partition(
     if not np.array_equal(gene_shared["y_true"], partition_shared["y_true"]):
         raise ValueError("shared homology-panel rows have inconsistent observed labels")
 
-    gene_f1 = _oof_macro_f1(gene_shared)
-    partition_f1 = _oof_macro_f1(partition_shared)
-    denominator = gene_f1 - gene_chance
-    point = (
-        None
-        if denominator <= MIN_ABOVE_CHANCE
-        else float((gene_f1 - partition_f1) / denominator)
-    )
-    return {
-        "point": point,
-        "ci_low": None,
-        "ci_high": None,
-        "ci_suppressed": True,
-        "missing": True,
-        "reason": "blocked_by_audit_1_4",
-        "n_clusters": int(
-            len(np.unique(np.asarray(partition_clusters)[partition_positions]))
+    gene_predictions = _pred_from_proba(gene_shared["proba"])
+    partition_predictions = _pred_from_proba(partition_shared["proba"])
+    gene_arms = [(gene_predictions, gene_shared["folds"], np.unique(gene_shared["folds"]))]
+    partition_arms = [
+        (
+            partition_predictions,
+            partition_shared["folds"],
+            np.unique(partition_shared["folds"]),
+        )
+    ]
+    observed = gene_shared["y_true"]
+
+    def _fold_f1(block, arm_pred):
+        return fold_macro_f1(observed, block, arm_pred, MECHANISM_CLASSES)
+
+    gene_folds = gene_shared["folds"]
+    gene_fold_ids = gene_arms[0][2]
+
+    def _majority_floor(rows):
+        """Training-fold majority rule, scored out of fold on the drawn rows.
+
+        The floor must be the same kind of quantity as the probe score it is
+        subtracted from: fitted on a fold's training rows and scored on that
+        fold's held-out rows. Choosing the majority class from the rows being
+        scored would fit the floor in sample and inflate it.
+        """
+        fold_of_row = gene_folds[rows]
+        fold_values = []
+        for fold in gene_fold_ids:
+            test_rows = rows[fold_of_row == fold]
+            train_rows = rows[fold_of_row != fold]
+            if test_rows.size == 0 or train_rows.size == 0:
+                return None
+            try:
+                value, _majority = majority_baseline_f1(
+                    observed[train_rows], observed[test_rows], MECHANISM_CLASSES
+                )
+            except ValueError:
+                # The drawn training rows have no single majority class, so the
+                # floor — and with it the ratio's denominator — is undefined here.
+                return None
+            fold_values.append(value)
+        return float(np.mean(fold_values))
+
+    def _ratio(rows):
+        # Both arms keep their own fold assignment on the drawn rows, and the
+        # chance floor is refitted fold by fold on the same draw, so numerator and
+        # denominator come from one draw rather than from mixed cohorts.
+        gene_f1 = score_within_folds(rows, gene_arms, _fold_f1)
+        partition_f1 = score_within_folds(rows, partition_arms, _fold_f1)
+        if gene_f1 is None or partition_f1 is None:
+            return None
+        resample_chance = _majority_floor(rows)
+        if resample_chance is None:
+            return None
+        denominator = gene_f1 - resample_chance
+        if denominator <= MIN_ABOVE_CHANCE:
+            return None
+        return (gene_f1 - partition_f1) / denominator
+
+    interval = cluster_bootstrap_ci(
+        np.asarray(partition_clusters)[partition_positions],
+        _ratio,
+        n_resamples=n_boot,
+        seed=seed,
+        discard_reason=(
+            "a fold of the draw had no single training-side majority class, or "
+            "the gene arm's lift over "
+            "the resampled chance floor collapsed, so the leakage fraction had no "
+            "denominator on that draw"
         ),
-        "n_shared_rows": int(len(shared_rows)),
-        "n_resamples": 0,
-        "n_resamples_total": 0,
-    }
+        metric_name="leakage_fraction",
+    )
+    interval["n_shared_rows"] = int(len(shared_rows))
+    return interval
 
 
 def _partition_row(
@@ -392,8 +465,9 @@ def main():
     }
 
     HOMOLOGY_PARTITION_PANEL_DIR.mkdir(parents=True, exist_ok=True)
-    write_result_json(HOMOLOGY_PARTITION_PANEL_JSON, results, seeds=[args.seed], indent=2)
-    print(f"\nResults written to {HOMOLOGY_PARTITION_PANEL_JSON}")
+    panel_path = homology_partition_panel_json(args.seed)
+    write_result_json(panel_path, results, seeds=[args.seed], indent=2)
+    print(f"\nResults written to {panel_path}")
 
 
 if __name__ == "__main__":

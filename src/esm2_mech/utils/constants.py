@@ -19,6 +19,14 @@ AA_INDEX = {aa: i for i, aa in enumerate(AA_ORDER)}
 # never hardcode 5 or [0, 1, 2, 3, 4] inline.
 N_SEEDS = 5
 
+# The seed whose out-of-fold predictions a bootstrap is run on. This records which
+# seed produced an interval and is provenance only: a one-seed interval describes
+# that seed, not the across-seed estimand reported beside it, so it must not be
+# attached to, compared with, or used to adjudicate a multi-seed point estimate.
+# Interval-dependent conclusions stay suppressed until audit item 1.4 defines a
+# replacement method (docs/improve/fix_seed.md, "Suppress invalid intervals").
+INFERENTIAL_SEED = 0
+
 # Schema for per-seed records and aggregates produced by utils.seed_aggregation.
 # Increment when that shared result shape or its validation rules change.
 SEED_AGGREGATION_SCHEMA_VERSION = 1
@@ -239,12 +247,6 @@ PERMUTATION_N_RESAMPLES = 1000
 # only when all N_SEEDS requested seed runs produced a finite p-value.
 PERMUTATION_SIGNIFICANCE_THRESHOLD = 0.05
 PERMUTATION_MIN_SIGNIFICANT_SEEDS = 3
-# A cluster-bootstrap metric can be undefined on a resample (e.g. a rare class is
-# absent, so one-vs-rest AUROC is undefined) and is dropped from the percentile. If
-# too few resamples survive, the CI is built on a biased, thinned subset and must not
-# be trusted. Below this surviving fraction, cluster_bootstrap_ci returns no CI and
-# flags it so the dropout is visible instead of silently narrowing the interval.
-BOOTSTRAP_MIN_VALID_FRAC = 0.8
 # Every fold-aware metric scores each class inside each fold and averages. A resample
 # in which any fold has lost a class entirely is discarded rather than scored over the
 # folds that survive, so every resample scores the same statistic (all folds, all
@@ -254,6 +256,10 @@ BOOTSTRAP_MIN_VALID_FRAC = 0.8
 # signal — most likely the resampling unit or the fold construction — and must be
 # investigated rather than absorbed.
 BOOTSTRAP_MAX_DISCARD_FRAC = 0.01
+# An interval built after discarding draws describes the draws that survived, not
+# the quantity being estimated, so the reporting threshold is the same tolerance
+# rather than a looser one: above it there is no interval, only the discard rate.
+BOOTSTRAP_MIN_VALID_FRAC = 1.0 - BOOTSTRAP_MAX_DISCARD_FRAC
 # No-signal reference for a one-vs-rest AUROC (ranking metric): a CI clearing this
 # from above, or a permutation p-value against it, marks above-chance separation.
 CHANCE_AUROC = 0.5

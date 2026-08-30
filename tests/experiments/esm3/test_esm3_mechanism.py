@@ -100,6 +100,7 @@ def test_mlp_metrics_come_from_shared_runner(phase3, monkeypatch):
     # summary. If phase 3 computes its own pooled F1, the stub value is ignored.
     mod, _delta = phase3
     agg = {
+        "status": "success",
         "macro_f1_mean": 0.4242,
         "macro_f1_std": 0.01,
         f"auroc_{GOF}_mean": 0.61,
@@ -112,13 +113,13 @@ def test_mlp_metrics_come_from_shared_runner(phase3, monkeypatch):
         return (agg, None) if kwargs.get("return_oof") else agg
 
     monkeypatch.setattr(mod, "run_mlp_probe_cv", stub)
-    mod.phase3_probes(seeds=[0], compute_ci=False)
+    mod.phase3_probes(seeds=[0])
 
     family = _summary(mod)["results"]["seq"]["family_split"]
-    assert family["mlp_f1_mean"] == pytest.approx(0.4242)
-    assert family["mlp_gof_auroc_mean"] == pytest.approx(0.61)
-    assert family["mlp_dn_auroc_mean"] == pytest.approx(0.62)
-    assert family["mlp_lof_auroc_mean"] == pytest.approx(0.63)
+    assert family["mlp_f1_seed_aggregate"]["mean"] == pytest.approx(0.4242)
+    assert family["mlp_gof_auroc_seed_aggregate"]["mean"] == pytest.approx(0.61)
+    assert family["mlp_dn_auroc_seed_aggregate"]["mean"] == pytest.approx(0.62)
+    assert family["mlp_lof_auroc_seed_aggregate"]["mean"] == pytest.approx(0.63)
 
 
 def test_every_fold_is_handed_to_the_runner(phase3, monkeypatch):
@@ -129,11 +130,16 @@ def test_every_fold_is_handed_to_the_runner(phase3, monkeypatch):
 
     def stub(X, labels, splits, *args, **kwargs):
         seen.append(len(splits))
-        agg = {"macro_f1_mean": 0.5, "macro_f1_std": 0.0, "n_folds": len(splits)}
+        agg = {
+            "status": "success",
+            "macro_f1_mean": 0.5,
+            "macro_f1_std": 0.0,
+            "n_folds": len(splits),
+        }
         return (agg, None) if kwargs.get("return_oof") else agg
 
     monkeypatch.setattr(mod, "run_mlp_probe_cv", stub)
-    mod.phase3_probes(seeds=[0], compute_ci=False)
+    mod.phase3_probes(seeds=[0])
 
     assert seen  # the runner was called
     assert all(n_folds == mod.N_FOLDS for n_folds in seen)
@@ -150,6 +156,7 @@ def test_family_oof_declares_scored_rows_and_string_labels(phase3, monkeypatch):
 
     def probe_stub(*args, **kwargs):
         aggregate = {
+            "status": "success",
             "macro_f1_mean": 0.5,
             f"auroc_{GOF}_mean": 0.6,
             f"auroc_{DN}_mean": 0.6,
@@ -159,15 +166,40 @@ def test_family_oof_declares_scored_rows_and_string_labels(phase3, monkeypatch):
 
     def aggregate_stub(*args, **kwargs):
         aggregate_calls.append(kwargs)
-        return SimpleNamespace(available=False, payload=None)
+        result = SimpleNamespace(
+            available=False,
+            payload=None,
+            schema_version=1,
+            state="unavailable",
+            reason=None,
+            requested_seeds=(0,),
+            contributing_seeds=(),
+            affected_seeds=(0,),
+            sampling_unit="model_seed",
+            message="unavailable",
+        )
+        result.to_dict = lambda: {
+            "schema_version": 1,
+            "state": "unavailable",
+            "reason": None,
+            "requested_seeds": [0],
+            "contributing_seeds": [],
+            "affected_seeds": [0],
+            "payload": None,
+            "sampling_unit": "model_seed",
+            "message": "unavailable",
+        }
+        return result
 
     monkeypatch.setattr(mod, "run_mlp_probe_cv", probe_stub)
     monkeypatch.setattr(
-        mod, "_run_logreg_folds", lambda *args, **kwargs: {"macro_f1_mean": 0.5}
+        mod,
+        "_run_logreg_folds",
+        lambda *args, **kwargs: {"status": "success", "macro_f1_mean": 0.5},
     )
     monkeypatch.setattr(mod, "aggregate_oof_dicts", aggregate_stub)
 
-    mod.phase3_probes(seeds=[0], compute_ci=True, n_boot=1)
+    mod.phase3_probes(seeds=[0])
 
     expected_rows = np.flatnonzero(genes != "G0")
     family_call = next(

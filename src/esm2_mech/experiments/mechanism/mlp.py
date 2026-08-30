@@ -35,6 +35,7 @@ from esm2_mech.utils.io import load_variants_and_delta, write_result_json
 from esm2_mech.utils.probes import run_mlp_probe_cv, run_sklearn_probe_pca, run_sklearn_probe
 from esm2_mech.utils.splits import gene_split_cv, family_split_cv
 from esm2_mech.utils.classification import validate_complete_classification_splits
+from esm2_mech.utils.seed_aggregation import read_seed_result_contract, seed_result_contract
 
 print = functools.partial(print, flush=True)
 
@@ -157,6 +158,7 @@ def run_seed(
     if args.only_new_family_arms:
         with open(out_path) as f:
             existing = json.load(f)
+        read_seed_result_contract(seed, str(out_path), existing)
         if existing.get("input_fingerprints") != input_fingerprints:
             raise ValueError(
                 f"{out_path} was not produced from the current nonlinear-probe inputs"
@@ -180,7 +182,7 @@ def run_seed(
             print(f"  {key}: macro_f1={value:.3f}" if value is not None else f"  {key}: Unscorable")
         return
 
-    results = {}
+    results = {**seed_result_contract(seed)}
     for feat_name, X in feature_arrays:
         for split_name, splits in splits_by_name:
             key = nonlinear_key("mlp", feat_name, split_name)
@@ -205,6 +207,8 @@ def run_seed(
 
     print("\n=== Summary ===")
     for feat, res in results.items():
+        if not isinstance(res, dict):
+            continue
         mf1 = res.get("macro_f1_mean")
         auroc_gof = res.get("auroc_GOF_mean")
         if mf1 is None:
@@ -213,7 +217,6 @@ def run_seed(
             auroc_text = "NA" if auroc_gof is None else f"{auroc_gof:.3f}"
             print(f"  {feat}: macro_f1={mf1:.3f}  auroc_GOF={auroc_text}")
 
-    results["seed"] = seed
     results["input_fingerprints"] = input_fingerprints
     results["analysis_parameters"] = {
         "max_epochs": args.max_epochs,

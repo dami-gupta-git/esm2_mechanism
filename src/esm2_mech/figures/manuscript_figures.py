@@ -19,6 +19,7 @@ from matplotlib.patches import FancyArrowPatch, FancyBboxPatch, Rectangle
 import numpy as np
 
 from esm2_mech.experiments.mechanism.seed_results import read_feature_metric
+from esm2_mech.utils.seed_aggregation import read_seed_inference, read_seed_point_estimate
 from esm2_mech.utils.constants import (
     DN,
     ESM2_MODEL,
@@ -38,6 +39,7 @@ from esm2_mech.utils.paths import (
     LEAKAGE_FRACTION_JSON,
     MAGNITUDE_DIRECTION_JSON,
     MECHANISM_AGGREGATE_JSON,
+    NAIVE_BASELINE_JSON,
     PATHOGENICITY_CONTROL_JSON,
     SINGLE_SOURCE_AGGREGATE_JSON,
     STABILITY_MLP_SUMMARY_JSON,
@@ -97,7 +99,7 @@ def _load_json(path: Path) -> object:
         return json.load(handle)
 
 
-def _seed_mean(aggregate: dict, split: str, feature: str, metric: str = "macro_f1") -> float:
+def _mechanism_point(aggregate: dict, split: str, feature: str, metric: str = "macro_f1") -> float:
     """Read an across-seed mechanism mean through the shared seed reader."""
     read = read_feature_metric(aggregate["across_seed"], split, feature, metric)
     if not read.available:
@@ -107,18 +109,45 @@ def _seed_mean(aggregate: dict, split: str, feature: str, metric: str = "macro_f
     return read.value
 
 
+def _reference_mean(baseline: dict, split: str) -> float:
+    aggregate = baseline["by_strategy"]["most_frequent"][split][
+        "macro_f1_seed_aggregate"
+    ]
+    read = read_seed_point_estimate(aggregate)
+    return _finite(read.value, f"{split} majority-class reference")
+
+
+def _pathogenicity_auroc(cell: dict, label: str) -> float:
+    read = read_seed_point_estimate(cell["metrics"]["auroc"])
+    return _finite(read.value, label)
+
+
 def _finite(value: object, field_name: str) -> float:
     if not isinstance(value, (int, float)) or not math.isfinite(float(value)):
         raise ValueError(f"{field_name} is not a finite number: {value!r}")
     return float(value)
 
 
-def _ci_errors(point: float, ci_low: float, ci_high: float) -> np.ndarray:
-    if not ci_low <= point <= ci_high:
-        raise ValueError(
-            f"Confidence interval [{ci_low}, {ci_high}] does not contain {point}"
-        )
-    return np.asarray([[point - ci_low], [ci_high - point]])
+def _interval_note(interval: dict | None, point_key: str = "point") -> str:
+    """Annotate a bootstrap interval and the point it was built around.
+
+    The interval is computed on one model seed's out-of-fold predictions, so its
+    point is that seed's own, not the across-seed mean plotted beside it.
+    """
+    if not interval:
+        return "no interval computed"
+    point = interval.get(point_key)
+    if (
+        interval.get("ci_suppressed")
+        or interval.get("ci_low") is None
+        or interval.get("ci_high") is None
+        or point is None
+    ):
+        return f"no interval ({interval.get('reason', 'not reported')})"
+    return (
+        f"seed 0: {point:+.3f} "
+        f"[{interval['ci_low']:+.3f}, {interval['ci_high']:+.3f}]"
+    )
 
 
 def _panel_label(axis: Axes, label: str) -> None:
@@ -533,7 +562,7 @@ def _plot_per_class_auroc(
 def figure2_mechanism_delta() -> None:
     aggregate = _load_json(MECHANISM_AGGREGATE_JSON)
     geometry = _load_json(MAGNITUDE_DIRECTION_JSON)
-    claim_2a = aggregate["claim_2a_ci_summary"]
+    baseline = _load_json(NAIVE_BASELINE_JSON)
 
     figure = plt.figure(figsize=(12, 8.2))
     grid = figure.add_gridspec(
@@ -543,28 +572,29 @@ def figure2_mechanism_delta() -> None:
     probe_axis = figure.add_subplot(grid[1, 0])
     auroc_axis = figure.add_subplot(grid[1, 1])
 
-    seed_rows = claim_2a["per_seed"]
-    seed_positions = np.arange(len(seed_rows))
-    points = np.asarray([_finite(row["point"], "claim2a point") for row in seed_rows])
-    lows = np.asarray([_finite(row["ci_low"], "claim2a ci_low") for row in seed_rows])
-    highs = np.asarray(
-        [_finite(row["ci_high"], "claim2a ci_high") for row in seed_rows]
+    family_delta = read_seed_inference(
+        aggregate["across_seed"]["family_split"]["delta_mean"][
+            "macro_f1_seed_aggregate"
+        ]
     )
+    if not family_delta.available:
+        raise ValueError(f"family-split delta macro-F1 is unavailable: {family_delta.message}")
+    point = _finite(family_delta.value, "family-split delta macro-F1")
+    spread = _finite(family_delta.spread, "family-split delta seed SD")
     interval_axis.errorbar(
-        points,
-        seed_positions,
-        xerr=np.vstack((points - lows, highs - points)),
+        [point],
+        [0],
+        xerr=[[spread]],
         fmt="o",
         color=PURPLE,
         ecolor=PURPLE,
         capsize=3,
     )
-    reference = _finite(claim_2a["family_chance_floor"], "family reference")
-    threshold = _finite(claim_2a["threshold"], "reference plus margin")
+    reference = _reference_mean(baseline, "family")
     interval_axis.axvline(reference, color=GREY, linestyle="--", linewidth=1.2)
     interval_axis.text(
         reference + 0.0004,
-        0.55,
+        0.0,
         "majority-class reference",
         va="center",
         ha="left",
@@ -573,21 +603,20 @@ def figure2_mechanism_delta() -> None:
     )
     interval_axis.text(
         0.98,
-        1.02,
-        f"Preregistered threshold {threshold:.3f}\nAll upper bounds were below it",
+        0.12,
+        "Confidence interval unavailable pending audit 1.4",
         transform=interval_axis.transAxes,
         va="bottom",
         ha="right",
-        color=RED,
+        color=GREY,
         fontsize=8,
     )
-    interval_axis.set_yticks(seed_positions)
-    interval_axis.set_yticklabels([f"Seed {row['seed']}" for row in seed_rows])
-    interval_axis.invert_yaxis()
-    interval_axis.set_xlim(min(lows) - 0.005, max(highs) + 0.006)
-    interval_axis.set_xlabel("Family-split macro-F1 (95% family-bootstrap CI)")
+    interval_axis.set_yticks([0])
+    interval_axis.set_yticklabels(["Five-seed mean"])
+    interval_axis.set_ylim(-0.5, 0.5)
+    interval_axis.set_xlabel("Family-split macro-F1 (error bar: model-seed SD)")
     interval_axis.set_title(
-        "Preregistered delta probe matched the reference", loc="left"
+        "Delta probe remained near the measured reference", loc="left"
     )
     _panel_label(interval_axis, "A")
 
@@ -596,15 +625,21 @@ def figure2_mechanism_delta() -> None:
         "Exploratory\nlogistic",
         "Exploratory\nMLP",
     )
+    def geometry_metric(split_name, probe_name):
+        metric = read_seed_point_estimate(
+            geometry["mechanism"]["full"][split_name][probe_name]
+        )
+        return _finite(metric.value, f"geometry {split_name} {probe_name}")
+
     gene_values = (
-        _seed_mean(aggregate, "gene_split", "delta_mean"),
-        geometry["mechanism"]["full"]["gene_split"]["logreg_macro_f1"]["mean"],
-        geometry["mechanism"]["full"]["gene_split"]["mlp_macro_f1"]["mean"],
+        _mechanism_point(aggregate, "gene_split", "delta_mean"),
+        geometry_metric("gene_split", "logreg_macro_f1"),
+        geometry_metric("gene_split", "mlp_macro_f1"),
     )
     family_values = (
-        _seed_mean(aggregate, "family_split", "delta_mean"),
-        geometry["mechanism"]["full"]["family_split"]["logreg_macro_f1"]["mean"],
-        geometry["mechanism"]["full"]["family_split"]["mlp_macro_f1"]["mean"],
+        _mechanism_point(aggregate, "family_split", "delta_mean"),
+        geometry_metric("family_split", "logreg_macro_f1"),
+        geometry_metric("family_split", "mlp_macro_f1"),
     )
     positions = np.arange(len(probe_labels))
     for position, gene_value, family_value in zip(
@@ -637,7 +672,7 @@ def figure2_mechanism_delta() -> None:
     _panel_label(probe_axis, "B")
 
     auroc_values = tuple(
-        _seed_mean(aggregate, "family_split", "delta_mean", f"auroc_{class_label}")
+        _mechanism_point(aggregate, "family_split", "delta_mean", f"auroc_{class_label}")
         for class_label in DISPLAY_CLASS_ORDER
     )
     _plot_per_class_auroc(
@@ -673,39 +708,30 @@ def figure3_family_information() -> None:
     for position, block, color in zip(
         positions, probe_blocks, (BLUE, CYAN, PURPLE)
     ):
-        accuracy = block.get("accuracy")
-        if accuracy is None:
+        accuracy = read_seed_inference(block.get("accuracy_seed_aggregate", {}))
+        if not accuracy.available:
             accuracy_axis.text(
                 position, 0.03, "Unscorable", ha="center", va="bottom", fontsize=8
             )
             continue
         accuracy_axis.bar(
             position,
-            accuracy,
-            yerr=block.get("accuracy_std"),
+            accuracy.value,
+            yerr=accuracy.spread,
             color=color,
             capsize=3,
         )
     baselines = [
-        block.get("majority_baseline_acc")
+        read_seed_inference(
+            block.get("majority_baseline_accuracy_seed_aggregate", {})
+        )
         for block in probe_blocks
-        if block.get("majority_baseline_acc") is not None
     ]
-    if baselines:
-        if not all(math.isclose(baseline, baselines[0]) for baseline in baselines):
-            raise ValueError("Family-probe majority references differ across views")
-        accuracy_axis.axhline(
-            baselines[0], color=GREY, linestyle="--", linewidth=1
-        )
-        accuracy_axis.text(
-            2.45,
-            baselines[0],
-            f"reference {baselines[0]:.3f}",
-            ha="right",
-            va="bottom",
-            fontsize=8,
-            color=GREY,
-        )
+    for position, baseline in zip(positions, baselines):
+        if baseline.available:
+            accuracy_axis.scatter(
+                position, baseline.value, marker="_", color=GREY, s=120
+            )
     accuracy_axis.set_xticks(positions)
     accuracy_axis.set_xticklabels(view_labels)
     accuracy_axis.set_ylim(0, 0.68)
@@ -717,22 +743,24 @@ def figure3_family_information() -> None:
 
     purity_axis = axes[0, 1]
     purity_points = []
-    purity_lows = []
-    purity_highs = []
+    purity_spreads = []
     purity_nulls = []
     for view_key in view_keys:
         purity_cell = views[view_key]
-        purity_points.append(purity_cell["knn5_purity"])
-        purity_lows.append(purity_cell["knn5_purity_ci"]["ci_low"])
-        purity_highs.append(purity_cell["knn5_purity_ci"]["ci_high"])
-        purity_nulls.append(purity_cell["knn5_purity_null"])
+        purity = read_seed_inference(purity_cell["knn5_purity_seed_aggregate"])
+        purity_null = read_seed_inference(
+            purity_cell["knn5_purity_null_seed_aggregate"]
+        )
+        if not purity.available or not purity_null.available:
+            raise ValueError(f"{view_key}: family-purity summary is unavailable")
+        purity_points.append(purity.value)
+        purity_spreads.append(purity.spread)
+        purity_nulls.append(purity_null.value)
     purity_points_array = np.asarray(purity_points)
     purity_axis.errorbar(
         positions,
         purity_points_array,
-        yerr=np.vstack(
-            (purity_points_array - purity_lows, purity_highs - purity_points_array)
-        ),
+        yerr=np.asarray(purity_spreads),
         fmt="o",
         color=BLUE,
         capsize=3,
@@ -757,46 +785,30 @@ def figure3_family_information() -> None:
     _panel_label(purity_axis, "B")
 
     gap_axis = axes[1, 0]
-    gap_rows = aggregate["claim_2b_split_gap_summary"]["per_seed"]
-    gap_positions = np.arange(len(gap_rows))
-    gap_points = np.asarray([row["point_diff"] for row in gap_rows])
-    gap_lows = np.asarray([row["ci_low"] for row in gap_rows])
-    gap_highs = np.asarray([row["ci_high"] for row in gap_rows])
-    gap_axis.errorbar(
-        gap_points,
-        gap_positions,
-        xerr=np.vstack((gap_points - gap_lows, gap_highs - gap_points)),
-        fmt="o",
-        color=BLUE,
-        capsize=3,
+    gap = read_seed_inference(
+        aggregate["claim_2b_split_gap_summary"][
+            "gene_minus_family_seed_aggregate"
+        ]
     )
+    if not gap.available:
+        raise ValueError(f"gene-minus-family split gap is unavailable: {gap.message}")
+    gap_axis.errorbar([gap.value], [0], xerr=[[gap.spread]], fmt="o", color=BLUE, capsize=3)
     gap_axis.axvline(0, color=GREY, linewidth=1)
-    gap_axis.set_yticks(gap_positions)
-    gap_axis.set_yticklabels([f"Seed {row['seed']}" for row in gap_rows])
-    gap_axis.invert_yaxis()
-    gap_axis.set_xlabel("Wildtype gene-minus-family macro-F1 (95% CI)")
-    gap_axis.set_title("Gene-held-out performance was higher in every seed", loc="left")
+    gap_axis.set_yticks([0])
+    gap_axis.set_yticklabels(["Five-seed mean"])
+    gap_axis.set_ylim(-0.5, 0.5)
+    gap_axis.set_xlabel("Wildtype gene-minus-family macro-F1 (model-seed SD)")
+    gap_axis.set_title("Gene-held-out performance was higher", loc="left")
     _panel_label(gap_axis, "C")
 
     leakage_axis = axes[1, 1]
     leakage_cell = leakage["by_feature"]["wt_only_mean"]
     leakage_point = _finite(leakage_cell["leakage_fraction"], "leakage fraction")
-    leakage_ci = leakage_cell["ci"]
-    leakage_low = _finite(leakage_ci["ci_low"], "leakage ci low")
-    leakage_high = _finite(leakage_ci["ci_high"], "leakage ci high")
-    leakage_axis.errorbar(
-        [leakage_point * 100],
-        [0],
-        xerr=_ci_errors(leakage_point * 100, leakage_low * 100, leakage_high * 100),
-        fmt="o",
-        color=PURPLE,
-        capsize=4,
-        markersize=7,
-    )
+    leakage_axis.scatter([leakage_point * 100], [0], color=PURPLE, s=55)
     leakage_axis.text(
         leakage_point * 100,
         0.12,
-        f"{leakage_point * 100:.1f}%\n[{leakage_low * 100:.1f}, {leakage_high * 100:.1f}]",
+        f"{leakage_point * 100:.1f}%\nCI unavailable",
         ha="center",
         va="bottom",
         fontsize=9,
@@ -808,7 +820,7 @@ def figure3_family_information() -> None:
         "Fraction of above-reference performance\nlost under family holdout (%)"
     )
     leakage_axis.set_title(
-        "Leakage fraction with family-bootstrap interval", loc="left"
+        "Leakage fraction point estimate", loc="left"
     )
     _panel_label(leakage_axis, "D")
 
@@ -826,12 +838,12 @@ def figure4_pathogenicity_conservation() -> None:
     delta_results = pathogenicity["by_feature"]["delta_mean"]
     probe_names = ("Logistic", "MLP")
     gene_values = (
-        delta_results["logreg_gene"]["auroc_mean"],
-        delta_results["mlp_gene"]["auroc_mean"],
+        _pathogenicity_auroc(delta_results["logreg_gene"], "logistic gene AUROC"),
+        _pathogenicity_auroc(delta_results["mlp_gene"], "MLP gene AUROC"),
     )
     family_values = (
-        delta_results["logreg_family"]["auroc_mean"],
-        delta_results["mlp_family"]["auroc_mean"],
+        _pathogenicity_auroc(delta_results["logreg_family"], "logistic family AUROC"),
+        _pathogenicity_auroc(delta_results["mlp_family"], "MLP family AUROC"),
     )
     positions = np.arange(len(probe_names))
     for position, gene_value, family_value in zip(
@@ -863,14 +875,24 @@ def figure4_pathogenicity_conservation() -> None:
     _panel_label(transfer_axis, "A")
 
     geometry_axis = axes[1]
+    def geometry_value(block, label):
+        metric = read_seed_point_estimate(block)
+        return _finite(metric.value, label)
+
     component_keys = ("full", "dir", "mag")
     component_labels = ("Full delta", "Direction", "Magnitude")
     logreg_values = tuple(
-        geometry["pathogenicity"][key]["family_split"]["logreg_auroc"]["mean"]
+        geometry_value(
+            geometry["pathogenicity"][key]["family_split"]["logreg_auroc"],
+            f"geometry {key} logistic AUROC",
+        )
         for key in component_keys
     )
     mlp_values = tuple(
-        geometry["pathogenicity"][key]["family_split"]["mlp_auroc"]["mean"]
+        geometry_value(
+            geometry["pathogenicity"][key]["family_split"]["mlp_auroc"],
+            f"geometry {key} MLP AUROC",
+        )
         for key in component_keys
     )
     geometry_positions = np.arange(len(component_labels))
@@ -903,39 +925,40 @@ def figure4_pathogenicity_conservation() -> None:
     comparison_keys = ("delta", "conservation", "conservation_plus_delta")
     comparison_labels = ("Delta", "Conservation", "Conservation\n+ delta")
     comparison_points = []
-    comparison_lows = []
-    comparison_highs = []
     for comparison_key in comparison_keys:
-        cell = conservation["auroc_family_split_ci"][comparison_key]
-        comparison_points.append(cell["point"])
-        comparison_lows.append(cell["ci_low"])
-        comparison_highs.append(cell["ci_high"])
+        comparison_points.append(
+            geometry_value(
+                conservation["auroc_family_split"][comparison_key],
+                f"conservation {comparison_key} AUROC",
+            )
+        )
     point_array = np.asarray(comparison_points)
     comparison_positions = np.arange(len(comparison_labels))
-    conservation_axis.errorbar(
-        comparison_positions,
-        point_array,
-        yerr=np.vstack((point_array - comparison_lows, comparison_highs - point_array)),
-        fmt="o",
-        color=PURPLE,
-        capsize=3,
-    )
+    conservation_axis.scatter(comparison_positions, point_array, color=PURPLE, s=55)
     conservation_axis.set_xticks(comparison_positions)
     conservation_axis.set_xticklabels(comparison_labels)
     conservation_axis.set_ylim(0.81, 0.91)
-    conservation_axis.set_ylabel("Family-split AUROC, seed 0 (95% CI)")
+    conservation_axis.set_ylabel("Family-split AUROC across model seeds")
     conservation_axis.set_title(
         "Adding delta did not improve discrimination", loc="left"
     )
     paired_difference = conservation["claims"]["2E_delta_beyond_conservation"][
         "paired_diff"
     ]
+    paired_value = geometry_value(
+        paired_difference, "combined minus conservation paired difference"
+    )
     conservation_axis.text(
         0.98,
         0.04,
         "Combined − conservation\n"
-        f"{paired_difference['point_diff']:+.3f} "
-        f"[{paired_difference['ci_low']:+.3f}, {paired_difference['ci_high']:+.3f}]",
+        f"{paired_value:+.3f}\n"
+        + _interval_note(
+            conservation["claims"]["2E_delta_beyond_conservation"].get(
+                "paired_diff_ci"
+            ),
+            point_key="point_diff",
+        ),
         transform=conservation_axis.transAxes,
         ha="right",
         va="bottom",
@@ -962,13 +985,29 @@ def figure5_enzyme_classification() -> None:
 
     transfer_axis = figure.add_subplot(grid[0, 0])
     representation_labels = ("ESM-2 wildtype", "Proteome control")
+    def seed_value(block, label):
+        metric = read_seed_point_estimate(block)
+        return _finite(metric.value, label)
+
     gene_values = (
-        esm["logreg_gene_split"]["macro_f1_mean"],
-        proteome["logreg_gene_split"]["macro_f1_mean"],
+        seed_value(
+            esm["logreg_gene_split"]["macro_f1_seed_aggregate"],
+            "enzyme ESM-2 gene-split macro-F1",
+        ),
+        seed_value(
+            proteome["logreg_gene_split"]["macro_f1_seed_aggregate"],
+            "enzyme proteome gene-split macro-F1",
+        ),
     )
     family_values = (
-        esm["logreg_family_split"]["macro_f1_mean"],
-        proteome["logreg_family_split"]["macro_f1_mean"],
+        seed_value(
+            esm["logreg_family_split"]["macro_f1_seed_aggregate"],
+            "enzyme ESM-2 family-split macro-F1",
+        ),
+        seed_value(
+            proteome["logreg_family_split"]["macro_f1_seed_aggregate"],
+            "enzyme proteome family-split macro-F1",
+        ),
     )
     positions = np.arange(len(representation_labels))
     for position, gene_value, family_value in zip(
@@ -991,7 +1030,10 @@ def figure5_enzyme_classification() -> None:
         label="Family holdout",
     )
     family_reference = _finite(
-        esm["majority_reference"]["family_split"]["macro_f1_mean"],
+        seed_value(
+            esm["majority_reference"]["family_split"],
+            "enzyme family-split majority reference",
+        ),
         "enzyme family-split majority reference",
     )
     transfer_axis.axhline(
@@ -1009,7 +1051,10 @@ def figure5_enzyme_classification() -> None:
 
     auroc_axis = figure.add_subplot(grid[0, 1])
     enzyme_auroc = tuple(
-        esm["logreg_family_split"]["per_class_auroc_mean"][class_name]
+        seed_value(
+            esm["logreg_family_split"]["per_class_auroc_seed_aggregate"][class_name],
+            f"enzyme {class_name} family-split AUROC",
+        )
         for class_name in ENZYME_CLASS_ORDER
     )
     display_labels = ("Kinase", "Oxidoreductase", "Non-enzyme", "Protease")
@@ -1023,23 +1068,28 @@ def figure5_enzyme_classification() -> None:
     auroc_axis.tick_params(axis="x", rotation=15)
 
     comparison_axis = figure.add_subplot(grid[1, :])
-    task_difference = esm["paired_ci_logreg_minus_mechanism"]
-    task_point = task_difference["point_diff"]
-    task_low = task_difference["ci_low"]
-    task_high = task_difference["ci_high"]
+
+    def paired_seed_difference(block, label):
+        metric = read_seed_inference(block)
+        return _finite(metric.value, label), metric.spread
+
+    task_point, task_spread = paired_seed_difference(
+        esm["paired_logreg_minus_mechanism_seed_aggregate"],
+        "enzyme minus mechanism paired seed difference",
+    )
     comparison_axis.errorbar(
         [task_point],
         [1],
-        xerr=_ci_errors(task_point, task_low, task_high),
+        xerr=None if task_spread is None else [task_spread],
         fmt="o",
         color=GREEN,
-        capsize=4,
         markersize=7,
+        capsize=3,
     )
-    probe_difference = esm["paired_ci_mlp_minus_logreg"]
-    probe_point = probe_difference["point_diff"]
-    probe_low = probe_difference["ci_low"]
-    probe_high = probe_difference["ci_high"]
+    probe_point, probe_spread = paired_seed_difference(
+        esm["paired_mlp_minus_logreg_seed_aggregate"],
+        "enzyme MLP minus logistic paired seed difference",
+    )
     comparison_axis.add_patch(
         Rectangle(
             (-0.05, -0.34),
@@ -1054,11 +1104,11 @@ def figure5_enzyme_classification() -> None:
     comparison_axis.errorbar(
         [probe_point],
         [0],
-        xerr=_ci_errors(probe_point, probe_low, probe_high),
+        xerr=None if probe_spread is None else [probe_spread],
         fmt="o",
         color=PURPLE,
-        capsize=4,
         markersize=7,
+        capsize=3,
     )
     comparison_axis.axvline(0, color=GREY, linewidth=1)
     minimum_gap = enzyme["gate_evaluation"]["2G_minimum_f1_gap"]
@@ -1069,18 +1119,21 @@ def figure5_enzyme_classification() -> None:
         linestyle=":",
         linewidth=1.5,
     )
+    def difference_label(point, spread):
+        return f"{point:+.3f}" if spread is None else f"{point:+.3f} ± {spread:.3f}"
+
     comparison_axis.text(
-        task_high + 0.018,
+        task_point + 0.018,
         1,
-        f"{task_point:+.3f} [{task_low:+.3f}, {task_high:+.3f}]",
+        difference_label(task_point, task_spread),
         ha="left",
         va="center",
         fontsize=8,
     )
     comparison_axis.text(
-        probe_high + 0.018,
+        probe_point + 0.018,
         0,
-        f"{probe_point:+.3f} [{probe_low:+.3f}, {probe_high:+.3f}]",
+        difference_label(probe_point, probe_spread),
         ha="left",
         va="center",
         fontsize=8,
@@ -1107,7 +1160,10 @@ def figure5_enzyme_classification() -> None:
     comparison_axis.set_ylim(-0.45, 1.45)
     comparison_axis.set_yticks((1, 0))
     comparison_axis.set_yticklabels(("Enzyme − mechanism", "MLP − logistic"))
-    comparison_axis.set_xlabel("Family-split macro-F1 difference (95% CI)")
+    comparison_axis.set_xlabel(
+        "Family-split macro-F1 difference "
+        "(mean of within-seed differences ± seed SD)"
+    )
     comparison_axis.set_title("Paired family-split comparisons", loc="left")
     _panel_label(comparison_axis, "C")
 
@@ -1132,6 +1188,12 @@ def figure6_folding_stability() -> None:
     transfer_axis = figure.add_subplot(grid[:, 0])
     split_names = ("Random", "Domain", "Pfam family")
     split_positions = np.arange(len(split_names))
+    def stability_value(result, key):
+        metric = read_seed_point_estimate(
+            result[key]["across_seed"]["spearman"]
+        )
+        return _finite(metric.value, f"{key} Spearman")
+
     model_series = (
         (
             "Ridge (preregistered)",
@@ -1140,9 +1202,9 @@ def figure6_folding_stability() -> None:
             "-",
             1.0,
             (
-                stability["delta_mean_random"]["across_seed"]["spearman_mean"],
-                stability["delta_mean_domain"]["across_seed"]["spearman_mean"],
-                stability["delta_mean_family"]["across_seed"]["spearman_mean"],
+                stability_value(stability, "delta_mean_random"),
+                stability_value(stability, "delta_mean_domain"),
+                stability_value(stability, "delta_mean_family"),
             ),
         ),
         (
@@ -1152,9 +1214,9 @@ def figure6_folding_stability() -> None:
             "--",
             0.72,
             (
-                mlp["mlp_random"]["across_seed"]["spearman_mean"],
-                mlp["mlp_domain"]["across_seed"]["spearman_mean"],
-                mlp["mlp_family"]["across_seed"]["spearman_mean"],
+                stability_value(mlp, "mlp_random"),
+                stability_value(mlp, "mlp_domain"),
+                stability_value(mlp, "mlp_family"),
             ),
         ),
         (
@@ -1164,9 +1226,9 @@ def figure6_folding_stability() -> None:
             "--",
             0.72,
             (
-                xgb["xgb_random"]["across_seed"]["spearman_mean"],
-                xgb["xgb_domain"]["across_seed"]["spearman_mean"],
-                xgb["xgb_family"]["across_seed"]["spearman_mean"],
+                stability_value(xgb, "xgb_random"),
+                stability_value(xgb, "xgb_domain"),
+                stability_value(xgb, "xgb_family"),
             ),
         ),
     )
@@ -1192,19 +1254,9 @@ def figure6_folding_stability() -> None:
     _panel_label(transfer_axis, "A")
 
     gap_axis = figure.add_subplot(grid[0, 1])
-    gap = stability["3B_gap_ci"]
-    gap_point = gap["point_diff"]
-    gap_low = gap["ci_low"]
-    gap_high = gap["ci_high"]
-    gap_axis.errorbar(
-        [gap_point],
-        [0],
-        xerr=_ci_errors(gap_point, gap_low, gap_high),
-        fmt="o",
-        color=RED,
-        capsize=4,
-        markersize=7,
-    )
+    gap = read_seed_point_estimate(stability["3B_random_minus_family_spearman"])
+    gap_point = _finite(gap.value, "random-minus-family stability gap")
+    gap_axis.scatter([gap_point], [0], color=RED, s=55)
     family_dependence_boundary = stability["gates"]["3B"]["threshold"]
     gap_axis.axvline(
         family_dependence_boundary, color=RED, linestyle=":", linewidth=1.5
@@ -1213,7 +1265,9 @@ def figure6_folding_stability() -> None:
     gap_axis.text(
         gap_point,
         0.12,
-        f"{gap_point:.3f}\n[{gap_low:.3f}, {gap_high:.3f}]",
+        f"{gap_point:.3f}\n" + _interval_note(
+            stability.get("3B_gap_ci"), point_key="point_diff"
+        ),
         ha="center",
         va="bottom",
     )
@@ -1221,7 +1275,7 @@ def figure6_folding_stability() -> None:
     gap_axis.set_ylim(-0.25, 0.32)
     gap_axis.set_yticks([])
     gap_axis.set_xlabel("Random-minus-family Spearman correlation")
-    gap_axis.set_title("Drop exceeded preregistered tolerance", loc="left")
+    gap_axis.set_title("Random-to-family decrease", loc="left")
     _panel_label(gap_axis, "B")
 
     domain_axis = figure.add_subplot(grid[1, 1])
@@ -1235,16 +1289,15 @@ def figure6_folding_stability() -> None:
     domain_axis.hist(
         domain_correlations, bins=np.linspace(0, 0.9, 19), color=CYAN, edgecolor=WHITE
     )
-    domain_mean = stability["per_protein"]["spearman_mean"]
+    domain_mean = stability["per_protein"]["spearman_protein_mean"]
     domain_axis.axvline(
         domain_mean, color=BLUE, linewidth=1.5, label=f"Mean {domain_mean:.3f}"
     )
-    domain_std = stability["per_protein"]["spearman_std"]
-    std_ci = stability["per_protein"]["spearman_std_ci"]
+    domain_std = stability["per_protein"]["spearman_protein_std"]
     domain_axis.text(
         0.03,
         0.95,
-        f"Across-domain SD {domain_std:.3f}\n95% CI [{std_ci['ci_low']:.3f}, {std_ci['ci_high']:.3f}]",
+        f"Across-protein SD {domain_std:.3f}",
         transform=domain_axis.transAxes,
         ha="left",
         va="top",
@@ -1269,12 +1322,22 @@ def figure_s1_single_source() -> None:
     split_labels = ("Gene holdout", "Family holdout")
     split_positions = np.arange(len(split_labels))
     delta_values = (
-        _seed_mean(single_source, "gene_split", "delta_mean"),
-        _seed_mean(single_source, "family_split", "delta_mean"),
+        _mechanism_point(single_source, "gene_split", "delta_mean"),
+        _mechanism_point(single_source, "family_split", "delta_mean"),
     )
     subset_references = (
-        single_source["subset_floor"]["gene_split"]["macro_f1_mean"],
-        single_source["subset_floor"]["family_split"]["macro_f1_mean"],
+        _finite(
+            read_seed_point_estimate(
+                single_source["subset_floor"]["gene_split"]["macro_f1_seed_aggregate"]
+            ).value,
+            "single-source gene reference",
+        ),
+        _finite(
+            read_seed_point_estimate(
+                single_source["subset_floor"]["family_split"]["macro_f1_seed_aggregate"]
+            ).value,
+            "single-source family reference",
+        ),
     )
     delta_axis.scatter(
         split_positions - 0.08, delta_values, color=PURPLE, s=55, label="Delta"
@@ -1298,12 +1361,12 @@ def figure_s1_single_source() -> None:
     wildtype_axis = axes[1]
     cohort_labels = ("Merged cohort", "Gerasimavicius only")
     gene_values = (
-        _seed_mean(aggregate, "gene_split", "wt_only_mean"),
-        _seed_mean(single_source, "gene_split", "wt_only_mean"),
+        _mechanism_point(aggregate, "gene_split", "wt_only_mean"),
+        _mechanism_point(single_source, "gene_split", "wt_only_mean"),
     )
     family_values = (
-        _seed_mean(aggregate, "family_split", "wt_only_mean"),
-        _seed_mean(single_source, "family_split", "wt_only_mean"),
+        _mechanism_point(aggregate, "family_split", "wt_only_mean"),
+        _mechanism_point(single_source, "family_split", "wt_only_mean"),
     )
     cohort_positions = np.arange(len(cohort_labels))
     for position, gene_value, family_value in zip(
@@ -1347,8 +1410,15 @@ def figure_s2_stability_direction_ablation() -> None:
 
     score_axis = axes[0]
     labels = ("Baseline", "Stability direction\nremoved")
-    points = (projection["baseline_f1_mean"], projection["projected_f1_mean"])
-    errors = (projection["baseline_f1_std"], projection["projected_f1_std"])
+    # The panel draws an error bar, so the spread has to be there: the inference
+    # reader refuses a mean that has no seed spread behind it.
+    baseline = read_seed_inference(projection["baseline_f1"])
+    projected = read_seed_inference(projection["projected_f1"])
+    points = (
+        _finite(baseline.value, "stability projection baseline F1"),
+        _finite(projected.value, "stability projection projected F1"),
+    )
+    errors = (baseline.spread, projected.spread)
     positions = np.arange(len(labels))
     score_axis.errorbar(
         positions, points, yerr=errors, fmt="o", color=PURPLE, capsize=3
@@ -1361,25 +1431,21 @@ def figure_s2_stability_direction_ablation() -> None:
     _panel_label(score_axis, "A")
 
     difference_axis = axes[1]
-    difference = projection["difference_ci"]
-    difference_point = difference["point_diff"]
-    difference_low = difference["ci_low"]
-    difference_high = difference["ci_high"]
-    difference_axis.errorbar(
-        [difference_point],
-        [0],
-        xerr=_ci_errors(difference_point, difference_low, difference_high),
-        fmt="o",
-        color=PURPLE,
-        capsize=4,
-        markersize=7,
+    difference = read_seed_point_estimate(
+        projection["projected_minus_baseline_f1"]
     )
+    difference_point = _finite(
+        difference.value, "projected-minus-baseline stability difference"
+    )
+    difference_axis.scatter([difference_point], [0], color=PURPLE, s=55)
     difference_axis.axvline(0, color=GREY, linewidth=1)
     difference_axis.axvline(0.01, color=RED, linestyle=":", linewidth=1.5)
     difference_axis.text(
         difference_point,
         0.12,
-        f"{difference_point:+.4f}\n[{difference_low:+.4f}, {difference_high:+.4f}]",
+        f"{difference_point:+.4f}\n" + _interval_note(
+            projection.get("difference_ci"), point_key="point_diff"
+        ),
         ha="center",
         va="bottom",
     )
@@ -1388,7 +1454,7 @@ def figure_s2_stability_direction_ablation() -> None:
     difference_axis.set_ylim(-0.35, 0.45)
     difference_axis.set_yticks([])
     difference_axis.set_xlabel("Projected minus baseline mechanism macro-F1")
-    difference_axis.set_title("Paired family-bootstrap difference", loc="left")
+    difference_axis.set_title("Paired model-seed difference", loc="left")
     _panel_label(difference_axis, "B")
 
     _save_figure(figure, "figureS2_stability_direction_ablation")

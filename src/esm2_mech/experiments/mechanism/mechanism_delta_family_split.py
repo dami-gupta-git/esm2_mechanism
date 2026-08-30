@@ -398,17 +398,8 @@ def run(
                 )
             else:
                 print(f"  family-split {fs.get('status', 'unscorable')}")
-            if gs_f1 is not None and fs_f1 is not None:
-                delta_macro = gs_f1 - fs_f1
-                print(
-                    f"  Δ(gene − family) macro-F1 = {delta_macro:+.3f}  "
-                    f"← positive ⇒ homology leakage"
-                )
-            else:
-                print("  Δ(gene − family) macro-F1 = Unscorable")
-
             if (
-                compute_ci and not isinstance(entry, tuple)
+                not isinstance(entry, tuple)
                 and gs_oof is not None and fs_oof is not None
             ):
                 gap = paired_oof_diff(
@@ -421,6 +412,14 @@ def run(
                 )
                 if gap is not None:
                     fs["split_gap_paired"] = gap
+                    point_difference = gap.get("point_diff")
+                    if point_difference is None:
+                        print("  Row-aligned Δ(gene − family) macro-F1 = Unscorable")
+                    else:
+                        print(
+                            f"  Row-aligned Δ(gene − family) macro-F1 = "
+                            f"{point_difference:+.3f}"
+                        )
                     if gap.get("ci_low") is None:
                         print(f"  split-gap CI suppressed ({gap['n_clusters']} families)")
                     else:
@@ -437,6 +436,8 @@ def run(
                                 f"interval): [{sensitivity['ci_low']:+.4f}, "
                                 f"{sensitivity['ci_high']:+.4f}]"
                             )
+            else:
+                print("  Row-aligned Δ(gene − family) macro-F1 = Unscorable")
 
     oof_cache_path = os.path.join(out_dir, mechanism_oof_cache_filename(seed))
     if oof_cache:

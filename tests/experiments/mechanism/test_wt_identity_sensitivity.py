@@ -23,51 +23,65 @@ def test_short_protein_mask_raises_for_missing_sequence():
         sensitivity.build_short_protein_mask([{"uniprot_id": "missing"}], {})
 
 
-def _seed_result(seed, low, high):
-    gap = {"point_diff": 0.1, "ci_low": low, "ci_high": high, "n_clusters": 20}
+def _seed_result(seed, gene=0.5, family=0.4, paired_gap=None):
+    if paired_gap is None:
+        paired_gap = gene - family
     return (
         seed,
         f"seed{seed}.json",
-        {"family_split": {sensitivity.WT_ONLY_FEATURE: {"split_gap_paired": gap}}},
+        {
+            "gene_split": {
+                sensitivity.WT_ONLY_FEATURE: {
+                    "status": "success",
+                    "macro_f1_mean": gene,
+                }
+            },
+            "family_split": {
+                sensitivity.WT_ONLY_FEATURE: {
+                    "status": "success",
+                    "macro_f1_mean": family,
+                    "split_gap_paired": {"point_diff": paired_gap},
+                }
+            },
+        },
     )
 
 
-def test_split_gap_summary_applies_three_of_five_rule():
-    seed_results = [
-        _seed_result(0, 0.01, 0.20),
-        _seed_result(1, 0.02, 0.18),
-        _seed_result(2, 0.03, 0.15),
-        _seed_result(3, -0.04, 0.12),
-        _seed_result(4, -0.02, 0.10),
-    ]
+def test_split_gap_summary_pairs_values_within_seed():
+    seed_results = [_seed_result(seed, 0.5 + seed / 100, 0.4) for seed in range(5)]
 
-    summary = sensitivity.summarize_split_gap(seed_results)
+    summary = sensitivity.summarize_split_gap(seed_results, range(5))
 
-    assert summary["seed_vote"]["payload"]["supporting_seeds"] == [0, 1, 2]
-    assert summary["preregistered_rule_evaluable"] is True
-    assert summary["meets_claim_2b_interval_rule"] is True
+    aggregate = summary["gene_minus_family_seed_aggregate"]
+    assert aggregate["mean"] == pytest.approx(0.12)
+    assert aggregate["state"] == "available"
 
 
-def test_split_gap_summary_does_not_adjudicate_incomplete_run():
+def test_split_gap_summary_is_unavailable_for_incomplete_run():
     summary = sensitivity.summarize_split_gap(
-        [_seed_result(seed, 0.01, 0.20) for seed in range(4)]
+        [_seed_result(seed) for seed in range(4)], range(5)
     )
 
-    assert summary["preregistered_rule_evaluable"] is False
-    assert summary["meets_claim_2b_interval_rule"] is None
+    assert summary["gene_minus_family_seed_aggregate"]["state"] == "unavailable"
 
 
-def test_negative_interval_does_not_support_positive_leakage_gap():
+def test_split_gap_preserves_negative_within_seed_difference():
     seed_results = [
-        _seed_result(0, -0.20, -0.01),
-        _seed_result(1, 0.01, 0.20),
-        _seed_result(2, 0.02, 0.18),
-        _seed_result(3, -0.04, 0.12),
-        _seed_result(4, -0.02, 0.10),
+        _seed_result(0, gene=0.3, family=0.4),
+        *[_seed_result(seed, gene=0.5, family=0.4) for seed in range(1, 5)],
     ]
 
-    summary = sensitivity.summarize_split_gap(seed_results)
+    summary = sensitivity.summarize_split_gap(seed_results, range(5))
 
-    assert summary["seed_vote"]["payload"]["supporting_seeds"] == [1, 2]
-    assert summary["contradictory_seeds"] == [0]
-    assert summary["meets_claim_2b_interval_rule"] is False
+    assert summary["gene_minus_family_seed_aggregate"]["mean"] == pytest.approx(0.06)
+
+
+def test_split_gap_uses_stored_row_aligned_estimate():
+    seed_results = [
+        _seed_result(seed, gene=0.9, family=0.1, paired_gap=0.2)
+        for seed in range(5)
+    ]
+
+    summary = sensitivity.summarize_split_gap(seed_results, range(5))
+
+    assert summary["gene_minus_family_seed_aggregate"]["mean"] == pytest.approx(0.2)

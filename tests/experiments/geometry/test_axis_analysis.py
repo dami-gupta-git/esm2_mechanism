@@ -30,9 +30,11 @@ def test_axis_associations_are_scored_across_held_out_family_folds():
     )
 
     correlation = result["correlations"]["known_signal"]
-    assert correlation["n"] == 10
+    assert correlation["requested_seeds"] == [0, 1]
+    assert correlation["contributing_seeds"] == [0, 1]
+    assert correlation["seed_std"] is None
     assert correlation["mean"] > 0.8
-    assert result["regression_r2"]["n"] == 10
+    assert result["regression_r2"]["contributing_seeds"] == [0, 1]
 
 
 def test_axis_analysis_rejects_misaligned_features():

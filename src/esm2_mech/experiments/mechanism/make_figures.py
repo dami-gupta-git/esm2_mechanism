@@ -14,6 +14,7 @@ import numpy as np
 
 from esm2_mech.utils.constants import MECHANISM_CLASSES
 from esm2_mech.experiments.mechanism.seed_results import read_feature_metric
+from esm2_mech.utils.seed_aggregation import read_seed_inference, read_seed_point_estimate
 from esm2_mech.utils.paths import (
     FAMILY_CLUSTERING_JSON,
     FIGURES_DIR,
@@ -80,7 +81,21 @@ def _mechanism_metric(across_seed, split, feature, metric="macro_f1", *, require
 def _mechanism_chance():
     """Measured majority-class macro-F1 floor (gene-split) for mechanism."""
     nb = _load_json(NAIVE_BASELINE_JSON)
-    return float(nb["by_strategy"]["most_frequent"]["gene"]["macro_f1_mean"])
+    metric = read_seed_point_estimate(
+        nb["by_strategy"]["most_frequent"]["gene"]["macro_f1_seed_aggregate"]
+    )
+    if not metric.available:
+        raise ValueError(f"mechanism chance floor is unavailable: {metric.message}")
+    return metric.value
+
+
+def _pathogenicity_metric(result, feature, arm):
+    metric = read_seed_inference(
+        result["by_feature"][feature][arm]["metrics"]["auroc"]
+    )
+    if not metric.available:
+        raise ValueError(f"{feature} {arm} AUROC is unavailable: {metric.message}")
+    return metric
 
 
 def fig_dissociation():
@@ -92,13 +107,17 @@ def fig_dissociation():
     fig, (ax_path, ax_mech) = plt.subplots(1, 2, figsize=(11, 4.5))
 
     path_feats = [("delta_mean", "delta_mean"), ("wt_only", "wt_only")]
+    path_gene = [_pathogenicity_metric(path, key, "mlp_gene") for key, _ in path_feats]
+    path_family = [
+        _pathogenicity_metric(path, key, "mlp_family") for key, _ in path_feats
+    ]
     _grouped_split_bars(
         ax_path,
         labels=[lab for _, lab in path_feats],
-        gene_vals=[path["by_feature"][key]["mlp_gene"]["auroc_mean"] for key, _ in path_feats],
-        gene_err=[path["by_feature"][key]["mlp_gene"]["auroc_std"] for key, _ in path_feats],
-        family_vals=[path["by_feature"][key]["mlp_family"]["auroc_mean"] for key, _ in path_feats],
-        family_err=[path["by_feature"][key]["mlp_family"]["auroc_std"] for key, _ in path_feats],
+        gene_vals=[metric.value for metric in path_gene],
+        gene_err=[metric.spread for metric in path_gene],
+        family_vals=[metric.value for metric in path_family],
+        family_err=[metric.spread for metric in path_family],
     )
     ax_path.axhline(0.5, ls="--", c="grey", lw=1)
     ax_path.text(0.02, 0.5, "no-skill 0.50", transform=ax_path.get_yaxis_transform(),
@@ -241,14 +260,14 @@ def fig_within_family():
 
     rows = []
     for fam, cell in data.items():
-        delta_mlp = cell["delta"]["mlp"]["macro_f1"]
-        mean = delta_mlp["mean"]
-        std = delta_mlp["std"]
-        base = cell["majority_reference"]["macro_f1_mean"]
-        if _is_nan(mean) or _is_nan(base):
+        # The bar is a difference, so its error bar has to be the spread of the
+        # within-seed differences, not one arm's spread.
+        lift = read_seed_inference(cell["delta_mlp_minus_majority_seed_aggregate"])
+        if not lift.available:
+            print(f"  [omitted] {fam}: {lift.message}")
             continue
         singleton_class = min(cell["gene_class_counts"].values()) <= 1
-        rows.append((fam, cell["n_genes"], mean - base, std, singleton_class))
+        rows.append((fam, cell["n_genes"], lift.value, lift.spread, singleton_class))
 
     rows.sort(key=lambda r: r[2])
     labels = [f"{fam} (n={ng})" for fam, ng, _, _, _ in rows]
@@ -265,7 +284,10 @@ def fig_within_family():
     ax.axvline(0.0, c="black", lw=1)
     ax.set_yticks(y)
     ax.set_yticklabels(labels, fontsize=8)
-    ax.set_xlabel("delta macro-F1 − family majority baseline (5-seed mean ± std)")
+    ax.set_xlabel(
+        "delta macro-F1 − family majority baseline "
+        "(mean of within-seed differences ± seed SD)"
+    )
     ax.set_title("Within each family, the delta does not reliably beat the family's\n"
                  "own majority baseline (small, noisy families)")
     hatched = plt.Rectangle((0, 0), 1, 1, facecolor="lightgrey",
@@ -290,13 +312,20 @@ def fig_family_clustering():
     fig, (ax_pur, ax_probe) = plt.subplots(1, 2, figsize=(11, 4.5))
     x = np.arange(len(views))
 
-    purity = [bv[key]["knn5_purity"] for key, _ in views]
-    purity_null = float(np.mean([bv[key]["knn5_purity_null"] for key, _ in views]))
+    purity_metrics = [
+        read_seed_inference(bv[key]["knn5_purity_seed_aggregate"])
+        for key, _ in views
+    ]
+    null_metrics = [
+        read_seed_inference(bv[key]["knn5_purity_null_seed_aggregate"])
+        for key, _ in views
+    ]
+    if not all(metric.available for metric in purity_metrics + null_metrics):
+        raise ValueError("family-clustering purity summaries are unavailable")
+    purity = [metric.value for metric in purity_metrics]
+    purity_null = [metric.value for metric in null_metrics]
     ax_pur.bar(x, purity, color=GENE_COLOR, width=0.6)
-    ax_pur.axhline(purity_null, ls="--", c="grey", lw=1)
-    ax_pur.text(0.02, purity_null, f"shuffled-label null {purity_null:.3f}",
-                transform=ax_pur.get_yaxis_transform(), va="bottom", ha="left",
-                fontsize=8, color="grey")
+    ax_pur.scatter(x, purity_null, marker="o", facecolor="white", edgecolor="grey")
     ax_pur.set_xticks(x)
     ax_pur.set_xticklabels([lab for _, lab in views], rotation=15, ha="right")
     ax_pur.set_ylabel("k=5 family purity")
@@ -304,38 +333,29 @@ def fig_family_clustering():
 
     probe_blocks = [bv[key]["family_probe"] for key, _ in views]
     for position, block in zip(x, probe_blocks):
-        accuracy = block.get("accuracy")
-        if accuracy is None:
+        accuracy = read_seed_inference(block.get("accuracy_seed_aggregate", {}))
+        if not accuracy.available:
             ax_probe.text(position, 0.03, "Unscorable", ha="center", va="bottom", fontsize=8)
             continue
         ax_probe.bar(
             position,
-            accuracy,
-            yerr=block.get("accuracy_std"),
+            accuracy.value,
+            yerr=accuracy.spread,
             capsize=3,
             color=FAMILY_COLOR,
             width=0.6,
         )
     probe_bases = [
-        block.get("majority_baseline_acc")
-        for block in probe_blocks
-        if block.get("majority_baseline_acc") is not None
-    ]
-    if probe_bases:
-        if not all(np.isclose(value, probe_bases[0]) for value in probe_bases):
-            raise ValueError("Family-probe majority references differ across views")
-        probe_base = probe_bases[0]
-        ax_probe.axhline(probe_base, ls="--", c="grey", lw=1)
-        ax_probe.text(
-            0.02,
-            probe_base,
-            f"majority-family baseline {probe_base:.3f}",
-            transform=ax_probe.get_yaxis_transform(),
-            va="bottom",
-            ha="left",
-            fontsize=8,
-            color="grey",
+        read_seed_inference(
+            block.get("majority_baseline_accuracy_seed_aggregate", {})
         )
+        for block in probe_blocks
+    ]
+    for position, baseline in zip(x, probe_bases):
+        if baseline.available:
+            ax_probe.scatter(
+                position, baseline.value, marker="_", color="grey", s=120
+            )
     ax_probe.set_xticks(x)
     ax_probe.set_xticklabels([lab for _, lab in views], rotation=15, ha="right")
     ax_probe.set_ylabel("Family-probe accuracy")

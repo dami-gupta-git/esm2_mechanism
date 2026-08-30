@@ -8,22 +8,36 @@ from sklearn.linear_model import LogisticRegression, Ridge
 from sklearn.metrics import r2_score
 from sklearn.preprocessing import StandardScaler
 
-from esm2_mech.utils.metrics import mean_std_n
+from esm2_mech.utils.constants import N_FOLDS, N_SEEDS
+from esm2_mech.utils.seed_aggregation import (
+    aggregate_seed_values,
+    make_seed_record,
+    read_seed_point_estimate,
+)
 from esm2_mech.utils.splits import family_split_cv
 
 
-def _summary(values: list[float]) -> dict:
-    mean, std, count = mean_std_n(values)
-    if count == 0:
-        return {"mean": None, "std": None, "n": 0, "missing": True}
-    return {"mean": mean, "std": std, "n": count, "missing": False}
+def _seed_summary(seeds, values_by_seed: dict[int, list[float]]) -> dict:
+    records = []
+    for seed in seeds:
+        fold_values = values_by_seed[seed]
+        within_seed_mean = (
+            float(np.mean(fold_values))
+            if len(fold_values) == N_FOLDS and np.isfinite(fold_values).all()
+            else None
+        )
+        records.append(make_seed_record(seed, within_seed_mean))
+    return aggregate_seed_values(seeds, records).to_dict()
 
 
 def format_axis_summary(summary: dict) -> str:
     """Format a summary without turning a missing estimate into a number."""
-    if summary["missing"]:
-        return "unavailable (n=0)"
-    return f"{summary['mean']:+.3f} ± {summary['std']:.3f} (n={summary['n']})"
+    metric = read_seed_point_estimate(summary)
+    if not metric.available:
+        return f"unavailable ({metric.message})"
+    spread = metric.spread
+    spread_text = "spread unavailable" if spread is None else f"seed SD {spread:.3f}"
+    return f"{metric.value:+.3f} ({spread_text})"
 
 
 def family_held_out_axis_analysis(
@@ -33,7 +47,7 @@ def family_held_out_axis_analysis(
     pfam_map: dict,
     association_features: dict[str, np.ndarray],
     regression_features: np.ndarray | None = None,
-    seeds=range(5),
+    seeds=range(N_SEEDS),
 ) -> dict:
     """Estimate axis associations without using a held-out family's labels.
 
@@ -63,9 +77,12 @@ def family_held_out_axis_analysis(
             f"expected {n_rows}"
         )
 
-    correlations = {name: [] for name in feature_arrays}
-    r2_values = []
-    for seed in seeds:
+    requested_seeds = tuple(seeds)
+    correlations = {
+        name: {seed: [] for seed in requested_seeds} for name in feature_arrays
+    }
+    r2_values = {seed: [] for seed in requested_seeds}
+    for seed in requested_seeds:
         for train_rows, test_rows in family_split_cv(genes, pfam_map, seed=seed):
             if (
                 len(np.unique(labels[train_rows])) < 2
@@ -85,7 +102,7 @@ def family_held_out_axis_analysis(
             for name, values in feature_arrays.items():
                 correlation = spearmanr(test_scores, values[test_rows]).correlation
                 if np.isfinite(correlation):
-                    correlations[name].append(float(correlation))
+                    correlations[name][seed].append(float(correlation))
 
             if regression_features is not None and len(test_rows) >= 2:
                 feature_scaler = StandardScaler().fit(regression_features[train_rows])
@@ -96,13 +113,14 @@ def family_held_out_axis_analysis(
                 ridge = Ridge(alpha=1.0).fit(train_features, train_scores)
                 value = r2_score(test_scores, ridge.predict(test_features))
                 if np.isfinite(value):
-                    r2_values.append(float(value))
+                    r2_values[seed].append(float(value))
 
     result = {
         "correlations": {
-            name: _summary(values) for name, values in correlations.items()
+            name: _seed_summary(requested_seeds, values_by_seed)
+            for name, values_by_seed in correlations.items()
         }
     }
     if regression_features is not None:
-        result["regression_r2"] = _summary(r2_values)
+        result["regression_r2"] = _seed_summary(requested_seeds, r2_values)
     return result

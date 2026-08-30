@@ -14,7 +14,7 @@ import os
 from dataclasses import dataclass
 from enum import Enum
 from numbers import Real
-from typing import Any, Iterable, Mapping
+from typing import Any, Callable, Iterable, Mapping
 
 import numpy as np
 
@@ -218,6 +218,11 @@ def seed_result_contract(seed: int, *, status: str = SEED_STATUS_SUCCESS) -> dic
     }
 
 
+def aggregate_result_contract() -> dict:
+    """Root field every across-seed aggregate result file declares."""
+    return {SEED_SCHEMA_KEY: SEED_AGGREGATION_SCHEMA_VERSION}
+
+
 def read_seed_result_contract(seed: int, source: str, result: Mapping) -> str:
     """Return the declared root status of one per-seed result file."""
     version = result.get(SEED_SCHEMA_KEY)
@@ -234,6 +239,22 @@ def read_seed_result_contract(seed: int, source: str, result: Mapping) -> str:
     status = result.get(SEED_STATUS_KEY)
     if status not in SEED_STATUSES:
         raise ValueError(f"{source}: root seed status {status!r} is not a seed status")
+    return status
+
+
+def block_seed_status(block: Any) -> str:
+    """The status a nested result block declares, preserving how it ended.
+
+    A block that broke declares 'failed' and a block whose data could not support
+    the metric declares 'unscorable'. Rewriting the first as the second reports a
+    crashed arm as a property of the data, so the declared status passes through
+    unchanged. A block that is absent entirely never ran, which is a failure.
+    """
+    if not isinstance(block, dict):
+        return SEED_STATUS_FAILED
+    status = block.get("status")
+    if status not in SEED_STATUSES:
+        raise ValueError(f"result block status {status!r} is not a seed status")
     return status
 
 
@@ -481,6 +502,32 @@ def aggregate_seed_values(
         sampling_unit=SEED_SAMPLING_UNIT,
         message=None,
     )
+
+
+def aggregate_seed_results(
+    requested_seeds: Iterable[int],
+    results: Iterable[Mapping],
+    value: Callable[[Mapping], float | int | None],
+    *,
+    status: Callable[[Mapping], str] | None = None,
+) -> SeedAggregate:
+    """Aggregate one value from each current-schema per-seed result.
+
+    Experiment modules supply only their local value and optional nested-status
+    lookups. Seed identity, root status, validation, and arithmetic stay here.
+    """
+    records = []
+    for result in results:
+        seed = result.get("seed")
+        if isinstance(seed, bool) or not isinstance(seed, int):
+            raise ValueError("a per-seed result has no integer seed identifier")
+        root_status = read_seed_result_contract(seed, f"seed {seed}", result)
+        metric_status = root_status
+        if root_status == SEED_STATUS_SUCCESS and status is not None:
+            metric_status = status(result)
+        metric_value = value(result) if metric_status == SEED_STATUS_SUCCESS else None
+        records.append(make_seed_record(seed, metric_value, status=metric_status))
+    return aggregate_seed_values(requested_seeds, records)
 
 
 def aggregate_seed_vote(

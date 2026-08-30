@@ -35,6 +35,13 @@ from esm2_mech.experiments.stability.megascale_stability import (
 from esm2_mech.utils.constants import BOOTSTRAP_N_RESAMPLES, N_SEEDS
 from esm2_mech.utils.io import write_result_json
 from esm2_mech.utils.metrics import auroc_at_median, mean_std_n, standardize
+from esm2_mech.utils.seed_aggregation import (
+    SEED_STATUS_UNSCORABLE,
+    aggregate_result_contract,
+    aggregate_seed_results,
+    read_seed_point_estimate,
+    seed_result_contract,
+)
 
 os.makedirs(OUT, exist_ok=True)
 
@@ -194,21 +201,35 @@ def run_mlp_regression(
             oof_indices.append(np.asarray(te))
             oof_folds.append(np.full(len(te), fold_i, dtype=int))
 
-    if not rhos:
-        result = {}
-    else:
-        rho_mean, rho_std, n_rho = mean_std_n(rhos)
+    # Each metric is judged on its own folds: a fold whose AUROC is undefined
+    # says nothing about the rank correlation measured on the same fold.
+    def _metric_status(fold_values):
+        return (
+            "success"
+            if fold_values and all(np.isfinite(value) for value in fold_values)
+            else SEED_STATUS_UNSCORABLE
+        )
+
+    result = {
+        "status": "success" if rhos else SEED_STATUS_UNSCORABLE,
+        "spearman_status": _metric_status(rhos),
+        "pearson_status": _metric_status(rs),
+        "auroc_status": _metric_status(aurocs),
+        "n_folds": len(rhos),
+        "sampling_unit": "cv_fold",
+    }
+    if result["spearman_status"] == "success":
+        rho_mean, rho_std, _ = mean_std_n(rhos)
+        result["spearman_mean"] = rho_mean
+        result["spearman_fold_std"] = rho_std
+    if result["pearson_status"] == "success":
         r_mean, r_std, _ = mean_std_n(rs)
+        result["pearson_mean"] = r_mean
+        result["pearson_fold_std"] = r_std
+    if result["auroc_status"] == "success":
         au_mean, au_std, _ = mean_std_n(aurocs)
-        result = {
-            "spearman_mean": rho_mean,
-            "spearman_std": rho_std,
-            "pearson_mean": r_mean,
-            "pearson_std": r_std,
-            "auroc_mean": au_mean,
-            "auroc_std": au_std,
-            "n_folds": n_rho,
-        }
+        result["auroc_mean"] = au_mean
+        result["auroc_fold_std"] = au_std
     if not return_oof:
         return result
     oof = None
@@ -223,12 +244,26 @@ def run_mlp_regression(
     return result, oof
 
 
+def _show(summary):
+    metric = read_seed_point_estimate(summary)
+    if not metric.available:
+        return f"unavailable ({metric.message})"
+    spread = metric.spread
+    return (
+        f"{metric.value:.3f}"
+        if spread is None
+        else f"{metric.value:.3f}±{spread:.3f} seed SD"
+    )
+
+
 
 def main(
     use_xgboost=False,
+    n_seeds=N_SEEDS,
     compute_ci=True,
     n_boot=BOOTSTRAP_N_RESAMPLES,
 ):
+    requested_seeds = tuple(range(n_seeds))
     inputs = load_stability_inputs()
     variants = inputs.variants
     proteins = inputs.proteins
@@ -323,9 +358,9 @@ def main(
     for probe_name, run_probe in probe_runners:
         print(f"\n── {probe_name.upper()} ──")
         for split_name in split_names:
-            rhos, aurocs = [], []
+            per_seed = []
             seed0_ci = None
-            for seed in range(N_SEEDS):
+            for seed in requested_seeds:
                 splits = build_splits(split_name, seed)
                 if probe_name == "mlp":
                     collect_oof = compute_ci and seed == 0
@@ -336,7 +371,7 @@ def main(
                         seed=seed,
                         median=global_median,
                         validation_groups=_validation_groups(split_name),
-                        clusters=_ci_clusters(split_name),
+                        clusters=_ci_clusters(split_name) if collect_oof else None,
                         return_oof=collect_oof,
                     )
                     if collect_oof:
@@ -349,32 +384,43 @@ def main(
                         res = mlp_result
                 else:
                     res = run_probe(X, ddg, splits, seed)
-                if res:
-                    rhos.append(res["spearman_mean"])
-                    aurocs.append(res["auroc_mean"])
+                status = res["status"]
+                per_seed.append(
+                    {
+                        **seed_result_contract(seed, status=status),
+                        "result": res,
+                    }
+                )
             key = f"{probe_name}_{split_name}"
-            rho_mean, rho_std, n_seeds_used = mean_std_n(rhos)
-            au_mean, au_std, _ = mean_std_n(aurocs)
-            if n_seeds_used == 0:
-                print(f"  {split_name:8s}: no valid folds across {N_SEEDS} seeds — skipped")
-                continue
+            spearman = aggregate_seed_results(
+                requested_seeds,
+                per_seed,
+                lambda seed_result: seed_result["result"].get("spearman_mean"),
+                status=lambda seed_result: seed_result["result"]["spearman_status"],
+            ).to_dict()
+            auroc = aggregate_seed_results(
+                requested_seeds,
+                per_seed,
+                lambda seed_result: seed_result["result"].get("auroc_mean"),
+                status=lambda seed_result: seed_result["result"]["auroc_status"],
+            ).to_dict()
             summary[key] = {
                 "across_seed": {
-                    "spearman_mean": rho_mean,
-                    "spearman_std": rho_std,
-                    "auroc_mean": au_mean,
-                    "auroc_std": au_std,
-                    "n_seeds": n_seeds_used,
+                    "spearman": spearman,
+                    "auroc": auroc,
                 },
+                "per_seed_fold_summaries": per_seed,
             }
             if seed0_ci is not None:
+                # A within-seed interval on seed 0's estimate. It is a separate
+                # field from the across-seed aggregate and is not a seed spread.
                 summary[key]["seed0_inference"] = {
+                    "seed": 0,
                     "point_estimate": seed0_ci.get("point"),
                     "ci": seed0_ci,
                 }
             print(
-                f"  {split_name:8s}: ρ={rho_mean:.3f}±{rho_std:.3f}  "
-                f"AUROC={au_mean:.3f}±{au_std:.3f}"
+                f"  {split_name:8s}: ρ={_show(spearman)}  AUROC={_show(auroc)}"
             )
 
     # Final comparison table
@@ -385,18 +431,21 @@ def main(
     )
     for probe_name, _ in probe_runners:
         probe = probe_name
-        rnd = summary.get(f"{probe}_random", {}).get("across_seed", {}).get(
-            "spearman_mean", float("nan")
-        )
-        dom = summary.get(f"{probe}_domain", {}).get("across_seed", {}).get(
-            "spearman_mean", float("nan")
-        )
-        fam = summary.get(f"{probe}_family", {}).get("across_seed", {}).get(
-            "spearman_mean", float("nan")
-        )
-        fau = summary.get(f"{probe}_family", {}).get("across_seed", {}).get(
-            "auroc_mean", float("nan")
-        )
+        rnd = read_seed_point_estimate(
+            summary[f"{probe}_random"]["across_seed"]["spearman"]
+        ).value
+        dom = read_seed_point_estimate(
+            summary[f"{probe}_domain"]["across_seed"]["spearman"]
+        ).value
+        fam = read_seed_point_estimate(
+            summary[f"{probe}_family"]["across_seed"]["spearman"]
+        ).value
+        fau = read_seed_point_estimate(
+            summary[f"{probe}_family"]["across_seed"]["auroc"]
+        ).value
+        if any(value is None for value in (rnd, dom, fam, fau)):
+            print(f"  {probe.upper():6s}  unavailable")
+            continue
         print(
             f"  {probe.upper():6s}  {rnd:>9.3f}  {dom:>9.3f}  {fam:>9.3f}  "
             f"{rnd-fam:>10.3f}  {fau:>13.3f}"
@@ -406,15 +455,16 @@ def main(
     # Separate output file for the xgboost variant so it never overwrites the
     # default sklearn comparison (mlp_summary.json).
     out_name = "mlp_summary_xgb.json" if use_xgboost else "mlp_summary.json"
-    summary["result_version"] = 3
+    summary.update(aggregate_result_contract())
+    summary["result_version"] = 4
     summary["input_fingerprints"] = input_fingerprints
     summary["analysis_parameters"] = {
-        "n_seeds": N_SEEDS,
+        "n_seeds": n_seeds,
         "compute_ci": compute_ci,
         "n_boot": n_boot,
         "probe_mode": "xgboost" if use_xgboost else "mlp_and_random_forest",
     }
-    write_result_json(os.path.join(OUT, out_name), summary, seeds=list(range(N_SEEDS)))
+    write_result_json(os.path.join(OUT, out_name), summary, seeds=list(requested_seeds))
     print(f"\nResults written to {os.path.join(OUT, out_name)}")
 
 
@@ -428,6 +478,7 @@ if __name__ == "__main__":
         help="Use GPU XGBoost (probe 'xgb') instead of sklearn RF/GBM. Faster on "
         "large high-dim data; writes mlp_summary_xgb.json. Requires xgboost installed.",
     )
+    parser.add_argument("--seeds", type=int, default=N_SEEDS)
     parser.add_argument(
         "--no_ci",
         action="store_true",
@@ -437,6 +488,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
     main(
         use_xgboost=args.xgboost,
+        n_seeds=args.seeds,
         compute_ci=not args.no_ci,
         n_boot=args.n_boot,
     )

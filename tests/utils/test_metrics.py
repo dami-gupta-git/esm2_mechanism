@@ -35,10 +35,27 @@ from esm2_mech.utils.metrics import (
     auroc_at_median,
     family_frequency_reference,
     featureless_reference,
+    null_standard_score,
     training_frequency_reference,
 )
 from esm2_mech.utils.probes import _per_gene_f1 as per_gene_f1
 from esm2_mech.utils.constants import MECHANISM_CLASSES, GOF, DN, LOF
+
+
+def test_null_standard_score_uses_sample_spread():
+    result = null_standard_score(4.0, [1.0, 2.0, 3.0])
+
+    assert result["state"] == "available"
+    assert result["null_draw_std"] == pytest.approx(1.0)
+    assert result["z_score"] == pytest.approx(2.0)
+
+
+def test_null_standard_score_refuses_zero_spread():
+    result = null_standard_score(2.0, [1.0, 1.0, 1.0])
+
+    assert result["state"] == "unavailable"
+    assert result["reason"] == "zero_null_draw_spread"
+    assert result["z_score"] is None
 
 
 def test_family_frequency_reference_uses_training_families_and_global_unseen_rule():

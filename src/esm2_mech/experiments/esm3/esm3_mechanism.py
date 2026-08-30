@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import functools
 import json
-import math
 import sys
 from pathlib import Path
 
@@ -26,10 +25,19 @@ from esm2_mech.utils.paths import (
     SEQUENCES_JSON,
     VALID_VARIANTS_JSON,
 )
+from esm2_mech.utils.seed_aggregation import (
+    aggregate_paired_seed_difference,
+    aggregate_result_contract,
+    aggregate_seed_results,
+    block_seed_status,
+    make_seed_record,
+    read_seed_point_estimate,
+    seed_result_contract,
+)
 from esm2_mech.utils.constants import (
     BOOTSTRAP_N_RESAMPLES,
     DELTA_MEAN_FEATURE, DN, GOF, HTTP_USER_AGENT, LOF, MECHANISM_CLASSES,
-    MIN_TRAIN_CLASSES, N_FOLDS, N_SEEDS, SPLIT_FAMILY, nonlinear_key,
+    N_FOLDS, N_SEEDS, SPLIT_FAMILY, nonlinear_key,
 )
 from esm2_mech.fetch_data.uniprot_fetch import TransientFetchError, fetch_with_retries
 from esm2_mech.utils.bootstrap import (
@@ -48,7 +56,7 @@ from esm2_mech.utils.io import (
     load_json_or_discard,
     save_npy,
 )
-from esm2_mech.utils.metrics import aggregate_folds, align_proba, compute_metrics, mean_std_n
+from esm2_mech.utils.metrics import aggregate_folds, align_proba, compute_metrics
 from esm2_mech.utils.probes import run_mlp_probe_cv
 from esm2_mech.utils.classification import validate_complete_classification_splits
 from esm2_mech.utils.sequences import apply_missense, window_sequence
@@ -125,7 +133,7 @@ def esm2_matched_delta(n_variants: int, valid_idx: np.ndarray | None) -> np.ndar
 
 def esm2_family_floor(seeds: list[int] = SEEDS) -> tuple[float, str]:
     """Return (floor, source) for the ESM-2 family-split macro-F1 baseline."""
-    values = []
+    results = []
     for seed in seeds:
         path = Path(NONLINEAR_RESULTS_SEED_JSON.format(seed=seed))
         with open(path) as fh:
@@ -133,14 +141,17 @@ def esm2_family_floor(seeds: list[int] = SEEDS) -> tuple[float, str]:
         entry = data.get(MLP_DELTA_MEAN_FAMILY)
         if not entry or "macro_f1_mean" not in entry:
             raise KeyError(f"{MLP_DELTA_MEAN_FAMILY}.macro_f1_mean missing from {path}")
-        value = entry["macro_f1_mean"]
-        if value is None or not math.isfinite(value):
-            raise ValueError(
-                f"{MLP_DELTA_MEAN_FAMILY}.macro_f1_mean is {value!r} in {path}"
-            )
-        values.append(float(value))
-    return float(np.mean(values)), (
-        f"nonlinear_results ({MLP_DELTA_MEAN_FAMILY}, {len(values)}-seed mean, "
+        results.append(data)
+    aggregate = aggregate_seed_results(
+        seeds,
+        results,
+        lambda result: result[MLP_DELTA_MEAN_FAMILY].get("macro_f1_mean"),
+    )
+    metric = read_seed_point_estimate(aggregate)
+    if not metric.available:
+        raise ValueError(metric.message)
+    return metric.value, (
+        f"nonlinear_results ({MLP_DELTA_MEAN_FAMILY}, {len(seeds)}-seed mean, "
         f"seeds={list(seeds)})"
     )
 
@@ -644,6 +655,7 @@ def phase3_probes(
         )
 
     results = {}
+    f1_records_by_arm: dict[tuple[str, str], list] = {}
     oof_by_arm: dict[tuple[str, str], dict] = {}
 
     for cond, delta in cond_arrays.items():
@@ -652,7 +664,6 @@ def phase3_probes(
                 f"{cond}: delta rows {delta.shape[0]} != labels {len(y)} — valid index mismatch"
             )
         print(f"\n=== Condition: {cond}  shape={delta.shape} ===")
-        y_cond = y
         labels_cond = labels_valid
         genes_cond = genes_valid
 
@@ -665,8 +676,7 @@ def phase3_probes(
                 lambda seed: family_split_cv(genes_cond, pfam_map, N_FOLDS, seed),
             ),
         ]:
-            mlp_f1s, mlp_gof, mlp_dn, mlp_lof = [], [], [], []
-            lr_f1s = []
+            seed_runs = []
             seed_oof_by_seed = {}
 
             for seed in seeds:
@@ -708,65 +718,86 @@ def phase3_probes(
                     label=f"{cond}_{cv_name}_seed{seed}",
                     return_oof=True,
                 )
-                if compute_ci:
-                    seed_oof_by_seed[seed] = oof
-                mlp_f1s.append(agg["macro_f1_mean"])
-                mlp_gof.append(agg.get(f"auroc_{GOF}_mean", float("nan")))
-                mlp_dn.append(agg.get(f"auroc_{DN}_mean", float("nan")))
-                mlp_lof.append(agg.get(f"auroc_{LOF}_mean", float("nan")))
-
+                seed_oof_by_seed[seed] = oof
                 # Logistic regression, over the same fold set.
                 lr_agg = _run_logreg_folds(
                     delta, labels_cond, splits, split_contract, seed
                 )
-                lr_f1s.append(
-                    None if lr_agg is None else lr_agg["macro_f1_mean"]
+                seed_runs.append(
+                    {
+                        **seed_result_contract(seed),
+                        "mlp": agg,
+                        "logreg": (
+                            lr_agg
+                            if lr_agg is not None
+                            else {"status": "unscorable", "macro_f1_mean": None}
+                        ),
+                    }
                 )
 
-            if not mlp_f1s:
+            if not seed_runs:
                 continue
 
-            def _seed_summary(values):
-                if len(values) != len(seeds) or any(
-                    value is None or not np.isfinite(value) for value in values
-                ):
-                    return None, None, sum(
-                        value is not None and np.isfinite(value) for value in values
-                    )
-                return float(np.mean(values)), float(np.std(values)), len(values)
-
-            f1_mean, f1_std, n_seeds_scored = _seed_summary(mlp_f1s)
-            lr_mean, lr_std, _ = _seed_summary(lr_f1s)
-            r = {
-                "mlp_f1_mean": f1_mean,
-                "mlp_f1_std": f1_std,
-                "mlp_gof_auroc_mean": _seed_summary(mlp_gof)[0],
-                "mlp_dn_auroc_mean": _seed_summary(mlp_dn)[0],
-                "mlp_lof_auroc_mean": _seed_summary(mlp_lof)[0],
-                "lr_f1_mean": lr_mean,
-                "lr_f1_std": lr_std,
-                "n_seeds": n_seeds_scored,
-            }
-            if compute_ci:
-                # The family split excludes unannotated genes from every fold, so
-                # only those rows are scored and can be declared.
-                rows = (
-                    np.arange(len(labels_cond))
-                    if cv_name == "gene_split"
-                    else np.flatnonzero(annotated_gene_mask(genes_cond, pfam_map))
-                )
-                combined_result = aggregate_oof_dicts(
+            def arm_aggregate(arm, metric):
+                return aggregate_seed_results(
                     seeds,
-                    seed_oof_by_seed,
-                    declared_row_ids=rows,
-                    declared_labels=labels_cond[rows],
-                    declared_clusters=genes_cond[rows],
-                    class_order=MECHANISM_CLASSES,
-                    declared_fold_ids=range(N_FOLDS),
+                    seed_runs,
+                    lambda result: result[arm].get(metric),
+                    status=lambda result: block_seed_status(result[arm]),
                 )
+
+            seed_aggregates = {
+                "mlp_f1": arm_aggregate("mlp", "macro_f1_mean"),
+                "mlp_gof_auroc": arm_aggregate("mlp", f"auroc_{GOF}_mean"),
+                "mlp_dn_auroc": arm_aggregate("mlp", f"auroc_{DN}_mean"),
+                "mlp_lof_auroc": arm_aggregate("mlp", f"auroc_{LOF}_mean"),
+                "lr_f1": arm_aggregate("logreg", "macro_f1_mean"),
+            }
+            metric_reads = {
+                name: read_seed_point_estimate(aggregate)
+                for name, aggregate in seed_aggregates.items()
+            }
+            f1_records_by_arm[(cond, cv_name)] = [
+                make_seed_record(
+                    result["seed"],
+                    result["mlp"].get("macro_f1_mean"),
+                    status=block_seed_status(result["mlp"]),
+                )
+                for result in seed_runs
+            ]
+            r = {
+                **{
+                    f"{name}_seed_aggregate": aggregate.to_dict()
+                    for name, aggregate in seed_aggregates.items()
+                },
+            }
+            # The family split excludes unannotated genes from every fold, so
+            # only those rows are scored and can be declared.
+            rows = (
+                np.arange(len(labels_cond))
+                if cv_name == "gene_split"
+                else np.flatnonzero(annotated_gene_mask(genes_cond, pfam_map))
+            )
+            combined_result = aggregate_oof_dicts(
+                seeds,
+                seed_oof_by_seed,
+                declared_row_ids=rows,
+                declared_labels=labels_cond[rows],
+                declared_clusters=genes_cond[rows],
+                class_order=MECHANISM_CLASSES,
+                declared_fold_ids=range(N_FOLDS),
+            )
+            oof_alignment = combined_result.to_dict()
+            oof_alignment.pop("payload")
+            r["oof_alignment"] = oof_alignment
+            if combined_result.available:
                 combined_oof = combined_result.payload
-                if combined_result.available:
-                    oof_by_arm[(cond, cv_name)] = combined_oof
+                oof_by_arm[(cond, cv_name)] = combined_oof
+                if compute_ci:
+                    # A bootstrap over the seed-combined out-of-fold predictions:
+                    # a resampling uncertainty on this arm's estimate, stored
+                    # under its own key. The seed aggregates above keep the
+                    # across-seed mean and the seed spread separately.
                     clusters = family_or_gene_clusters(
                         combined_oof["genes"], pfam_map,
                         is_family_split=(cv_name == "family_split"),
@@ -780,18 +811,19 @@ def phase3_probes(
                         seed=0,
                     )
             cond_results[cv_name] = r
-            if r["mlp_f1_mean"] is None or r["lr_f1_mean"] is None:
+            if not metric_reads["mlp_f1"].available or not metric_reads["lr_f1"].available:
                 print(f"  {cv_name}: Unscorable")
             else:
                 def _metric_text(value):
                     return "Unavailable" if value is None else f"{value:.3f}"
 
                 print(
-                    f"  {cv_name}: MLP F1={r['mlp_f1_mean']:.3f}±{r['mlp_f1_std']:.3f}  "
-                    f"GOF={_metric_text(r['mlp_gof_auroc_mean'])}  "
-                    f"DN={_metric_text(r['mlp_dn_auroc_mean'])}  "
-                    f"LOF={_metric_text(r['mlp_lof_auroc_mean'])}  "
-                    f"LR F1={r['lr_f1_mean']:.3f}"
+                    f"  {cv_name}: MLP F1={metric_reads['mlp_f1'].value:.3f}"
+                    f"±{_metric_text(metric_reads['mlp_f1'].spread)}  "
+                    f"GOF={_metric_text(metric_reads['mlp_gof_auroc'].value)}  "
+                    f"DN={_metric_text(metric_reads['mlp_dn_auroc'].value)}  "
+                    f"LOF={_metric_text(metric_reads['mlp_lof_auroc'].value)}  "
+                    f"LR F1={metric_reads['lr_f1'].value:.3f}"
                 )
 
         results[cond] = cond_results
@@ -802,48 +834,51 @@ def phase3_probes(
     print(f"  ESM-2 family-split floor = {esm2_floor:.3f}  [{floor_source}]")
     print(f"  M1/M2 threshold = {m1_threshold:.3f}  (floor + {M1_MARGIN})")
 
-    def get_f1(cond: str, cv: str) -> float:
-        return results.get(cond, {}).get(cv, {}).get("mlp_f1_mean", float("nan"))
+    def get_f1(cond: str, cv: str):
+        return read_seed_point_estimate(
+            results.get(cond, {}).get(cv, {}).get("mlp_f1_seed_aggregate", {})
+        )
 
-    ss_f1 = get_f1("seq_struct", "family_split")
-    seq_f1 = get_f1("seq", "family_split")
+    ss_f1 = get_f1("seq_struct", "family_split").value
+    seq_f1 = get_f1("seq", "family_split").value
 
     # The matched ESM-2 arm scores the same variants the ESM-3 arms do; the gate's
     # floor is the full merged set. They are two populations, so a divergence beyond
-    # the matched arm's own seed spread means the gate and its CI are not describing
-    # the same comparison, and the summary records the flag rather than reconciling it.
-    matched_f1 = get_f1(ESM2_COND, "family_split")
-    matched_std = (
-        results.get(ESM2_COND, {}).get("family_split", {}).get("mlp_f1_std", float("nan"))
-    )
+    # the matched arm's own seed spread means the gate and paired comparison are
+    # not describing the same population, so the summary records the divergence.
+    matched_metric = get_f1(ESM2_COND, "family_split")
+    matched_f1 = matched_metric.value
+    matched_std = matched_metric.spread
     baseline_divergence = None
-    if not np.isnan(matched_f1):
+    if matched_f1 is not None:
         baseline_divergence = float(matched_f1 - esm2_floor)
+        spread_text = "N/A" if matched_std is None else f"{matched_std:.3f}"
         print(
-            f"  ESM-2 matched-subset floor = {matched_f1:.3f}±{matched_std:.3f}  "
+            f"  ESM-2 matched-subset floor = {matched_f1:.3f}±{spread_text}  "
             f"(gate uses the full-set floor {esm2_floor:.3f}; "
             f"difference {baseline_divergence:+.3f})"
         )
-        if not np.isnan(matched_std) and abs(baseline_divergence) > matched_std:
+        if matched_std is not None and abs(baseline_divergence) > matched_std:
             print(
                 "  WARNING: the matched-subset ESM-2 floor differs from the "
                 "pre-registered full-set floor by more than one seed of spread. The "
-                "M1/M2 thresholds are pinned to the full set while the paired CIs are "
-                "computed on the subset."
+                "M1/M2 thresholds are pinned to the full set while the paired "
+                "comparison uses the subset."
             )
 
-    m1 = ss_f1 > m1_threshold if not np.isnan(ss_f1) else None
-    m2 = seq_f1 > m1_threshold if not np.isnan(seq_f1) else None
+    m1 = ss_f1 > m1_threshold if ss_f1 is not None else None
+    m2 = seq_f1 > m1_threshold if seq_f1 is not None else None
     m3 = (
         (ss_f1 - seq_f1) > M3_THRESHOLD
-        if not np.isnan(ss_f1) and not np.isnan(seq_f1)
+        if ss_f1 is not None and seq_f1 is not None
         else None
     )
 
-    def fmt(v, passed):
-        s = f"{v:.3f}" if not np.isnan(v) else "N/A"
+    def fmt(v, point_threshold_met):
+        s = f"{v:.3f}" if v is not None else "N/A"
         return (
-            f"{s} → {'PASS ✓' if passed else 'FAIL ✗' if passed is not None else 'N/A'}"
+            f"{s} → "
+            f"{'above threshold' if point_threshold_met else 'below threshold' if point_threshold_met is not None else 'N/A'}"
         )
 
     print(
@@ -852,14 +887,35 @@ def phase3_probes(
     print(
         f"  M2: ESM-3 seq        family-split F1 > {m1_threshold:.3f} → {fmt(seq_f1, m2)}"
     )
-    gap = (
-        ss_f1 - seq_f1 if not np.isnan(ss_f1) and not np.isnan(seq_f1) else float("nan")
-    )
+    gap = ss_f1 - seq_f1 if ss_f1 is not None and seq_f1 is not None else None
     print(
         f"  M3: seq_struct − seq > {M3_THRESHOLD:.3f}                 → {fmt(gap, m3)}"
     )
 
+    print("\n=== PAIRED DIFFERENCES ACROSS SEEDS ===")
     diffs: dict[str, dict] = {}
+    for gate, arm_a, arm_b in (
+        ("M1", "seq_struct", ESM2_COND),
+        ("M2", "seq", ESM2_COND),
+        ("M3", "seq_struct", "seq"),
+    ):
+        aggregate = aggregate_paired_seed_difference(
+            seeds,
+            f1_records_by_arm.get((arm_a, "family_split"), []),
+            f1_records_by_arm.get((arm_b, "family_split"), []),
+        )
+        diffs[gate] = aggregate.to_dict()
+        metric = read_seed_point_estimate(aggregate)
+        if metric.available:
+            print(f"  {gate}: {arm_a} − {arm_b} = {metric.value:+.4f} (across seeds)")
+        else:
+            print(f"  {gate}: {arm_a} − {arm_b} unavailable")
+
+    # A separate quantity from the across-seed differences above: each interval
+    # resamples families within the seed-combined out-of-fold predictions and
+    # describes one paired estimate's resampling uncertainty, not the spread
+    # between seeds. The verdicts are adjudicated on these intervals.
+    diff_cis: dict[str, dict] = {}
     if compute_ci:
         print("\n=== PAIRED DIFFERENCES (family-split, family-cluster bootstrap) ===")
         contrasts = [
@@ -869,6 +925,7 @@ def phase3_probes(
         ]
         for gate, arm_a, arm_b, threshold in contrasts:
             label = f"{gate}: {arm_a} − {arm_b}"
+            # paired_oof_diff stratifies its own draws where the metric needs it.
             diff = paired_oof_diff(
                 oof_by_arm.get((arm_a, "family_split")),
                 oof_by_arm.get((arm_b, "family_split")),
@@ -879,7 +936,7 @@ def phase3_probes(
             )
             if diff is None:
                 continue
-            diffs[gate] = diff
+            diff_cis[gate] = diff
             if diff.get("ci_low") is None:
                 print(f"  {label}: diff={diff['point_diff']:+.4f}  CI suppressed")
             else:
@@ -889,12 +946,12 @@ def phase3_probes(
                     f"(threshold {threshold:.3f}, {diff['n_clusters']} families)"
                 )
     else:
-        print("\n  Paired differences skipped (--no_ci)")
+        print("\n  Paired difference intervals skipped (--no_ci)")
 
     verdicts = {
-        "M1": adjudicate_diff(m1, diffs.get("M1"), M1_MARGIN),
-        "M2": adjudicate_diff(m2, diffs.get("M2"), M1_MARGIN),
-        "M3": adjudicate_diff(m3, diffs.get("M3"), M3_THRESHOLD),
+        "M1": adjudicate_diff(m1, diff_cis.get("M1"), M1_MARGIN),
+        "M2": adjudicate_diff(m2, diff_cis.get("M2"), M1_MARGIN),
+        "M3": adjudicate_diff(m3, diff_cis.get("M3"), M3_THRESHOLD),
     }
     for gate, verdict in verdicts.items():
         print(f"  {gate} verdict: {verdict}")
@@ -920,10 +977,11 @@ def phase3_probes(
     struct_meta = json.loads(STRUCT_META.read_text()) if STRUCT_META.exists() else None
 
     summary = {
+        **aggregate_result_contract(),
         "esm2_baseline_family_split_f1": esm2_floor,
         "esm2_baseline_source": floor_source,
         "esm2_matched_subset_family_split_f1": (
-            float(matched_f1) if not np.isnan(matched_f1) else None
+            float(matched_f1) if matched_f1 is not None else None
         ),
         "esm2_matched_minus_full_set_floor": baseline_divergence,
         "m1_threshold": m1_threshold,
@@ -934,8 +992,9 @@ def phase3_probes(
             "M1": {
                 "criterion": f"seq_struct family-split F1 > {m1_threshold:.3f}",
                 "value": ss_f1,
-                "passed": m1,
+                "point_threshold_met": m1,
                 "paired_diff": diffs.get("M1"),
+                "paired_diff_ci": diff_cis.get("M1"),
                 "paired_diff_arms": f"seq_struct − {ESM2_COND}",
                 "paired_threshold": M1_MARGIN,
                 "verdict": verdicts["M1"],
@@ -943,17 +1002,19 @@ def phase3_probes(
             "M2": {
                 "criterion": f"seq family-split F1 > {m1_threshold:.3f}",
                 "value": seq_f1,
-                "passed": m2,
+                "point_threshold_met": m2,
                 "paired_diff": diffs.get("M2"),
+                "paired_diff_ci": diff_cis.get("M2"),
                 "paired_diff_arms": f"seq − {ESM2_COND}",
                 "paired_threshold": M1_MARGIN,
                 "verdict": verdicts["M2"],
             },
             "M3": {
                 "criterion": f"seq_struct − seq > {M3_THRESHOLD:.3f}",
-                "value": float(gap) if not np.isnan(gap) else None,
-                "passed": m3,
+                "value": float(gap) if gap is not None else None,
+                "point_threshold_met": m3,
                 "paired_diff": diffs.get("M3"),
+                "paired_diff_ci": diff_cis.get("M3"),
                 "paired_diff_arms": "seq_struct − seq",
                 "paired_threshold": M3_THRESHOLD,
                 "verdict": verdicts["M3"],
@@ -965,8 +1026,7 @@ def phase3_probes(
         "seeds": seeds,
     }
 
-    with open(OUT / "summary.json", "w") as f:
-        json.dump(summary, f, indent=2)
+    atomic_write_json(OUT / "summary.json", summary)
     print(f"\nWrote → {OUT}/summary.json")
 
 

@@ -7,19 +7,12 @@ V4 contrastive head + kNN. Pre-registered decision gates between stages.
 from __future__ import annotations
 
 import argparse
-import json
-import os
-import sys
 import warnings
-from pathlib import Path
 
 import numpy as np
-from sklearn.linear_model import LogisticRegression
-from sklearn.neural_network import MLPClassifier
 from sklearn.neighbors import KNeighborsClassifier
-from sklearn.preprocessing import StandardScaler
 from esm2_mech.utils.splits import family_split_indices
-from esm2_mech.utils.constants import MECHANISM_CLASSES, BOOTSTRAP_N_RESAMPLES
+from esm2_mech.utils.constants import MECHANISM_CLASSES, BOOTSTRAP_N_RESAMPLES, N_SEEDS
 from esm2_mech.utils.metrics import (
     aggregate_folds,
     align_proba,
@@ -30,7 +23,15 @@ from esm2_mech.utils.probes import run_mlp_cv, run_logreg_cv, run_histgb_cv
 from esm2_mech.utils.bootstrap import attach_mechanism_ci
 from esm2_mech.utils.classification import validate_complete_classification_splits
 from esm2_mech.utils.data import build_gene_to_row, observed_rows_mask, load_pfam_map
-from esm2_mech.utils.io import load_variants_and_delta
+from esm2_mech.utils.seed_aggregation import (
+    SEED_STATUS_SKIPPED,
+    aggregate_seed_results,
+    block_seed_status,
+    read_seed_inference,
+    seed_result_contract,
+)
+from esm2_mech.experiments.mechanism.seed_results import aggregate_result_contract
+from esm2_mech.utils.io import load_variants_and_delta, write_result_json
 from esm2_mech.utils.paths import (
     RESULTS_DIR,
     VALID_VARIANTS_JSON,
@@ -41,10 +42,6 @@ from esm2_mech.utils.paths import (
     PFAM_JSON,
     PROTEOME_FEATURES_ALIGNED,
     PROTEOME_FEATURE_COLUMNS_JSON,
-    PROTEOME_FEATURES_TSV,
-    BADONYI_FEATURES_ALIGNED,
-    BADONYI_FEATURE_COLUMNS_JSON,
-    BADONYI_FEATURES_TSV,
 )
 import functools
 
@@ -751,7 +748,7 @@ def run_seed(
     )
 
     results: dict = {
-        "seed": seed,
+        **seed_result_contract(seed),
         "n_variants_with_family": int(len(fam_idx)),
         "n_total_variants": int(len(y)),
         "n_families": int(len(set(groups.tolist()))),
@@ -770,11 +767,14 @@ def run_seed(
         n_boot=n_boot,
     )
     results["V1_family_split"] = v1_res
-    v1_f1 = v1_res.get("macro_f1_mean", float("nan"))
-    print(
-        f"  V1 family-split macro-F1 = {v1_f1:.4f} ± {v1_res.get('macro_f1_std', float('nan')):.4f}"
-        + _fmt_ci(v1_res)
-    )
+    v1_f1 = v1_res.get("macro_f1_mean")
+    if v1_f1 is None:
+        print("  V1 family-split macro-F1 = N/A")
+    else:
+        print(
+            f"  V1 family-split macro-F1 = {v1_f1:.4f} ± {v1_res['macro_f1_std']:.4f}"
+            + _fmt_ci(v1_res)
+        )
 
     # LightGBM is primary (NaN-native); LogReg + matched HistGB on observed subset for linearity check.
     print(f"\n--- V2: Proteome features only (LightGBM primary; linear check on observed subset) ---")
@@ -830,17 +830,21 @@ def run_seed(
             + _fmt_ci(v2_lgbm_res)
         )
     else:
-        v2_label, v2_f1 = None, float("nan")
+        v2_label, v2_f1 = None, None
         print("  V2 family-split macro-F1 = N/A (primary model produced no folds)")
     results["V2_best_macro_f1_mean"] = v2_f1
     results["V2_best_model"] = v2_label
 
     # Gate 1
-    gate1_pass = v2_f1 >= 0.35
+    gate1_pass = v2_f1 >= 0.35 if v2_f1 is not None else None
     gate1_msg = (
-        f"GATE_PASS (Gate 1): V2 macro-F1 {v2_f1:.4f} >= 0.35"
-        if gate1_pass
-        else f"GATE_FAIL (Gate 1): V2 macro-F1 {v2_f1:.4f} < 0.35"
+        "GATE_UNAVAILABLE (Gate 1): V2 macro-F1 unavailable"
+        if gate1_pass is None
+        else (
+            f"GATE_PASS (Gate 1): V2 macro-F1 {v2_f1:.4f} >= 0.35"
+            if gate1_pass
+            else f"GATE_FAIL (Gate 1): V2 macro-F1 {v2_f1:.4f} < 0.35"
+        )
     )
     print(f"  {gate1_msg}")
     results["gate_1"] = {"passed": gate1_pass, "v2_f1": v2_f1, "threshold": 0.35}
@@ -862,11 +866,14 @@ def run_seed(
         n_boot=n_boot,
     )
     results["V3_family_split"] = v3_family_res
-    v3_f1 = v3_family_res.get("macro_f1_mean", float("nan"))
-    print(
-        f"  V3 family-split macro-F1 = {v3_f1:.4f} ± {v3_family_res.get('macro_f1_std', float('nan')):.4f}"
-        + _fmt_ci(v3_family_res)
-    )
+    v3_f1 = v3_family_res.get("macro_f1_mean")
+    if v3_f1 is None:
+        print("  V3 family-split macro-F1 = N/A")
+    else:
+        print(
+            f"  V3 family-split macro-F1 = {v3_f1:.4f} ± {v3_family_res['macro_f1_std']:.4f}"
+            + _fmt_ci(v3_family_res)
+        )
 
     # Gene-split for V3 (leakage diagnostic — uses all variants, not just family-annotated)
     print(f"\n--- V3 gene-split (leakage diagnostic) ---")
@@ -882,24 +889,36 @@ def run_seed(
         n_boot=n_boot,
     )
     results["V3_gene_split"] = v3_gene_res
-    v3_gs_f1 = v3_gene_res.get("macro_f1_mean", float("nan"))
-    leakage_delta = v3_gs_f1 - v3_f1
-    results["V3_leakage_delta"] = (
-        float(leakage_delta) if not (np.isnan(v3_gs_f1) or np.isnan(v3_f1)) else None
+    v3_gs_f1 = v3_gene_res.get("macro_f1_mean")
+    leakage_delta = (
+        v3_gs_f1 - v3_f1
+        if v3_gs_f1 is not None and v3_f1 is not None
+        else None
     )
-    print(
-        f"  V3 gene-split  macro-F1 = {v3_gs_f1:.4f}   "
-        f"leakage delta (gene-split − family-split) = {leakage_delta:+.4f}"
-    )
+    results["V3_leakage_delta"] = leakage_delta
+    if leakage_delta is None:
+        print("  V3 gene-split macro-F1 or leakage delta = N/A")
+    else:
+        print(
+            f"  V3 gene-split  macro-F1 = {v3_gs_f1:.4f}   "
+            f"leakage delta (gene-split − family-split) = {leakage_delta:+.4f}"
+        )
 
     # Gate 2
-    max_v1_v2 = max(v1_f1, v2_f1)
-    gate2_threshold = max_v1_v2 + 0.02
-    gate2_pass = v3_f1 >= gate2_threshold
+    gate2_inputs = (v1_f1, v2_f1, v3_f1)
+    max_v1_v2 = (
+        max(v1_f1, v2_f1) if all(value is not None for value in gate2_inputs) else None
+    )
+    gate2_threshold = None if max_v1_v2 is None else max_v1_v2 + 0.02
+    gate2_pass = None if gate2_threshold is None else v3_f1 >= gate2_threshold
     gate2_msg = (
-        f"GATE_PASS (Gate 2): V3 macro-F1 {v3_f1:.4f} >= max(V1,V2)+0.02 ({gate2_threshold:.4f})"
-        if gate2_pass
-        else f"GATE_FAIL (Gate 2): V3 macro-F1 {v3_f1:.4f} < max(V1,V2)+0.02 ({gate2_threshold:.4f})"
+        "GATE_UNAVAILABLE (Gate 2): a required macro-F1 is unavailable"
+        if gate2_pass is None
+        else (
+            f"GATE_PASS (Gate 2): V3 macro-F1 {v3_f1:.4f} >= max(V1,V2)+0.02 ({gate2_threshold:.4f})"
+            if gate2_pass
+            else f"GATE_FAIL (Gate 2): V3 macro-F1 {v3_f1:.4f} < max(V1,V2)+0.02 ({gate2_threshold:.4f})"
+        )
     )
     print(f"  {gate2_msg}")
     results["gate_2"] = {
@@ -911,12 +930,19 @@ def run_seed(
 
     if variants_only:
         print("  --variants-only: skipping V4.")
-        results["V4_family_split"] = {"skipped": True, "reason": "--variants-only"}
         return results
 
     if not gate2_pass:
         print("  Stopping after Gate 2 failure (V4 not run for this seed).")
-        results["V4_family_split"] = {"skipped": True, "reason": "Gate 2 failed"}
+        skipped_block = {
+            "status": SEED_STATUS_SKIPPED,
+            "skipped": True,
+            "reason": "Gate 2 failed",
+        }
+        # V3's matched re-run exists only to compare with V4 on V4's rows, so it
+        # is skipped for the same reason and says so rather than going missing.
+        results["V4_family_split"] = skipped_block
+        results["V3_family_split_matched_to_V4"] = dict(skipped_block)
         return results
 
     # V4 needs complete-case (no NaN-native substitute for learned embeddings).
@@ -927,12 +953,15 @@ def run_seed(
 
     if n_v4 < n_folds:
         print(f"  V4 skipped: only {n_v4} fully-observed genes")
-        results["V4_family_split"] = {
+        skipped_block = {
+            "status": SEED_STATUS_SKIPPED,
             "skipped": True,
             "reason": "too few fully-observed genes",
             "n_observed": n_v4,
             "n_total": int(len(X_concat)),
         }
+        results["V4_family_split"] = skipped_block
+        results["V3_family_split_matched_to_V4"] = dict(skipped_block)
         return results
 
     v4_res = run_v4_family_split(
@@ -953,12 +982,15 @@ def run_seed(
     v4_res["n_total"] = int(len(X_concat))
     v4_res["frac_observed"] = float(n_v4 / len(X_concat))
     results["V4_family_split"] = v4_res
-    v4_f1 = v4_res.get("macro_f1_mean", float("nan"))
-    print(
-        f"  V4 family-split macro-F1 = {v4_f1:.4f} ± {v4_res.get('macro_f1_std', float('nan')):.4f}"
-        f"  (n={n_v4}/{len(X_concat)} fully-observed genes)"
-        + _fmt_ci(v4_res)
-    )
+    v4_f1 = v4_res.get("macro_f1_mean")
+    if v4_f1 is None:
+        print("  V4 family-split macro-F1 = N/A")
+    else:
+        print(
+            f"  V4 family-split macro-F1 = {v4_f1:.4f} ± {v4_res['macro_f1_std']:.4f}"
+            f"  (n={n_v4}/{len(X_concat)} fully-observed genes)"
+            + _fmt_ci(v4_res)
+        )
 
     # V3 on V4's exact rows for like-for-like Gate 3 comparison.
     v3_matched_res = run_family_split_histgb(
@@ -973,23 +1005,34 @@ def run_seed(
     )
     v3_matched_res["n_observed"] = n_v4
     results["V3_family_split_matched_to_V4"] = v3_matched_res
-    v3_matched_f1 = v3_matched_res.get("macro_f1_mean", float("nan"))
-    print(
-        f"  V3 on the same {n_v4} genes = {v3_matched_f1:.4f} (Gate 3 comparator)"
-        + _fmt_ci(v3_matched_res)
-    )
+    v3_matched_f1 = v3_matched_res.get("macro_f1_mean")
+    if v3_matched_f1 is None:
+        print(f"  V3 on the same {n_v4} genes = N/A (Gate 3 comparator)")
+    else:
+        print(
+            f"  V3 on the same {n_v4} genes = {v3_matched_f1:.4f} (Gate 3 comparator)"
+            + _fmt_ci(v3_matched_res)
+        )
 
     # Gate 3 — report only; compared against V3 on the identical gene subset.
-    gate3_target = v3_matched_f1 + 0.03
-    gate3_pass = v4_f1 >= gate3_target
+    gate3_target = None if v3_matched_f1 is None else v3_matched_f1 + 0.03
+    gate3_pass = (
+        v4_f1 >= gate3_target
+        if v4_f1 is not None and gate3_target is not None
+        else None
+    )
     gate3_msg = (
-        f"GATE_PASS (Gate 3): V4 macro-F1 {v4_f1:.4f} >= matched V3 + 0.03 ({gate3_target:.4f})"
-        if gate3_pass
-        else f"GATE_FAIL (Gate 3): V4 macro-F1 {v4_f1:.4f} < matched V3 + 0.03 ({gate3_target:.4f})"
+        "GATE_UNAVAILABLE (Gate 3): a required macro-F1 is unavailable"
+        if gate3_pass is None
+        else (
+            f"GATE_PASS (Gate 3): V4 macro-F1 {v4_f1:.4f} >= matched V3 + 0.03 ({gate3_target:.4f})"
+            if gate3_pass
+            else f"GATE_FAIL (Gate 3): V4 macro-F1 {v4_f1:.4f} < matched V3 + 0.03 ({gate3_target:.4f})"
+        )
     )
     print(f"  {gate3_msg}")
     results["gate_3"] = {
-        "passed": bool(gate3_pass),
+        "passed": gate3_pass,
         "v4_f1": v4_f1,
         "v3_matched_f1": v3_matched_f1,
         "target": gate3_target,
@@ -1000,109 +1043,77 @@ def run_seed(
     return results
 
 
-def aggregate_seeds(all_seed_results: list[dict]) -> dict:
-    """Aggregate per-seed results into mean +/- std across seeds."""
-    summary: dict = {"n_seeds": len(all_seed_results)}
+def aggregate_seeds(
+    all_seed_results: list[dict], requested_seeds, *, include_v4: bool = True
+) -> dict:
+    """Aggregate every retained per-seed point estimate through the shared contract."""
+    summary: dict = {
+        **aggregate_result_contract(),
+        "requested_seeds": list(requested_seeds),
+    }
 
-    def get_mean_std(key_mean: str) -> tuple[float | None, float | None]:
-        vals = []
-        for r in all_seed_results:
-            v = nested_get(r, key_mean)
-            if v is not None and not np.isnan(float(v)):
-                vals.append(float(v))
-        if not vals:
-            return None, None
-        return float(np.mean(vals)), float(np.std(vals))
+    scalar_paths = {
+        "V1_family_split_macro_f1": "V1_family_split.macro_f1_mean",
+        "V2_best_macro_f1": "V2_best_macro_f1_mean",
+        "V2_lgbm_macro_f1": "V2_lgbm_family_split.macro_f1_mean",
+        "V2_logreg_observed_macro_f1": "V2_logreg_observed_subset.macro_f1_mean",
+        "V2_histgb_observed_macro_f1": "V2_histgb_observed_subset.macro_f1_mean",
+        "V2_observed_subset_frac": "V2_logreg_observed_subset.frac_observed",
+        "V3_family_split_macro_f1": "V3_family_split.macro_f1_mean",
+        "V3_gene_split_macro_f1": "V3_gene_split.macro_f1_mean",
+        "V3_leakage_delta": "V3_leakage_delta",
+    }
+    if include_v4:
+        scalar_paths.update(
+            {
+                "V4_family_split_macro_f1": "V4_family_split.macro_f1_mean",
+                "V3_matched_to_V4_macro_f1": (
+                    "V3_family_split_matched_to_V4.macro_f1_mean"
+                ),
+                "V4_observed_subset_frac": "V4_family_split.frac_observed",
+            }
+        )
+    else:
+        summary["arm_exclusions"] = {
+            "V4": {"reason": "excluded_by_variants_only_option"}
+        }
 
-    # V1
-    m, s = get_mean_std("V1_family_split.macro_f1_mean")
-    summary["V1_family_split_macro_f1_mean"] = m
-    summary["V1_family_split_macro_f1_std"] = s
+    def metric_status(result, metric_path):
+        first = metric_path.split(".", 1)[0]
+        if first == "V2_best_macro_f1_mean":
+            block = result.get("V2_lgbm_family_split", {})
+        elif first == "V3_leakage_delta":
+            block = result.get("V3_family_split", {})
+        else:
+            block = result.get(first, {})
+        return block_seed_status(block)
 
-    # V2 (flat key, not nested)
-    v2_vals = [
-        r["V2_best_macro_f1_mean"]
-        for r in all_seed_results
-        if "V2_best_macro_f1_mean" in r
-        and r["V2_best_macro_f1_mean"] is not None
-        and not np.isnan(r["V2_best_macro_f1_mean"])
-    ]
-    summary["V2_best_macro_f1_mean"] = float(np.mean(v2_vals)) if v2_vals else None
-    summary["V2_best_macro_f1_std"] = float(np.std(v2_vals)) if v2_vals else None
+    for output_name, path in scalar_paths.items():
+        summary[f"{output_name}_seed_aggregate"] = aggregate_seed_results(
+            requested_seeds,
+            all_seed_results,
+            lambda result, metric_path=path: nested_get(result, metric_path),
+            status=lambda result, metric_path=path: metric_status(
+                result, metric_path
+            ),
+        ).to_dict()
 
-    m, s = get_mean_std("V2_lgbm_family_split.macro_f1_mean")
-    summary["V2_lgbm_macro_f1_mean"] = m
-    summary["V2_lgbm_macro_f1_std"] = s
-
-    # V2 linear check pair (observed subset only); not comparable to all-genes LightGBM.
-    for key, out_prefix in [
-        ("V2_logreg_observed_subset", "V2_logreg_observed"),
-        ("V2_histgb_observed_subset", "V2_histgb_observed"),
-    ]:
-        m, s = get_mean_std(f"{key}.macro_f1_mean")
-        summary[f"{out_prefix}_macro_f1_mean"] = m
-        summary[f"{out_prefix}_macro_f1_std"] = s
-    obs_fracs = [
-        float(r["V2_logreg_observed_subset"]["frac_observed"])
-        for r in all_seed_results
-        if r.get("V2_logreg_observed_subset", {}).get("frac_observed") is not None
-    ]
-    summary["V2_observed_subset_frac"] = (
-        float(np.mean(obs_fracs)) if obs_fracs else None
-    )
-
-    # V3
-    m, s = get_mean_std("V3_family_split.macro_f1_mean")
-    summary["V3_family_split_macro_f1_mean"] = m
-    summary["V3_family_split_macro_f1_std"] = s
-
-    m, s = get_mean_std("V3_gene_split.macro_f1_mean")
-    summary["V3_gene_split_macro_f1_mean"] = m
-    summary["V3_gene_split_macro_f1_std"] = s
-
-    leakage_vals = [
-        float(r["V3_leakage_delta"])
-        for r in all_seed_results
-        if r.get("V3_leakage_delta") is not None
-    ]
-    if leakage_vals:
-        summary["V3_leakage_delta_mean"] = float(np.mean(leakage_vals))
-        summary["V3_leakage_delta_std"] = float(np.std(leakage_vals))
-
-    # V4 and its matched V3 pair; Gate 3 reads from this, not from all-genes V3.
-    m, s = get_mean_std("V4_family_split.macro_f1_mean")
-    summary["V4_family_split_macro_f1_mean"] = m
-    summary["V4_family_split_macro_f1_std"] = s
-
-    m, s = get_mean_std("V3_family_split_matched_to_V4.macro_f1_mean")
-    summary["V3_matched_to_V4_macro_f1_mean"] = m
-    summary["V3_matched_to_V4_macro_f1_std"] = s
-
-    v4_fracs = [
-        float(r["V4_family_split"]["frac_observed"])
-        for r in all_seed_results
-        if r.get("V4_family_split", {}).get("frac_observed") is not None
-    ]
-    summary["V4_observed_subset_frac"] = float(np.mean(v4_fracs)) if v4_fracs else None
-
-    # Per-class AUROC across seeds (V1, V3)
-    for variant_key in ["V1_family_split", "V3_family_split", "V4_family_split"]:
+    variant_keys = ["V1_family_split", "V3_family_split"]
+    if include_v4:
+        variant_keys.append("V4_family_split")
+    for variant_key in variant_keys:
         for cls in CLASSES:
-            m, s = get_mean_std(f"{variant_key}.auroc_{cls}_mean")
-            summary[f"{variant_key}_auroc_{cls}_mean"] = m
-            summary[f"{variant_key}_auroc_{cls}_std"] = s
-
-    # Per-seed resampled CIs pooled across seeds (within-seed uncertainty,
-    # separate from the seed-to-seed spread in *_macro_f1_std above).
-    for variant_key in [
-        "V1_family_split", "V2_lgbm_family_split", "V2_logreg_observed_subset",
-        "V2_histgb_observed_subset", "V3_family_split", "V3_gene_split",
-        "V4_family_split", "V3_family_split_matched_to_V4",
-    ]:
-        for bound in ("ci_low", "ci_high"):
-            m, s = get_mean_std(f"{variant_key}.ci.macro_f1.{bound}")
-            if m is not None:
-                summary[f"{variant_key}_macro_f1_{bound}_seed_mean"] = m
+            path = f"{variant_key}.auroc_{cls}_mean"
+            summary[f"{variant_key}_auroc_{cls}_seed_aggregate"] = (
+                aggregate_seed_results(
+                    requested_seeds,
+                    all_seed_results,
+                    lambda result, metric_path=path: nested_get(result, metric_path),
+                    status=lambda result, metric_path=path: metric_status(
+                        result, metric_path
+                    ),
+                ).to_dict()
+            )
 
     return summary
 
@@ -1138,7 +1149,7 @@ def main():
     parser.add_argument("--n_boot", type=int, default=BOOTSTRAP_N_RESAMPLES)
     args = parser.parse_args()
 
-    seeds = [args.seed] if args.seed is not None else list(range(5))
+    seeds = [args.seed] if args.seed is not None else list(range(N_SEEDS))
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -1178,13 +1189,15 @@ def main():
         all_seed_results.append(seed_results)
 
         out_path = OUT_DIR / f"proteome_mechanism_seed{seed}.json"
-        out_path.write_text(json.dumps(seed_results, indent=2))
+        write_result_json(out_path, seed_results, seeds=[seed], indent=2)
         print(f"\n  Saved: {out_path}")
 
-    summary = aggregate_seeds(all_seed_results)
+    summary = aggregate_seeds(
+        all_seed_results, seeds, include_v4=not args.variants_only
+    )
 
     summary_path = OUT_DIR / "proteome_mechanism_summary.json"
-    summary_path.write_text(json.dumps(summary, indent=2))
+    write_result_json(summary_path, summary, seeds=seeds, indent=2)
     print(f"\nSaved summary: {summary_path}")
 
     # ------------------------------------------------------------------
@@ -1194,59 +1207,62 @@ def main():
     print("SUMMARY (mean ± std across seeds)")
     print("=" * 70)
 
-    def fmt(m, s):
-        if m is None:
+    def fmt(aggregate):
+        metric = read_seed_inference(aggregate)
+        if not metric.available:
             return "    N/A   "
-        s_str = f"{s:.4f}" if s is not None else "  N/A"
-        return f"{m:.4f} ± {s_str}"
+        return f"{metric.value:.4f} ± {metric.spread:.4f}"
 
     rows = [
         (
             "V1 family-split macro-F1",
-            summary.get("V1_family_split_macro_f1_mean"),
-            summary.get("V1_family_split_macro_f1_std"),
+            summary.get("V1_family_split_macro_f1_seed_aggregate", {}),
         ),
         (
             "V2 best family-split macro-F1",
-            summary.get("V2_best_macro_f1_mean"),
-            summary.get("V2_best_macro_f1_std"),
+            summary.get("V2_best_macro_f1_seed_aggregate", {}),
         ),
         (
             "V3 family-split macro-F1",
-            summary.get("V3_family_split_macro_f1_mean"),
-            summary.get("V3_family_split_macro_f1_std"),
+            summary.get("V3_family_split_macro_f1_seed_aggregate", {}),
         ),
         (
             "V3 gene-split macro-F1",
-            summary.get("V3_gene_split_macro_f1_mean"),
-            summary.get("V3_gene_split_macro_f1_std"),
-        ),
-        (
-            "V4 family-split macro-F1",
-            summary.get("V4_family_split_macro_f1_mean"),
-            summary.get("V4_family_split_macro_f1_std"),
+            summary.get("V3_gene_split_macro_f1_seed_aggregate", {}),
         ),
     ]
-    for name, m, s in rows:
-        print(f"  {name:<38}  {fmt(m, s)}")
+    if not args.variants_only:
+        rows.append(
+            (
+                "V4 family-split macro-F1",
+                summary.get("V4_family_split_macro_f1_seed_aggregate", {}),
+            )
+        )
+    for name, aggregate in rows:
+        print(f"  {name:<38}  {fmt(aggregate)}")
 
-    if summary.get("V3_leakage_delta_mean") is not None:
-        ld = summary["V3_leakage_delta_mean"]
-        ld_s = summary.get("V3_leakage_delta_std", 0.0)
-        print(f"\n  V3 leakage delta (gene−family)         {ld:+.4f} ± {ld_s:.4f}")
+    leakage = read_seed_inference(summary.get("V3_leakage_delta_seed_aggregate", {}))
+    if leakage.available:
+        print(
+            f"\n  V3 leakage delta (gene−family)         "
+            f"{leakage.value:+.4f} ± {leakage.spread:.4f}"
+        )
 
     print("\nPer-class AUROC (family-split, mean across seeds):")
-    for vk, label in [
+    auroc_rows = [
         ("V1_family_split", "V1"),
         ("V3_family_split", "V3"),
-        ("V4_family_split", "V4"),
-    ]:
+    ]
+    if not args.variants_only:
+        auroc_rows.append(("V4_family_split", "V4"))
+    for vk, label in auroc_rows:
         parts = []
         for cls in CLASSES:
-            mv = summary.get(f"{vk}_auroc_{cls}_mean")
-            sv = summary.get(f"{vk}_auroc_{cls}_std")
-            if mv is not None:
-                parts.append(f"{cls}={mv:.3f}±{sv:.3f}")
+            metric = read_seed_inference(
+                summary.get(f"{vk}_auroc_{cls}_seed_aggregate", {})
+            )
+            if metric.available:
+                parts.append(f"{cls}={metric.value:.3f}±{metric.spread:.3f}")
             else:
                 parts.append(f"{cls}=N/A")
         print(f"  {label}: " + "  ".join(parts))

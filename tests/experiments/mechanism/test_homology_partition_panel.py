@@ -85,6 +85,82 @@ class TestLeakageFractionCiForPartition:
         assert ci is not None
         assert ci["point"] == pytest.approx(expected)
 
+    def test_chance_floor_is_selected_from_each_training_fold(self):
+        fold_labels = [
+            [LOF] * 6 + [GOF] * 2 + [DN] * 2,
+            [GOF] * 5 + [LOF] * 2 + [DN] * 3,
+            [LOF] * 4 + [GOF] * 3 + [DN] * 3,
+        ]
+        y_true = np.array([label for block in fold_labels for label in block])
+        folds = np.repeat(np.arange(3), 10)
+        row_ids = np.arange(len(y_true))
+        gene_predictions = y_true.copy()
+        partition_predictions = np.full(len(y_true), LOF)
+        oof_gene = {
+            "y_true": y_true,
+            "proba": _one_hot_proba(gene_predictions),
+            "row_ids": row_ids,
+            "folds": folds,
+        }
+        oof_partition = {
+            "y_true": y_true,
+            "proba": _one_hot_proba(partition_predictions),
+            "row_ids": row_ids,
+            "folds": folds,
+        }
+        partition_clusters = np.array([f"c{row // 2}" for row in row_ids])
+
+        fold_gene_scores = []
+        fold_partition_scores = []
+        fold_chance_scores = []
+        for fold in range(3):
+            test = np.flatnonzero(folds == fold)
+            train = np.flatnonzero(folds != fold)
+            fold_gene_scores.append(
+                f1_score(
+                    y_true[test],
+                    gene_predictions[test],
+                    labels=MECHANISM_CLASSES,
+                    average="macro",
+                    zero_division=0,
+                )
+            )
+            fold_partition_scores.append(
+                f1_score(
+                    y_true[test],
+                    partition_predictions[test],
+                    labels=MECHANISM_CLASSES,
+                    average="macro",
+                    zero_division=0,
+                )
+            )
+            chance, _majority = majority_baseline_f1(
+                y_true[train], y_true[test], MECHANISM_CLASSES
+            )
+            fold_chance_scores.append(chance)
+
+        expected = (
+            np.mean(fold_gene_scores) - np.mean(fold_partition_scores)
+        ) / (np.mean(fold_gene_scores) - np.mean(fold_chance_scores))
+        global_chance, _majority = majority_baseline_f1(
+            y_true, y_true, MECHANISM_CLASSES
+        )
+        wrong_global_floor_value = (
+            np.mean(fold_gene_scores) - np.mean(fold_partition_scores)
+        ) / (np.mean(fold_gene_scores) - global_chance)
+
+        interval = panel.leakage_fraction_ci_for_partition(
+            oof_gene,
+            oof_partition,
+            partition_clusters,
+            gene_chance=global_chance,
+            n_boot=20,
+            seed=0,
+        )
+
+        assert expected != pytest.approx(wrong_global_floor_value)
+        assert interval["point"] == pytest.approx(expected)
+
     def test_resamples_partition_cluster_not_row_count(self):
         # 12 rows collapsed into exactly 3 partition clusters (4 rows each) —
         # n_clusters in the returned CI must be 3, not 12 (rows) and not
@@ -154,21 +230,31 @@ class TestPartitionRow:
         assert row["partition"] == "pfam_clan"
         assert row["n_clusters"] == 4
         assert row["measured_floor"] == 0.288
-        assert row["mechanism_null_macro_f1"]["ci_suppressed"] is True
-        assert row["mechanism_null_macro_f1"]["reason"] == "blocked_by_audit_1_4"
+        interval = row["mechanism_null_macro_f1"]
+        assert interval["ci_low"] is not None and interval["ci_high"] is not None
+        assert interval["ci_low"] <= interval["point"] <= interval["ci_high"]
+        assert interval["n_clusters"] == 4
 
 
 class TestMeasuredChanceFloors:
 
     def test_reads_live_values_not_hardcoded(self, tmp_path, monkeypatch):
+        from esm2_mech.utils.seed_aggregation import aggregate_seed_values, make_seed_record
+
         naive_baseline = tmp_path / "naive_baseline.json"
+        gene = aggregate_seed_values(
+            range(3), [make_seed_record(seed, 0.1234) for seed in range(3)]
+        ).to_dict()
+        family = aggregate_seed_values(
+            range(3), [make_seed_record(seed, 0.5678) for seed in range(3)]
+        ).to_dict()
         with open(naive_baseline, "w") as f:
             json.dump(
                 {
                     "by_strategy": {
                         "most_frequent": {
-                            "gene": {"macro_f1_mean": 0.1234},
-                            "family": {"macro_f1_mean": 0.5678},
+                            "gene": {"macro_f1_seed_aggregate": gene},
+                            "family": {"macro_f1_seed_aggregate": family},
                         }
                     }
                 },
@@ -184,10 +270,12 @@ class TestMeasuredChanceFloors:
 class TestLiveMlpPyFamilyReference:
 
     def test_reads_live_value(self, tmp_path, monkeypatch):
+        from esm2_mech.utils.seed_aggregation import seed_result_contract
+
         seed_path = tmp_path / "nonlinear_results_seed{seed}.json"
         monkeypatch.setattr(panel, "NONLINEAR_RESULTS_SEED_JSON", str(seed_path))
         with open(str(seed_path).format(seed=0), "w") as f:
-            json.dump({"mlp_delta_mean_family": {"macro_f1_mean": 0.4242}}, f)
+            json.dump({**seed_result_contract(0), "mlp_delta_mean_family": {"macro_f1_mean": 0.4242}}, f)
 
         assert panel._live_mlp_py_family_reference(0) == pytest.approx(0.4242)
 
@@ -204,17 +292,24 @@ class TestClanHoldoutLiveFamilySplitRefs:
     of the project cites."""
 
     def test_reads_live_mlp_and_contrastive_values(self, tmp_path, monkeypatch):
+        from esm2_mech.experiments.mechanism.seed_results import aggregate_result_contract
+        from esm2_mech.utils.seed_aggregation import aggregate_seed_values, make_seed_record, seed_result_contract
+
+        monkeypatch.setattr(clan_holdout, "N_SEEDS", 1)
         mlp_seed_path = tmp_path / "nonlinear_results_seed{seed}.json"
         with open(str(mlp_seed_path).format(seed=0), "w") as f:
-            json.dump({"mlp_delta_mean_family": {"macro_f1_mean": 0.4111}}, f)
+            json.dump({**seed_result_contract(0), "mlp_delta_mean_family": {"macro_f1_mean": 0.4111}}, f)
         monkeypatch.setattr(clan_holdout, "NONLINEAR_RESULTS_SEED_JSON", str(mlp_seed_path))
 
         contrastive_path = tmp_path / "contrastive_aggregate.json"
         with open(contrastive_path, "w") as f:
-            json.dump(
-                {"across_seed": {"family_split": {"contrastive_knn": {"macro_f1_seed_mean": 0.4222}}}},
-                f,
-            )
+            aggregate = aggregate_seed_values([0], [make_seed_record(0, 0.4222)])
+            json.dump({
+                **aggregate_result_contract(),
+                "across_seed": {"family_split": {"contrastive_knn": {
+                    "macro_f1_seed_aggregate": aggregate.to_dict()
+                }}},
+            }, f)
         monkeypatch.setattr(clan_holdout, "CONTRASTIVE_AGGREGATE_JSON", contrastive_path)
 
         mlp_f1, contrastive_f1 = clan_holdout._read_live_family_split_refs()
@@ -327,16 +422,24 @@ class TestPanelEndToEnd:
         return labels, genes, delta, pfam_map, gene_clan, clan_names, gene_to_cluster
 
     def test_all_three_rows_present_with_correct_cluster_counts(self, tmp_path, monkeypatch):
+        from esm2_mech.utils.seed_aggregation import aggregate_seed_values, make_seed_record
+
         (labels, genes, delta, pfam_map, gene_clan, clan_names, gene_to_cluster) = self._build_dataset()
 
         naive_baseline = tmp_path / "naive_baseline.json"
+        gene_floor = aggregate_seed_values(
+            range(3), [make_seed_record(seed, 0.30) for seed in range(3)]
+        ).to_dict()
+        family_floor = aggregate_seed_values(
+            range(3), [make_seed_record(seed, 0.28) for seed in range(3)]
+        ).to_dict()
         with open(naive_baseline, "w") as f:
             json.dump(
                 {
                     "by_strategy": {
                         "most_frequent": {
-                            "gene": {"macro_f1_mean": 0.30},
-                            "family": {"macro_f1_mean": 0.28},
+                            "gene": {"macro_f1_seed_aggregate": gene_floor},
+                            "family": {"macro_f1_seed_aggregate": family_floor},
                         }
                     }
                 },
@@ -377,9 +480,13 @@ class TestPanelEndToEnd:
 
         for name, row in rows.items():
             null_ci = row["mechanism_null_macro_f1"]
-            assert null_ci["ci_suppressed"] is True, f"{name} CI was not gated"
-            assert null_ci["ci_low"] is None and null_ci["ci_high"] is None
-            assert null_ci["reason"] == "blocked_by_audit_1_4"
+            assert null_ci["point"] is not None, f"{name} has no point estimate"
+            if null_ci["ci_suppressed"]:
+                # Only a genuinely undefined draw set may withhold the interval,
+                # and the row must say how many draws it lost.
+                assert null_ci["n_discarded"] > 0, f"{name} CI gated for no reason"
+                continue
+            assert null_ci["ci_low"] <= null_ci["point"] <= null_ci["ci_high"]
 
         # Write and reload the consolidated JSON, matching main()'s shape.
         from esm2_mech.utils.io import atomic_write_json

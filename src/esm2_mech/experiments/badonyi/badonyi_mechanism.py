@@ -11,15 +11,23 @@ import argparse
 import json
 import warnings
 from collections import Counter
-from pathlib import Path
 
 import numpy as np
-from esm2_mech.utils.constants import MECHANISM_CLASSES, BOOTSTRAP_N_RESAMPLES
+from esm2_mech.utils.constants import MECHANISM_CLASSES, BOOTSTRAP_N_RESAMPLES, N_SEEDS
 from esm2_mech.utils.data import build_gene_to_row as _build_gene_to_row, load_pfam_map
 from esm2_mech.utils.splits import family_split_indices
 from esm2_mech.utils.probes import run_mlp_cv, run_logreg_cv, run_histgb_cv
 from esm2_mech.utils.bootstrap import attach_mechanism_ci, family_or_gene_clusters
 from esm2_mech.utils.classification import validate_complete_classification_splits
+from esm2_mech.utils.seed_aggregation import (
+    aggregate_paired_seed_difference,
+    aggregate_seed_results,
+    aggregate_seed_values,
+    make_seed_record,
+    read_seed_inference,
+    seed_result_contract,
+)
+from esm2_mech.experiments.mechanism.seed_results import aggregate_result_contract
 from esm2_mech.utils.paths import (
     RESULTS_DIR,
     VALID_VARIANTS_JSON,
@@ -28,11 +36,7 @@ from esm2_mech.utils.paths import (
     GENE_UNIVERSE,
     PFAM_JSON,
     PROTEOME_FEATURES_ALIGNED,
-    PROTEOME_FEATURE_COLUMNS_JSON,
-    PROTEOME_FEATURES_TSV,
     BADONYI_FEATURES_ALIGNED,
-    BADONYI_FEATURE_COLUMNS_JSON,
-    BADONYI_FEATURES_TSV,
 )
 import functools
 
@@ -264,7 +268,7 @@ def run_seed(
     )
 
     results: dict = {
-        "seed": seed,
+        **seed_result_contract(seed),
         "n_variants_with_family": int(len(fam_idx)),
         "n_total_variants": int(len(y)),
         "evaluation": {
@@ -400,25 +404,13 @@ def build_seed_comparisons(seed_result: dict) -> dict:
     return comparisons
 
 
-def seed_metric_mean_std(all_results: list[dict], extractor) -> tuple[float | None, float | None, int]:
-    """Mean/std of one metric across seeds, skipping None and NaN."""
-    vals = []
-    for r in all_results:
-        v = extractor(r)
-        if v is not None and not (isinstance(v, float) and np.isnan(v)):
-            vals.append(float(v))
-    if not vals:
-        return None, None, 0
-    return float(np.mean(vals)), float(np.std(vals)), len(vals)
-
-
-def aggregate_seeds(all_results: list[dict]) -> dict:
+def aggregate_seeds(all_results: list[dict], requested_seeds) -> dict:
     if not all_results:
         raise ValueError("Cannot aggregate Badonyi comparisons without seed results")
 
     summary: dict = {
-        "schema_version": 2,
-        "n_seeds": len(all_results),
+        **aggregate_result_contract(),
+        "requested_seeds": list(requested_seeds),
         "evaluation": {
             "split": "pfam_family",
             "metric": "mean_fold_macro_f1",
@@ -426,58 +418,46 @@ def aggregate_seeds(all_results: list[dict]) -> dict:
         "arm_probe_specs": ARM_PROBE_SPECS,
     }
 
-    def pull(key, metric):
-        # Returns the per-seed metric or None; seed_metric_mean_std drops None+NaN.
-        return lambda r, k=key, m=metric: r[k].get(m) if k in r else None
-
     for key in ["V1", "V2", "V_bad", "V2_bad", "V1_bad", "V_all"]:
         for metric in ["macro_f1_mean", "per_gene_f1_mean"]:
             stem = f"{key}_{metric.replace('_mean','')}"
-            mean, std, n = seed_metric_mean_std(all_results, pull(key, metric))
-            summary[f"{stem}_mean"] = mean if n else None
-            summary[f"{stem}_std"] = std if n else None
+            summary[f"{stem}_seed_aggregate"] = aggregate_seed_results(
+                requested_seeds,
+                all_results,
+                lambda result, arm=key, name=metric: result.get(arm, {}).get(name),
+            ).to_dict()
         for cls in CLASSES:
-            mean, std, n = seed_metric_mean_std(
-                all_results, pull(key, f"auroc_{cls}_mean")
-            )
-            if n:
-                summary[f"{key}_auroc_{cls}_mean"] = mean
-                summary[f"{key}_auroc_{cls}_std"] = std
-
-        # CI bounds pooled across seeds — separate from seed-to-seed std.
-        for metric_name in ["macro_f1"] + [f"auroc_{cls}" for cls in CLASSES]:
-            for bound in ("ci_low", "ci_high"):
-                def extractor(r, k=key, m=metric_name, b=bound):
-                    ci = r.get(k, {}).get("ci", {}).get(m)
-                    if not ci or ci.get("ci_suppressed"):
-                        return None
-                    return ci.get(b)
-
-                mean, std, n = seed_metric_mean_std(all_results, extractor)
-                if n:
-                    summary[f"{key}_{metric_name}_{bound}_seed_mean"] = mean
-                    summary[f"{key}_{metric_name}_{bound}_n_seeds"] = n
+            summary[f"{key}_auroc_{cls}_seed_aggregate"] = aggregate_seed_results(
+                requested_seeds,
+                all_results,
+                lambda result, arm=key, label=cls: result.get(arm, {}).get(
+                    f"auroc_{label}_mean"
+                ),
+            ).to_dict()
 
     seed_comparisons = [build_seed_comparisons(result) for result in all_results]
     summary["comparisons"] = {}
     for name, comparison_spec in COMPARISON_SPECS.items():
-        left_values = np.asarray(
-            [comparison[name]["left_value"] for comparison in seed_comparisons],
-            dtype=float,
-        )
-        right_values = np.asarray(
-            [comparison[name]["right_value"] for comparison in seed_comparisons],
-            dtype=float,
-        )
-        differences = left_values - right_values
+        left_records = [
+            make_seed_record(result["seed"], comparison[name]["left_value"])
+            for result, comparison in zip(all_results, seed_comparisons)
+        ]
+        right_records = [
+            make_seed_record(result["seed"], comparison[name]["right_value"])
+            for result, comparison in zip(all_results, seed_comparisons)
+        ]
         summary["comparisons"][name] = {
             **comparison_spec,
             "metric": "mean_fold_macro_f1",
-            "left_mean": float(np.mean(left_values)),
-            "right_mean": float(np.mean(right_values)),
-            "difference_mean": float(np.mean(differences)),
-            "difference_std": float(np.std(differences)),
-            "n_seeds": len(all_results),
+            "left_seed_aggregate": aggregate_seed_values(
+                requested_seeds, left_records
+            ).to_dict(),
+            "right_seed_aggregate": aggregate_seed_values(
+                requested_seeds, right_records
+            ).to_dict(),
+            "difference_seed_aggregate": aggregate_paired_seed_difference(
+                requested_seeds, left_records, right_records
+            ).to_dict(),
             "same_classifier": seed_comparisons[0][name]["same_classifier"],
             "left_classifier": seed_comparisons[0][name]["left_classifier"],
             "right_classifier": seed_comparisons[0][name]["right_classifier"],
@@ -495,7 +475,7 @@ def main():
     parser.add_argument("--n_boot", type=int, default=BOOTSTRAP_N_RESAMPLES)
     args = parser.parse_args()
 
-    seeds = [args.seed] if args.seed is not None else list(range(5))
+    seeds = [args.seed] if args.seed is not None else list(range(N_SEEDS))
     OUT_DIR.mkdir(parents=True, exist_ok=True)
 
     print("=== Loading data ===")
@@ -527,7 +507,7 @@ def main():
         path.write_text(json.dumps(res, indent=2))
         print(f"\n  Saved: {path}")
 
-    summary = aggregate_seeds(all_results)
+    summary = aggregate_seeds(all_results, seeds)
     summary_path = OUT_DIR / "badonyi_mechanism_summary.json"
     summary_path.write_text(json.dumps(summary, indent=2))
     print(f"\nSaved summary: {summary_path}")
@@ -540,10 +520,11 @@ def main():
     print(header)
     print("-" * 72)
 
-    def fmt(m, s):
-        if m is None:
+    def fmt(aggregate):
+        metric = read_seed_inference(aggregate)
+        if not metric.available:
             return "    N/A       "
-        return f"{m:.4f}±{s:.4f}"
+        return f"{metric.value:.4f}±{metric.spread:.4f}"
 
     for key, label in [
         ("V1", "V1(seq)"),
@@ -553,22 +534,11 @@ def main():
         ("V1_bad", "V1+bad"),
         ("V_all", "V_all"),
     ]:
-        f1 = fmt(
-            summary.get(f"{key}_macro_f1_mean"), summary.get(f"{key}_macro_f1_std")
-        )
-        pg = fmt(
-            summary.get(f"{key}_per_gene_f1_mean"),
-            summary.get(f"{key}_per_gene_f1_std"),
-        )
-        gof = fmt(
-            summary.get(f"{key}_auroc_GOF_mean"), summary.get(f"{key}_auroc_GOF_std")
-        )
-        dn = fmt(
-            summary.get(f"{key}_auroc_DN_mean"), summary.get(f"{key}_auroc_DN_std")
-        )
-        lof = fmt(
-            summary.get(f"{key}_auroc_LOF_mean"), summary.get(f"{key}_auroc_LOF_std")
-        )
+        f1 = fmt(summary.get(f"{key}_macro_f1_seed_aggregate", {}))
+        pg = fmt(summary.get(f"{key}_per_gene_f1_seed_aggregate", {}))
+        gof = fmt(summary.get(f"{key}_auroc_GOF_seed_aggregate", {}))
+        dn = fmt(summary.get(f"{key}_auroc_DN_seed_aggregate", {}))
+        lof = fmt(summary.get(f"{key}_auroc_LOF_seed_aggregate", {}))
         print(f"{label:<12} {f1:<16} {pg:<16} {gof:<14} {dn:<14} {lof:<14}")
 
     print("=" * 72)

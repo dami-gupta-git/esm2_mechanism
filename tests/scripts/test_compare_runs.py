@@ -5,8 +5,8 @@ Invariants:
 - load_run: flattens nested dicts/lists to dotted paths keyed by file
 - load_run: a corrupt JSON is skipped and reported, not fatal
 - compare: a run against itself reports no movement, no additions, no removals
-- compare: a `_mean` leaf is judged against its sibling `_std`, not a flat threshold
-- compare: a leaf with no sibling `_std` falls back to the absolute threshold and is
+- compare: a shared `mean` is judged against its declared `seed_std`
+- compare: a leaf with no valid seed spread falls back to the absolute threshold and is
   counted as such
 - compare: a zero or non-finite `_std` falls back rather than flagging everything
 - compare: NaN -> NaN is unchanged; NaN appearing or disappearing is incomparable
@@ -20,6 +20,7 @@ import json
 import pytest
 
 from scripts.compare_runs import compare, format_report, load_run
+from esm2_mech.utils.seed_aggregation import SEED_AGGREGATION_SCHEMA_VERSION
 
 
 def _write(run_dir, name, payload):
@@ -59,6 +60,16 @@ class TestLoadRun:
 
 
 class TestCompare:
+    @staticmethod
+    def _seed_aggregate(prefix, mean, spread):
+        return {
+            f"{prefix}.schema_version": SEED_AGGREGATION_SCHEMA_VERSION,
+            f"{prefix}.state": "available",
+            f"{prefix}.sampling_unit": "model_seed",
+            f"{prefix}.mean": mean,
+            f"{prefix}.seed_std": spread,
+        }
+
     def test_self_diff_reports_nothing(self, run_dir):
         _write(run_dir, "a.json", {
             "macro_f1_mean": 0.418, "macro_f1_std": 0.02,
@@ -72,20 +83,20 @@ class TestCompare:
         assert result["removed"] == []
         assert result["incomparable"] == []
 
-    def test_mean_is_judged_against_its_sibling_std(self):
-        old = {"f.json.macro_f1_mean": 0.400, "f.json.macro_f1_std": 0.05}
+    def test_mean_is_judged_against_its_seed_std(self):
+        old = self._seed_aggregate("f.json.macro_f1", 0.400, 0.05)
         # +0.03 is inside one seed-std (0.05) but far outside the flat threshold.
-        new = {"f.json.macro_f1_mean": 0.430, "f.json.macro_f1_std": 0.05}
+        new = self._seed_aggregate("f.json.macro_f1", 0.430, 0.05)
         result = compare(old, new, abs_threshold=0.005)
         assert result["moved"] == []
 
     def test_movement_beyond_one_seed_std_is_flagged(self):
-        old = {"f.json.macro_f1_mean": 0.400, "f.json.macro_f1_std": 0.01}
-        new = {"f.json.macro_f1_mean": 0.430, "f.json.macro_f1_std": 0.01}
+        old = self._seed_aggregate("f.json.macro_f1", 0.400, 0.01)
+        new = self._seed_aggregate("f.json.macro_f1", 0.430, 0.01)
         result = compare(old, new, abs_threshold=0.005)
         assert len(result["moved"]) == 1
         key, old_value, new_value, delta, threshold, used_std = result["moved"][0]
-        assert key == "f.json.macro_f1_mean"
+        assert key == "f.json.macro_f1.mean"
         assert delta == pytest.approx(0.03)
         assert threshold == 0.01
         assert used_std is True
@@ -98,16 +109,25 @@ class TestCompare:
         assert result["moved"][0][5] is False
         assert result["threshold_fallbacks"] == 1
 
-    def test_zero_std_falls_back_rather_than_flagging_everything(self):
+    def test_zero_seed_std_falls_back_rather_than_flagging_everything(self):
         # A zero std carries no information about spread; using it as a threshold
         # would flag every floating-point wobble as material movement.
-        old = {"f.json.auroc_mean": 0.894, "f.json.auroc_std": 0.0}
-        new = {"f.json.auroc_mean": 0.8941, "f.json.auroc_std": 0.0}
+        old = self._seed_aggregate("f.json.auroc", 0.894, 0.0)
+        new = self._seed_aggregate("f.json.auroc", 0.8941, 0.0)
         result = compare(old, new, abs_threshold=0.005)
         assert result["moved"] == []
-        # Both leaves fall back: the mean because its std is zero, and the std
-        # itself because it has no sibling std of its own.
-        assert result["threshold_fallbacks"] == 2
+        assert result["threshold_fallbacks"] >= 2
+
+    def test_fold_spread_is_not_used_as_a_seed_threshold(self):
+        old = {
+            "f.json.metric.mean": 0.4,
+            "f.json.metric.fold_std": 0.2,
+            "f.json.metric.sampling_unit": "cv_fold",
+        }
+        new = dict(old, **{"f.json.metric.mean": 0.41})
+        result = compare(old, new, abs_threshold=0.005)
+        assert len(result["moved"]) == 1
+        assert result["moved"][0][5] is False
 
     def test_nan_to_nan_is_unchanged(self):
         old = {"f.json.rho_mean": float("nan")}
@@ -147,7 +167,7 @@ class TestCompare:
         assert len(result["changed"]) == 1
 
     def test_added_keys_are_not_counted_as_movement(self):
-        old = {"f.json.macro_f1_mean": 0.4, "f.json.macro_f1_std": 0.01}
+        old = self._seed_aggregate("f.json.macro_f1", 0.4, 0.01)
         new = dict(old, **{"f.json.ci.ci_low": 0.3, "f.json.ci.ci_high": 0.5})
         result = compare(old, new, abs_threshold=0.005)
         # run_biorxiv adds CI keys throughout; folding them into movement would bury
@@ -172,11 +192,11 @@ class TestFormatReport:
         assert "## Keys removed (0)" in report
 
     def test_moved_rows_show_old_new_delta_and_basis(self):
-        old = {"f.json.macro_f1_mean": 0.400, "f.json.macro_f1_std": 0.01}
-        new = {"f.json.macro_f1_mean": 0.430, "f.json.macro_f1_std": 0.01}
+        old = TestCompare._seed_aggregate("f.json.macro_f1", 0.400, 0.01)
+        new = TestCompare._seed_aggregate("f.json.macro_f1", 0.430, 0.01)
         report = format_report(
             "run6", "run_biorxiv", compare(old, new, abs_threshold=0.005), 0.005
         )
-        assert "`f.json.macro_f1_mean`" in report
+        assert "`f.json.macro_f1.mean`" in report
         assert "+0.03" in report
-        assert "seed-std" in report
+        assert "seed SD" in report

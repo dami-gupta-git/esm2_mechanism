@@ -239,36 +239,37 @@ class TestEmbeddingCacheValidation:
 
 
 class TestClaim2C:
-    def _inference(self, ci):
-        return {
+    def test_seed0_interval_adjudicates_and_across_seed_mean_stays_separate(self):
+        seed0 = {
             "point_estimate": 0.90,
-            "ci": ci,
-            "estimate_basis": "seed_0_mean_of_fold_aurocs",
-            "resampling_unit": "pfam_family",
+            "ci": {"ci_low": 0.88, "ci_high": 0.92, "ci_suppressed": False},
+            "estimate_basis": "seed0_fold_mean_auroc",
+            "resampling_unit": "gene",
             "n_scored": 100,
-            "n_excluded": 5,
+            "n_excluded": 0,
         }
-
-    def test_family_seed0_interval_adjudicates_claim(self):
-        claim = _build_claim_2c(
-            self._inference(
-                {
-                    "point": 0.90,
-                    "ci_low": 0.87,
-                    "ci_high": 0.93,
-                    "ci_suppressed": False,
-                }
-            )
-        )
+        claim = _build_claim_2c(seed0, across_seed_point_estimate=0.89)
 
         assert claim["split"] == "family"
         assert claim["seed"] == 0
         assert claim["threshold"] == CLAIM_2C_THRESHOLD
-        assert claim["resampling_unit"] == "pfam_family"
-        assert claim["verdict"] == "pass, established (CI excludes the threshold)"
+        assert claim["resampling_unit"] == "gene"
+        assert claim["point_estimate"] == 0.90
+        # The seed spread and the resampling interval describe different things,
+        # so the across-seed mean is recorded beside the interval, never inside it.
+        assert claim["across_seed_point_estimate"] == 0.89
+        assert claim["ci"]["ci_low"] == 0.88
 
-    def test_missing_interval_does_not_adjudicate(self):
-        claim = _build_claim_2c(self._inference(None))
+    def test_a_suppressed_interval_is_not_adjudicated(self):
+        seed0 = {
+            "point_estimate": 0.90,
+            "ci": {"ci_low": None, "ci_high": None, "ci_suppressed": True},
+            "estimate_basis": "seed0_fold_mean_auroc",
+            "resampling_unit": "gene",
+            "n_scored": 100,
+            "n_excluded": 0,
+        }
+        claim = _build_claim_2c(seed0, across_seed_point_estimate=0.89)
         assert claim["verdict"] == "not adjudicated (CI unavailable)"
 
 

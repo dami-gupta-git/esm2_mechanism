@@ -10,14 +10,18 @@ import argparse
 import json
 import warnings
 from collections import Counter
-from pathlib import Path
 
 import numpy as np
-from sklearn.preprocessing import LabelEncoder
 from esm2_mech.utils.bootstrap import attach_mechanism_ci
-from esm2_mech.utils.constants import BOOTSTRAP_N_RESAMPLES, MECHANISM_CLASSES
+from esm2_mech.utils.constants import BOOTSTRAP_N_RESAMPLES, MECHANISM_CLASSES, N_SEEDS
 from esm2_mech.utils.data import build_gene_to_row as _build_gene_to_row
-from esm2_mech.utils.metrics import mean_std_n
+from esm2_mech.utils.seed_aggregation import (
+    aggregate_seed_results,
+    block_seed_status,
+    read_seed_inference,
+    seed_result_contract,
+)
+from esm2_mech.experiments.mechanism.seed_results import aggregate_result_contract
 from esm2_mech.utils.io import load_variants_and_delta, write_result_json
 from esm2_mech.utils.probes import run_mlp_cv, run_histgb_cv
 from esm2_mech.utils.classification import validate_complete_classification_splits
@@ -28,13 +32,8 @@ from esm2_mech.utils.paths import (
     EMB_WT_MEAN,
     EMB_MUT_MEAN,
     GENE_UNIVERSE,
-    PFAM_JSON,
     PROTEOME_FEATURES_ALIGNED,
-    PROTEOME_FEATURE_COLUMNS_JSON,
-    PROTEOME_FEATURES_TSV,
     BADONYI_FEATURES_ALIGNED,
-    BADONYI_FEATURE_COLUMNS_JSON,
-    BADONYI_FEATURES_TSV,
     MMSEQS_CLUSTERS_JSON,
 )
 import functools
@@ -204,7 +203,7 @@ def run_seed(
     )
 
     res = {
-        "seed": seed,
+        **seed_result_contract(seed),
         "n_variants": int(len(idx)),
         "n_clusters": n_clusters,
         "class_dist": cd,
@@ -277,28 +276,27 @@ def run_seed(
     return res
 
 
-def aggregate_seeds(all_res):
-    out = {"n_seeds": len(all_res)}
+def aggregate_seeds(all_res, requested_seeds):
+    requested = tuple(requested_seeds)
+    out = {"requested_seeds": list(requested)}
     for key in ["V1", "V2", "V_bad", "V2_bad", "V_all"]:
         for metric in ["macro_f1_mean", "per_gene_f1_mean"]:
-            vals = [r[key].get(metric) for r in all_res if key in r]
             stem = f"{key}_{metric.replace('_mean','')}"
-            unavailable = len(vals) != len(all_res) or any(
-                value is None or not np.isfinite(value) for value in vals
-            )
-            out[f"{stem}_mean"] = None if unavailable else float(np.mean(vals))
-            out[f"{stem}_std"] = None if unavailable else float(np.std(vals))
+            out[f"{stem}_seed_aggregate"] = aggregate_seed_results(
+                requested,
+                all_res,
+                lambda result, arm=key, name=metric: result.get(arm, {}).get(name),
+                status=lambda result, arm=key: block_seed_status(result.get(arm)),
+            ).to_dict()
         for cls in CLASSES:
-            vals = [r[key].get(f"auroc_{cls}_mean") for r in all_res if key in r]
-            unavailable = len(vals) != len(all_res) or any(
-                value is None or not np.isfinite(value) for value in vals
-            )
-            out[f"{key}_auroc_{cls}_mean"] = (
-                None if unavailable else float(np.mean(vals))
-            )
-            out[f"{key}_auroc_{cls}_std"] = (
-                None if unavailable else float(np.std(vals))
-            )
+            out[f"{key}_auroc_{cls}_seed_aggregate"] = aggregate_seed_results(
+                requested,
+                all_res,
+                lambda result, arm=key, label=cls: result.get(arm, {}).get(
+                    f"auroc_{label}_mean"
+                ),
+                status=lambda result, arm=key: block_seed_status(result.get(arm)),
+            ).to_dict()
     return out
 
 
@@ -311,10 +309,11 @@ def print_table(summary):
     )
     print("-" * 96)
 
-    def fmt(m, s):
-        if m is None:
+    def fmt(aggregate):
+        metric = read_seed_inference(aggregate)
+        if not metric.available:
             return "    N/A      "
-        return f"{m:.3f}±{s:.3f}"
+        return f"{metric.value:.3f}±{metric.spread:.3f}"
 
     for key, label in [
         ("V1", "V1(seq)"),
@@ -323,22 +322,11 @@ def print_table(summary):
         ("V2_bad", "V2+bad"),
         ("V_all", "V_all"),
     ]:
-        f1 = fmt(
-            summary.get(f"{key}_macro_f1_mean"), summary.get(f"{key}_macro_f1_std")
-        )
-        pg = fmt(
-            summary.get(f"{key}_per_gene_f1_mean"),
-            summary.get(f"{key}_per_gene_f1_std"),
-        )
-        gof = fmt(
-            summary.get(f"{key}_auroc_GOF_mean"), summary.get(f"{key}_auroc_GOF_std")
-        )
-        dn = fmt(
-            summary.get(f"{key}_auroc_DN_mean"), summary.get(f"{key}_auroc_DN_std")
-        )
-        lof = fmt(
-            summary.get(f"{key}_auroc_LOF_mean"), summary.get(f"{key}_auroc_LOF_std")
-        )
+        f1 = fmt(summary.get(f"{key}_macro_f1_seed_aggregate", {}))
+        pg = fmt(summary.get(f"{key}_per_gene_f1_seed_aggregate", {}))
+        gof = fmt(summary.get(f"{key}_auroc_GOF_seed_aggregate", {}))
+        dn = fmt(summary.get(f"{key}_auroc_DN_seed_aggregate", {}))
+        lof = fmt(summary.get(f"{key}_auroc_LOF_seed_aggregate", {}))
         print(f"{label:<10} {f1:<16} {pg:<16} {gof:<14} {dn:<14} {lof:<14}")
     print("=" * 96)
 
@@ -351,7 +339,7 @@ def main():
     ap.add_argument("--n_boot", type=int, default=BOOTSTRAP_N_RESAMPLES)
     args = ap.parse_args()
 
-    seeds = [args.seed] if args.seed is not None else list(range(5))
+    seeds = [args.seed] if args.seed is not None else list(range(N_SEEDS))
     OUT_DIR.mkdir(parents=True, exist_ok=True)
 
     print("=== Loading data ===")
@@ -395,7 +383,10 @@ def main():
         write_result_json(path, res, seeds=[s], indent=2)
         print(f"  Saved: {path}")
 
-    summary = aggregate_seeds(all_res)
+    summary = {
+        **aggregate_result_contract(),
+        **aggregate_seeds(all_res, seeds),
+    }
     spath = OUT_DIR / "cluster_summary.json"
     write_result_json(spath, summary, seeds=seeds, indent=2)
     print(f"\nSaved summary: {spath}")

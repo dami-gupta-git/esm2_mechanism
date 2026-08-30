@@ -22,7 +22,6 @@ from esm2_mech.experiments.stability.stability_data import (
     stability_splits,
 )
 from esm2_mech.utils.bootstrap import (
-    INTERVAL_GATE_REASON,
     cluster_bootstrap_ci,
     folds_to_arms,
     paired_cluster_bootstrap_diff,
@@ -32,6 +31,7 @@ from esm2_mech.utils.bootstrap import (
 from esm2_mech.utils.classification import validate_complete_classification_splits
 from esm2_mech.utils.constants import (
     BOOTSTRAP_N_RESAMPLES,
+    INFERENTIAL_SEED,
     MECHANISM_CLASSES,
     N_SEEDS,
     N_FOLDS,
@@ -43,8 +43,22 @@ from esm2_mech.utils.data import (
     pfam_fingerprint,
 )
 from esm2_mech.utils.io import write_result_json
-from esm2_mech.utils.metrics import auroc_at_median, fold_macro_f1, mean_std_n, standardize
+from esm2_mech.utils.metrics import (
+    auroc_at_median,
+    fold_macro_f1,
+    mean_std_n,
+    standardize,
+)
 from esm2_mech.utils.probes import run_logreg_cv
+from esm2_mech.utils.seed_aggregation import (
+    SEED_STATUS_UNSCORABLE,
+    aggregate_paired_seed_difference,
+    aggregate_result_contract,
+    aggregate_seed_results,
+    make_seed_record,
+    read_seed_point_estimate,
+    seed_result_contract,
+)
 from esm2_mech.utils.splits import family_split_cv
 from esm2_mech.utils.paths import (
     DATA_DIR as _DATA_DIR,
@@ -89,22 +103,38 @@ def run_regression_cv(X, y, splits, clf_fn, with_pearson=True, clusters=None,
             oof_clusters.append(clusters[te])
             oof_indices.append(te)
             oof_folds.append(np.full(len(te), fold_i, dtype=int))
-    if not rhos:
-        out = {}
-    else:
-        rho_mean, rho_std, n_rho = mean_std_n(rhos)
+    # Each metric is judged on its own folds. A fold whose AUROC is undefined —
+    # every held-out variant on one side of the median, say — says nothing about
+    # the Spearman correlation from the same fold, so one undefined metric no
+    # longer withholds the others.
+    def _metric_status(fold_values):
+        return (
+            "success"
+            if fold_values and all(np.isfinite(value) for value in fold_values)
+            else SEED_STATUS_UNSCORABLE
+        )
+
+    out = {
+        "status": "success" if rhos else SEED_STATUS_UNSCORABLE,
+        "spearman_status": _metric_status(rhos),
+        "auroc_status": _metric_status(aurocs),
+        "n_folds": len(rhos),
+        "sampling_unit": "cv_fold",
+    }
+    if out["spearman_status"] == "success":
+        rho_mean, rho_std, _ = mean_std_n(rhos)
+        out["spearman_mean"] = rho_mean
+        out["spearman_fold_std"] = rho_std
+    if out["auroc_status"] == "success":
         au_mean, au_std, _ = mean_std_n(aurocs)
-        out = {
-            "spearman_mean": rho_mean,
-            "spearman_std": rho_std,
-            "auroc_mean": au_mean,
-            "auroc_std": au_std,
-            "n_folds": n_rho,
-        }
-        if with_pearson:
+        out["auroc_mean"] = au_mean
+        out["auroc_fold_std"] = au_std
+    if with_pearson:
+        out["pearson_status"] = _metric_status(pearsons)
+        if out["pearson_status"] == "success":
             pearson_mean, pearson_std, _ = mean_std_n(pearsons)
             out["pearson_mean"] = pearson_mean
-            out["pearson_std"] = pearson_std
+            out["pearson_fold_std"] = pearson_std
     if not return_oof:
         return out
     oof = None
@@ -277,7 +307,6 @@ def _adjudicate_upper_bound(point, ci, threshold):
     return "underpowered" if ci["ci_low"] <= threshold else "failed"
 
 
-
 def _fit_one_protein(prot, X, y, proteins):
     """Fit Ridge leaving out one protein; return (prot, result) or None."""
     mask = proteins == prot
@@ -375,57 +404,80 @@ def run_stability_projection_3c(
             groups=family_groups,
             held_out_unit="family",
         )
+        seed_result = {**seed_result_contract(seed), "results": {}}
         seed_oof = {}
-        seed_baseline_f1 = None
-        seed_projected_f1 = None
         for X, tag in [(merged_scaled, "baseline"), (residuals, "projected")]:
-            result, oof = run_logreg_cv(
+            probe_result = run_logreg_cv(
                 X,
                 y,
                 splits,
                 MECHANISM_CLASSES,
                 split_contract,
                 seed=seed,
-                genes=merged_proteins,
-                return_oof=True,
+                genes=merged_proteins if collect_oof else None,
+                return_oof=collect_oof,
                 prescaled=True,
                 compute_per_gene=False,
                 label=f"control_3c_{tag}",
             )
-            seed_f1_mean = result["macro_f1_mean"]
-            if tag == "baseline":
-                seed_baseline_f1 = seed_f1_mean
-            else:
-                seed_projected_f1 = seed_f1_mean
-            if collect_oof and oof is not None:
+            result, oof = probe_result if collect_oof else (probe_result, None)
+            seed_result["results"][tag] = result
+            if oof is not None:
                 seed_oof[tag] = {
                     **oof,
                     "pred": np.array(
                         [MECHANISM_CLASSES[column] for column in oof["proba"].argmax(1)]
                     ),
                 }
-        return seed_baseline_f1, seed_projected_f1, seed_oof
+        # The out-of-fold arrays stay outside seed_result, which is written to the
+        # result file.
+        return seed_result, seed_oof
 
-    seed0_bl, seed0_pr, seed0_oof = _run_3c_seed(
-        0, collect_oof=compute_ci
-    )
+    requested_seeds = tuple(range(n_seeds))
+    # Seed 0 also carries the paired bootstrap, which parallelises internally, so
+    # it runs on its own rather than nested inside the per-seed pool.
+    seed0_result, seed0_oof = _run_3c_seed(0, collect_oof=compute_ci)
     with parallel_config(backend="loky", n_jobs=n_jobs, inner_max_num_threads=1):
-        rest = Parallel()(
-            delayed(_run_3c_seed)(seed, False) for seed in range(1, n_seeds)
+        remaining = Parallel()(
+            delayed(_run_3c_seed)(seed, False) for seed in requested_seeds[1:]
         )
-    baseline_f1s = [seed0_bl] + [r[0] for r in rest]
-    projected_f1s = [seed0_pr] + [r[1] for r in rest]
+    seed_results = [seed0_result] + [result for result, _oof in remaining]
+    baseline = aggregate_seed_results(
+        requested_seeds,
+        seed_results,
+        lambda result: result["results"]["baseline"].get("macro_f1_mean"),
+        status=lambda result: result["results"]["baseline"]["status"],
+    )
+    projected = aggregate_seed_results(
+        requested_seeds,
+        seed_results,
+        lambda result: result["results"]["projected"].get("macro_f1_mean"),
+        status=lambda result: result["results"]["projected"]["status"],
+    )
+    difference = aggregate_paired_seed_difference(
+        requested_seeds,
+        [
+            make_seed_record(
+                seed_result["seed"],
+                seed_result["results"]["projected"].get("macro_f1_mean"),
+                status=seed_result["results"]["projected"]["status"],
+            )
+            for seed_result in seed_results
+        ],
+        [
+            make_seed_record(
+                seed_result["seed"],
+                seed_result["results"]["baseline"].get("macro_f1_mean"),
+                status=seed_result["results"]["baseline"]["status"],
+            )
+            for seed_result in seed_results
+        ],
+    )
 
-    if any(value is None for value in baseline_f1s + projected_f1s):
-        baseline_f1_mean = baseline_f1_std = None
-        projected_f1_mean = projected_f1_std = None
-    else:
-        baseline_f1_mean = float(np.mean(baseline_f1s))
-        baseline_f1_std = float(np.std(baseline_f1s))
-        projected_f1_mean = float(np.mean(projected_f1s))
-        projected_f1_std = float(np.std(projected_f1s))
+    # Seed 0's paired family bootstrap: a within-seed interval on one seed's
+    # difference, reported separately from the across-seed paired difference above.
     difference_ci = None
-    if compute_ci and "baseline" in seed0_oof and "projected" in seed0_oof:
+    if "baseline" in seed0_oof and "projected" in seed0_oof:
         baseline_oof = seed0_oof["baseline"]
         projected_oof = seed0_oof["projected"]
         if not np.array_equal(baseline_oof["genes"], projected_oof["genes"]):
@@ -442,30 +494,18 @@ def run_stability_projection_3c(
                 return fold_macro_f1(y_true, block, arm_pred, MECHANISM_CLASSES)
             return lambda rows: score_within_folds(rows, arms, _score)
 
-        # Both arms are the same fold assignment (one seed, one split), so the paired
+        # Both arms share the fold assignment (one seed, one split), so the paired
         # difference stays row-for-row aligned while each side is scored per fold.
-        _projected_f1 = _fold_f1(projected_oof)
-        _baseline_f1 = _fold_f1(baseline_oof)
-
-        all_rows = np.arange(len(baseline_oof["y_true"]))
-        projected_point = _projected_f1(all_rows)
-        baseline_point = _baseline_f1(all_rows)
-        point_diff = (
-            None
-            if projected_point is None or baseline_point is None
-            else projected_point - baseline_point
+        # Macro-F1 has a fixed class denominator, so it is defined on every draw
+        # and the plain cluster resample applies.
+        difference_ci = paired_cluster_bootstrap_diff(
+            clusters,
+            _fold_f1(projected_oof),
+            _fold_f1(baseline_oof),
+            n_resamples=n_boot,
+            seed=0,
+            discard_reason="a fold's resampled rows lost every row",
         )
-        difference_ci = {
-            "point_diff": point_diff,
-            "ci_low": None,
-            "ci_high": None,
-            "ci_suppressed": True,
-            "missing": True,
-            "reason": INTERVAL_GATE_REASON,
-            "n_resamples": 0,
-            "n_resamples_total": 0,
-            "n_clusters": int(len(np.unique(clusters))),
-        }
     inferential_point = (
         None if difference_ci is None else difference_ci.get("point_diff")
     )
@@ -473,15 +513,12 @@ def run_stability_projection_3c(
         inferential_point, difference_ci, 0.01
     )
     return {
-        "baseline_f1_mean": baseline_f1_mean,
-        "baseline_f1_std": baseline_f1_std,
-        "projected_f1_mean": projected_f1_mean,
-        "projected_f1_std": projected_f1_std,
-        "delta_f1": (
-            None
-            if projected_f1_mean is None or baseline_f1_mean is None
-            else projected_f1_mean - baseline_f1_mean
-        ),
+        **aggregate_result_contract(),
+        "baseline_f1": baseline.to_dict(),
+        "projected_f1": projected.to_dict(),
+        "projected_minus_baseline_f1": difference.to_dict(),
+        "per_seed_fold_summaries": seed_results,
+        "inferential_seed": INFERENTIAL_SEED,
         "inferential_point_estimate": inferential_point,
         "difference_ci": difference_ci,
         "3C_passes": control_3c_verdict == "affirmed",
@@ -490,7 +527,11 @@ def run_stability_projection_3c(
 
 
 def apply_decision_rule(control_3a_ci, control_3b_gap_ci, control_3c, control_3d_ci):
-    """Adjudicate controls 3A-3D from their registered point/CI pairs."""
+    """Adjudicate controls 3A-3D from their registered point/CI pairs.
+
+    Each gate reads the point estimate the interval beside it was built around, so
+    a verdict never compares an interval with a different estimand.
+    """
     point_3a = None if control_3a_ci is None else control_3a_ci.get("point")
     point_3b = (
         None if control_3b_gap_ci is None else control_3b_gap_ci.get("point_diff")
@@ -514,9 +555,7 @@ def apply_decision_rule(control_3a_ci, control_3b_gap_ci, control_3c, control_3d
             "threshold": 0.10,
             "point_estimate": point_3b,
             "ci": control_3b_gap_ci,
-            "verdict": _adjudicate_upper_bound(
-                point_3b, control_3b_gap_ci, 0.10
-            ),
+            "verdict": _adjudicate_upper_bound(point_3b, control_3b_gap_ci, 0.10),
         },
         "3C": {
             "criterion": "projected_minus_baseline_mechanism_f1_at_most_0.01",
@@ -549,8 +588,15 @@ def apply_decision_rule(control_3a_ci, control_3b_gap_ci, control_3c, control_3d
     return {"overall": overall, "gates": gates}
 
 
+def _show_seed_value(value, signed=False):
+    if value is None or not np.isfinite(value):
+        return "unavailable"
+    return f"{value:+.3f}" if signed else f"{value:.3f}"
 
-def main(compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES, n_jobs=1):
+
+
+def main(n_jobs=1, n_seeds=N_SEEDS, compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES):
+    requested_seeds = tuple(range(n_seeds))
     inputs = load_stability_inputs(include_pos=True)
     variants = inputs.variants
     proteins = inputs.proteins
@@ -562,7 +608,7 @@ def main(compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES, n_jobs=1):
     stability_fingerprints = inputs.input_fingerprints
     analysis_parameters = {
         "n_folds": N_FOLDS,
-        "n_seeds": N_SEEDS,
+        "n_seeds": n_seeds,
         "compute_ci": compute_ci,
         "n_boot": n_boot,
         "ridge_alpha": 1.0,
@@ -573,18 +619,15 @@ def main(compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES, n_jobs=1):
     global_median = float(np.median(ddg))
     print(f"Global ΔΔG median: {global_median:.4f}")
 
-    def _run_seed0():
-        """Seed 0 additionally computes cluster-bootstrap CIs (joblib-parallel
-        internally), so it must run alone rather than alongside the other seeds
-        — nesting Parallel inside Parallel just splits the same core pool."""
-        print("\n── Seed 0 ──")
-        splits_by_name = stability_splits(0, len(variants), proteins, family_map)
-        seed_result = {"seed": 0}
-        oofs = {}
+    def _run_seed(seed, collect_oof):
+        print(f"\n── Seed {seed} ──")
+        splits_by_name = stability_splits(seed, len(variants), proteins, family_map)
+        seed_result = {**seed_result_contract(seed), "results": {}}
+        seed_oofs = {}
         for feat_name, X in [("delta_mean", delta_mean), ("delta_pos", delta_pos)]:
             for split_name, splits in splits_by_name.items():
                 key = f"{feat_name}_{split_name}"
-                if compute_ci:
+                if collect_oof:
                     ci_clusters = (
                         np.array([family_map.get(p) for p in proteins], dtype=object)
                         if split_name == "family"
@@ -598,47 +641,41 @@ def main(compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES, n_jobs=1):
                         return_oof=True,
                         median=global_median,
                     )
+                    if oof is not None:
+                        seed_oofs[key] = oof
                 else:
-                    res = run_ridge_with_auroc(
-                        X, ddg, splits, median=global_median
-                    )
-                    oof = None
-                if compute_ci and oof is not None:
-                    res["ci"] = spearman_cluster_bootstrap_ci(
-                        oof, n_resamples=n_boot, seed=0
-                    )
-                    oofs[key] = oof
-                seed_result[key] = res
-                if res:
-                    print(
-                        f"  {key}: ρ={res['spearman_mean']:.3f}±{res['spearman_std']:.3f}  "
-                        f"AUROC={res['auroc_mean']:.3f}"
-                    )
-        return seed_result, oofs
+                    res = run_ridge_with_auroc(X, ddg, splits, median=global_median)
+                seed_result["results"][key] = res
+                spearman_text = (
+                    f"ρ={res['spearman_mean']:.3f}±"
+                    f"{res['spearman_fold_std']:.3f} fold SD"
+                    if res["spearman_status"] == "success"
+                    else "ρ=unscorable"
+                )
+                auroc_text = (
+                    f"AUROC={res['auroc_mean']:.3f}"
+                    if res["auroc_status"] == "success"
+                    else "AUROC=unscorable"
+                )
+                print(f"  {key}: {spearman_text}  {auroc_text}")
+        return seed_result, seed_oofs
 
-    def _run_seed_plain(seed):
-        """Seeds 1..N-1: no CI, no OOF — independent of each other and of seed 0."""
-        print(f"\n── Seed {seed} ──")
-        splits_by_name = stability_splits(seed, len(variants), proteins, family_map)
-        seed_result = {"seed": seed}
-        for feat_name, X in [("delta_mean", delta_mean), ("delta_pos", delta_pos)]:
-            for split_name, splits in splits_by_name.items():
-                key = f"{feat_name}_{split_name}"
-                res = run_ridge_with_auroc(X, ddg, splits, median=global_median)
-                seed_result[key] = res
-                if res:
-                    print(
-                        f"  {key}: ρ={res['spearman_mean']:.3f}±{res['spearman_std']:.3f}  "
-                        f"AUROC={res['auroc_mean']:.3f}"
-                    )
-        return seed_result
-
-    seed0_result, seed0_oofs = _run_seed0()
+    # Seed 0 also carries the cluster bootstrap, which parallelises internally, so
+    # it runs on its own rather than nested inside the per-seed pool.
+    seed0_result, seed0_oofs = _run_seed(0, collect_oof=compute_ci)
     with parallel_config(backend="loky", n_jobs=n_jobs, inner_max_num_threads=1):
-        remaining_results = Parallel()(
-            delayed(_run_seed_plain)(seed) for seed in range(1, N_SEEDS)
+        remaining = Parallel()(
+            delayed(_run_seed)(seed, False) for seed in requested_seeds[1:]
         )
-    results_by_seed = [seed0_result] + list(remaining_results)
+    results_by_seed = [seed0_result] + [result for result, _oofs in remaining]
+
+    seed0_intervals = {}
+    if compute_ci:
+        print("\nCluster-bootstrap CIs on seed 0's fold-mean Spearman...")
+        for key, oof in seed0_oofs.items():
+            seed0_intervals[key] = spearman_cluster_bootstrap_ci(
+                oof, n_resamples=n_boot, seed=0
+            )
 
     print("\nPer-protein Spearman (leave-one-protein-out)...")
     per_prot = per_protein_spearman(delta_mean, ddg, proteins, n_jobs=n_jobs)
@@ -669,43 +706,52 @@ def main(compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES, n_jobs=1):
         seeds=None,
     )
 
-    summary = {}
-    all_keys = set()
-    for seed_result in results_by_seed:
-        for key_name, value in seed_result.items():
-            if isinstance(value, dict):
-                all_keys.add(key_name)
-
-    for key in sorted(all_keys):
-        vals_rho = [
-            sr[key]["spearman_mean"] for sr in results_by_seed if key in sr and sr[key]
-        ]
-        vals_auroc = [
-            sr[key]["auroc_mean"] for sr in results_by_seed if key in sr and sr[key]
-        ]
-        if not vals_rho:
-            continue
-        rho_mean, rho_std, n_seeds_used = mean_std_n(vals_rho)
-        au_mean, au_std, _ = mean_std_n(vals_auroc)
+    summary = {**aggregate_result_contract()}
+    all_keys = sorted(results_by_seed[0]["results"])
+    for key in all_keys:
+        spearman = aggregate_seed_results(
+            requested_seeds,
+            results_by_seed,
+            lambda seed_result, key=key: seed_result["results"][key].get(
+                "spearman_mean"
+            ),
+            status=lambda seed_result, key=key: seed_result["results"][key][
+                "spearman_status"
+            ],
+        )
+        auroc = aggregate_seed_results(
+            requested_seeds,
+            results_by_seed,
+            lambda seed_result, key=key: seed_result["results"][key].get(
+                "auroc_mean"
+            ),
+            status=lambda seed_result, key=key: seed_result["results"][key][
+                "auroc_status"
+            ],
+        )
         summary[key] = {
             "across_seed": {
-                "spearman_mean": rho_mean,
-                "spearman_std": rho_std,
-                "auroc_mean": au_mean,
-                "auroc_std": au_std,
-                "n_seeds": n_seeds_used,
+                "spearman": spearman.to_dict(),
+                "auroc": auroc.to_dict(),
+            },
+            "per_seed_fold_summaries": {
+                str(result["seed"]): result["results"][key]
+                for result in results_by_seed
             },
         }
-        seed0_ci = results_by_seed[0].get(key, {}).get("ci") if results_by_seed else None
-        if seed0_ci is not None:
+        # A within-seed interval on seed 0's estimate, kept in its own field: it
+        # is not the across-seed spread reported in the aggregate above.
+        if key in seed0_intervals:
             summary[key]["seed0_inference"] = {
-                "point_estimate": seed0_ci.get("point"),
-                "ci": seed0_ci,
+                "seed": 0,
+                "point_estimate": seed0_intervals[key].get("point"),
+                "ci": seed0_intervals[key],
             }
 
     summary["per_protein"] = {
-        "spearman_mean": per_prot_mean,
-        "spearman_std": per_prot_std,
+        "spearman_protein_mean": per_prot_mean,
+        "spearman_protein_std": per_prot_std,
+        "sampling_unit": "protein",
         "n_proteins": len(prot_rhos),
         "n_proteins_finite": n_finite_prot,
     }
@@ -750,20 +796,22 @@ def main(compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES, n_jobs=1):
         delta_mean,
         ddg,
         n_folds=N_FOLDS,
-        n_seeds=N_SEEDS,
+        n_seeds=n_seeds,
         n_boot=n_boot,
         n_jobs=n_jobs,
         compute_ci=compute_ci,
     )
+    baseline_3c = read_seed_point_estimate(control_3c_result["baseline_f1"]).value
+    projected_3c = read_seed_point_estimate(control_3c_result["projected_f1"]).value
+    difference_3c = read_seed_point_estimate(
+        control_3c_result["projected_minus_baseline_f1"]
+    ).value
     inferential_3c = control_3c_result["inferential_point_estimate"]
-    inferential_3c_text = (
-        "unavailable" if inferential_3c is None else f"{inferential_3c:+.3f}"
-    )
     print(
-        f"  3C: five-seed baseline F1={control_3c_result['baseline_f1_mean']:.3f}  "
-        f"projected F1={control_3c_result['projected_f1_mean']:.3f}  "
-        f"mean Δ={control_3c_result['delta_f1']:+.3f}  "
-        f"seed-0 inferential Δ={inferential_3c_text}  "
+        f"  3C: baseline F1={_show_seed_value(baseline_3c)}  "
+        f"projected F1={_show_seed_value(projected_3c)}  "
+        f"paired mean Δ={_show_seed_value(difference_3c, signed=True)}  "
+        f"seed-0 inferential Δ={_show_seed_value(inferential_3c, signed=True)}  "
         f"verdict={control_3c_result['3C_verdict']}"
     )
     write_result_json(
@@ -776,8 +824,29 @@ def main(compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES, n_jobs=1):
             },
             "analysis_parameters": analysis_parameters,
         },
-        seeds=list(range(N_SEEDS)),
+        seeds=list(requested_seeds),
     )
+
+    control_3b_gap = aggregate_paired_seed_difference(
+        requested_seeds,
+        [
+            make_seed_record(
+                result["seed"],
+                result["results"]["delta_mean_random"].get("spearman_mean"),
+                status=result["results"]["delta_mean_random"]["spearman_status"],
+            )
+            for result in results_by_seed
+        ],
+        [
+            make_seed_record(
+                result["seed"],
+                result["results"]["delta_mean_family"].get("spearman_mean"),
+                status=result["results"]["delta_mean_family"]["spearman_status"],
+            )
+            for result in results_by_seed
+        ],
+    )
+    summary["3B_random_minus_family_spearman"] = control_3b_gap.to_dict()
 
     control_3b_gap_ci = None
     oof_random = seed0_oofs.get("delta_mean_random")
@@ -792,17 +861,23 @@ def main(compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES, n_jobs=1):
             n_resamples=n_boot,
             seed=0,
         )
+        summary["3B_gap_ci"] = control_3b_gap_ci
         print(
             f"  3B gap: {control_3b_gap_ci['point_diff']:.3f} "
-            f"[{control_3b_gap_ci.get('ci_low', '?')}, {control_3b_gap_ci.get('ci_high', '?')}]"
+            f"[{control_3b_gap_ci.get('ci_low', '?')}, "
+            f"{control_3b_gap_ci.get('ci_high', '?')}]"
         )
 
-    dm_random = summary["delta_mean_random"]["across_seed"]["spearman_mean"]
-    dm_family = summary["delta_mean_family"]["across_seed"]["spearman_mean"]
+    dm_random = read_seed_point_estimate(
+        summary["delta_mean_random"]["across_seed"]["spearman"]
+    ).value
+    dm_family = read_seed_point_estimate(
+        summary["delta_mean_family"]["across_seed"]["spearman"]
+    ).value
 
-    control_3a_ci = summary.get("delta_mean_random", {}).get(
-        "seed0_inference", {}
-    ).get("ci")
+    control_3a_ci = (
+        summary.get("delta_mean_random", {}).get("seed0_inference", {}).get("ci")
+    )
     adjudication = apply_decision_rule(
         control_3a_ci,
         control_3b_gap_ci,
@@ -813,12 +888,10 @@ def main(compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES, n_jobs=1):
     summary["result_version"] = 3
     summary["verdict"] = verdict
     summary["gates"] = adjudication["gates"]
-    if control_3b_gap_ci is not None:
-        summary["3B_gap_ci"] = control_3b_gap_ci
     summary["n_variants"] = len(variants)
     summary["n_proteins"] = len(set(proteins))
     summary["n_families"] = n_families
-    summary["n_seeds"] = N_SEEDS
+    summary["n_seeds"] = n_seeds
     summary["3C"] = control_3c_result
     summary["input_fingerprints"] = {
         "stability": stability_fingerprints,
@@ -828,27 +901,39 @@ def main(compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES, n_jobs=1):
 
     print(f"\n{'='*60}")
     print(f"VERDICT: {verdict}")
-    print(f"  delta_mean random ρ  : {dm_random:.3f}  (3A threshold ≥ 0.5)")
-    print(f"  delta_mean family ρ  : {dm_family:.3f}")
-    print(f"  Δ (random − family)  : {dm_random - dm_family:.3f}  (LEAKY if Δ ≥ 0.10)")
-    print(f"  per-domain ρ std     : {per_prot_std:.3f}  (3D threshold ≤ 0.10)")
+    print(f"  delta_mean random ρ  : {_show_seed_value(dm_random)}  (3A threshold ≥ 0.5)")
+    print(f"  delta_mean family ρ  : {_show_seed_value(dm_family)}")
+    print(
+        "  Δ (random − family)  : "
+        f"{_show_seed_value(control_3b_gap.mean, signed=True)}  "
+        "(LEAKY if Δ ≥ 0.10)"
+    )
+    print(
+        f"  per-protein ρ std    : {_show_seed_value(per_prot_std)}  "
+        "(3D threshold ≤ 0.10)"
+    )
     if control_3c_result:
         print(
-            f"  3C seed-0 Δ mechanism F1: "
-            f"{inferential_3c_text}  "
+            f"  3C paired-seed Δ mechanism F1: "
+            f"{_show_seed_value(difference_3c, signed=True)}  "
+            f"(seed-0 inferential Δ "
+            f"{_show_seed_value(inferential_3c, signed=True)})  "
             f"(passes if ≤ +0.01 — stability projection doesn't help mechanism)"
         )
     for gate_name, gate in adjudication["gates"].items():
         print(f"  {gate_name} verdict          : {gate['verdict']}")
     print(f"{'='*60}")
 
-    write_result_json(os.path.join(OUT, "summary.json"), summary, seeds=list(range(N_SEEDS)))
+    write_result_json(os.path.join(OUT, "summary.json"), summary, seeds=list(requested_seeds))
     print(f"\nResults written to {OUT}/")
 
 
 def _cli():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--no_ci", action="store_true", help="skip cluster-bootstrap CIs")
+    parser.add_argument("--seeds", type=int, default=N_SEEDS)
+    parser.add_argument(
+        "--no_ci", action="store_true", help="skip cluster-bootstrap CIs"
+    )
     parser.add_argument("--n_boot", type=int, default=BOOTSTRAP_N_RESAMPLES)
     parser.add_argument(
         "--n_jobs", type=int, required=True,
@@ -858,7 +943,12 @@ def _cli():
         "peak RAM. Start low (e.g. 4), watch peak RAM, raise only if it fits.",
     )
     args = parser.parse_args()
-    main(compute_ci=not args.no_ci, n_boot=args.n_boot, n_jobs=args.n_jobs)
+    main(
+        n_jobs=args.n_jobs,
+        n_seeds=args.seeds,
+        compute_ci=not args.no_ci,
+        n_boot=args.n_boot,
+    )
 
 
 if __name__ == "__main__":

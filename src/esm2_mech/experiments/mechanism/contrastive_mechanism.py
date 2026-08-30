@@ -48,13 +48,18 @@ from esm2_mech.utils.constants import (
     N_SEEDS,
     contrastive_seed_result_filename,
 )
-from esm2_mech.utils.seed_aggregation import load_seed_files, seed_result_contract
+from esm2_mech.utils.seed_aggregation import (
+    aggregate_seed_results,
+    load_seed_files,
+    seed_result_contract,
+)
 from esm2_mech.experiments.mechanism.seed_results import (
     FAMILY_SPLIT,
     aggregate_across_seeds,
     aggregate_result_contract,
     print_table,
     read_across_seed_metric,
+    read_feature_metric,
 )
 import functools
 
@@ -675,11 +680,14 @@ def load_all_data():
 
 def print_interpretation(aggregated):
     """Print across-seed verdict against the live MLP delta_mean family floor."""
-    fam = aggregated.get(FAMILY_SPLIT, {})
-    cont = fam.get("contrastive_knn", {})
-    raw = fam.get("raw_knn_baseline", {})
-    cont_f1 = cont.get("macro_f1_seed_mean")
-    raw_f1 = raw.get("macro_f1_seed_mean")
+    cont_read = read_feature_metric(
+        aggregated, FAMILY_SPLIT, "contrastive_knn", "macro_f1"
+    )
+    raw_read = read_feature_metric(
+        aggregated, FAMILY_SPLIT, "raw_knn_baseline", "macro_f1"
+    )
+    cont_f1 = cont_read.value
+    raw_f1 = raw_read.value
     floor = read_across_seed_metric(
         MECHANISM_AGGREGATE_JSON, FAMILY_SPLIT, DELTA_MEAN_FEATURE
     )
@@ -763,6 +771,21 @@ def main():
         requested_seeds,
         confusion_matrix_class_order=MECHANISM_CLASSES,
     )
+    paired_comparisons = {}
+    loaded_results = [result for _seed, _filename, result in seed_results]
+    for split_name in ("gene_split", "family_split"):
+        paired_comparisons[split_name] = {}
+        for metric_name in ("macro_f1", *[f"auroc_{cls}" for cls in MECHANISM_CLASSES]):
+            paired_comparisons[split_name][metric_name] = aggregate_seed_results(
+                requested_seeds,
+                loaded_results,
+                lambda result, split=split_name, metric=metric_name: (
+                    result.get(split, {})
+                    .get("paired_diff_vs_raw_knn", {})
+                    .get(metric, {})
+                    .get("point_diff")
+                ),
+            ).to_dict()
     seed_numbers = [seed for seed, _filename, _result in seed_results]
     write_result_json(
         CONTRASTIVE_AGGREGATE_JSON,
@@ -771,6 +794,7 @@ def main():
             "n_seeds": len(seed_results),
             "seed_files": [filename for _seed, filename, _result in seed_results],
             "across_seed": aggregated,
+            "paired_comparisons": paired_comparisons,
         },
         seeds=seed_numbers,
     )
