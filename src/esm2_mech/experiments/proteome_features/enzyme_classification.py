@@ -52,9 +52,10 @@ from esm2_mech.utils.bootstrap import (
 from esm2_mech.utils.seed_aggregation import (
     SEED_STATUS_SUCCESS,
     SEED_STATUS_UNSCORABLE,
-    aggregate_seed_oof,
     aggregate_result_contract,
+    aggregate_seed_oof,
     aggregate_seed_results,
+    make_seed_payload_record,
     read_seed_point_estimate,
     read_seed_result_contract,
     seed_count,
