@@ -6,7 +6,8 @@ from esm2_mech.experiments.stability.megascale_stability import (
     apply_decision_rule,
     run_ridge_with_auroc,
     paired_spearman_gap_ci,
-    run_stability_projection_3c,
+    run_stability_projection,
+    spearman_cluster_bootstrap_ci,
 )
 from esm2_mech.utils import bootstrap as bootstrap_module
 from esm2_mech.utils.constants import BOOTSTRAP_MAX_DISCARD_FRAC
@@ -29,7 +30,8 @@ def test_each_gate_reads_the_point_the_interval_beside_it_was_built_around():
     assert gates["random_split_spearman"]["ci"]["ci_low"] == 0.55
     assert gates["random_minus_family_spearman_gap"]["point_estimate"] == 0.05
     assert gates["per_protein_spearman_spread"]["point_estimate"] == 0.07
-    # 3C was not supplied, so it alone stays unadjudicated.
+    # The stability-projection control was not supplied, so it alone stays
+    # unadjudicated.
     assert gates["projected_minus_baseline_mechanism_f1"]["point_estimate"] is None
     assert gates["projected_minus_baseline_mechanism_f1"]["ci"] is None
 
@@ -41,15 +43,106 @@ def test_a_gate_without_its_interval_is_not_adjudicated():
     assert all(gate["ci"] is None for gate in adjudication["gates"].values())
 
 
+def _complete_seed_ci(**values):
+    return {
+        "requested_seeds": [0, 1, 2],
+        "seed_std": 0.02,
+        **values,
+    }
+
+
+def test_3b_uses_separate_affirmed_and_leaky_boundaries():
+    affirmed = apply_decision_rule(
+        None,
+        _complete_seed_ci(point_diff=0.03, ci_low=0.01, ci_high=0.04),
+        None,
+        None,
+    )
+    between = apply_decision_rule(
+        None,
+        _complete_seed_ci(point_diff=0.07, ci_low=0.06, ci_high=0.08),
+        None,
+        None,
+    )
+    leaky = apply_decision_rule(
+        None,
+        _complete_seed_ci(point_diff=0.13, ci_low=0.11, ci_high=0.15),
+        None,
+        None,
+    )
+
+    gate = "random_minus_family_spearman_gap"
+    assert affirmed["gates"][gate]["verdict"] == "affirmed"
+    assert "between the two boundaries" in between["gates"][gate]["verdict"]
+    assert leaky["gates"][gate]["verdict"] == "failed"
+    assert leaky["overall"] == "LEAKY"
+
+
+def test_seed_based_gate_rejects_a_single_seed_interval():
+    adjudication = apply_decision_rule(
+        {
+            "point": 0.7,
+            "ci_low": 0.6,
+            "ci_high": 0.8,
+            "requested_seeds": [0],
+            "seed_std": None,
+        },
+        None,
+        None,
+        None,
+    )
+
+    assert (
+        "multi-seed estimate unavailable"
+        in adjudication["gates"]["random_split_spearman"]["verdict"]
+    )
+
+
+def test_multiseed_spearman_interval_targets_all_seed_fold_means():
+    y_true = np.arange(12, dtype=float)
+    folds = np.repeat([0, 1, 2], 4)
+    oof = {
+        "requested_seeds": [0, 1, 2],
+        "y_true": y_true,
+        "clusters": np.repeat(np.arange(6), 2),
+        "oof_by_seed": {
+            0: {"proba": y_true, "folds": folds},
+            1: {"proba": y_true, "folds": folds},
+            2: {"proba": -y_true, "folds": folds},
+        },
+    }
+
+    interval = spearman_cluster_bootstrap_ci(oof, n_resamples=20, seed=0)
+
+    assert interval["point"] == pytest.approx(1.0 / 3.0)
+
+
 def test_random_minus_family_gap_is_the_mean_of_within_fold_spearman_scores():
+    """The gap is scored on the combined all-seed arms the run actually passes.
+
+    Each seed reshuffles its folds, so the arms carry one prediction block per
+    requested seed and the difference is taken over the same resampled units.
+    """
     y_true = np.array([0, 1, 2, 0, 1, 2], dtype=float)
     folds = np.array([0, 0, 0, 1, 1, 1])
     indices = np.arange(len(y_true))
     proteins = np.array(["P0", "P1", "P2", "P0", "P1", "P2"])
     family_map = {"P0": "F0", "P1": "F1", "P2": "F2"}
-    common = {"y_true": y_true, "indices": indices, "folds": folds}
-    arm_a = {**common, "pred": np.array([100, 101, 102, 0, 1, 2])}
-    arm_b = {**common, "pred": np.array([2, 1, 0, 102, 101, 100])}
+    requested_seeds = [0, 1, 2]
+
+    def _combined(predictions):
+        return {
+            "requested_seeds": requested_seeds,
+            "indices": indices,
+            "y_true": y_true,
+            "clusters": proteins,
+            "oof_by_seed": {
+                seed: {"proba": predictions, "folds": folds} for seed in requested_seeds
+            },
+        }
+
+    arm_a = _combined(np.array([100, 101, 102, 0, 1, 2]))
+    arm_b = _combined(np.array([2, 1, 0, 102, 101, 100]))
 
     result = paired_spearman_gap_ci(
         arm_a, arm_b, proteins, family_map, n_resamples=20, seed=0
@@ -97,7 +190,7 @@ def test_projected_minus_baseline_returns_a_paired_seed_point():
     stability_ddg = stability_delta[:, 0] + 0.1 * rng.normal(size=60)
     mechanism_delta, labels, genes, pfam_map = _merged_set(rng, n_features)
 
-    result = run_stability_projection_3c(
+    result = run_stability_projection(
         mechanism_delta,
         labels,
         genes,
@@ -123,9 +216,7 @@ def test_projected_minus_baseline_interval_keeps_most_of_its_draws(monkeypatch):
     # Runs against the resampling machinery itself, which audit item 1.4 gates
     # off. The machinery must stay healthy for when that gate is lifted, and a
     # high discard rate would mean folds are losing whole classes.
-    monkeypatch.setattr(
-        bootstrap_module, "CLASSIFICATION_INTERVALS_BLOCKED", False
-    )
+    monkeypatch.setattr(bootstrap_module, "CLASSIFICATION_INTERVALS_BLOCKED", False)
     # A high discard rate means folds are losing whole classes, which makes the
     # surviving draws a different statistic from the point estimate. With ten
     # families per fold it should be near zero, so a regression that empties or
@@ -136,7 +227,7 @@ def test_projected_minus_baseline_interval_keeps_most_of_its_draws(monkeypatch):
     stability_ddg = stability_delta[:, 0] + 0.1 * rng.normal(size=60)
     mechanism_delta, labels, genes, pfam_map = _merged_set(rng, n_features)
 
-    result = run_stability_projection_3c(
+    result = run_stability_projection(
         mechanism_delta,
         labels,
         genes,
@@ -170,9 +261,7 @@ def test_an_undefined_auroc_fold_does_not_withhold_the_rank_correlation():
         for test in np.array_split(np.arange(n_rows), 3)
     ]
     # A median above every value leaves each fold's binarised labels all-negative.
-    result = run_ridge_with_auroc(
-        features, ddg, splits, median=float(ddg.max() + 1.0)
-    )
+    result = run_ridge_with_auroc(features, ddg, splits, median=float(ddg.max() + 1.0))
 
     assert result["spearman_status"] == "success"
     assert result["spearman_mean"] is not None

@@ -16,9 +16,8 @@ the same as run6's; only the statistics and, where the data changed, the ClinVar
 Supersedes `RUNBOOK_biorxiv_old.md`, which became inconsistent after a second ClinVar refetch and
 is kept for reference only, not as a status source.
 
-Decision rules, resampling units, and the confirmatory/exploratory split: see
-[`PREREGISTRATION_run_biorxiv.md`](PREREGISTRATION_run_biorxiv.md), whose revision history records
-the rules revised on 2026-08-18 before the re-run. Design of the statistics
+Decision rules, resampling units, and the primary/exploratory split: see
+[`docs/improve/ANALYSIS_PLAN.md`](../docs/improve/ANALYSIS_PLAN.md). Design of the statistics
 machinery and non-obvious findings: see [`docs/FINDINGS.md`](../docs/FINDINGS.md).
 
 Outputs go to `results/run_biorxiv/` and `reports/run_biorxiv/`. `results/run6/` and
@@ -82,9 +81,9 @@ conservation-vs-embedding-delta gap that claim 2E turns on and the
 gene-split-minus-family-split gap (the leakage account, 2B) — plus the pathogenicity-vs-mechanism
 cross-family transfer contrast (not paired — different datasets, no shared row space).
 
-**0.5/0.6 — Pre-registered decision rules.** The CI decision rule (§1.1) and the
-confirmatory/exploratory split (Parts 2 and 4), written into
-[`PREREGISTRATION_run_biorxiv.md`](PREREGISTRATION_run_biorxiv.md) before the run.
+**0.5/0.6 — Decision rules.** The interval decision rule and the primary/exploratory
+split are defined in
+[`docs/improve/ANALYSIS_PLAN.md`](../docs/improve/ANALYSIS_PLAN.md).
 
 **0.7 — Pinned environment.** Confirm before the run:
 
@@ -393,7 +392,7 @@ section 5's pathogenicity signal is really the embeddings picking up on curation
 than biology.
 
 The Megascale arrays are unchanged by the ClinVar refresh, but they are used only after precondition
-0.10 has verified their extraction-time row identity and content. Step 7.2's 3C test also reads
+0.10 has verified their extraction-time row identity and content. Step 7.2's stability-projection rule also reads
 `valid_variants.json` and the section 4 embeddings, so run step 7.2 after step 4.1 has produced a
 current `valid_variants.json`.
 
@@ -416,19 +415,20 @@ or rebuilds the arrays when that identity cannot be established.
 ### Linear probe (CPU)
 
 Fits a Ridge regression from the embeddings to ΔΔG under three cross-validation schemes — random
-split, holding out whole domains, and holding out whole Pfam families — and tests four pre-registered
-hypotheses: 3A, the random-split correlation (Spearman ρ) reaches at least 0.5; 3B, that correlation
-drops by no more than 0.05 when switching to a family split, while a drop of at least 0.10 triggers
-the `LEAKY` outcome and the interval between them is not adjudicated; 3C, projecting the fitted
-stability direction out of section 4's mechanism-classification features does not raise the
-family-split mechanism score by more than 0.01 (stability and mechanism should be separable); 3D, the
-per-domain spread in correlation stays tight (standard deviation ≤ 0.10).
+split, holding out whole domains, and holding out whole Pfam families — and applies four decision rules.
+The random-split correlation (Spearman ρ) must reach at least 0.5. The family-transfer gap must be
+no more than 0.05 when switching to a family split, while a drop of at least 0.10 triggers the
+`LEAKY` outcome and the interval between them is not adjudicated. The stability projection, which
+removes the fitted stability direction from section 4's mechanism-classification features, must not
+raise the family-split mechanism score by more than 0.01, since stability and mechanism should be
+separable. The per-protein spread in correlation must stay tight, with a standard deviation of at
+most 0.10.
 
 | Step | Command | Description | Inputs | Outputs |
 |---|---|---|---|---|
-| 7.2 | `python -m esm2_mech.experiments.stability.megascale_stability --n_jobs 4` | 🟡 CPU — more cores help. Ridge probe from embeddings to ΔΔG under random/domain/family splits | `megascale_tsuboyama_variants.json`, `megascale_domain_families.json`, `data/embeddings/esm2_t33_650M_UR50D/megascale_{wt,mut}_{mean,pos}.npy`, `valid_variants.json` | `results/<run>/megascale_stability/per_protein_spearman.json`, `stability_projection_3c.json`, `summary.json` |
+| 7.2 | `python -m esm2_mech.experiments.stability.megascale_stability --n_jobs 4` | 🟡 CPU — more cores help. Ridge probe from embeddings to ΔΔG under random/domain/family splits | `megascale_tsuboyama_variants.json`, `megascale_domain_families.json`, `data/embeddings/esm2_t33_650M_UR50D/megascale_{wt,mut}_{mean,pos}.npy`, `valid_variants.json` | `results/<run>/megascale_stability/per_protein_spearman.json`, `stability_projection.json`, `summary.json` |
 
-`--n_jobs` is required, not optional: the per-seed, per-protein, and 3C loops each fork a worker
+`--n_jobs` is required, not optional: the per-seed, per-protein, and stability-projection loops each fork a worker
 that standardizes and fits against most of the 177k×1280 embedding matrix, so an unbounded worker
 count (`-1`) can exhaust RAM. Start at `--n_jobs 4`, watch peak RAM, and raise only if it fits.
 
@@ -437,7 +437,7 @@ count (`-1`) can exhaust RAM. Start at `--n_jobs 4`, watch peak RAM, and raise o
 Repeats step 7.2's three-way split comparison with a small neural network (MLP), plus
 an exploratory random forest, to check whether a
 nonlinear model finds more signal than the linear probe, and whether any such gain survives the
-family-split. Only the Ridge and MLP results are pre-registered; the random forest and XGBoost
+family-split. The Ridge and MLP results are the primary ones; the random forest and XGBoost
 numbers are exploratory. The default command runs the MLP and random forest. The random forest uses
 cuML on a GPU when available and otherwise uses scikit-learn on the CPU. The separate `--xgboost`
 command runs only XGBoost and needs a GPU.
@@ -449,7 +449,7 @@ command runs only XGBoost and needs a GPU.
 
 ### Controls (CPU)
 
-Exploratory checks on the step 7.2 linear signal, not part of the pre-registered 3A–3D verdict:
+Exploratory checks on the step 7.2 linear signal, not part of the stability control's verdict:
 whether a single feature (the size of the embedding shift, ignoring its direction) recovers most of
 the full signal; the regularization strength chosen by nested cross-validation, so the main probe's
 result isn't an artifact of one fixed setting; a label-shuffle null, where the ΔΔG values are
@@ -464,15 +464,12 @@ stability signal actually occupies.
 `--n_jobs` is required here too, for the same reason as step 7.2 — its per-seed loops fork workers
 against the full embedding matrix. Start at `--n_jobs 4`.
 
-Gates are unchanged from run6: 3A random-split ρ ≥ 0.5; 3B is affirmed when the
-random-to-family-split drop is at most 0.05, fails as `LEAKY` when the drop is at least 0.10, and is
-not adjudicated between those boundaries; 3C the mechanism-F1 change from projecting out stability
-stays ≤ +0.01; and 3D per-domain ρ standard deviation stays tight. run_biorxiv's only addition here
-is confidence intervals on these figures; since this experiment has no ClinVar dependency, it is
-the one part of this run that isolates the effect of the new statistics from any effect of the
-refreshed ClinVar snapshot. The audit clarification in `PREREGISTRATION_run_biorxiv.md`, Part 3,
-records why the executed result's single 0.10 upper-bound field does not change the observed 3B
-verdict.
+The decision rules are: the random-split correlation reaches ρ ≥ 0.5; the family-transfer gap is
+affirmed when the random-to-family-split drop is at most 0.05, fails as `LEAKY` when the drop is at
+least 0.10, and is not adjudicated between those boundaries; the stability projection changes
+mechanism F1 by at most +0.01; and the per-protein correlation spread stays tight. Since this
+experiment has no ClinVar dependency, it isolates the effect of the new statistics from any effect
+of the refreshed ClinVar snapshot.
 
 ---
 
@@ -540,7 +537,7 @@ defines what "verified" means.
       the current `valid_variants.json` / `embedded_variants.json` / `clinvar_pathogenicity_variants.json`
       identity (not a stale cache from an earlier run).
 - [ ] `scripts/compare_runs.py` has been run against the previous run and every flagged point-estimate
-      movement has a written explanation (Part 5 of the preregistration).
+      movement has a written explanation.
 - [ ] No report or figure cites a number from `reports/summaries/` or any run other than `run_biorxiv`.
 
 ### Per-claim checks
@@ -561,10 +558,10 @@ from the rule in §1.1 rather than from the point estimate alone.
 | 2F | `enzyme_classification/enzyme_classification_summary.json` | report_enzyme_classification.md | [ ] |
 | 2G | `enzyme_classification/enzyme_classification_summary.json` (paired against §4's mechanism OOF) | report_enzyme_classification.md | [ ] |
 | 2H | `enzyme_classification/enzyme_classification_summary.json` | report_enzyme_classification.md | [ ] |
-| 3A | `megascale_stability/summary.json` | report_stability.md | [ ] |
-| 3B | `megascale_stability/summary.json` | report_stability.md | [ ] |
-| 3C | `megascale_stability/stability_projection_3c.json` | report_stability.md | [ ] |
-| 3D | `megascale_stability/summary.json`, `megascale_stability/per_protein_spearman.json` | report_stability.md | [ ] |
+| Random-split correlation | `megascale_stability/summary.json` | report_stability.md | [ ] |
+| Family-transfer gap | `megascale_stability/summary.json` | report_stability.md | [ ] |
+| Stability projection | `megascale_stability/stability_projection.json` | report_stability.md | [ ] |
+| Per-protein spread | `megascale_stability/summary.json`, `megascale_stability/per_protein_spearman.json` | report_stability.md | [ ] |
 
 ### Exit condition
 

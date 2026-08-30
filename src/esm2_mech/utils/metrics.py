@@ -48,9 +48,27 @@ def within_seed_summary(values, expected_count, spread_name, sampling_unit) -> d
     }
 
 
-def null_standard_score(observed, null_values) -> dict:
-    """Standardize an observation against complete null draws using sample spread."""
+def null_standard_score(observed, null_values, *, expected_draws: int) -> dict:
+    """Standardize an observation against complete null draws using sample spread.
+
+    The caller declares how many draws it asked for. A draw that was skipped
+    because its own data could not support the statistic makes the summary
+    unavailable, rather than standardizing against the draws that survived.
+    """
     values = np.asarray(null_values, dtype=float)
+    if not isinstance(expected_draws, int) or isinstance(expected_draws, bool):
+        raise TypeError("expected_draws must be an integer")
+    if len(values) != expected_draws:
+        return {
+            "state": "unavailable",
+            "reason": "incomplete_null_draws",
+            "z_score": None,
+            "null_mean": None,
+            "null_draw_std": None,
+            "n_null_draws": int(len(values)),
+            "n_requested_draws": expected_draws,
+            "sampling_unit": "null_draw",
+        }
     if (
         observed is None
         or not np.isfinite(observed)
@@ -64,6 +82,7 @@ def null_standard_score(observed, null_values) -> dict:
             "null_mean": None,
             "null_draw_std": None,
             "n_null_draws": int(len(values)),
+            "n_requested_draws": expected_draws,
             "sampling_unit": "null_draw",
         }
     null_mean = float(np.mean(values))
@@ -76,6 +95,7 @@ def null_standard_score(observed, null_values) -> dict:
             "null_mean": null_mean,
             "null_draw_std": 0.0,
             "n_null_draws": int(len(values)),
+            "n_requested_draws": expected_draws,
             "sampling_unit": "null_draw",
         }
     return {
@@ -85,6 +105,7 @@ def null_standard_score(observed, null_values) -> dict:
         "null_mean": null_mean,
         "null_draw_std": null_spread,
         "n_null_draws": int(len(values)),
+        "n_requested_draws": expected_draws,
         "sampling_unit": "null_draw",
     }
 

@@ -126,9 +126,7 @@ def aggregate_across_seeds(
                         if isinstance(block, dict)
                         else None
                     )
-                    records.append(
-                        make_seed_record(seed, value, status=statuses[seed])
-                    )
+                    records.append(make_seed_record(seed, value, status=statuses[seed]))
                 aggregate = aggregate_seed_values(requested, records)
                 feature_out[f"{base_metric}_seed_aggregate"] = aggregate.to_dict()
 
@@ -172,9 +170,7 @@ def _aggregate_confusion_matrices(
             if isinstance(block, dict)
             else None
         )
-        records.append(
-            make_seed_payload_record(seed, payload, status=statuses[seed])
-        )
+        records.append(make_seed_payload_record(seed, payload, status=statuses[seed]))
     aggregate = aggregate_seed_confusion_matrices(
         requested_seeds, declared_classes, records
     )
@@ -204,9 +200,7 @@ def read_across_seed_metric(
             f"{aggregate_path}: seed schema version {version!r} does not match the "
             f"expected {SEED_AGGREGATION_SCHEMA_VERSION}"
         )
-    return read_feature_metric(
-        aggregate[ACROSS_SEED_KEY], split, feature, metric
-    ).value
+    return read_feature_metric(aggregate[ACROSS_SEED_KEY], split, feature, metric).value
 
 
 def read_feature_metric(
@@ -229,33 +223,36 @@ def read_feature_metric(
     return read_seed_point_estimate(stored)
 
 
+def _format_cell(aggregated: dict, split: str, feature: str) -> str:
+    """One table cell.
+
+    A point estimate that satisfies its own contract is printed even when fewer
+    than three requested seeds leave it with no spread: it is a real estimate, not
+    an unscorable one, and saying otherwise hides a number the run produced.
+    """
+    if feature not in aggregated.get(split, {}):
+        return "unavailable"
+    metric = read_feature_metric(aggregated, split, feature, HEADLINE_METRIC)
+    if not metric.available:
+        return "unavailable"
+    if metric.spread is None:
+        return f"{metric.value:.3f} (no spread)"
+    return f"{metric.value:.3f} ± {metric.spread:.3f}"
+
+
 def print_table(aggregated: dict[str, dict[str, dict]]) -> None:
     """Print the headline-metric table: per-feature gene vs family, across seeds."""
     gene = aggregated.get(GENE_SPLIT, {})
     family = aggregated.get(FAMILY_SPLIT, {})
     features = sorted(set(gene) | set(family))
 
-    print(f"\n=== {HEADLINE_METRIC} across seeds (mean ± std) ===")
+    print(f"\n=== {HEADLINE_METRIC}: mean ± SD across model seeds ===")
     print(f"{'feature':<20} {'gene-split':>18} {'family-split':>18}")
     for feature in features:
-        if feature not in gene or feature not in family:
-            print(
-                f"{feature:<20} {'Unscorable':>18} {'Unscorable':>18}"
-            )
-            continue
-        gene_metric = read_feature_metric(
-            aggregated, GENE_SPLIT, feature, HEADLINE_METRIC, require_spread=True
-        )
-        family_metric = read_feature_metric(
-            aggregated, FAMILY_SPLIT, feature, HEADLINE_METRIC, require_spread=True
-        )
-        if not gene_metric.available or not family_metric.available:
-            print(
-                f"{feature:<20} {'Unscorable':>18} {'Unscorable':>18}"
-            )
-            continue
+        # Each split is read on its own, so one unavailable column never hides the
+        # other's estimate.
         print(
             f"{feature:<20} "
-            f"{gene_metric.value:>8.3f} ± {gene_metric.spread:<6.3f} "
-            f"{family_metric.value:>8.3f} ± {family_metric.spread:<6.3f}"
+            f"{_format_cell(aggregated, GENE_SPLIT, feature):>18} "
+            f"{_format_cell(aggregated, FAMILY_SPLIT, feature):>18}"
         )

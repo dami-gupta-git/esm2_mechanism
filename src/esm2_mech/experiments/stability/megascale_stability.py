@@ -23,7 +23,7 @@ from esm2_mech.experiments.stability.stability_data import (
 )
 from esm2_mech.utils.bootstrap import (
     cluster_bootstrap_ci,
-    folds_to_arms,
+    oof_score_arms,
     paired_cluster_bootstrap_diff,
     paired_cluster_bootstrap_diff_cross_partition,
     score_within_folds,
@@ -31,7 +31,6 @@ from esm2_mech.utils.bootstrap import (
 from esm2_mech.utils.classification import validate_complete_classification_splits
 from esm2_mech.utils.constants import (
     BOOTSTRAP_N_RESAMPLES,
-    INFERENTIAL_SEED,
     MECHANISM_CLASSES,
     N_SEEDS,
     N_FOLDS,
@@ -54,7 +53,9 @@ from esm2_mech.utils.seed_aggregation import (
     SEED_STATUS_UNSCORABLE,
     aggregate_paired_seed_difference,
     aggregate_result_contract,
+    aggregate_seed_oof,
     aggregate_seed_results,
+    make_seed_payload_record,
     make_seed_record,
     read_seed_point_estimate,
     seed_count,
@@ -73,13 +74,27 @@ from esm2_mech.utils.paths import (
 
 OUT = str(_RESULTS_DIR / "megascale_stability")
 
+RANDOM_SPLIT_MIN_SPEARMAN = 0.50
+FAMILY_TRANSFER_AFFIRMED_MAX_GAP = 0.05
+FAMILY_TRANSFER_LEAKY_MIN_GAP = 0.10
+STABILITY_PROJECTION_MAX_F1_CHANGE = 0.01
+PER_PROTEIN_MAX_SPEARMAN_SPREAD = 0.10
+
 os.makedirs(OUT, exist_ok=True)
 os.makedirs(str(_DATA_DIR / "embeddings" / ESM2_MODEL), exist_ok=True)
 
 
-
-def run_regression_cv(X, y, splits, clf_fn, with_pearson=True, clusters=None,
-                      return_oof=False, median=None, label=None):
+def run_regression_cv(
+    X,
+    y,
+    splits,
+    clf_fn,
+    with_pearson=True,
+    clusters=None,
+    return_oof=False,
+    median=None,
+    label=None,
+):
     """Standardise-fit-predict a regressor over CV folds; return ρ/AUROC."""
     rhos, pearsons, aurocs = [], [], []
     oof_y, oof_pred, oof_clusters, oof_indices, oof_folds = [], [], [], [], []
@@ -104,6 +119,7 @@ def run_regression_cv(X, y, splits, clf_fn, with_pearson=True, clusters=None,
             oof_clusters.append(clusters[te])
             oof_indices.append(te)
             oof_folds.append(np.full(len(te), fold_i, dtype=int))
+
     # Each metric is judged on its own folds. A fold whose AUROC is undefined —
     # every held-out variant on one side of the median, say — says nothing about
     # the Spearman correlation from the same fold, so one undefined metric no
@@ -157,9 +173,52 @@ def run_regression_cv(X, y, splits, clf_fn, with_pearson=True, clusters=None,
 def run_ridge_with_auroc(X, y, splits, clusters=None, return_oof=False, median=None):
     """Ridge alpha=1.0 stability probe."""
     return run_regression_cv(
-        X, y, splits, lambda: Ridge(alpha=1.0), with_pearson=True,
-        clusters=clusters, return_oof=return_oof, median=median,
+        X,
+        y,
+        splits,
+        lambda: Ridge(alpha=1.0),
+        with_pearson=True,
+        clusters=clusters,
+        return_oof=return_oof,
+        median=median,
     )
+
+
+def _combine_regression_oof(requested_seeds, oof_by_seed, declared_indices):
+    """Align one complete regression OOF block for every requested seed."""
+    row_ids = np.asarray(declared_indices, dtype=int)
+    combined = {}
+    y_true = None
+    clusters = None
+    for seed in requested_seeds:
+        if seed not in oof_by_seed:
+            raise ValueError(f"missing regression OOF predictions for seed {seed}")
+        oof = oof_by_seed[seed]
+        seed_rows = np.asarray(oof["indices"], dtype=int)
+        if set(seed_rows.tolist()) != set(row_ids.tolist()):
+            raise ValueError(f"regression OOF row set differs for seed {seed}")
+        positions = {row_id: pos for pos, row_id in enumerate(seed_rows.tolist())}
+        order = np.array([positions[row_id] for row_id in row_ids.tolist()])
+        seed_y = np.asarray(oof["y_true"])[order]
+        seed_clusters = np.asarray(oof["clusters"], dtype=object)[order]
+        if y_true is None:
+            y_true = seed_y
+            clusters = seed_clusters
+        elif not np.array_equal(seed_y, y_true) or not np.array_equal(
+            seed_clusters, clusters
+        ):
+            raise ValueError(f"regression OOF metadata differs for seed {seed}")
+        combined[seed] = {
+            "proba": np.asarray(oof["pred"])[order],
+            "folds": np.asarray(oof["folds"])[order],
+        }
+    return {
+        "requested_seeds": list(requested_seeds),
+        "indices": row_ids,
+        "y_true": y_true,
+        "clusters": clusters,
+        "oof_by_seed": combined,
+    }
 
 
 def spearman_cluster_bootstrap_ci(oof, n_resamples=BOOTSTRAP_N_RESAMPLES, seed=0):
@@ -169,7 +228,7 @@ def spearman_cluster_bootstrap_ci(oof, n_resamples=BOOTSTRAP_N_RESAMPLES, seed=0
     fitted with different intercepts into one ranking.
     """
     y_true = oof["y_true"]
-    arms = folds_to_arms(oof["pred"], oof["folds"])
+    arms = oof_score_arms(oof, "stability Spearman")
 
     def _fold_rho(block, arm_pred):
         if len(set(block.tolist())) < 2:
@@ -181,7 +240,10 @@ def spearman_cluster_bootstrap_ci(oof, n_resamples=BOOTSTRAP_N_RESAMPLES, seed=0
         return score_within_folds(rows, arms, _fold_rho)
 
     return cluster_bootstrap_ci(
-        oof["clusters"], _rho, n_resamples=n_resamples, seed=seed,
+        oof["clusters"],
+        _rho,
+        n_resamples=n_resamples,
+        seed=seed,
         discard_reason=(
             "a fold's resampled rows had fewer than 2 distinct values, so its "
             "rank correlation is undefined (no class to lose — this is a "
@@ -191,15 +253,7 @@ def spearman_cluster_bootstrap_ci(oof, n_resamples=BOOTSTRAP_N_RESAMPLES, seed=0
     )
 
 
-def paired_spearman_gap_ci(
-    oof_a,
-    oof_b,
-    proteins,
-    family_map,
-    n_resamples=BOOTSTRAP_N_RESAMPLES,
-    seed=0,
-):
-    """Paired family-bootstrap CI on a fold-aware Spearman difference."""
+def _paired_spearman_gap_inputs(oof_a, oof_b, proteins, family_map):
     indices_a = np.asarray(oof_a["indices"])
     indices_b = np.asarray(oof_b["indices"])
     shared = np.intersect1d(indices_a, indices_b)
@@ -213,12 +267,18 @@ def paired_spearman_gap_ci(
     if not np.array_equal(y_true_a, y_true_b):
         raise ValueError("paired Spearman arms have different labels on shared rows")
 
-    predictions_a = np.asarray(oof_a["pred"])[selected_a]
-    predictions_b = np.asarray(oof_b["pred"])[selected_b]
-    folds_a = np.asarray(oof_a["folds"])[selected_a]
-    folds_b = np.asarray(oof_b["folds"])[selected_b]
-    arms_a = folds_to_arms(predictions_a, folds_a)
-    arms_b = folds_to_arms(predictions_b, folds_b)
+    arms_a = [
+        (predictions[selected_a], folds[selected_a], np.unique(folds[selected_a]))
+        for predictions, folds, _fold_ids in oof_score_arms(
+            oof_a, "stability random split"
+        )
+    ]
+    arms_b = [
+        (predictions[selected_b], folds[selected_b], np.unique(folds[selected_b]))
+        for predictions, folds, _fold_ids in oof_score_arms(
+            oof_b, "stability family split"
+        )
+    ]
 
     def _fold_rho(block, arm_predictions):
         if len(np.unique(y_true_a[block])) < 2:
@@ -240,10 +300,25 @@ def paired_spearman_gap_ci(
         [family_map[protein] for protein in shared_proteins],
         dtype=object,
     )
+    return _rho_a, _rho_b, shared_proteins, shared_families
+
+
+def paired_spearman_gap_ci(
+    oof_a,
+    oof_b,
+    proteins,
+    family_map,
+    n_resamples=BOOTSTRAP_N_RESAMPLES,
+    seed=0,
+):
+    """Paired family-bootstrap CI on a fold-aware Spearman difference."""
+    rho_a, rho_b, shared_proteins, shared_families = _paired_spearman_gap_inputs(
+        oof_a, oof_b, proteins, family_map
+    )
     result = paired_cluster_bootstrap_diff_cross_partition(
         resample_clusters=shared_families,
-        metric_fn_a=_rho_a,
-        metric_fn_b=_rho_b,
+        metric_fn_a=rho_a,
+        metric_fn_b=rho_b,
         sensitivity_clusters=shared_proteins,
         n_resamples=n_resamples,
         seed=seed,
@@ -252,9 +327,7 @@ def paired_spearman_gap_ci(
             "correlation on the shared family resample"
         ),
     )
-    result["domain_resampled_sensitivity"] = result.pop(
-        "gene_resampled_sensitivity"
-    )
+    result["domain_resampled_sensitivity"] = result.pop("gene_resampled_sensitivity")
     return result
 
 
@@ -308,6 +381,47 @@ def _adjudicate_upper_bound(point, ci, threshold):
     return "underpowered" if ci["ci_low"] <= threshold else "failed"
 
 
+def _seed_gate_unavailability(ci):
+    if ci is None:
+        return "not adjudicated (CI unavailable)"
+    requested_seeds = ci.get("requested_seeds", [])
+    seed_std = ci.get("seed_std")
+    if len(requested_seeds) < 3 or seed_std is None or not np.isfinite(seed_std):
+        return "not adjudicated (complete multi-seed estimate unavailable)"
+    return None
+
+
+def _adjudicate_seed_lower_bound(point, ci, threshold):
+    unavailable = _seed_gate_unavailability(ci)
+    return unavailable or _adjudicate_lower_bound(point, ci, threshold)
+
+
+def _adjudicate_seed_upper_bound(point, ci, threshold):
+    unavailable = _seed_gate_unavailability(ci)
+    return unavailable or _adjudicate_upper_bound(point, ci, threshold)
+
+
+def _adjudicate_family_transfer_gap(point, ci):
+    unavailable = _seed_gate_unavailability(ci)
+    if unavailable:
+        return unavailable
+    if point is None or not np.isfinite(point):
+        return "not adjudicated (point estimate unavailable)"
+    if ci.get("ci_low") is None or ci.get("ci_high") is None:
+        return "not adjudicated (CI unavailable)"
+    if point <= FAMILY_TRANSFER_AFFIRMED_MAX_GAP:
+        return (
+            "affirmed"
+            if ci["ci_high"] < FAMILY_TRANSFER_AFFIRMED_MAX_GAP
+            else "not distinguishable"
+        )
+    if point >= FAMILY_TRANSFER_LEAKY_MIN_GAP:
+        return (
+            "failed" if ci["ci_low"] > FAMILY_TRANSFER_LEAKY_MIN_GAP else "underpowered"
+        )
+    return "not adjudicated (point estimate is between the two boundaries)"
+
+
 def _fit_one_protein(prot, X, y, proteins):
     """Fit Ridge leaving out one protein; return (prot, result) or None."""
     mask = proteins == prot
@@ -345,8 +459,7 @@ def per_protein_spearman(X, y, proteins, n_jobs):
     return {prot: result for prot, result in (h for h in hits if h is not None)}
 
 
-
-def run_stability_projection_3c(
+def run_stability_projection(
     merged_delta_mean,
     merged_labels,
     merged_proteins,
@@ -379,7 +492,8 @@ def run_stability_projection_3c(
     proj = merged_scaled @ stability_dir  # (N,) scalar stability score per variant
     residuals = merged_scaled - np.outer(proj, stability_dir)
 
-    # Control 3C hinges on this removal; assert var along stability_dir ≈ 0.
+    # The stability-projection control hinges on this removal; assert var along
+    # stability_dir ≈ 0.
     var_before = float(np.var(merged_scaled.astype(np.float64) @ stability_dir))
     var_after = float(np.var(residuals.astype(np.float64) @ stability_dir))
     if var_after > 1e-6 * var_before + 1e-8:
@@ -390,8 +504,13 @@ def run_stability_projection_3c(
         )
 
     y = np.asarray(merged_labels)
+    eligible_rows = np.flatnonzero(
+        np.array(
+            [pfam_map.get(gene) is not None for gene in merged_proteins], dtype=bool
+        )
+    )
 
-    def _run_3c_seed(seed, collect_oof):
+    def _run_projection_seed(seed, collect_oof):
         splits = family_split_cv(merged_proteins, pfam_map, n_folds=n_folds, seed=seed)
         family_groups = np.array(
             [pfam_map.get(gene) for gene in merged_proteins], dtype=object
@@ -419,7 +538,7 @@ def run_stability_projection_3c(
                 return_oof=collect_oof,
                 prescaled=True,
                 compute_per_gene=False,
-                label=f"control_3c_{tag}",
+                label=f"stability_projection_{tag}",
             )
             result, oof = probe_result if collect_oof else (probe_result, None)
             seed_result["results"][tag] = result
@@ -435,14 +554,12 @@ def run_stability_projection_3c(
         return seed_result, seed_oof
 
     requested_seeds = tuple(range(n_seeds))
-    # Seed 0 also carries the paired bootstrap, which parallelises internally, so
-    # it runs on its own rather than nested inside the per-seed pool.
-    seed0_result, seed0_oof = _run_3c_seed(0, collect_oof=compute_ci)
     with parallel_config(backend="loky", n_jobs=n_jobs, inner_max_num_threads=1):
-        remaining = Parallel()(
-            delayed(_run_3c_seed)(seed, False) for seed in requested_seeds[1:]
+        seed_outputs = Parallel()(
+            delayed(_run_projection_seed)(seed, compute_ci) for seed in requested_seeds
         )
-    seed_results = [seed0_result] + [result for result, _oof in remaining]
+    seed_results = [result for result, _oof in seed_outputs]
+    seed_oofs = {result["seed"]: oof for result, oof in seed_outputs}
     baseline = aggregate_seed_results(
         requested_seeds,
         seed_results,
@@ -475,43 +592,74 @@ def run_stability_projection_3c(
         ],
     )
 
-    # Seed 0's paired family bootstrap: a within-seed interval on one seed's
-    # difference, reported separately from the across-seed paired difference above.
     difference_ci = None
-    if "baseline" in seed0_oof and "projected" in seed0_oof:
-        baseline_oof = seed0_oof["baseline"]
-        projected_oof = seed0_oof["projected"]
-        if not np.array_equal(baseline_oof["genes"], projected_oof["genes"]):
-            raise AssertionError("3C baseline and projected OOF rows are not aligned")
-        clusters = np.array(
-            [pfam_map[gene] for gene in baseline_oof["genes"]], dtype=object
-        )
+    if compute_ci:
 
-        def _fold_f1(oof):
-            y_true = oof["y_true"]
-            arms = folds_to_arms(oof["pred"], oof["folds"])
+        def _combined_oof(tag):
+            combined = aggregate_seed_oof(
+                requested_seeds,
+                [
+                    make_seed_payload_record(
+                        seed,
+                        seed_oofs[seed].get(tag),
+                        status=seed_results[seed]["results"][tag]["status"],
+                    )
+                    for seed in requested_seeds
+                ],
+                declared_row_ids=eligible_rows,
+                declared_labels=y[eligible_rows],
+                declared_clusters=np.asarray(merged_proteins)[eligible_rows],
+                class_order=MECHANISM_CLASSES,
+                declared_fold_ids=range(n_folds),
+            )
+            return combined.payload if combined.available else None
 
-            def _score(block, arm_pred):
-                return fold_macro_f1(y_true, block, arm_pred, MECHANISM_CLASSES)
-            return lambda rows: score_within_folds(rows, arms, _score)
+        baseline_oof = _combined_oof("baseline")
+        projected_oof = _combined_oof("projected")
+        if baseline_oof is not None and projected_oof is not None:
+            if not np.array_equal(baseline_oof["genes"], projected_oof["genes"]):
+                raise AssertionError(
+                    "stability-projection baseline and projected OOF rows are not aligned"
+                )
+            clusters = np.array(
+                [pfam_map[gene] for gene in baseline_oof["genes"]], dtype=object
+            )
 
-        # Both arms share the fold assignment (one seed, one split), so the paired
-        # difference stays row-for-row aligned while each side is scored per fold.
-        # Macro-F1 has a fixed class denominator, so it is defined on every draw
-        # and the plain cluster resample applies.
-        difference_ci = paired_cluster_bootstrap_diff(
-            clusters,
-            _fold_f1(projected_oof),
-            _fold_f1(baseline_oof),
-            n_resamples=n_boot,
-            seed=0,
-            discard_reason="a fold's resampled rows lost every row",
-        )
+            def _fold_f1(oof):
+                y_true = oof["y_true"]
+                arms = [
+                    (
+                        np.array(
+                            [MECHANISM_CLASSES[col] for col in proba.argmax(axis=1)]
+                        ),
+                        folds,
+                        fold_ids,
+                    )
+                    for proba, folds, fold_ids in oof_score_arms(
+                        oof, "stability projection"
+                    )
+                ]
+
+                def _score(block, arm_pred):
+                    return fold_macro_f1(y_true, block, arm_pred, MECHANISM_CLASSES)
+
+                return lambda rows: score_within_folds(rows, arms, _score)
+
+            difference_ci = paired_cluster_bootstrap_diff(
+                clusters,
+                _fold_f1(projected_oof),
+                _fold_f1(baseline_oof),
+                n_resamples=n_boot,
+                seed=0,
+                discard_reason="a fold's resampled rows lost every row",
+            )
+            difference_ci["seed_std"] = difference.spread
+            difference_ci["requested_seeds"] = list(requested_seeds)
     inferential_point = (
         None if difference_ci is None else difference_ci.get("point_diff")
     )
-    control_3c_verdict = _adjudicate_upper_bound(
-        inferential_point, difference_ci, 0.01
+    stability_projection_verdict = _adjudicate_upper_bound(
+        inferential_point, difference_ci, STABILITY_PROJECTION_MAX_F1_CHANGE
     )
     return {
         **aggregate_result_contract(),
@@ -519,58 +667,89 @@ def run_stability_projection_3c(
         "projected_f1": projected.to_dict(),
         "projected_minus_baseline_f1": difference.to_dict(),
         "per_seed_fold_summaries": seed_results,
-        "inferential_seed": INFERENTIAL_SEED,
+        "inferential_seeds": list(requested_seeds),
         "inferential_point_estimate": inferential_point,
         "difference_ci": difference_ci,
-        "projected_minus_baseline_mechanism_f1_passes": control_3c_verdict == "affirmed",
-        "projected_minus_baseline_mechanism_f1_verdict": control_3c_verdict,
+        # None, not False, when the gate was not adjudicated: an unevaluated rule
+        # is not a failed one, and a bare False here would read as a real failure.
+        "projected_minus_baseline_mechanism_f1_passes": (
+            None
+            if stability_projection_verdict.startswith("not adjudicated")
+            else stability_projection_verdict == "affirmed"
+        ),
+        "projected_minus_baseline_mechanism_f1_verdict": stability_projection_verdict,
     }
 
 
-def apply_decision_rule(control_3a_ci, control_3b_gap_ci, control_3c, control_3d_ci):
-    """Adjudicate controls 3A-3D from their registered point/CI pairs.
+def apply_decision_rule(
+    random_split_ci, family_transfer_gap_ci, stability_projection, per_protein_spread_ci
+):
+    """Adjudicate the four stability controls from matched point/CI pairs.
 
     Each gate reads the point estimate the interval beside it was built around, so
     a verdict never compares an interval with a different estimand.
     """
-    point_3a = None if control_3a_ci is None else control_3a_ci.get("point")
-    point_3b = (
-        None if control_3b_gap_ci is None else control_3b_gap_ci.get("point_diff")
+    random_split_point = (
+        None if random_split_ci is None else random_split_ci.get("point")
     )
-    point_3c = (
-        None if control_3c is None else control_3c.get("inferential_point_estimate")
+    family_transfer_point = (
+        None
+        if family_transfer_gap_ci is None
+        else family_transfer_gap_ci.get("point_diff")
     )
-    ci_3c = None if control_3c is None else control_3c.get("difference_ci")
-    point_3d = None if control_3d_ci is None else control_3d_ci.get("point")
+    projection_point = (
+        None
+        if stability_projection is None
+        else stability_projection.get("inferential_point_estimate")
+    )
+    projection_ci = (
+        None
+        if stability_projection is None
+        else stability_projection.get("difference_ci")
+    )
+    per_protein_point = (
+        None if per_protein_spread_ci is None else per_protein_spread_ci.get("point")
+    )
 
     gates = {
         "random_split_spearman": {
-            "criterion": "random_split_spearman_at_least_0.5",
-            "threshold": 0.5,
-            "point_estimate": point_3a,
-            "ci": control_3a_ci,
-            "verdict": _adjudicate_lower_bound(point_3a, control_3a_ci, 0.5),
+            "criterion": "random_split_spearman_at_least_0.50",
+            "threshold": RANDOM_SPLIT_MIN_SPEARMAN,
+            "point_estimate": random_split_point,
+            "ci": random_split_ci,
+            "verdict": _adjudicate_seed_lower_bound(
+                random_split_point, random_split_ci, RANDOM_SPLIT_MIN_SPEARMAN
+            ),
         },
         "random_minus_family_spearman_gap": {
-            "criterion": "random_minus_family_spearman_at_most_0.10",
-            "threshold": 0.10,
-            "point_estimate": point_3b,
-            "ci": control_3b_gap_ci,
-            "verdict": _adjudicate_upper_bound(point_3b, control_3b_gap_ci, 0.10),
+            "criterion": "random_minus_family_spearman_gap_two_boundary_rule",
+            "affirmed_maximum": FAMILY_TRANSFER_AFFIRMED_MAX_GAP,
+            "leaky_minimum": FAMILY_TRANSFER_LEAKY_MIN_GAP,
+            "point_estimate": family_transfer_point,
+            "ci": family_transfer_gap_ci,
+            "verdict": _adjudicate_family_transfer_gap(
+                family_transfer_point, family_transfer_gap_ci
+            ),
         },
         "projected_minus_baseline_mechanism_f1": {
             "criterion": "projected_minus_baseline_mechanism_f1_at_most_0.01",
-            "threshold": 0.01,
-            "point_estimate": point_3c,
-            "ci": ci_3c,
-            "verdict": _adjudicate_upper_bound(point_3c, ci_3c, 0.01),
+            "threshold": STABILITY_PROJECTION_MAX_F1_CHANGE,
+            "point_estimate": projection_point,
+            "ci": projection_ci,
+            "verdict": _adjudicate_seed_upper_bound(
+                projection_point, projection_ci, STABILITY_PROJECTION_MAX_F1_CHANGE
+            ),
         },
         "per_protein_spearman_spread": {
             "criterion": "per_protein_spearman_std_at_most_0.10",
-            "threshold": 0.10,
-            "point_estimate": point_3d,
-            "ci": control_3d_ci,
-            "verdict": _adjudicate_upper_bound(point_3d, control_3d_ci, 0.10),
+            "threshold": PER_PROTEIN_MAX_SPEARMAN_SPREAD,
+            "point_estimate": per_protein_point,
+            "ci": per_protein_spread_ci,
+            "verdict": _adjudicate_upper_bound(
+                per_protein_point,
+                per_protein_spread_ci,
+                PER_PROTEIN_MAX_SPEARMAN_SPREAD,
+            ),
         },
     }
 
@@ -593,7 +772,6 @@ def _show_seed_value(value, signed=False):
     if value is None or not np.isfinite(value):
         return "unavailable"
     return f"{value:+.3f}" if signed else f"{value:.3f}"
-
 
 
 def main(n_jobs=1, n_seeds=N_SEEDS, compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES):
@@ -661,21 +839,30 @@ def main(n_jobs=1, n_seeds=N_SEEDS, compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLE
                 print(f"  {key}: {spearman_text}  {auroc_text}")
         return seed_result, seed_oofs
 
-    # Seed 0 also carries the cluster bootstrap, which parallelises internally, so
-    # it runs on its own rather than nested inside the per-seed pool.
-    seed0_result, seed0_oofs = _run_seed(0, collect_oof=compute_ci)
     with parallel_config(backend="loky", n_jobs=n_jobs, inner_max_num_threads=1):
-        remaining = Parallel()(
-            delayed(_run_seed)(seed, False) for seed in requested_seeds[1:]
+        seed_outputs = Parallel()(
+            delayed(_run_seed)(seed, True) for seed in requested_seeds
         )
-    results_by_seed = [seed0_result] + [result for result, _oofs in remaining]
+    results_by_seed = [result for result, _oofs in seed_outputs]
+    oofs_by_seed = {result["seed"]: oofs for result, oofs in seed_outputs}
 
-    seed0_intervals = {}
+    combined_oofs = {}
+    bootstrap_intervals = {}
     if compute_ci:
-        print("\nCluster-bootstrap CIs on seed 0's fold-mean Spearman...")
-        for key, oof in seed0_oofs.items():
-            seed0_intervals[key] = spearman_cluster_bootstrap_ci(
-                oof, n_resamples=n_boot, seed=0
+        print("\nCluster-bootstrap CIs on all seeds' fold-mean Spearman...")
+        all_rows = np.arange(len(variants))
+        family_rows = np.flatnonzero(
+            np.array([family_map.get(protein) is not None for protein in proteins])
+        )
+        for key in sorted(results_by_seed[0]["results"]):
+            declared_rows = family_rows if key.endswith("_family") else all_rows
+            combined_oofs[key] = _combine_regression_oof(
+                requested_seeds,
+                {seed: oofs_by_seed[seed][key] for seed in requested_seeds},
+                declared_rows,
+            )
+            bootstrap_intervals[key] = spearman_cluster_bootstrap_ci(
+                combined_oofs[key], n_resamples=n_boot, seed=0
             )
 
     print("\nPer-protein Spearman (leave-one-protein-out)...")
@@ -723,9 +910,7 @@ def main(n_jobs=1, n_seeds=N_SEEDS, compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLE
         auroc = aggregate_seed_results(
             requested_seeds,
             results_by_seed,
-            lambda seed_result, key=key: seed_result["results"][key].get(
-                "auroc_mean"
-            ),
+            lambda seed_result, key=key: seed_result["results"][key].get("auroc_mean"),
             status=lambda seed_result, key=key: seed_result["results"][key][
                 "auroc_status"
             ],
@@ -740,14 +925,10 @@ def main(n_jobs=1, n_seeds=N_SEEDS, compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLE
                 for result in results_by_seed
             },
         }
-        # A within-seed interval on seed 0's estimate, kept in its own field: it
-        # is not the across-seed spread reported in the aggregate above.
-        if key in seed0_intervals:
-            summary[key]["seed0_inference"] = {
-                "seed": 0,
-                "point_estimate": seed0_intervals[key].get("point"),
-                "ci": seed0_intervals[key],
-            }
+        if key in bootstrap_intervals:
+            bootstrap_intervals[key]["seed_std"] = spearman.spread
+            bootstrap_intervals[key]["requested_seeds"] = list(requested_seeds)
+            summary[key]["bootstrap_ci"] = bootstrap_intervals[key]
 
     summary["per_protein"] = {
         "spearman_protein_mean": per_prot_mean,
@@ -756,12 +937,12 @@ def main(n_jobs=1, n_seeds=N_SEEDS, compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLE
         "n_proteins": len(prot_rhos),
         "n_proteins_finite": n_finite_prot,
     }
-    control_3d_ci = None
+    per_protein_spread_ci = None
     if compute_ci:
-        control_3d_ci = per_protein_std_bootstrap_ci(
+        per_protein_spread_ci = per_protein_std_bootstrap_ci(
             per_prot, n_resamples=n_boot, seed=0
         )
-        summary["per_protein"]["spearman_std_ci"] = control_3d_ci
+        summary["per_protein"]["spearman_std_ci"] = per_protein_spread_ci
 
     required_3c_paths = [VALID_VARIANTS_JSON, EMB_WT_MEAN, EMB_MUT_MEAN, PFAM_JSON]
     missing_3c_paths = [
@@ -769,10 +950,10 @@ def main(n_jobs=1, n_seeds=N_SEEDS, compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLE
     ]
     if missing_3c_paths:
         raise FileNotFoundError(
-            "registered control 3C requires missing input files: "
+            "the stability-projection control requires missing input files: "
             + ", ".join(missing_3c_paths)
         )
-    print("\nRunning 3C stability projection test...")
+    print("\nRunning the stability-projection control...")
     pfam_map = load_pfam_map(PFAM_JSON)
 
     merged_delta, merged_labels, merged_proteins = load_merged()
@@ -783,12 +964,10 @@ def main(n_jobs=1, n_seeds=N_SEEDS, compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLE
             mechanism_variants, merged_labels
         ),
         "delta_mean_content": embedding_fingerprint(merged_delta),
-        "pfam_assignments": pfam_fingerprint(
-            pfam_map, merged_proteins.tolist()
-        ),
+        "pfam_assignments": pfam_fingerprint(pfam_map, merged_proteins.tolist()),
     }
 
-    control_3c_result = run_stability_projection_3c(
+    stability_projection_result = run_stability_projection(
         merged_delta,
         merged_labels,
         merged_proteins,
@@ -802,23 +981,27 @@ def main(n_jobs=1, n_seeds=N_SEEDS, compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLE
         n_jobs=n_jobs,
         compute_ci=compute_ci,
     )
-    baseline_3c = read_seed_point_estimate(control_3c_result["baseline_f1"]).value
-    projected_3c = read_seed_point_estimate(control_3c_result["projected_f1"]).value
-    difference_3c = read_seed_point_estimate(
-        control_3c_result["projected_minus_baseline_f1"]
+    projection_baseline = read_seed_point_estimate(
+        stability_projection_result["baseline_f1"]
     ).value
-    inferential_3c = control_3c_result["inferential_point_estimate"]
+    projection_projected = read_seed_point_estimate(
+        stability_projection_result["projected_f1"]
+    ).value
+    projection_difference = read_seed_point_estimate(
+        stability_projection_result["projected_minus_baseline_f1"]
+    ).value
+    projection_inferential = stability_projection_result["inferential_point_estimate"]
     print(
-        f"  3C: baseline F1={_show_seed_value(baseline_3c)}  "
-        f"projected F1={_show_seed_value(projected_3c)}  "
-        f"paired mean Δ={_show_seed_value(difference_3c, signed=True)}  "
-        f"seed-0 inferential Δ={_show_seed_value(inferential_3c, signed=True)}  "
-        f"verdict={control_3c_result['projected_minus_baseline_mechanism_f1_verdict']}"
+        f"  stability projection: baseline F1={_show_seed_value(projection_baseline)}  "
+        f"projected F1={_show_seed_value(projection_projected)}  "
+        f"paired mean Δ={_show_seed_value(projection_difference, signed=True)}  "
+        f"bootstrap point Δ={_show_seed_value(projection_inferential, signed=True)}  "
+        f"verdict={stability_projection_result['projected_minus_baseline_mechanism_f1_verdict']}"
     )
     write_result_json(
-        os.path.join(OUT, "stability_projection_3c.json"),
+        os.path.join(OUT, "stability_projection.json"),
         {
-            **control_3c_result,
+            **stability_projection_result,
             "input_fingerprints": {
                 "stability": stability_fingerprints,
                 "mechanism_projection": mechanism_projection_fingerprints,
@@ -828,45 +1011,45 @@ def main(n_jobs=1, n_seeds=N_SEEDS, compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLE
         seeds=list(requested_seeds),
     )
 
-    control_3b_gap = aggregate_paired_seed_difference(
-        requested_seeds,
-        [
-            make_seed_record(
-                result["seed"],
-                result["results"]["delta_mean_random"].get("spearman_mean"),
-                status=result["results"]["delta_mean_random"]["spearman_status"],
+    random_records = []
+    family_records = []
+    for seed in requested_seeds:
+        rho_random, rho_family, shared_proteins, _shared_families = (
+            _paired_spearman_gap_inputs(
+                oofs_by_seed[seed]["delta_mean_random"],
+                oofs_by_seed[seed]["delta_mean_family"],
+                proteins,
+                family_map,
             )
-            for result in results_by_seed
-        ],
-        [
-            make_seed_record(
-                result["seed"],
-                result["results"]["delta_mean_family"].get("spearman_mean"),
-                status=result["results"]["delta_mean_family"]["spearman_status"],
-            )
-            for result in results_by_seed
-        ],
+        )
+        shared_rows = np.arange(len(shared_proteins))
+        random_records.append(make_seed_record(seed, rho_random(shared_rows)))
+        family_records.append(make_seed_record(seed, rho_family(shared_rows)))
+    family_transfer_gap = aggregate_paired_seed_difference(
+        requested_seeds, random_records, family_records
     )
-    summary["random_minus_family_spearman_gap_seed_aggregate"] = control_3b_gap.to_dict()
+    summary["random_minus_family_spearman_gap_seed_aggregate"] = (
+        family_transfer_gap.to_dict()
+    )
 
-    control_3b_gap_ci = None
-    oof_random = seed0_oofs.get("delta_mean_random")
-    oof_family = seed0_oofs.get("delta_mean_family")
-    if compute_ci and oof_random is not None and oof_family is not None:
-        print("\nComputing paired CI on random-to-family Spearman gap (3B)...")
-        control_3b_gap_ci = paired_spearman_gap_ci(
-            oof_random,
-            oof_family,
+    family_transfer_gap_ci = None
+    if compute_ci:
+        print("\nComputing paired CI on the random-to-family Spearman gap...")
+        family_transfer_gap_ci = paired_spearman_gap_ci(
+            combined_oofs["delta_mean_random"],
+            combined_oofs["delta_mean_family"],
             proteins,
             family_map,
             n_resamples=n_boot,
             seed=0,
         )
-        summary["random_minus_family_spearman_gap_ci"] = control_3b_gap_ci
+        family_transfer_gap_ci["seed_std"] = family_transfer_gap.spread
+        family_transfer_gap_ci["requested_seeds"] = list(requested_seeds)
+        summary["random_minus_family_spearman_gap_ci"] = family_transfer_gap_ci
         print(
-            f"  3B gap: {control_3b_gap_ci['point_diff']:.3f} "
-            f"[{control_3b_gap_ci.get('ci_low', '?')}, "
-            f"{control_3b_gap_ci.get('ci_high', '?')}]"
+            f"  family-transfer gap: {family_transfer_gap_ci['point_diff']:.3f} "
+            f"[{family_transfer_gap_ci.get('ci_low', '?')}, "
+            f"{family_transfer_gap_ci.get('ci_high', '?')}]"
         )
 
     dm_random = read_seed_point_estimate(
@@ -876,14 +1059,12 @@ def main(n_jobs=1, n_seeds=N_SEEDS, compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLE
         summary["delta_mean_family"]["across_seed"]["spearman"]
     ).value
 
-    control_3a_ci = (
-        summary.get("delta_mean_random", {}).get("seed0_inference", {}).get("ci")
-    )
+    random_split_ci = summary.get("delta_mean_random", {}).get("bootstrap_ci")
     adjudication = apply_decision_rule(
-        control_3a_ci,
-        control_3b_gap_ci,
-        control_3c_result,
-        control_3d_ci,
+        random_split_ci,
+        family_transfer_gap_ci,
+        stability_projection_result,
+        per_protein_spread_ci,
     )
     verdict = adjudication["overall"]
     summary["result_version"] = 3
@@ -893,7 +1074,7 @@ def main(n_jobs=1, n_seeds=N_SEEDS, compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLE
     summary["n_proteins"] = len(set(proteins))
     summary["n_families"] = n_families
     summary["n_seeds"] = n_seeds
-    summary["projected_minus_baseline_mechanism_f1"] = control_3c_result
+    summary["projected_minus_baseline_mechanism_f1"] = stability_projection_result
     summary["input_fingerprints"] = {
         "stability": stability_fingerprints,
         "mechanism_projection": mechanism_projection_fingerprints,
@@ -902,30 +1083,36 @@ def main(n_jobs=1, n_seeds=N_SEEDS, compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLE
 
     print(f"\n{'='*60}")
     print(f"VERDICT: {verdict}")
-    print(f"  delta_mean random ρ  : {_show_seed_value(dm_random)}  (3A threshold ≥ 0.5)")
+    print(
+        f"  delta_mean random ρ  : {_show_seed_value(dm_random)}  "
+        f"(random-split threshold ≥ {RANDOM_SPLIT_MIN_SPEARMAN:.2f})"
+    )
     print(f"  delta_mean family ρ  : {_show_seed_value(dm_family)}")
     print(
         "  Δ (random − family)  : "
-        f"{_show_seed_value(control_3b_gap.mean, signed=True)}  "
-        "(LEAKY if Δ ≥ 0.10)"
+        f"{_show_seed_value(family_transfer_gap.mean, signed=True)}  "
+        f"(affirmed if Δ ≤ {FAMILY_TRANSFER_AFFIRMED_MAX_GAP:.2f}; "
+        f"LEAKY if Δ ≥ {FAMILY_TRANSFER_LEAKY_MIN_GAP:.2f})"
     )
     print(
         f"  per-protein ρ std    : {_show_seed_value(per_prot_std)}  "
-        "(3D threshold ≤ 0.10)"
+        f"(per-protein spread threshold ≤ {PER_PROTEIN_MAX_SPEARMAN_SPREAD:.2f})"
     )
-    if control_3c_result:
+    if stability_projection_result:
         print(
-            f"  3C paired-seed Δ mechanism F1: "
-            f"{_show_seed_value(difference_3c, signed=True)}  "
-            f"(seed-0 inferential Δ "
-            f"{_show_seed_value(inferential_3c, signed=True)})  "
-            f"(passes if ≤ +0.01 — stability projection doesn't help mechanism)"
+            f"  stability projection, paired-seed Δ mechanism F1: "
+            f"{_show_seed_value(projection_difference, signed=True)}  "
+            f"(all-seed bootstrap Δ "
+            f"{_show_seed_value(projection_inferential, signed=True)})  "
+            f"(passes if ≤ +{STABILITY_PROJECTION_MAX_F1_CHANGE:.2f})"
         )
     for gate_name, gate in adjudication["gates"].items():
         print(f"  {gate_name} verdict          : {gate['verdict']}")
     print(f"{'='*60}")
 
-    write_result_json(os.path.join(OUT, "summary.json"), summary, seeds=list(requested_seeds))
+    write_result_json(
+        os.path.join(OUT, "summary.json"), summary, seeds=list(requested_seeds)
+    )
     print(f"\nResults written to {OUT}/")
 
 
@@ -937,9 +1124,12 @@ def _cli():
     )
     parser.add_argument("--n_boot", type=int, default=BOOTSTRAP_N_RESAMPLES)
     parser.add_argument(
-        "--n_jobs", type=int, required=True,
+        "--n_jobs",
+        type=int,
+        required=True,
         help="Max concurrent worker processes for the per-seed, per-protein, and "
-        "3C parallel loops. Each worker standardizes/fits against most of the "
+        "the stability-projection parallel loops. Each worker standardizes/fits "
+        "against most of the "
         "177k x 1280 matrix, so this must be set explicitly (never -1) to bound "
         "peak RAM. Start low (e.g. 4), watch peak RAM, raise only if it fits.",
     )

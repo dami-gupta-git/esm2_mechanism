@@ -22,12 +22,11 @@ from esm2_mech.utils.paths import (
     VALID_VARIANTS_JSON,
 )
 from esm2_mech.utils.sequences import window_sequence, apply_missense
+from esm2_mech.utils.constants import PROBE_RESIDUE_NAMES
 
 OUT = _RESULTS_DIR / "perturbation_scan"
 OUT.mkdir(parents=True, exist_ok=True)
 
-PROBE_AAS = ["A", "D", "W"]  # Ala, Asp, Trp
-PROBE_NAMES = ["ala", "asp", "trp"]
 N_POSITIONS = 100  # evenly-spaced positions per gene
 MIN_GENE_LEN = 10  # skip very short sequences
 
@@ -74,7 +73,7 @@ def build_probe_list(seqs):
 
         for pos in positions:
             wt_aa = seq[pos - 1]
-            for probe_aa, probe_name in zip(PROBE_AAS, PROBE_NAMES):
+            for probe_aa, probe_name in PROBE_RESIDUE_NAMES.items():
                 if probe_aa == wt_aa:
                     continue
                 probes.append(
@@ -139,7 +138,6 @@ def compute_scan_features(probes, wt_emb, mut_emb, covered_genes, ablation=False
     if ablation:
         feature_names += [
             "scan_mag_skew",
-            "scan_hotspot_spacing_cv",
             "scan_top5_range",
             "scan_pc1_pc2_ratio",
         ]
@@ -164,13 +162,22 @@ def compute_scan_features(probes, wt_emb, mut_emb, covered_genes, ablation=False
         threshold = mag_mean + mag_std
         hotspot_frac = float(np.mean(mags > threshold))
 
-        # PC1 variance fraction
-        if len(idxs) >= 4:
-            ratios = _top_explained_variance_ratios(gene_deltas, k=2)
-            pc1_var = float(ratios[0])
-            pc2_var = float(ratios[1]) if len(ratios) > 1 else 0.0
-        else:
-            pc1_var, pc2_var = 0.0, 0.0
+        # PC1/PC2 variance fractions. Sampling gives every gene at least
+        # MIN_GENE_LEN positions with 2-3 probes each, so this is always
+        # measurable; if a sampling change breaks that, stop rather than fabricate.
+        if len(idxs) < 4:
+            raise ValueError(
+                f"Gene {gene} has {len(idxs)} probes; PC1/PC2 variance needs at "
+                f"least 4. Check N_POSITIONS/MIN_GENE_LEN sampling settings."
+            )
+        ratios = _top_explained_variance_ratios(gene_deltas, k=2)
+        if len(ratios) < 2:
+            raise ValueError(
+                f"Gene {gene} yielded {len(ratios)} variance ratios; PC2 is not "
+                f"measurable."
+            )
+        pc1_var = float(ratios[0])
+        pc2_var = float(ratios[1])
 
         # Per-position substitution variance
         # Group by position, compute variance of magnitudes across probes at that position
@@ -178,7 +185,12 @@ def compute_scan_features(probes, wt_emb, mut_emb, covered_genes, ablation=False
         for j, p in enumerate(gene_probes):
             pos_to_mags[p["aa_pos"]].append(mags[j])
         sub_vars = [np.var(v) for v in pos_to_mags.values() if len(v) >= 2]
-        scan_sub_variance = float(np.mean(sub_vars)) if sub_vars else 0.0
+        if not sub_vars:
+            raise ValueError(
+                f"Gene {gene} has no position with 2+ probes; substitution "
+                f"variance is not measurable. Check PROBE_RESIDUE_NAMES."
+            )
+        scan_sub_variance = float(np.mean(sub_vars))
 
         feats = [mag_mean, mag_cv, hotspot_frac, pc1_var, scan_sub_variance]
 
@@ -188,12 +200,9 @@ def compute_scan_features(probes, wt_emb, mut_emb, covered_genes, ablation=False
 
             mag_skew = float(scipy_skew(mags))
 
-            hotspot_positions = np.where(mags > threshold)[0]
-            if len(hotspot_positions) >= 2:
-                spacings = np.diff(hotspot_positions)
-                spacing_cv = float(np.std(spacings) / (np.mean(spacings) + 1e-8))
-            else:
-                spacing_cv = 0.0
+            # Hotspot-spacing CV was dropped: a gene with fewer than two hotspots has
+            # no spacing to measure, and that is a property of the result rather than
+            # of sample size, so neither a value nor a gene exclusion is warranted.
 
             top5_idx = np.argsort(mags)[-5:]
             top5_positions = np.array([gene_probes[i]["aa_pos"] for i in top5_idx])
@@ -204,7 +213,7 @@ def compute_scan_features(probes, wt_emb, mut_emb, covered_genes, ablation=False
 
             pc1_pc2_ratio = float(pc1_var / (pc2_var + 1e-8))
 
-            feats += [mag_skew, spacing_cv, top5_range, pc1_pc2_ratio]
+            feats += [mag_skew, top5_range, pc1_pc2_ratio]
 
         gene_list.append(gene)
         X.append(feats)

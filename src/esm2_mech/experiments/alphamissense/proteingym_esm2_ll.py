@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import csv
 import functools
+import hashlib
 import json
 import re
 import sys
@@ -18,8 +19,14 @@ from sklearn.metrics import roc_auc_score
 
 print = functools.partial(print, flush=True)
 
-from esm2_mech.utils.constants import AA_ORDER
-from esm2_mech.utils.paths import PROTEINGYM_CACHE_DIR, RESULTS_DIR as _RESULTS_DIR
+from esm2_mech.utils.constants import AA_ORDER, MAX_SEQ_LEN
+from esm2_mech.utils.io import atomic_write_json
+from esm2_mech.utils.paths import (
+    PFAM_JSON,
+    PROTEINGYM_CACHE_DIR,
+    RESULTS_DIR as _RESULTS_DIR,
+)
+from esm2_mech.utils.sequences import window_sequence
 
 PG_DIR = PROTEINGYM_CACHE_DIR
 OUT = _RESULTS_DIR / "proteingym_esm2_ll"
@@ -27,11 +34,25 @@ OUT = _RESULTS_DIR / "proteingym_esm2_ll"
 DMS_INDEX = PG_DIR / "DMS_substitutions.csv"
 DMS_SUBDIR = PG_DIR / "DMS_ProteinGym_substitutions"
 JOBS_CACHE = PG_DIR / "esm2_ll_jobs.json"
+JOBS_PARAMS_JSON = PG_DIR / "esm2_ll_jobs.params.json"
 SCORE_CACHE = PG_DIR / "esm2_ll_scores.json"
+SCORE_PARAMS_JSON = PG_DIR / "esm2_ll_scores.params.json"
+
+# Bump when the parsing or scoring logic changes in a way that makes a cache
+# built before the change invalid even though its recorded inputs are unchanged.
+JOBS_CACHE_VERSION = 1
+SCORE_CACHE_VERSION = 1
 AM_CACHE = PG_DIR / "am_scores_proteingym.json"
 
 CHECKPOINT_EVERY = 10  # assays between GPU saves
 MIN_VARIANTS = 20  # minimum scored variants to include an assay
+
+# Gate thresholds. Named here so the printed criterion and the comparison cannot
+# drift apart, and so it is visible that they are fixed choices rather than
+# quantities recomputed from this run.
+G1_MIN_MEDIAN_SPEARMAN = 0.40
+G2_MAX_FRAC_BELOW_020 = 0.25
+G3_MIN_MEDIAN_GAP_OVER_AM = 0.05
 
 
 def parse_mutant(mut_str: str) -> tuple[str, int, str] | None:
@@ -42,27 +63,82 @@ def parse_mutant(mut_str: str) -> tuple[str, int, str] | None:
     return m.group(1), int(m.group(2)), m.group(3)
 
 
-def window_sequence(seq: str, pos_1indexed: int, window: int = 1000) -> tuple[str, int]:
-    """Return (windowed_seq, new_pos_1indexed) centred on pos, clamped to ends."""
-    L = len(seq)
-    if L <= window:
-        return seq, pos_1indexed
-    half = window // 2
-    start = max(0, pos_1indexed - 1 - half)
-    end = start + window
-    if end > L:
-        end = L
-        start = max(0, end - window)
-    new_pos = pos_1indexed - start  # still 1-indexed relative to windowed seq
-    return seq[start:end], new_pos
+def _load_cache_if_current(cache_path: Path, params_path: Path, params: dict):
+    """Return the cached JSON only when its recorded inputs match `params`.
+
+    Both caches were previously keyed on file existence alone, so a changed
+    assay list, window length or model silently reused a stale file.
+    """
+    if not cache_path.exists() or not params_path.exists():
+        return None
+    try:
+        with open(params_path) as handle:
+            stored = json.load(handle)
+    except json.JSONDecodeError:
+        print(f"  {params_path.name} is corrupt — rebuilding {cache_path.name}")
+        return None
+    if stored != params:
+        print(f"  {cache_path.name} was built from different inputs — rebuilding")
+        return None
+    with open(cache_path) as handle:
+        return json.load(handle)
+
+
+def _save_cache(cache_path: Path, params_path: Path, payload, params: dict) -> None:
+    """Write the cache, then the params that produced it."""
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(cache_path, "w") as handle:
+        json.dump(payload, handle, indent=2)
+    atomic_write_json(params_path, params)
+
+
+def _jobs_cache_params() -> dict:
+    """Inputs that determine the parsed job list.
+
+    The DMS index is hashed by content. The per-assay files are recorded by name
+    and size, which catches an added, removed or resized assay file but not an
+    edit that preserves the byte count — bump JOBS_CACHE_VERSION for that.
+    """
+    index_digest = hashlib.sha256(DMS_INDEX.read_bytes()).hexdigest()
+    assay_files = sorted(
+        (path.name, path.stat().st_size)
+        for path in DMS_SUBDIR.glob("*.csv")
+    )
+    return {
+        "version": JOBS_CACHE_VERSION,
+        "dms_index_sha256": index_digest,
+        "assay_files": assay_files,
+        "min_variants": MIN_VARIANTS,
+    }
+
+
+def _score_cache_params(jobs: list[dict], model_name: str) -> dict:
+    """Every input that determines a delta-LL score.
+
+    The job list is hashed by content, so a changed assay, a changed variant list
+    or a reordering all invalidate the cache.
+    """
+    digest = hashlib.sha256()
+    for job in jobs:
+        digest.update(job["DMS_id"].encode())
+        digest.update(b"\x00")
+        for variant in job["variants"]:
+            digest.update(variant["mutant"].encode())
+            digest.update(b"\x00")
+    return {
+        "version": SCORE_CACHE_VERSION,
+        "jobs_sha256": digest.hexdigest(),
+        "model": model_name,
+        "max_seq_len": MAX_SEQ_LEN,
+    }
 
 
 def phase1_build_jobs() -> list[dict]:
     """Parse human DMS assays into a cached job list of single-mutant variants."""
-    if JOBS_CACHE.exists():
+    params = _jobs_cache_params()
+    jobs = _load_cache_if_current(JOBS_CACHE, JOBS_PARAMS_JSON, params)
+    if jobs is not None:
         print(f"Loading cached jobs from {JOBS_CACHE}")
-        with open(JOBS_CACHE) as f:
-            jobs = json.load(f)
         print(f"  {len(jobs)} assays")
         return jobs
 
@@ -143,8 +219,7 @@ def phase1_build_jobs() -> list[dict]:
 
     print(f"\nJobs built: {len(jobs)} assays, {skipped} skipped")
     OUT.mkdir(parents=True, exist_ok=True)
-    with open(JOBS_CACHE, "w") as f:
-        json.dump(jobs, f, indent=2)
+    _save_cache(JOBS_CACHE, JOBS_PARAMS_JSON, jobs, params)
     print(f"Saved → {JOBS_CACHE}")
     return jobs
 
@@ -156,16 +231,17 @@ def phase2_extract_ll(
     import torch
     import esm as esm_lib
 
-    if SCORE_CACHE.exists():
+    from esm2_mech.embeddings.embed_variants import ESM2_MODEL_650M
+
+    params = _score_cache_params(jobs, ESM2_MODEL_650M)
+    cached = _load_cache_if_current(SCORE_CACHE, SCORE_PARAMS_JSON, params)
+    if cached is not None:
         print(f"Cached LL scores found: {SCORE_CACHE}")
-        with open(SCORE_CACHE) as f:
-            return json.load(f)
+        return cached
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     if device != "cuda":
         raise RuntimeError("Phase 2 requires a GPU. Run on RunPod.")
-
-    from esm2_mech.embeddings.embed_variants import ESM2_MODEL_650M
 
     model, alphabet = esm_lib.pretrained.load_model_and_alphabet(ESM2_MODEL_650M)
     model = model.to(device).eval()
@@ -206,7 +282,7 @@ def phase2_extract_ll(
             batch_meta = []  # (pos, wt_aa, windowed_new_pos)
 
             for pos in batch_pos:
-                win_seq, new_pos = window_sequence(wt_seq, pos)
+                win_seq, new_pos, _start = window_sequence(wt_seq, pos)
                 masked = list(win_seq)
                 masked[new_pos - 1] = "<mask>"
                 masked_str = "".join(masked)
@@ -252,8 +328,7 @@ def phase2_extract_ll(
                 json.dump({"done": list(done_ids), "scores": all_scores}, f)
             print(f"  Checkpoint saved ({len(done_ids)} assays done)")
 
-    with open(SCORE_CACHE, "w") as f:
-        json.dump(all_scores, f)
+    _save_cache(SCORE_CACHE, SCORE_PARAMS_JSON, all_scores, params)
     print(f"Saved ΔLL scores → {SCORE_CACHE}")
     if CKPT.exists():
         CKPT.unlink()
@@ -265,7 +340,7 @@ def phase3_analyse(jobs: list[dict], all_scores: dict[str, dict[str, float]]) ->
     OUT.mkdir(parents=True, exist_ok=True)
 
     # Load Pfam map for family-split analysis
-    pfam_path = DATA / "pfam_families.json"
+    pfam_path = PFAM_JSON
     pfam_map: dict[str, str] = {}
     if pfam_path.exists():
         with open(pfam_path) as f:
@@ -421,25 +496,40 @@ def phase3_analyse(jobs: list[dict], all_scores: dict[str, dict[str, float]]) ->
                 f"frac<0.20={spearman_dist.get('frac_below_0_20', float('nan')):.2f}  (n={len(rhos)})"
             )
 
-    esm2_median = spearman_dist.get("median", float("nan"))
-    esm2_frac020 = spearman_dist.get("frac_below_0_20", float("nan"))
-    am_median = am_comparison.get("median", float("nan"))
+    # A gate with nothing to judge is unavailable, not failed. `dist` returns
+    # {"n": 0} when no assay scored, so these keys are absent rather than zero;
+    # comparing the resulting NaN would silently record every gate as FAIL.
+    esm2_median = spearman_dist.get("median")
+    esm2_frac020 = spearman_dist.get("frac_below_0_20")
+    am_median = am_comparison.get("median")
 
-    g1 = esm2_median >= 0.40
-    g2 = esm2_frac020 <= 0.25
-    g3 = (esm2_median - am_median) >= 0.05 if not np.isnan(am_median) else None
+    g1 = None if esm2_median is None else esm2_median >= G1_MIN_MEDIAN_SPEARMAN
+    g2 = None if esm2_frac020 is None else esm2_frac020 <= G2_MAX_FRAC_BELOW_020
+    am_gap = (
+        None
+        if esm2_median is None or am_median is None
+        else float(esm2_median - am_median)
+    )
+    g3 = None if am_gap is None else am_gap >= G3_MIN_MEDIAN_GAP_OVER_AM
+
+    def _verdict(passed, value):
+        if passed is None:
+            return "UNAVAILABLE (nothing scored)"
+        return f"{value:.3f} → {'PASS ✓' if passed else 'FAIL ✗'}"
 
     print("\n=== DECISION RULES ===")
     print(
-        f"  G1: median Spearman ≥ 0.40 → {esm2_median:.3f} → {'PASS ✓' if g1 else 'FAIL ✗'}"
+        f"  G1: median Spearman ≥ {G1_MIN_MEDIAN_SPEARMAN} → "
+        f"{_verdict(g1, esm2_median)}"
     )
     print(
-        f"  G2: frac ρ<0.20 ≤ 0.25    → {esm2_frac020:.3f} → {'PASS ✓' if g2 else 'FAIL ✗'}"
+        f"  G2: frac ρ<0.20 ≤ {G2_MAX_FRAC_BELOW_020} → "
+        f"{_verdict(g2, esm2_frac020)}"
     )
-    if g3 is not None:
-        print(
-            f"  G3: ESM2 median − AM median ≥ 0.05 → {esm2_median-am_median:.3f} → {'PASS ✓' if g3 else 'FAIL ✗'}"
-        )
+    print(
+        f"  G3: ESM2 median − AM median ≥ {G3_MIN_MEDIAN_GAP_OVER_AM} → "
+        f"{_verdict(g3, am_gap)}"
+    )
 
     ranked = sorted(
         [(k, v) for k, v in per_assay.items() if not v.get("skipped")],
@@ -468,20 +558,20 @@ def phase3_analyse(jobs: list[dict], all_scores: dict[str, dict[str, float]]) ->
         "am_comparison": am_comparison,
         "decision_rules": {
             "G1": {
-                "criterion": "median_spearman >= 0.40",
+                "criterion": f"median_spearman >= {G1_MIN_MEDIAN_SPEARMAN}",
                 "value": esm2_median,
                 "passed": g1,
             },
             "G2": {
-                "criterion": "frac_below_0.20 <= 0.25",
+                "criterion": f"frac_below_0.20 <= {G2_MAX_FRAC_BELOW_020}",
                 "value": esm2_frac020,
                 "passed": g2,
             },
             "G3": {
-                "criterion": "esm2_median - am_median >= 0.05",
-                "value": (
-                    float(esm2_median - am_median) if not np.isnan(am_median) else None
+                "criterion": (
+                    f"esm2_median - am_median >= {G3_MIN_MEDIAN_GAP_OVER_AM}"
                 ),
+                "value": am_gap,
                 "passed": g3,
             },
         },

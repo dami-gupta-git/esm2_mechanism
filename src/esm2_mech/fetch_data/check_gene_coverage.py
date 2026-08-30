@@ -125,11 +125,18 @@ def main() -> int:
     }
 
     results: list[bool] = []
+    skipped: list[str] = []
 
     def have(*keys: str) -> bool:
-        missing = [keys[i] for i, key in enumerate(keys) if not paths[key].exists()]
+        """True when every named file exists; a skip is counted, not just printed.
+
+        A skipped check has not been performed, so the summary must not report
+        that every expectation holds on the strength of the checks that did run.
+        """
+        missing = [key for key in keys if not paths[key].exists()]
         if missing:
             print(f"[SKIP] missing file(s): {', '.join(str(paths[m]) for m in missing)}")
+            skipped.extend(missing)
         return not missing
 
     print("=== Gene-coverage consistency check ===\n")
@@ -189,6 +196,14 @@ def main() -> int:
         return 1
     if not results:
         print("  RESULT: nothing checked (no files found).")
+        return 1
+    if skipped:
+        missing_files = sorted({str(paths[key]) for key in skipped})
+        print(f"  checks skipped for {len(missing_files)} missing file(s)")
+        print(
+            "  RESULT: INCOMPLETE — every check that ran passed, but some could "
+            f"not run: {', '.join(missing_files)}"
+        )
         return 1
     print("  RESULT: PASS — all gene-coverage expectations hold.")
     return 0

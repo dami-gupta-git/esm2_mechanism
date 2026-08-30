@@ -24,10 +24,7 @@ import math
 import sys
 from pathlib import Path
 
-from esm2_mech.utils.seed_aggregation import (
-    SEED_AGGREGATION_SCHEMA_VERSION,
-    SEED_SAMPLING_UNIT,
-)
+from esm2_mech.utils.seed_aggregation import read_seed_inference
 from esm2_mech.utils.paths import results_dir_for_run
 
 print = functools.partial(print, flush=True)
@@ -84,24 +81,51 @@ def _is_number(value) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
+_AGGREGATE_SCALARS = (
+    "schema_version",
+    "state",
+    "reason",
+    "mean",
+    "seed_std",
+    "sampling_unit",
+    "message",
+)
+_AGGREGATE_SEED_LISTS = ("requested_seeds", "contributing_seeds", "affected_seeds")
+
+
+def _aggregate_at(path: str, leaves: dict) -> dict:
+    """Rebuild one stored seed aggregate from its flattened leaves.
+
+    Flattening indexes lists positionally, so the seed lists are reassembled from
+    their indexed leaves. An empty list contributes no leaves and comes back empty,
+    which is what an available aggregate stores for its affected seeds.
+    """
+    record = {
+        field: leaves[f"{path}.{field}"]
+        for field in _AGGREGATE_SCALARS
+        if f"{path}.{field}" in leaves
+    }
+    for field in _AGGREGATE_SEED_LISTS:
+        values = []
+        while f"{path}.{field}[{len(values)}]" in leaves:
+            values.append(leaves[f"{path}.{field}[{len(values)}]"])
+        record[field] = values
+    return record
+
+
 def _threshold_for(key: str, old: dict, abs_threshold: float) -> tuple[float, bool]:
     """(threshold, used_seed_std) for one metric.
 
-    Only a validated shared seed aggregate supplies a spread threshold. Fold,
-    protein, partition, and other spreads must not stand in for seed variation.
+    The shared reader decides whether a stored aggregate is a complete seed
+    aggregate, so this script does not carry its own copy of that rule. Fold,
+    protein, partition, and other spreads never stand in for seed variation, and a
+    zero spread is no threshold at all.
     """
     if key.endswith(MEAN_SUFFIX):
         aggregate_path = key[: -len(MEAN_SUFFIX)]
-        is_seed_aggregate = (
-            old.get(f"{aggregate_path}.schema_version")
-            == SEED_AGGREGATION_SCHEMA_VERSION
-            and old.get(f"{aggregate_path}.state") == "available"
-            and old.get(f"{aggregate_path}.sampling_unit") == SEED_SAMPLING_UNIT
-        )
-        if is_seed_aggregate:
-            spread = old.get(f"{aggregate_path}.seed_std")
-            if _is_number(spread) and math.isfinite(spread) and spread > 0:
-                return float(spread), True
+        metric = read_seed_inference(_aggregate_at(aggregate_path, old))
+        if metric.available and metric.spread > 0:
+            return float(metric.spread), True
     return abs_threshold, False
 
 
@@ -149,7 +173,9 @@ def compare(old: dict, new: dict, abs_threshold: float) -> dict:
     }
 
 
-def format_report(old_run: str, new_run: str, result: dict, abs_threshold: float) -> str:
+def format_report(
+    old_run: str, new_run: str, result: dict, abs_threshold: float
+) -> str:
     """The delta note: a table of old / new / delta with the material-movement flag."""
     lines = [
         f"# Delta note — {old_run} to {new_run}",
@@ -203,10 +229,18 @@ def format_report(old_run: str, new_run: str, result: dict, abs_threshold: float
         lines.append("")
 
     for bucket, title, note in (
-        ("added", "Keys added", f"Present in {new_run} only — expected for the new CI "
-                                "and paired-difference keys."),
-        ("removed", "Keys removed", f"Present in {old_run} only. Each one is either an "
-                                    "intended cut or a silently dropped output."),
+        (
+            "added",
+            "Keys added",
+            f"Present in {new_run} only — expected for the new CI "
+            "and paired-difference keys.",
+        ),
+        (
+            "removed",
+            "Keys removed",
+            f"Present in {old_run} only. Each one is either an "
+            "intended cut or a silently dropped output.",
+        ),
     ):
         entries = result[bucket]
         lines += [f"## {title} ({len(entries)})", ""]
@@ -223,15 +257,20 @@ def main() -> int:
     parser.add_argument("old_run", help="baseline run name, e.g. run6")
     parser.add_argument("new_run", help="run being checked, e.g. run_biorxiv")
     parser.add_argument(
-        "--abs-threshold", type=float, default=DEFAULT_ABS_THRESHOLD,
+        "--abs-threshold",
+        type=float,
+        default=DEFAULT_ABS_THRESHOLD,
         help="movement threshold for metrics with no sibling _std",
     )
     parser.add_argument(
-        "--out", type=Path, default=None,
+        "--out",
+        type=Path,
+        default=None,
         help="write the delta note here as well as to stdout",
     )
     parser.add_argument(
-        "--fail-on-movement", action="store_true",
+        "--fail-on-movement",
+        action="store_true",
         help="exit non-zero if anything moved materially (the self-diff invariant)",
     )
     args = parser.parse_args()

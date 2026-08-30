@@ -367,10 +367,7 @@ def run(
             # subset of seeds or features is a different quantity from the number
             # it is printed beside. Feature-local row ids are valid here because
             # leakage is aligned independently within each feature.
-            if (
-                compute_ci
-                and gs_oof is not None and fs_oof is not None
-            ):
+            if gs_oof is not None and fs_oof is not None:
                 def _cache_arm(oof):
                     pred = [MECHANISM_CLASSES[col] for col in oof["proba"].argmax(axis=1)]
                     return {

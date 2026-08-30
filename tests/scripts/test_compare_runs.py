@@ -40,7 +40,11 @@ def run_dir(tmp_path):
 
 class TestLoadRun:
     def test_flattens_nested_structures_to_dotted_paths(self, run_dir):
-        _write(run_dir, "a.json", {"gates": {"some_gate": {"value": 0.891}}, "seeds": [1, 2]})
+        _write(
+            run_dir,
+            "a.json",
+            {"gates": {"some_gate": {"value": 0.891}}, "seeds": [1, 2]},
+        )
         leaves = load_run(run_dir)
         assert leaves["a.json.gates.some_gate.value"] == 0.891
         assert leaves["a.json.seeds[0]"] == 1
@@ -61,20 +65,38 @@ class TestLoadRun:
 
 class TestCompare:
     @staticmethod
-    def _seed_aggregate(prefix, mean, spread):
-        return {
+    def _seed_aggregate(prefix, mean, spread, n_seeds=5):
+        """The flattened leaves of one complete stored seed aggregate.
+
+        Written the way a real aggregate flattens: the seed lists appear as
+        positionally indexed leaves, and the empty affected list contributes none.
+        """
+        leaves = {
             f"{prefix}.schema_version": SEED_AGGREGATION_SCHEMA_VERSION,
             f"{prefix}.state": "available",
-            f"{prefix}.sampling_unit": "model_seed",
+            f"{prefix}.reason": None,
             f"{prefix}.mean": mean,
             f"{prefix}.seed_std": spread,
+            f"{prefix}.sampling_unit": "model_seed",
+            f"{prefix}.message": None,
         }
+        for seed in range(n_seeds):
+            leaves[f"{prefix}.requested_seeds[{seed}]"] = seed
+            leaves[f"{prefix}.contributing_seeds[{seed}]"] = seed
+        return leaves
 
     def test_self_diff_reports_nothing(self, run_dir):
-        _write(run_dir, "a.json", {
-            "macro_f1_mean": 0.418, "macro_f1_std": 0.02,
-            "verdict": "pass", "n": 17826, "missing": None,
-        })
+        _write(
+            run_dir,
+            "a.json",
+            {
+                "macro_f1_mean": 0.418,
+                "macro_f1_std": 0.02,
+                "verdict": "pass",
+                "n": 17826,
+                "missing": None,
+            },
+        )
         leaves = load_run(run_dir)
         result = compare(leaves, leaves, abs_threshold=0.005)
         assert result["moved"] == []
@@ -89,6 +111,25 @@ class TestCompare:
         new = self._seed_aggregate("f.json.macro_f1", 0.430, 0.05)
         result = compare(old, new, abs_threshold=0.005)
         assert result["moved"] == []
+
+    def test_an_incomplete_aggregate_supplies_no_seed_threshold(self):
+        """A seed short of its requested set cannot lend its spread as a threshold.
+
+        The shared reader owns that judgement, so the script cannot accept a
+        stored aggregate the rest of the pipeline would refuse.
+        """
+        old = self._seed_aggregate("f.json.macro_f1", 0.400, 0.05)
+        new = self._seed_aggregate("f.json.macro_f1", 0.430, 0.05)
+        for leaves in (old, new):
+            del leaves["f.json.macro_f1.contributing_seeds[4]"]
+
+        result = compare(old, new, abs_threshold=0.005)
+
+        # Falls back to the flat threshold, which +0.03 clears.
+        assert len(result["moved"]) == 1
+        _key, _old, _new, _delta, threshold, used_std = result["moved"][0]
+        assert threshold == 0.005
+        assert used_std is False
 
     def test_movement_beyond_one_seed_std_is_flagged(self):
         old = self._seed_aggregate("f.json.macro_f1", 0.400, 0.01)

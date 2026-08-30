@@ -51,6 +51,9 @@ from esm2_mech.utils.bootstrap import (
 )
 from esm2_mech.utils.seed_aggregation import (
     SEED_STATUS_SUCCESS,
+    aggregate_paired_seed_difference,
+    block_seed_status,
+    make_seed_record,
     SEED_STATUS_UNSCORABLE,
     aggregate_result_contract,
     aggregate_seed_oof,
@@ -628,47 +631,46 @@ def run_multiseed(
         print(f"    Leakage fraction:        {leakage_pct:.1f}%")
 
     permutation_result = None
-    paired_mlp_vs_logreg = aggregate_seed_results(
-        seeds,
-        seed_runs,
-        lambda result: (
-            result["mlp_family"]["macro_f1_mean"]
-            - result["logreg_family"]["macro_f1_mean"]
-        ),
-        status=lambda result: (
-            result["mlp_family"]["status"]
-            if result["mlp_family"]["status"] != SEED_STATUS_SUCCESS
-            else result["logreg_family"]["status"]
-        ),
+
+    def _arm_records(arm):
+        """One record per seed for one arm, carrying that arm's own status."""
+        return [
+            make_seed_record(
+                result["seed"],
+                result[arm].get("macro_f1_mean"),
+                status=block_seed_status(result[arm]),
+            )
+            for result in seed_runs
+        ]
+
+    # The shared paired reducer differences within seed and combines the two arms'
+    # statuses, so neither rule is written out again here.
+    paired_mlp_vs_logreg = aggregate_paired_seed_difference(
+        seeds, _arm_records("mlp_family"), _arm_records("logreg_family")
     )
 
     mechanism_by_seed = {
         result["seed"]: result for result in (mechanism_seed_records or [])
     }
-    paired_logreg_mechanism_results = []
-    for enzyme_result in seed_runs:
-        seed = enzyme_result["seed"]
-        mechanism_result = mechanism_by_seed.get(seed)
-        if mechanism_result is None:
-            continue
-        paired_logreg_mechanism_results.append(
-            {
-                **seed_result_contract(seed, status=mechanism_result["seed_status"]),
-                "enzyme": enzyme_result["logreg_family"],
-                "mechanism": mechanism_result["mechanism"],
-            }
+    # A seed the mechanism run did not produce is absent from its arm, which the
+    # shared reducer refuses as a missing seed rather than pairing what is left.
+    mechanism_records = [
+        make_seed_record(
+            seed,
+            record["mechanism"].get("macro_f1_mean"),
+            # The mechanism seed's declared root status wins over its metric
+            # block, so a seed that failed outright is not reported as a data
+            # property of the block.
+            status=(
+                record["seed_status"]
+                if record["seed_status"] != SEED_STATUS_SUCCESS
+                else block_seed_status(record["mechanism"])
+            ),
         )
-    paired_logreg_vs_mechanism = aggregate_seed_results(
-        seeds,
-        paired_logreg_mechanism_results,
-        lambda result: (
-            result["enzyme"]["macro_f1_mean"] - result["mechanism"]["macro_f1_mean"]
-        ),
-        status=lambda result: (
-            result["enzyme"]["status"]
-            if result["enzyme"]["status"] != SEED_STATUS_SUCCESS
-            else result["mechanism"]["status"]
-        ),
+        for seed, record in sorted(mechanism_by_seed.items())
+    ]
+    paired_logreg_vs_mechanism = aggregate_paired_seed_difference(
+        seeds, _arm_records("logreg_family"), mechanism_records
     )
 
     # Interval block. Each bootstrap draw selects families once, both arms and

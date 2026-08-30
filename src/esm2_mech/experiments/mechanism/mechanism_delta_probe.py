@@ -113,9 +113,7 @@ def load_cached_stability_subspace(fingerprint):
     return cached
 
 
-def fit_stability_subspace_megascale(
-    n_components=10
-):
+def fit_stability_subspace_megascale(n_components=10):
     """Fit stability subspace on Megascale data. Returns (n_components, D) or None."""
     try:
         variants = load_tsuboyama_variants()
@@ -311,7 +309,9 @@ def assert_subspace_removed(deltas_proj, subspace, name, tol=1e-8):
         return 0.0
     Q, _ = np.linalg.qr(subspace.T, mode="reduced")
     residual_var = float(np.var(deltas_proj.dot(Q), axis=0).max())
-    print(f"  {name}: max variance along stability subspace after projection = {residual_var:.3e}")
+    print(
+        f"  {name}: max variance along stability subspace after projection = {residual_var:.3e}"
+    )
     if residual_var > tol:
         raise ValueError(
             f"{name}: projection failed — {residual_var:.3e} variance remains along "
@@ -420,15 +420,18 @@ def probe_direction_orthogonality(
                     continue
                 null_cosines.append(float(np.dot(shuf_weights[k1], shuf_weights[k2])))
 
+    # Every shuffle contributes one cosine per real probe pair. A shuffled fit
+    # that failed leaves the draw set short, which the declared count catches.
+    expected_null_draws = n_shuffle * len(cosine_matrix)
     distinguishable = {}
     null_summaries = {}
     for pair, real_cos in cosine_matrix.items():
-        null_summary = null_standard_score(real_cos, null_cosines)
+        null_summary = null_standard_score(
+            real_cos, null_cosines, expected_draws=expected_null_draws
+        )
         null_summaries[pair] = null_summary
         z_score = null_summary["z_score"]
-        distinguishable[pair] = (
-            None if z_score is None else bool(abs(z_score) > 2.0)
-        )
+        distinguishable[pair] = None if z_score is None else bool(abs(z_score) > 2.0)
 
     first_null_summary = next(iter(null_summaries.values()), None)
 
@@ -439,9 +442,7 @@ def probe_direction_orthogonality(
             None if first_null_summary is None else first_null_summary["null_mean"]
         ),
         "null_cosine_std": (
-            None
-            if first_null_summary is None
-            else first_null_summary["null_draw_std"]
+            None if first_null_summary is None else first_null_summary["null_draw_std"]
         ),
         "null_score_summaries": null_summaries,
         "distinguishable_from_null": distinguishable,
@@ -511,14 +512,15 @@ def run_baselines(
     ]
 
     results = {}
-    for name, X_bl, y_bl, spl, split_groups, runnable in full_configs + [foldx_config, am_config]:
+    for name, X_bl, y_bl, spl, split_groups, runnable in full_configs + [
+        foldx_config,
+        am_config,
+    ]:
         if not runnable or X_bl is None:
             results[name] = {"note": f"{name} unavailable or zero-variance"}
             continue
         print(f"  Baseline: {name} (n={len(y_bl)})")
-        contract = _complete_contract(
-            y_bl, split_groups, spl, CLASSES_3, 5, "gene"
-        )
+        contract = _complete_contract(y_bl, split_groups, spl, CLASSES_3, 5, "gene")
         results[name] = run_logreg_cv(
             X_bl, y_bl, spl, CLASSES_3, contract, seed=seed, label=name
         )
@@ -558,13 +560,17 @@ def _load_alphamissense_scores(variants: list) -> np.ndarray:
     Keys in the JSON are gene_aapos_aawt_aamut (same format used by fetch_annotations.py).
     """
     if not ALPHAMISSENSE_SCORES_JSON.exists():
-        print(f"  WARNING: {ALPHAMISSENSE_SCORES_JSON} not found — AlphaMissense scores unavailable")
+        print(
+            f"  WARNING: {ALPHAMISSENSE_SCORES_JSON} not found — AlphaMissense scores unavailable"
+        )
         return np.full(len(variants), np.nan)
     try:
         with open(ALPHAMISSENSE_SCORES_JSON) as f:
             am_scores = json.load(f)
     except json.JSONDecodeError:
-        print(f"  WARNING: corrupt {ALPHAMISSENSE_SCORES_JSON} — AlphaMissense scores unavailable")
+        print(
+            f"  WARNING: corrupt {ALPHAMISSENSE_SCORES_JSON} — AlphaMissense scores unavailable"
+        )
         return np.full(len(variants), np.nan)
 
     scores = np.full(len(variants), np.nan)
@@ -632,9 +638,7 @@ def _load_embeddings():
     """Phase 3: load Gerasimavicius embeddings. Raises FileNotFoundError if missing."""
     for path in [EMB_WT_MEAN, EMB_MUT_MEAN, EMB_WT_POS, EMB_MUT_POS]:
         if not os.path.exists(path):
-            raise FileNotFoundError(
-                f"Embedding file missing: {path}\n"
-            )
+            raise FileNotFoundError(f"Embedding file missing: {path}\n")
     print("\n=== Loading embeddings ===")
     return (
         np.load(EMB_WT_MEAN),
@@ -668,9 +672,7 @@ def _run_primary_probes(
         ("per_residue_unprojected", deltas_pos),
     ]
     results = {}
-    contract = _complete_contract(
-        y, genes, splits, CLASSES_3, n_cv_folds, "gene"
-    )
+    contract = _complete_contract(y, genes, splits, CLASSES_3, n_cv_folds, "gene")
     for name, X in probe_configs:
         print(f"  {name}:")
         results[name] = run_logreg_cv(
@@ -689,12 +691,16 @@ def _run_secondary_probes(
     # y4/y2 stay string labels — run_logreg_cv keys on `classes` (strings).
     y4 = np.asarray(labels_4class)
     splits4 = gene_split_cv(genes, n_folds=n_cv_folds, seed=seed)
-    contract4 = _complete_contract(
-        y4, genes, splits4, classes_4, n_cv_folds, "gene"
-    )
+    contract4 = _complete_contract(y4, genes, splits4, classes_4, n_cv_folds, "gene")
     print("  4-class (GOF/DN/HI/AR):")
     results["four_class"] = run_logreg_cv(
-        deltas_mean_proj, y4, splits4, classes_4, contract4, seed=seed, label="4class",
+        deltas_mean_proj,
+        y4,
+        splits4,
+        classes_4,
+        contract4,
+        seed=seed,
+        label="4class",
         prescaled=True,
     )
 
@@ -724,12 +730,12 @@ def _run_secondary_probes(
     return results
 
 
-def _run_family_cv(
-    deltas_mean_proj, y, genes, valid_variants, n_cv_folds, seed
-):
+def _run_family_cv(deltas_mean_proj, y, genes, valid_variants, n_cv_folds, seed):
     """Phase 7: gene-family-split CV using Pfam families."""
     if not PFAM_JSON.exists():
-        raise FileNotFoundError(f"{PFAM_JSON} not found — run fetch_data/fetch_annotations --step pfam first")
+        raise FileNotFoundError(
+            f"{PFAM_JSON} not found — run fetch_data/fetch_annotations --step pfam first"
+        )
     with open(PFAM_JSON) as f:
         pfam_map = json.load(f)
     n_families = len(set(v for v in pfam_map.values() if v is not None))
@@ -741,7 +747,13 @@ def _run_family_cv(
         y, family_groups, splits, CLASSES_3, n_cv_folds, "family"
     )
     results = run_logreg_cv(
-        deltas_mean_proj, y, splits, CLASSES_3, contract, seed=seed, label="family_cv",
+        deltas_mean_proj,
+        y,
+        splits,
+        CLASSES_3,
+        contract,
+        seed=seed,
+        label="family_cv",
         prescaled=True,
     )
     if results["status"] == "success":

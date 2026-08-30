@@ -61,8 +61,7 @@ CLASSES = MECHANISM_CLASSES
 
 def load_data():
     _variants, labels, genes, delta, _ = load_variants_and_delta(
-        MERGED_VALID_VARIANTS, MERGED_EMBEDDED_VARIANTS,
-        MERGED_WT_MEAN, MERGED_MUT_MEAN
+        MERGED_VALID_VARIANTS, MERGED_EMBEDDED_VARIANTS, MERGED_WT_MEAN, MERGED_MUT_MEAN
     )
     return labels, genes, delta
 
@@ -126,8 +125,16 @@ def run_mlp(
         held_out_unit="sequence_cluster",
     )
     return run_mlp_cv(
-        X, y, splits, CLASSES, contract, hidden=hidden, seed=seed,
-        genes=genes, label=label, return_oof=return_oof,
+        X,
+        y,
+        splits,
+        CLASSES,
+        contract,
+        hidden=hidden,
+        seed=seed,
+        genes=genes,
+        label=label,
+        return_oof=return_oof,
         compute_per_gene=compute_per_gene,
     )
 
@@ -145,8 +152,15 @@ def run_histgb(X, y, genes, groups, n_folds, seed, label, return_oof=False):
         held_out_unit="sequence_cluster",
     )
     return run_histgb_cv(
-        X, y, splits, CLASSES, contract, seed=seed, genes=genes,
-        label=label, return_oof=return_oof
+        X,
+        y,
+        splits,
+        CLASSES,
+        contract,
+        seed=seed,
+        genes=genes,
+        label=label,
+        return_oof=return_oof,
     )
 
 
@@ -302,7 +316,7 @@ def aggregate_seeds(all_res, requested_seeds):
 
 def print_table(summary):
     print("\n" + "=" * 96)
-    print("MMseqs2-20 cluster-holdout — 5-seed mean ± std")
+    print("MMseqs2-20 cluster-holdout — mean ± SD across model seeds")
     print("=" * 96)
     print(
         f"{'Variant':<10} {'F1(variant)':<16} {'F1(gene)':<16} {'GOF AUROC':<14} {'DN AUROC':<14} {'LOF AUROC':<14}"
@@ -335,7 +349,9 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--seed", type=int, default=None)
     ap.add_argument("--n-folds", type=int, default=5)
-    ap.add_argument("--no_ci", action="store_true", help="skip the cluster-bootstrap CIs")
+    ap.add_argument(
+        "--no_ci", action="store_true", help="skip the cluster-bootstrap CIs"
+    )
     ap.add_argument("--n_boot", type=int, default=BOOTSTRAP_N_RESAMPLES)
     args = ap.parse_args()
 

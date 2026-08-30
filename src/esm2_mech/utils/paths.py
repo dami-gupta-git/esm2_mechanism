@@ -1,9 +1,15 @@
 import functools
 from pathlib import Path
 
-from esm2_mech.utils.constants import ESM2_MODEL, ESM3_MODEL, GENE_UNIVERSE_FILENAME, PFAM_FAMILIES_FILENAME
+from esm2_mech.utils.constants import (
+    ESM2_MODEL,
+    ESM3_MODEL,
+    GENE_UNIVERSE_FILENAME,
+    PFAM_FAMILIES_FILENAME,
+)
 
 print = functools.partial(print, flush=True)
+
 
 def _find_project_root() -> Path:
     p = Path(__file__).resolve().parent
@@ -16,10 +22,11 @@ def _find_project_root() -> Path:
         f"{Path(__file__).resolve()}). Is the package installed editable?"
     )
 
+
 PROJECT_ROOT = _find_project_root()
 PACKAGE_ROOT = PROJECT_ROOT / "src" / "esm2_mech"
 
-RUN_NAME="run_biorxiv"
+RUN_NAME = "run_biorxiv"
 
 DATA_DIR = PROJECT_ROOT / "data"
 ALL_RESULTS_DIR = PROJECT_ROOT / "results"
@@ -40,6 +47,7 @@ def results_dir_for_run(run_name: str) -> Path:
     """
     return ALL_RESULTS_DIR / run_name
 
+
 # ── LLM-judge mechanism eval (Langfuse-traced agent) ─────────────────────────
 # An LLM-as-judge predicts label_3class per variant; predictions are scored
 # against ground truth and every model call is traced to Langfuse. Lives in its
@@ -56,7 +64,9 @@ PATHOGENICITY_CONTROL_JSON = RESULTS_DIR / "pathogenicity_control.json"
 LEAKAGE_FRACTION_JSON = RESULTS_DIR / "leakage_fraction.json"
 # Per-seed probe outputs, written as each seed completes (resume + progress).
 # Format with .format(seed=N).
-PATHOGENICITY_CONTROL_SEED_JSON = str(RESULTS_DIR / "pathogenicity_control_seed{seed}.json")
+PATHOGENICITY_CONTROL_SEED_JSON = str(
+    RESULTS_DIR / "pathogenicity_control_seed{seed}.json"
+)
 WITHIN_FAMILY_MECHANISM_JSON = RESULTS_DIR / "within_family_mechanism.json"
 
 # ── Two-stage cascade mechanism classifier (cascade_mechanism.py) ─────────────
@@ -77,7 +87,7 @@ STABILITY_SUMMARY_JSON = STABILITY_RESULTS_DIR / "summary.json"
 STABILITY_MLP_SUMMARY_JSON = STABILITY_RESULTS_DIR / "mlp_summary.json"
 STABILITY_XGB_SUMMARY_JSON = STABILITY_RESULTS_DIR / "mlp_summary_xgb.json"
 STABILITY_PER_PROTEIN_JSON = STABILITY_RESULTS_DIR / "per_protein_spearman.json"
-STABILITY_PROJECTION_JSON = STABILITY_RESULTS_DIR / "stability_projection_3c.json"
+STABILITY_PROJECTION_JSON = STABILITY_RESULTS_DIR / "stability_projection.json"
 # Per-seed ESM-2 nonlinear-probe results (MLP/GBM/RF/kNN on delta features). Format
 # with .format(seed=N). The ESM-3 experiment reads mlp_delta_mean_family from these to
 # derive the matched ESM-2 family-split floor instead of hardcoding it.
@@ -172,6 +182,12 @@ ENZYME_LABELS_TSV = DATA_DIR / "enzyme_labels.tsv"
 SCAN_FEATURES_NPY = DATA_DIR / "scan_features.npy"
 SCAN_FEATURES_META_JSON = DATA_DIR / "scan_features_meta.json"
 
+# ── Log-likelihood scan features (ll_scan.py) ────────────────────────────────
+# Row order is pinned by the "genes" list inside LL_FEATURES_META_JSON.
+LL_SCORES_JSON = DATA_DIR / "ll_scores.json"
+LL_FEATURES_NPY = DATA_DIR / "ll_features.npy"
+LL_FEATURES_META_JSON = DATA_DIR / "ll_features_meta.json"
+
 # ── Cache ─────────────────────────────────────────────────────────────────────
 CACHE_DIR = DATA_DIR / "cache"
 SEQUENCES_JSON = CACHE_DIR / "sequences.json"
@@ -189,7 +205,9 @@ ESM3_STRUCT_TOKENS_JSON = CACHE_DIR / "esm3_struct_tokens.json"
 CLINVAR_PATHOGENICITY_VARIANTS_JSON = DATA_DIR / "clinvar_pathogenicity_variants.json"
 # Sidecar recording the fetch params the cache above was built with, so a param
 # change (cap / seed) re-fetches instead of silently serving the stale set.
-CLINVAR_PATHOGENICITY_PARAMS_JSON = DATA_DIR / "clinvar_pathogenicity_variants.params.json"
+CLINVAR_PATHOGENICITY_PARAMS_JSON = (
+    DATA_DIR / "clinvar_pathogenicity_variants.params.json"
+)
 
 # ── ESM-2 Gerasimavicius embeddings (embed_variants.py) ──────────────────────
 # Row-aligned subset of variants actually embedded (one row per .npy array row).
@@ -215,7 +233,9 @@ PATHOGENICITY_VALID_VARIANTS_JSON = DATA_DIR / "pathogenicity_valid_variants.jso
 # ── Canonical pathogenicity set + masked-LL conservation (geometry experiments) ─
 # The n=16,576 canonical pathogenicity variant set whose embeddings are PATH_EMB_*.
 # Row-aligned to PATH_EMB_WT_MEAN / PATH_EMB_MUT_MEAN.
-PATHOGENICITY_CANONICAL_VARIANTS_JSON = DATA_DIR / "pathogenicity_valid_variants_canonical.json"
+PATHOGENICITY_CANONICAL_VARIANTS_JSON = (
+    DATA_DIR / "pathogenicity_valid_variants_canonical.json"
+)
 # Masked-LM conservation readouts per canonical variant: [logP_wt, logP_mut, entropy].
 CONSERVATION_PATHOGENICITY_NPY = DATA_DIR / "conservation_pathogenicity.npy"
 CONSERVATION_PATHOGENICITY_META_JSON = DATA_DIR / "conservation_pathogenicity_meta.json"

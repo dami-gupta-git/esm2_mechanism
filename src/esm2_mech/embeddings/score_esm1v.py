@@ -53,6 +53,7 @@ def score_variants_single_model(
     aa_to_idx = {aa: alphabet.get_idx(aa) for aa in AA_ORDER}
 
     scores: dict[str, float] = {}
+    collisions: list[str] = []
     genes_without_sequence: set[str] = set()
     for gene, variants in gene_variants.items():
         uniprot = g2u.get(gene)
@@ -99,9 +100,48 @@ def score_variants_single_model(
                         )
                     else:
                         delta = float("nan")
+                    if v["key"] in scores and scores[v["key"]] != delta:
+                        collisions.append(v["key"])
                     scores[v["key"]] = delta
 
+    if collisions:
+        print(
+            f"  WARNING: {len(collisions)} variant key(s) scored more than once "
+            f"with differing values; the last won. Examples: {collisions[:5]}",
+            file=sys.stderr,
+        )
     return scores, genes_without_sequence
+
+
+def average_across_checkpoints(
+    per_ckpt: dict[str, dict[str, float]],
+) -> tuple[dict[str, float], int]:
+    """Mean delta-LL over every checkpoint, plus a count of partial variants.
+
+    An ensemble score is the mean over all of CHECKPOINTS. A variant only some
+    checkpoints scored has no ensemble score and is returned as NaN: averaging
+    the survivors would write a single-model value indistinguishable from a
+    genuine ensemble score.
+    """
+    all_vkeys: set[str] = set()
+    for checkpoint in CHECKPOINTS:
+        all_vkeys.update(per_ckpt[checkpoint].keys())
+
+    averaged: dict[str, float] = {}
+    n_incomplete = 0
+    for vkey in all_vkeys:
+        finite = [
+            per_ckpt[checkpoint][vkey]
+            for checkpoint in CHECKPOINTS
+            if vkey in per_ckpt[checkpoint] and not np.isnan(per_ckpt[checkpoint][vkey])
+        ]
+        if len(finite) == len(CHECKPOINTS):
+            averaged[vkey] = float(np.mean(finite))
+        else:
+            averaged[vkey] = float("nan")
+            if finite:
+                n_incomplete += 1
+    return averaged, n_incomplete
 
 
 def main() -> int:
@@ -164,7 +204,12 @@ def main() -> int:
             ckpt_path.unlink()
             saved = None
         if saved is not None:
-            per_ckpt = saved.get("per_ckpt", per_ckpt)
+            if "per_ckpt" not in saved:
+                raise ValueError(
+                    f"{ckpt_path} has no 'per_ckpt' block; it was written by an "
+                    "incompatible version — delete it and rerun"
+                )
+            per_ckpt = saved["per_ckpt"]
             for c in CHECKPOINTS:
                 ckpt_done[c] = set(saved.get("ckpt_done", {}).get(c, []))
             done_genes = set.intersection(*[ckpt_done[c] for c in CHECKPOINTS])
@@ -232,18 +277,15 @@ def main() -> int:
         except Exception:
             pass
 
-    all_vkeys = set()
-    for c in CHECKPOINTS:
-        all_vkeys.update(per_ckpt[c].keys())
-
-    averaged: dict[str, float] = {}
-    for vkey in all_vkeys:
-        vals = [per_ckpt[c][vkey] for c in CHECKPOINTS if vkey in per_ckpt[c]]
-        finite = [v for v in vals if not np.isnan(v)]
-        averaged[vkey] = float(np.mean(finite)) if finite else float("nan")
+    averaged, n_incomplete = average_across_checkpoints(per_ckpt)
 
     n_scored = sum(1 for v in averaged.values() if not np.isnan(v))
     print(f"\nFinal: {n_scored:,}/{len(averaged):,} variants with finite ΔLL")
+    if n_incomplete:
+        print(
+            f"  {n_incomplete:,} variant(s) scored by only some of the "
+            f"{len(CHECKPOINTS)} checkpoints have no ensemble score"
+        )
 
     atomic_write_json(args.out, averaged, indent=2, sort_keys=True)
     print(f"Wrote {args.out}")

@@ -243,7 +243,9 @@ def test_run_fits_only_requested_feature(tmp_path, monkeypatch):
     )
 
 
-def test_result_and_oof_cache_share_exact_execution_binding(tmp_path, monkeypatch):
+def test_no_ci_still_writes_oof_cache_with_exact_execution_binding(
+    tmp_path, monkeypatch
+):
     n_rows = 6
     labels = np.array(["GOF", "DN", "LOF", "GOF", "DN", "LOF"])
     genes = np.array([f"G{row}" for row in range(n_rows)])
@@ -283,7 +285,7 @@ def test_result_and_oof_cache_share_exact_execution_binding(tmp_path, monkeypatc
     run(
         data,
         out_dir=str(tmp_path),
-        compute_ci=True,
+        compute_ci=False,
         n_folds=1,
         n_boot=10,
         feature_names=("wt_only_mean",),

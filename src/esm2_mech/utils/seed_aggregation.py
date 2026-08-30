@@ -293,6 +293,19 @@ class SeedMetricRead:
         return self.value is not None and self.reason is None
 
 
+@dataclass(frozen=True)
+class SeedPayloadRead:
+    """What a consumer gets back for a vote, matrix summary, or aligned OOF."""
+
+    payload: Any
+    reason: SeedUnavailableReason | None
+    message: str | None
+
+    @property
+    def available(self) -> bool:
+        return self.payload is not None and self.reason is None
+
+
 def make_seed_record(
     seed: int,
     value: float | int | None,
@@ -833,9 +846,9 @@ def unavailable_seed_read(reason: SeedUnavailableReason) -> SeedMetricRead:
 
 
 def _aggregate_fields(
-    aggregate: SeedAggregate | Mapping,
+    aggregate: SeedAggregate | SeedPayloadAggregate | Mapping,
 ) -> tuple[Mapping, SeedUnavailableReason | None]:
-    if isinstance(aggregate, SeedAggregate):
+    if isinstance(aggregate, (SeedAggregate, SeedPayloadAggregate)):
         return aggregate.to_dict(), None
     if not isinstance(aggregate, Mapping):
         return {}, SeedUnavailableReason.INVALID_AGGREGATE
@@ -855,42 +868,59 @@ def _seed_id_list(value) -> list[int] | None:
     return list(value)
 
 
-def read_seed_point_estimate(
-    aggregate: SeedAggregate | Mapping,
-    *,
-    expected_sampling_unit: str = SEED_SAMPLING_UNIT,
-) -> SeedMetricRead:
-    """Read a complete current-schema seed mean without inventing a fallback."""
+def _read_envelope(
+    aggregate, expected_sampling_unit: str, value_key: str
+) -> tuple[Mapping, list[int], SeedMetricRead | None]:
+    """Validate the seed accounting every stored aggregate carries.
+
+    Returns the aggregate's fields, its requested seeds, and either a finished
+    refusal or None when the caller should go on to read its own value. Both
+    readers share this so a payload is judged available on exactly the terms a
+    scalar is.
+    """
     fields, failure = _aggregate_fields(aggregate)
     if failure is not None:
-        return unavailable_seed_read(failure)
+        return {}, [], unavailable_seed_read(failure)
     if fields.get("sampling_unit") != expected_sampling_unit:
-        return unavailable_seed_read(SeedUnavailableReason.SAMPLING_UNIT_MISMATCH)
+        return (
+            fields,
+            [],
+            unavailable_seed_read(SeedUnavailableReason.SAMPLING_UNIT_MISMATCH),
+        )
 
     requested = _seed_id_list(fields.get("requested_seeds"))
     contributing = _seed_id_list(fields.get("contributing_seeds"))
     affected = _seed_id_list(fields.get("affected_seeds"))
+    invalid = unavailable_seed_read(SeedUnavailableReason.INVALID_AGGREGATE)
     if requested is None or contributing is None or affected is None:
-        return unavailable_seed_read(SeedUnavailableReason.INVALID_AGGREGATE)
+        return fields, [], invalid
 
     state = fields.get("state")
     if state == "unavailable":
         try:
             reason = SeedUnavailableReason(fields.get("reason"))
         except (TypeError, ValueError):
-            return unavailable_seed_read(SeedUnavailableReason.INVALID_AGGREGATE)
-        if reason not in _STORED_UNAVAILABLE_REASONS or fields.get("mean") is not None:
-            return unavailable_seed_read(SeedUnavailableReason.INVALID_AGGREGATE)
+            return fields, requested, invalid
+        if (
+            reason not in _STORED_UNAVAILABLE_REASONS
+            or fields.get(value_key) is not None
+        ):
+            return fields, requested, invalid
         message = fields.get("message")
-        return SeedMetricRead(
-            value=None,
-            spread=None,
-            reason=reason,
-            message=message if isinstance(message, str) else _REASON_MESSAGES[reason],
+        return (
+            fields,
+            requested,
+            SeedMetricRead(
+                value=None,
+                spread=None,
+                reason=reason,
+                message=(
+                    message if isinstance(message, str) else _REASON_MESSAGES[reason]
+                ),
+            ),
         )
     if state != "available":
-        return unavailable_seed_read(SeedUnavailableReason.INVALID_AGGREGATE)
-
+        return fields, requested, invalid
     if (
         not requested
         or contributing != requested
@@ -898,7 +928,21 @@ def read_seed_point_estimate(
         or fields.get("reason") is not None
         or fields.get("message") is not None
     ):
-        return unavailable_seed_read(SeedUnavailableReason.INVALID_AGGREGATE)
+        return fields, requested, invalid
+    return fields, requested, None
+
+
+def read_seed_point_estimate(
+    aggregate: SeedAggregate | Mapping,
+    *,
+    expected_sampling_unit: str = SEED_SAMPLING_UNIT,
+) -> SeedMetricRead:
+    """Read a complete current-schema seed mean without inventing a fallback."""
+    fields, requested, refusal = _read_envelope(
+        aggregate, expected_sampling_unit, "mean"
+    )
+    if refusal is not None:
+        return refusal
 
     mean = fields.get("mean")
     if not _is_finite_number(mean):
@@ -916,6 +960,34 @@ def read_seed_point_estimate(
         reason=None,
         message=None,
     )
+
+
+def read_seed_payload(
+    aggregate: SeedPayloadAggregate | Mapping,
+    *,
+    expected_sampling_unit: str = SEED_SAMPLING_UNIT,
+) -> SeedPayloadRead:
+    """Read a complete vote, matrix summary, or aligned out-of-fold payload.
+
+    Consumers call this instead of inspecting the stored state, so a payload that
+    could not be produced is never read as a negative result — an unevaluable vote
+    is not a vote against.
+    """
+    fields, _requested, refusal = _read_envelope(
+        aggregate, expected_sampling_unit, "payload"
+    )
+    if refusal is not None:
+        return SeedPayloadRead(
+            payload=None, reason=refusal.reason, message=refusal.message
+        )
+    payload = fields.get("payload")
+    if payload is None:
+        return SeedPayloadRead(
+            payload=None,
+            reason=SeedUnavailableReason.INVALID_AGGREGATE,
+            message=_REASON_MESSAGES[SeedUnavailableReason.INVALID_AGGREGATE],
+        )
+    return SeedPayloadRead(payload=payload, reason=None, message=None)
 
 
 def read_seed_inference(

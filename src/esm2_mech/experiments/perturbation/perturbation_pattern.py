@@ -17,6 +17,7 @@ from esm2_mech.utils.paths import (
 )
 
 print = functools.partial(print, flush=True)
+from esm2_mech.utils.data import mechanism_label
 from esm2_mech.utils.splits import family_split_cv, gene_split_cv
 from esm2_mech.utils.probes import run_logreg_cv
 from esm2_mech.utils.constants import MECHANISM_CLASSES, N_SEEDS
@@ -38,17 +39,18 @@ DATA = str(_DATA_DIR)
 OUT = str(_RESULTS_DIR / "perturbation_pattern")
 os.makedirs(OUT, exist_ok=True)
 
+# Smallest variant count at which every declared scalar feature is measurable:
+# spread needs 2, PCA on the delta matrix needs 3.
+REQUIRED_VARIANTS_FOR_FEATURES = 3
+# Cohort threshold applied before any feature is built.
+MIN_VARIANTS_PER_GENE = REQUIRED_VARIANTS_FOR_FEATURES
+
 
 def load_data():
     with open(VALID_VARIANTS_JSON) as f:
         variants = json.load(f)
     for v in variants:
-        if "label_3class" not in v:
-            v["label_3class"] = (
-                "LOF"
-                if v.get("mechanism") in ("HI", "AR")
-                else v.get("mechanism", "LOF")
-            )
+        v["label_3class"] = mechanism_label(v)
 
     wt_pos = np.load(EMB_WT_POS)
     mut_pos = np.load(EMB_MUT_POS)
@@ -76,6 +78,44 @@ def build_gene_features(variants, delta_pos, delta_mean):
             }
         )
 
+    def gene_label(records):
+        return Counter(r["label"] for r in records).most_common(1)[0][0]
+
+    # One cohort filter for every arm and every split: genes with fewer than
+    # MIN_VARIANTS_PER_GENE variants cannot have all declared features measured,
+    # so they are dropped here, before any feature is built.
+    kept_genes = {
+        gene: records
+        for gene, records in gene_data.items()
+        if len(records) >= MIN_VARIANTS_PER_GENE
+    }
+    excluded_genes = sorted(set(gene_data) - set(kept_genes))
+    cohort = {
+        "min_variants_per_gene": MIN_VARIANTS_PER_GENE,
+        "n_genes_before": len(gene_data),
+        "n_genes_excluded": len(excluded_genes),
+        "n_genes_after": len(kept_genes),
+        "excluded_genes": excluded_genes,
+        "class_balance_before": dict(
+            Counter(gene_label(r) for r in gene_data.values())
+        ),
+        "class_balance_after": dict(
+            Counter(gene_label(r) for r in kept_genes.values())
+        ),
+        "class_balance_excluded": dict(
+            Counter(gene_label(gene_data[gene]) for gene in excluded_genes)
+        ),
+    }
+    print(
+        f"Cohort filter (>= {MIN_VARIANTS_PER_GENE} variants/gene): "
+        f"{cohort['n_genes_before']} genes -> {cohort['n_genes_after']} "
+        f"({cohort['n_genes_excluded']} excluded)"
+    )
+    print(f"  Class balance before:   {cohort['class_balance_before']}")
+    print(f"  Class balance excluded: {cohort['class_balance_excluded']}")
+    print(f"  Class balance after:    {cohort['class_balance_after']}")
+    gene_data = kept_genes
+
     gene_list, X, labels = [], [], []
     feature_names = [
         "delta_mag_mean",
@@ -90,8 +130,14 @@ def build_gene_features(variants, delta_pos, delta_mean):
     ]
 
     for gene, records in gene_data.items():
-        label = Counter(r["label"] for r in records).most_common(1)[0][0]
+        label = gene_label(records)
         n = len(records)
+        if n < REQUIRED_VARIANTS_FOR_FEATURES:
+            raise ValueError(
+                f"Gene {gene} has {n} variants; spread and PCA features are not "
+                f"measurable below {REQUIRED_VARIANTS_FOR_FEATURES}. The cohort "
+                f"filter should have excluded it."
+            )
 
         positions = np.array([r["aa_pos"] for r in records], dtype=float)
         d_pos_mat = np.array([r["delta_pos"] for r in records])
@@ -104,18 +150,14 @@ def build_gene_features(variants, delta_pos, delta_mean):
 
         max_pos = float(np.max(positions))
         pos_mean_norm = float(np.mean(positions)) / (max_pos + 1e-8)
-        pos_std_norm = float(np.std(positions)) / max_pos if len(positions) > 1 else 0.0
+        pos_std_norm = float(np.std(positions)) / max_pos
 
-        if n >= 3:
-            pca = PCA(n_components=1)
-            pca.fit(d_pos_mat)
-            pc1_var = float(pca.explained_variance_ratio_[0])
-            pc1_vec = pca.components_[0]
-            mean_delta_pos = d_pos_mat.mean(0)
-            pc1_proj = float(np.dot(mean_delta_pos, pc1_vec))
-        else:
-            pc1_var = 0.0
-            pc1_proj = 0.0
+        pca = PCA(n_components=1)
+        pca.fit(d_pos_mat)
+        pc1_var = float(pca.explained_variance_ratio_[0])
+        pc1_vec = pca.components_[0]
+        mean_delta_pos = d_pos_mat.mean(0)
+        pc1_proj = float(np.dot(mean_delta_pos, pc1_vec))
 
         gene_mean_delta = d_mean_mat.mean(0)
 
@@ -145,7 +187,7 @@ def build_gene_features(variants, delta_pos, delta_mean):
     print(f"Built gene features: {len(gene_list)} genes, {X.shape[1]} features")
     print(f"  Scalar features: 8  |  Mean-pooled delta: 1280  |  Total: {X.shape[1]}")
     print(f"  Class distribution: {dict(Counter(labels))}")
-    return gene_list, X, labels, len(scalar_feats)
+    return gene_list, X, labels, len(scalar_feats), cohort
 
 
 def run_probe(X, labels, splits, groups, held_out_unit, seed=42):
@@ -174,7 +216,7 @@ def main(n_seeds=N_SEEDS):
     variants, delta_pos, delta_mean = load_data()
 
     print("\n=== Building gene features ===")
-    gene_list, X_full, labels, n_scalar = build_gene_features(
+    gene_list, X_full, labels, n_scalar, cohort = build_gene_features(
         variants, delta_pos, delta_mean
     )
 
@@ -267,6 +309,7 @@ def main(n_seeds=N_SEEDS):
     )
     out = {
         **aggregate_result_contract(),
+        "cohort_filter": cohort,
         "summary": summary,
         "per_seed": {str(seed): all_results[seed] for seed in requested_seeds},
         "combined_minus_baseline_macro_f1": delta.to_dict(),

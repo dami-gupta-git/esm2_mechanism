@@ -114,7 +114,9 @@ def knn_family_purity(emb, families, k=5, n_shuffles=20, seed=42):
             nbrs = neighbor_idx[i]
             ps.append(sum(1 for j in nbrs if shuf_fam[j] == fam) / k)
         null_purities.append(np.mean(ps))
-    null_summary = null_standard_score(real_purity, null_purities)
+    null_summary = null_standard_score(
+        real_purity, null_purities, expected_draws=n_shuffles
+    )
     return real_purity, null_summary["null_mean"], null_summary["z_score"]
 
 
@@ -185,11 +187,13 @@ def within_between_ratio(emb, families, n_shuffles=20, seed=42):
         shuf_fam = rng.permutation(families)
         fam_pair_same_s = np.array([shuf_fam[i] == shuf_fam[j] for i, j in zip(*iu)])
         if fam_pair_same_s.sum() < 5:
+            # A draw that cannot be scored is not silently dropped: the declared
+            # draw count below then makes the whole null summary unavailable.
             continue
         w = d[fam_pair_same_s].mean()
         b = d[~fam_pair_same_s].mean()
         null_ratios.append(w / (b + 1e-10))
-    null_summary = null_standard_score(ratio, null_ratios)
+    null_summary = null_standard_score(ratio, null_ratios, expected_draws=n_shuffles)
     return ratio, null_summary["null_mean"], null_summary["z_score"]
 
 

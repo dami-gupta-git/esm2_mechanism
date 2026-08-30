@@ -37,31 +37,54 @@ MAP_CACHE = DATA / "mnemonic_to_acc.json"
 SCORE_CACHE = DATA / "am_scores_proteingym.json"
 
 
-def load_mnemonic_map(mnemonics: list[str]) -> dict[str, str]:
-    cache: dict[str, str] = {}
+def load_mnemonic_map(mnemonics: list[str]) -> dict[str, str | None]:
+    """Map UniProt mnemonics to accessions, caching only definitive answers.
+
+    A mnemonic that genuinely has no entry is cached as None so it is not queried
+    again. A transient failure is left out of the cache entirely: writing it as a
+    permanent "no accession" would drop that assay from every later run with no
+    way to tell the two apart.
+    """
+    cache: dict[str, str | None] = {}
     if MAP_CACHE.exists():
-        with open(MAP_CACHE) as _f:
-            cache = json.load(_f)
+        try:
+            with open(MAP_CACHE) as _f:
+                cache = json.load(_f)
+        except json.JSONDecodeError:
+            print(f"  {MAP_CACHE.name} is corrupt — refetching", file=sys.stderr)
+            MAP_CACHE.unlink()
+            cache = {}
     missing = [m for m in mnemonics if m not in cache]
     if not missing:
         return cache
     print(f"querying UniProt for {len(missing)} mnemonics...")
+    transient_failures = []
     for i, m in enumerate(missing, 1):
         url = f"https://rest.uniprot.org/uniprotkb/{m}.tsv?fields=accession"
         try:
             req = Request(url, headers={"User-Agent": "claude-script/1.0"})
             with urlopen(req, timeout=30) as r:
                 lines = r.read().decode().strip().splitlines()
-            if len(lines) >= 2:
-                cache[m] = lines[1].split("\t")[0]
+            # A 2xx with no data row is a definitive "no such mnemonic".
+            cache[m] = lines[1].split("\t")[0] if len(lines) >= 2 else None
+        except HTTPError as e:
+            if e.code == 404:
+                cache[m] = None
             else:
-                cache[m] = ""
-        except (HTTPError, URLError) as e:
-            print(f"  WARN: {m} -> {e}", file=sys.stderr)
-            cache[m] = ""
+                transient_failures.append(m)
+                print(f"  WARN: {m} -> {e} (not cached)", file=sys.stderr)
+        except URLError as e:
+            transient_failures.append(m)
+            print(f"  WARN: {m} -> {e} (not cached)", file=sys.stderr)
         if i % 20 == 0:
             print(f"  {i}/{len(missing)}", file=sys.stderr)
         time.sleep(0.05)
+    if transient_failures:
+        print(
+            f"  {len(transient_failures)} mnemonic(s) failed transiently and were "
+            f"not cached; rerun to retry them: {transient_failures[:5]}",
+            file=sys.stderr,
+        )
     MAP_CACHE.parent.mkdir(parents=True, exist_ok=True)
     with open(MAP_CACHE, "w") as _f:
         json.dump(cache, _f, indent=2, sort_keys=True)
@@ -110,6 +133,7 @@ def stream_am(index: dict[tuple[str, str], list]) -> dict[tuple[str, str], float
     needed = len(index)
     print(f"streaming AM, looking for {needed:,} (accession, variant) pairs")
     out: dict[tuple[str, str], float] = {}
+    unparseable = 0
     with gzip.open(AM_FILE, "rt") as f:
         for i, line in enumerate(f):
             if i % 10_000_000 == 0 and i:
@@ -127,7 +151,12 @@ def stream_am(index: dict[tuple[str, str], list]) -> dict[tuple[str, str], float
                 try:
                     out[key] = float(parts[2])
                 except ValueError:
-                    pass
+                    unparseable += 1
+    if unparseable:
+        print(
+            f"  {unparseable} matched row(s) had an unparseable score and were dropped",
+            file=sys.stderr,
+        )
     return out
 
 

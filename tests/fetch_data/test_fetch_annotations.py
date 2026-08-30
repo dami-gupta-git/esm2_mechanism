@@ -24,81 +24,47 @@ from esm2_mech.fetch_data.alphamissense_common import (
 # ---------------------------------------------------------------------------
 
 
+AM_HEADER = "uniprot_id\tprotein_variant\tam_pathogenicity\tam_class"
+SCORED_ROW = "P12345\tA1V\t0.9\tpathogenic"
+INDEX = {("P12345", "A1V"): "GENE_1_A_V"}
+
+
 def _write_am_gz(path: Path, lines: list[str]) -> None:
     with gzip.open(path, "wt") as f:
         f.write("\n".join(lines) + "\n")
 
 
+def _am_file(tmp_path, *rows, preamble=()):
+    """An AlphaMissense TSV.gz: any preamble lines, then the header, then rows."""
+    path = tmp_path / "am.tsv.gz"
+    _write_am_gz(path, [*preamble, AM_HEADER, *rows])
+    return path
+
+
 def test_stream_am_filter_skips_header(tmp_path):
-    am_gz = tmp_path / "am.tsv.gz"
-    _write_am_gz(
-        am_gz,
-        [
-            "uniprot_id\tprotein_variant\tam_pathogenicity\tam_class",
-            "P12345\tA1V\t0.9\tpathogenic",
-        ],
-    )
-    index = {("P12345", "A1V"): "GENE_1_A_V"}
-    scores = stream_am_filter(am_gz, index)
+    scores = stream_am_filter(_am_file(tmp_path, SCORED_ROW), INDEX)
     assert scores == {"GENE_1_A_V": pytest.approx(0.9)}
 
 
 def test_stream_am_filter_skips_comment_lines(tmp_path):
-    am_gz = tmp_path / "am.tsv.gz"
-    _write_am_gz(
-        am_gz,
-        [
-            "# this is a comment",
-            "uniprot_id\tprotein_variant\tam_pathogenicity\tam_class",
-            "P12345\tA1V\t0.9\tpathogenic",
-        ],
-    )
-    index = {("P12345", "A1V"): "GENE_1_A_V"}
-    scores = stream_am_filter(am_gz, index)
-    assert scores == {"GENE_1_A_V": pytest.approx(0.9)}
+    am_gz = _am_file(tmp_path, SCORED_ROW, preamble=["# this is a comment"])
+    assert stream_am_filter(am_gz, INDEX) == {"GENE_1_A_V": pytest.approx(0.9)}
 
 
 def test_stream_am_filter_only_matches_indexed_pairs(tmp_path):
-    am_gz = tmp_path / "am.tsv.gz"
-    _write_am_gz(
-        am_gz,
-        [
-            "uniprot_id\tprotein_variant\tam_pathogenicity\tam_class",
-            "P12345\tA1V\t0.9\tpathogenic",
-            "P99999\tR5K\t0.2\tbenign",
-        ],
-    )
-    index = {("P12345", "A1V"): "GENE_1_A_V"}
-    scores = stream_am_filter(am_gz, index)
+    am_gz = _am_file(tmp_path, SCORED_ROW, "P99999\tR5K\t0.2\tbenign")
+    scores = stream_am_filter(am_gz, INDEX)
     assert "GENE_1_A_V" in scores
     assert len(scores) == 1
 
 
 def test_stream_am_filter_empty_index(tmp_path):
-    am_gz = tmp_path / "am.tsv.gz"
-    _write_am_gz(
-        am_gz,
-        [
-            "uniprot_id\tprotein_variant\tam_pathogenicity\tam_class",
-            "P12345\tA1V\t0.9\tpathogenic",
-        ],
-    )
-    scores = stream_am_filter(am_gz, {})
-    assert scores == {}
+    assert stream_am_filter(_am_file(tmp_path, SCORED_ROW), {}) == {}
 
 
 def test_stream_am_filter_malformed_score_skipped(tmp_path):
-    am_gz = tmp_path / "am.tsv.gz"
-    _write_am_gz(
-        am_gz,
-        [
-            "uniprot_id\tprotein_variant\tam_pathogenicity\tam_class",
-            "P12345\tA1V\tNOT_A_FLOAT\tpathogenic",
-        ],
-    )
-    index = {("P12345", "A1V"): "GENE_1_A_V"}
-    scores = stream_am_filter(am_gz, index)
-    assert scores == {}
+    am_gz = _am_file(tmp_path, "P12345\tA1V\tNOT_A_FLOAT\tpathogenic")
+    assert stream_am_filter(am_gz, INDEX) == {}
 
 
 # ---------------------------------------------------------------------------

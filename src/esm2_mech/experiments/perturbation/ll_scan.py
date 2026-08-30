@@ -7,7 +7,7 @@ import argparse, functools, json, os, sys, numpy as np
 from collections import defaultdict
 from pathlib import Path
 
-from esm2_mech.utils.paths import EMB_MUT_MEAN, EMB_WT_MEAN, LL_CKPT_JSON, RESULTS_DIR as _RESULTS_DIR, SCAN_FEATURES_META_JSON, SCAN_FEATURES_NPY, SCAN_PROBE_CACHE_JSON, SEQUENCES_EXTENDED_JSON, SEQUENCES_JSON, VALID_VARIANTS_JSON
+from esm2_mech.utils.paths import EMB_MUT_MEAN, EMB_WT_MEAN, LL_CKPT_JSON, LL_FEATURES_META_JSON, LL_FEATURES_NPY, LL_SCORES_JSON, PFAM_JSON, RESULTS_DIR as _RESULTS_DIR, SCAN_FEATURES_META_JSON, SCAN_FEATURES_NPY, SCAN_PROBE_CACHE_JSON, SEQUENCES_EXTENDED_JSON, SEQUENCES_JSON, VALID_VARIANTS_JSON
 from esm2_mech.utils.constants import AA_ORDER, MECHANISM_CLASSES, N_SEEDS
 from esm2_mech.utils.io import write_result_json
 from esm2_mech.utils.seed_aggregation import aggregate_result_contract, seed_result_contract, seed_count
@@ -15,6 +15,7 @@ from esm2_mech.experiments.perturbation.seed_summary import (
     aggregate_probe_results,
     read_probe_metric,
 )
+from esm2_mech.utils.data import gene_mechanism_labels
 from esm2_mech.utils.embed import load_esm2_model, load_gene_delta, masked_aa_log_probs
 from esm2_mech.utils.probes import run_logreg_cv
 from esm2_mech.utils.classification import validate_complete_classification_splits
@@ -26,7 +27,6 @@ from esm2_mech.utils.sequences import window_sequence
 OUT = _RESULTS_DIR / "ll_scan"
 OUT.mkdir(parents=True, exist_ok=True)
 
-PROBE_AAS = ["A", "D", "W"]  # Ala, Asp, Trp — same as result_20
 CHECKPOINT_EVERY = 50  # genes between saves
 MIN_POSITIONS = 3
 
@@ -74,7 +74,7 @@ def extract_ll_scores(covered_genes, gene_positions, seqs, batch_size=32):
         raise RuntimeError("GPU required. Run on RunPod.")
 
     ckpt_path = LL_CKPT_JSON
-    out_path = DATA / "ll_scores.json"
+    out_path = LL_SCORES_JSON
 
     if out_path.exists():
         print(f"Cached LL scores found: {out_path}")
@@ -174,34 +174,44 @@ def compute_ll_features(covered_genes, all_scores):
     ]
 
     gene_list, X = [], []
-    aa_order = AA_ORDER
+    n_dropped_genes = 0
 
     for gene in covered_genes:
         scores = all_scores.get(gene, [])
-        if len(scores) < MIN_POSITIONS:
-            continue
 
-        # Per-position ΔLL = mean(log P(wt) - log P(probe)) across Ala/Asp/Trp
-        ll_wt_vals = np.array([s["ll_wt"] for s in scores])
-        delta_vals = np.array(
+        # A position whose wild-type residue is outside AA_ORDER has no ll_wt and
+        # so no ΔLL. Restrict to observed positions once here rather than letting
+        # each reduction handle NaN differently: a comparison against NaN is False,
+        # which would count unscoreable positions as non-hotspots, and argsort puts
+        # NaN last, which would make them the "most perturbed" positions.
+        all_delta_vals = np.array(
             [
                 s["ll_wt"] - np.mean([s["ll_ala"], s["ll_asp"], s["ll_trp"]])
                 for s in scores
-            ]
+            ],
+            dtype=float,
         )
+        observed = np.flatnonzero(np.isfinite(all_delta_vals))
+        if len(observed) < MIN_POSITIONS:
+            n_dropped_genes += 1
+            continue
 
-        ll_wt_mean = float(np.nanmean(ll_wt_vals))
+        # Per-position ΔLL = mean(log P(wt) - log P(probe)) across Ala/Asp/Trp
+        delta_vals = all_delta_vals[observed]
+        ll_wt_vals = np.array([scores[i]["ll_wt"] for i in observed], dtype=float)
 
-        delta_mean = float(np.nanmean(delta_vals))
-        delta_std = float(np.nanstd(delta_vals))
+        ll_wt_mean = float(np.mean(ll_wt_vals))
+
+        delta_mean = float(np.mean(delta_vals))
+        delta_std = float(np.std(delta_vals))
         delta_cv = delta_std / (abs(delta_mean) + 1e-8)
 
         threshold = delta_mean + delta_std
         hotspot_frac = float(np.mean(delta_vals > threshold))
 
-        top10_idx = np.argsort(delta_vals)[-10:]
+        top_positions = observed[np.argsort(delta_vals)[-10:]]
         entropies = []
-        for idx in top10_idx:
+        for idx in top_positions:
             probs = np.array(scores[idx]["full_probs"])
             probs = probs / (probs.sum() + 1e-12)
             ent = -float(np.sum(probs * np.log(probs + 1e-12)))
@@ -212,16 +222,23 @@ def compute_ll_features(covered_genes, all_scores):
         X.append([ll_wt_mean, delta_mean, delta_cv, hotspot_frac, ll_top_entropy])
 
     gene_list = np.array(gene_list)
-    X = np.array(X, dtype=np.float32)
+    # Shape the empty case explicitly: np.array([]) is 1-D, so the column count
+    # below would raise rather than reporting that no gene was scoreable.
+    X = np.array(X, dtype=np.float32).reshape(len(gene_list), len(feature_names))
     print(f"Gene features built: {len(gene_list)} genes × {X.shape[1]} features")
+    if n_dropped_genes:
+        print(
+            f"  {n_dropped_genes} gene(s) dropped with fewer than "
+            f"{MIN_POSITIONS} scoreable positions"
+        )
     print(f"Feature names: {feature_names}")
     return gene_list, X, feature_names
 
 
 def save_features(gene_list, X, feature_names):
-    np.save(DATA / "ll_features.npy", X)
+    np.save(LL_FEATURES_NPY, X)
     meta = {"genes": gene_list.tolist(), "feature_names": feature_names}
-    with open(DATA / "ll_features_meta.json", "w") as f:
+    with open(LL_FEATURES_META_JSON, "w") as f:
         json.dump(meta, f, indent=2)
     print(f"Saved ll_features.npy ({X.shape})")
 
@@ -249,25 +266,11 @@ def run_probe_analysis(n_seeds=N_SEEDS):
     print("=== Loading data ===")
     with open(VALID_VARIANTS_JSON) as f:
         variants = json.load(f)
-    for v in variants:
-        if "label_3class" not in v:
-            v["label_3class"] = (
-                "LOF"
-                if v.get("mechanism") in ("HI", "AR")
-                else v.get("mechanism", "LOF")
-            )
-
-    gene_labels = defaultdict(list)
-    for v in variants:
-        gene_labels[v["gene"].upper()].append(v["label_3class"])
-    gene_list_all = np.array(sorted(gene_labels.keys()))
-    labels_all = np.array(
-        [Counter(gene_labels[g]).most_common(1)[0][0] for g in gene_list_all]
-    )
+    gene_list_all, labels_all = gene_mechanism_labels(variants)
 
     # Load LL features
-    ll_X = np.load(DATA / "ll_features.npy")
-    with open(DATA / "ll_features_meta.json") as f:
+    ll_X = np.load(LL_FEATURES_NPY)
+    with open(LL_FEATURES_META_JSON) as f:
         ll_meta = json.load(f)
     ll_genes = np.array(ll_meta["genes"])
     ll_idx = {g: i for i, g in enumerate(ll_genes)}
@@ -310,7 +313,7 @@ def run_probe_analysis(n_seeds=N_SEEDS):
         for split_name in ("gene_split", "family_split")
     ]
 
-    with open(DATA / "pfam_families.json") as f:
+    with open(PFAM_JSON) as f:
         pfam_map = json.load(f)
 
     def run_probe(X, labels, splits, groups, held_out_unit, seed):
@@ -439,7 +442,7 @@ def main():
             covered_genes, gene_positions, seqs, batch_size=args.batch_size
         )
     elif "3" in phases:
-        out_path = DATA / "ll_scores.json"
+        out_path = LL_SCORES_JSON
         if not out_path.exists():
             print("ERROR: ll_scores.json not found. Run phase 2 first (requires GPU).")
             sys.exit(1)

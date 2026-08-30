@@ -25,6 +25,7 @@ from esm2_mech.utils.seed_aggregation import (
     block_seed_status,
     load_seed_files,
     make_seed_record,
+    read_seed_payload,
     read_seed_point_estimate,
     seed_count,
 )
@@ -180,10 +181,13 @@ def print_permutation_summary(summary: dict[str, dict]) -> None:
     print("\n=== Permutation results across seeds ===")
     for feature in PERMUTATION_FEATURES:
         vote = summary[feature]["seed_vote"]
-        if vote["state"] == "available":
-            count = vote["payload"]["n_supporting_seeds"]
+        # The shared reader decides whether the vote can be used, so this display
+        # never has to interpret a status field to tell a "no" from a "cannot say".
+        read = read_seed_payload(vote)
+        if read.available:
+            count = read.payload["n_supporting_seeds"]
             verdict = (
-                "criterion met" if vote["payload"]["decision"] else "criterion not met"
+                "criterion met" if read.payload["decision"] else "criterion not met"
             )
             print(
                 f"  {feature}: {count}/{len(vote['requested_seeds'])} p-values below "
@@ -193,7 +197,7 @@ def print_permutation_summary(summary: dict[str, dict]) -> None:
             )
         else:
             print(
-                f"  {feature}: unavailable ({vote['reason']}), affected "
+                f"  {feature}: unavailable ({read.message}), affected "
                 f"seeds {vote['affected_seeds']}"
             )
 

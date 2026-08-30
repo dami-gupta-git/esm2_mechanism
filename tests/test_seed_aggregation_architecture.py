@@ -5,12 +5,14 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-
 ROOT = Path(__file__).parents[1]
 PRODUCTION_ROOTS = (ROOT / "src" / "esm2_mech", ROOT / "scripts")
 
 MEAN_STD_ALLOWLIST = {
-    ("src/esm2_mech/experiments/mechanism/mechanism_within_family.py", "_within_family_majority_reference"),
+    (
+        "src/esm2_mech/experiments/mechanism/mechanism_within_family.py",
+        "_within_family_majority_reference",
+    ),
     ("src/esm2_mech/experiments/mechanism/cascade_mechanism.py", "run_arm"),
     ("src/esm2_mech/experiments/stability/megascale_stability.py", "run_regression_cv"),
     ("src/esm2_mech/experiments/stability/megascale_stability.py", "main"),
@@ -84,6 +86,76 @@ def test_named_seed_reducers_do_not_reimplement_mean_or_spread():
             ):
                 found.add((str(path.relative_to(ROOT)), function.name))
     assert found == DIRECT_SEED_REDUCER_ALLOWLIST
+
+
+SEED_RECORD_FACTORIES = {"make_seed_record", "make_seed_payload_record"}
+
+# The shared module builds and interprets the aggregate itself; the run-comparison
+# script rebuilds one from flattened keys purely to hand it to the shared reader.
+COMPLETENESS_POLICY_ALLOWLIST = {
+    "src/esm2_mech/utils/seed_aggregation.py",
+    "scripts/compare_runs.py",
+}
+
+
+def _seed_from_position_hits(tree) -> list[int]:
+    """Lines where a seed record takes its identity from an enumerate() counter."""
+    hits = []
+    for node in ast.walk(tree):
+        iterators = []
+        if isinstance(node, (ast.For, ast.AsyncFor)):
+            iterators = [node.iter]
+        elif isinstance(node, (ast.ListComp, ast.GeneratorExp, ast.SetComp)):
+            iterators = [generator.iter for generator in node.generators]
+        if not any(
+            isinstance(iterator, ast.Call)
+            and isinstance(iterator.func, ast.Name)
+            and iterator.func.id == "enumerate"
+            for iterator in iterators
+        ):
+            continue
+        for inner in ast.walk(node):
+            if (
+                isinstance(inner, ast.Call)
+                and isinstance(inner.func, ast.Name)
+                and inner.func.id in SEED_RECORD_FACTORIES
+            ):
+                hits.append(inner.lineno)
+    return hits
+
+
+def test_a_seed_never_takes_its_identity_from_a_list_position():
+    """See BUG_PATTERNS.md: counting positions is correct only until a seed is skipped.
+
+    One skipped seed shifts every later value onto the wrong seed while the
+    completeness check still sees a full set, so nothing raises.
+    """
+    offenders = []
+    for path in _production_files():
+        tree = ast.parse(path.read_text(), filename=str(path))
+        offenders += [
+            f"{path.relative_to(ROOT)}:{line}"
+            for line in _seed_from_position_hits(tree)
+        ]
+    assert offenders == []
+
+
+def test_no_consumer_decides_seed_completeness_for_itself():
+    """Availability is the shared readers' judgement, never a caller's.
+
+    A consumer that counts contributing seeds or reads the stored state is a
+    second copy of the rule, free to drift from the one the producers apply.
+    """
+    offenders = []
+    for path in _production_files():
+        relative = str(path.relative_to(ROOT))
+        if relative in COMPLETENESS_POLICY_ALLOWLIST:
+            continue
+        source = path.read_text()
+        for marker in ('"contributing_seeds"', '["state"]', 'get("state")'):
+            if marker in source:
+                offenders.append(f"{relative}: {marker}")
+    assert offenders == []
 
 
 def test_removed_partial_oof_and_compatibility_schema_do_not_return():

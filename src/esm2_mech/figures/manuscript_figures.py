@@ -19,7 +19,10 @@ from matplotlib.patches import FancyArrowPatch, FancyBboxPatch, Rectangle
 import numpy as np
 
 from esm2_mech.experiments.mechanism.seed_results import read_feature_metric
-from esm2_mech.utils.seed_aggregation import read_seed_inference, read_seed_point_estimate
+from esm2_mech.utils.seed_aggregation import (
+    read_seed_inference,
+    read_seed_point_estimate,
+)
 from esm2_mech.utils.constants import (
     DN,
     ESM2_MODEL,
@@ -99,7 +102,9 @@ def _load_json(path: Path) -> object:
         return json.load(handle)
 
 
-def _mechanism_point(aggregate: dict, split: str, feature: str, metric: str = "macro_f1") -> float:
+def _mechanism_point(
+    aggregate: dict, split: str, feature: str, metric: str = "macro_f1"
+) -> float:
     """Read an across-seed mechanism mean through the shared seed reader."""
     read = read_feature_metric(aggregate["across_seed"], split, feature, metric)
     if not read.available:
@@ -578,7 +583,9 @@ def figure2_mechanism_delta() -> None:
         ]
     )
     if not family_delta.available:
-        raise ValueError(f"family-split delta macro-F1 is unavailable: {family_delta.message}")
+        raise ValueError(
+            f"family-split delta macro-F1 is unavailable: {family_delta.message}"
+        )
     point = _finite(family_delta.value, "family-split delta macro-F1")
     spread = _finite(family_delta.spread, "family-split delta seed SD")
     interval_axis.errorbar(
@@ -625,6 +632,7 @@ def figure2_mechanism_delta() -> None:
         "Exploratory\nlogistic",
         "Exploratory\nMLP",
     )
+
     def geometry_metric(split_name, probe_name):
         metric = read_seed_point_estimate(
             geometry["mechanism"]["full"][split_name][probe_name]
@@ -666,13 +674,15 @@ def figure2_mechanism_delta() -> None:
     probe_axis.set_xticks(positions)
     probe_axis.set_xticklabels(probe_labels)
     probe_axis.set_ylim(0.26, 0.44)
-    probe_axis.set_ylabel("Macro-F1 (five-seed mean)")
+    probe_axis.set_ylabel("Macro-F1 (mean across model seeds)")
     probe_axis.set_title("Probe-dependent classification signal", loc="left")
     probe_axis.legend(frameon=False, loc="upper right")
     _panel_label(probe_axis, "B")
 
     auroc_values = tuple(
-        _mechanism_point(aggregate, "family_split", "delta_mean", f"auroc_{class_label}")
+        _mechanism_point(
+            aggregate, "family_split", "delta_mean", f"auroc_{class_label}"
+        )
         for class_label in DISPLAY_CLASS_ORDER
     )
     _plot_per_class_auroc(
@@ -705,9 +715,7 @@ def figure3_family_information() -> None:
     accuracy_axis = axes[0, 0]
     positions = np.arange(len(view_keys))
     probe_blocks = [views[key]["family_probe"] for key in view_keys]
-    for position, block, color in zip(
-        positions, probe_blocks, (BLUE, CYAN, PURPLE)
-    ):
+    for position, block, color in zip(positions, probe_blocks, (BLUE, CYAN, PURPLE)):
         accuracy = read_seed_inference(block.get("accuracy_seed_aggregate", {}))
         if not accuracy.available:
             accuracy_axis.text(
@@ -722,9 +730,7 @@ def figure3_family_information() -> None:
             capsize=3,
         )
     baselines = [
-        read_seed_inference(
-            block.get("majority_baseline_accuracy_seed_aggregate", {})
-        )
+        read_seed_inference(block.get("majority_baseline_accuracy_seed_aggregate", {}))
         for block in probe_blocks
     ]
     for position, baseline in zip(positions, baselines):
@@ -786,13 +792,13 @@ def figure3_family_information() -> None:
 
     gap_axis = axes[1, 0]
     gap = read_seed_inference(
-        aggregate["gene_minus_family_split_gap"][
-            "gene_minus_family_seed_aggregate"
-        ]
+        aggregate["gene_minus_family_split_gap"]["gene_minus_family_seed_aggregate"]
     )
     if not gap.available:
         raise ValueError(f"gene-minus-family split gap is unavailable: {gap.message}")
-    gap_axis.errorbar([gap.value], [0], xerr=[[gap.spread]], fmt="o", color=BLUE, capsize=3)
+    gap_axis.errorbar(
+        [gap.value], [0], xerr=[[gap.spread]], fmt="o", color=BLUE, capsize=3
+    )
     gap_axis.axvline(0, color=GREY, linewidth=1)
     gap_axis.set_yticks([0])
     gap_axis.set_yticklabels(["Five-seed mean"])
@@ -819,9 +825,7 @@ def figure3_family_information() -> None:
     leakage_axis.set_xlabel(
         "Fraction of above-reference performance\nlost under family holdout (%)"
     )
-    leakage_axis.set_title(
-        "Leakage fraction point estimate", loc="left"
-    )
+    leakage_axis.set_title("Leakage fraction point estimate", loc="left")
     _panel_label(leakage_axis, "D")
 
     _save_figure(figure, "figure3_family_information")
@@ -875,6 +879,7 @@ def figure4_pathogenicity_conservation() -> None:
     _panel_label(transfer_axis, "A")
 
     geometry_axis = axes[1]
+
     def geometry_value(block, label):
         metric = read_seed_point_estimate(block)
         return _finite(metric.value, label)
@@ -985,6 +990,7 @@ def figure5_enzyme_classification() -> None:
 
     transfer_axis = figure.add_subplot(grid[0, 0])
     representation_labels = ("ESM-2 wildtype", "Proteome control")
+
     def seed_value(block, label):
         metric = read_seed_point_estimate(block)
         return _finite(metric.value, label)
@@ -1036,13 +1042,11 @@ def figure5_enzyme_classification() -> None:
         ),
         "enzyme family-split majority reference",
     )
-    transfer_axis.axhline(
-        family_reference, color=GREY, linestyle="--", linewidth=1
-    )
+    transfer_axis.axhline(family_reference, color=GREY, linestyle="--", linewidth=1)
     transfer_axis.set_xticks(positions)
     transfer_axis.set_xticklabels(representation_labels)
     transfer_axis.set_ylim(0.18, 0.88)
-    transfer_axis.set_ylabel("Enzyme macro-F1 (five-seed mean)")
+    transfer_axis.set_ylabel("Enzyme macro-F1 (mean across model seeds)")
     transfer_axis.set_title(
         "Wildtype embedding supported enzyme classification", loc="left"
     )
@@ -1119,6 +1123,7 @@ def figure5_enzyme_classification() -> None:
         linestyle=":",
         linewidth=1.5,
     )
+
     def difference_label(point, spread):
         return f"{point:+.3f}" if spread is None else f"{point:+.3f} ± {spread:.3f}"
 
@@ -1188,10 +1193,9 @@ def figure6_folding_stability() -> None:
     transfer_axis = figure.add_subplot(grid[:, 0])
     split_names = ("Random", "Domain", "Pfam family")
     split_positions = np.arange(len(split_names))
+
     def stability_value(result, key):
-        metric = read_seed_point_estimate(
-            result[key]["across_seed"]["spearman"]
-        )
+        metric = read_seed_point_estimate(result[key]["across_seed"]["spearman"])
         return _finite(metric.value, f"{key} Spearman")
 
     model_series = (
@@ -1246,7 +1250,7 @@ def figure6_folding_stability() -> None:
     transfer_axis.set_xticks(split_positions)
     transfer_axis.set_xticklabels(split_names, rotation=15, ha="right")
     transfer_axis.set_ylim(0.48, 0.90)
-    transfer_axis.set_ylabel("Spearman correlation (five-seed mean)")
+    transfer_axis.set_ylabel("Spearman correlation (mean across model seeds)")
     transfer_axis.set_title(
         "Stability signal decreased under stricter holdout", loc="left"
     )
@@ -1254,10 +1258,14 @@ def figure6_folding_stability() -> None:
     _panel_label(transfer_axis, "A")
 
     gap_axis = figure.add_subplot(grid[0, 1])
-    gap = read_seed_point_estimate(stability["random_minus_family_spearman_gap_seed_aggregate"])
+    gap = read_seed_point_estimate(
+        stability["random_minus_family_spearman_gap_seed_aggregate"]
+    )
     gap_point = _finite(gap.value, "random-minus-family stability gap")
     gap_axis.scatter([gap_point], [0], color=RED, s=55)
-    family_dependence_boundary = stability["gates"]["random_minus_family_spearman_gap"]["threshold"]
+    family_dependence_boundary = stability["gates"]["random_minus_family_spearman_gap"][
+        "threshold"
+    ]
     gap_axis.axvline(
         family_dependence_boundary, color=RED, linestyle=":", linewidth=1.5
     )
@@ -1265,7 +1273,8 @@ def figure6_folding_stability() -> None:
     gap_axis.text(
         gap_point,
         0.12,
-        f"{gap_point:.3f}\n" + _interval_note(
+        f"{gap_point:.3f}\n"
+        + _interval_note(
             stability.get("random_minus_family_spearman_gap_ci"), point_key="point_diff"
         ),
         ha="center",
@@ -1353,7 +1362,7 @@ def figure_s1_single_source() -> None:
     delta_axis.set_xticks(split_positions)
     delta_axis.set_xticklabels(split_labels)
     delta_axis.set_ylim(0.26, 0.30)
-    delta_axis.set_ylabel("Macro-F1 (five-seed mean)")
+    delta_axis.set_ylabel("Macro-F1 (mean across model seeds)")
     delta_axis.set_title("Delta matched subset-specific references", loc="left")
     delta_axis.legend(frameon=False)
     _panel_label(delta_axis, "A")
@@ -1395,7 +1404,7 @@ def figure_s1_single_source() -> None:
     wildtype_axis.set_xticks(cohort_positions)
     wildtype_axis.set_xticklabels(cohort_labels)
     wildtype_axis.set_ylim(0.40, 0.65)
-    wildtype_axis.set_ylabel("Wildtype macro-F1 (five-seed mean)")
+    wildtype_axis.set_ylabel("Wildtype macro-F1 (mean across model seeds)")
     wildtype_axis.set_title("Wildtype split decrease replicated", loc="left")
     wildtype_axis.legend(frameon=False)
     _panel_label(wildtype_axis, "B")
@@ -1426,14 +1435,12 @@ def figure_s2_stability_direction_ablation() -> None:
     score_axis.set_xticks(positions)
     score_axis.set_xticklabels(labels)
     score_axis.set_ylim(0.37, 0.42)
-    score_axis.set_ylabel("Mechanism macro-F1 (five-seed mean ± SD)")
+    score_axis.set_ylabel("Mechanism macro-F1 (mean ± SD across model seeds)")
     score_axis.set_title("Mechanism score changed minimally", loc="left")
     _panel_label(score_axis, "A")
 
     difference_axis = axes[1]
-    difference = read_seed_point_estimate(
-        projection["projected_minus_baseline_f1"]
-    )
+    difference = read_seed_point_estimate(projection["projected_minus_baseline_f1"])
     difference_point = _finite(
         difference.value, "projected-minus-baseline stability difference"
     )
@@ -1443,9 +1450,8 @@ def figure_s2_stability_direction_ablation() -> None:
     difference_axis.text(
         difference_point,
         0.12,
-        f"{difference_point:+.4f}\n" + _interval_note(
-            projection.get("difference_ci"), point_key="point_diff"
-        ),
+        f"{difference_point:+.4f}\n"
+        + _interval_note(projection.get("difference_ci"), point_key="point_diff"),
         ha="center",
         va="bottom",
     )

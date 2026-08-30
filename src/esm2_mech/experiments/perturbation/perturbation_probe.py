@@ -7,7 +7,7 @@ import argparse, functools
 import json, os, sys, numpy as np
 from pathlib import Path
 
-from esm2_mech.utils.data import build_gene_to_row
+from esm2_mech.utils.data import build_gene_to_row, gene_mechanism_labels
 from esm2_mech.utils.paths import (
     BADONYI_FEATURES_ALIGNED,
     EMB_MUT_MEAN,
@@ -137,21 +137,9 @@ def main(n_seeds=N_SEEDS):
 
     with open(VALID_VARIANTS_JSON) as f:
         variants = json.load(f)
-    for v in variants:
-        if "label_3class" not in v:
-            v["label_3class"] = (
-                "LOF"
-                if v.get("mechanism") in ("HI", "AR")
-                else v.get("mechanism", "LOF")
-            )
+    gene_list, labels = gene_mechanism_labels(variants)
 
-    from collections import Counter, defaultdict
-
-    gene_labels = defaultdict(list)
-    for v in variants:
-        gene_labels[v["gene"].upper()].append(v["label_3class"])
-    gene_list = np.array(sorted(gene_labels.keys()))
-    labels = np.array([Counter(gene_labels[g]).most_common(1)[0][0] for g in gene_list])
+    from collections import Counter
 
     print(f"Genes: {len(gene_list)}  Classes: {dict(Counter(labels))}")
 

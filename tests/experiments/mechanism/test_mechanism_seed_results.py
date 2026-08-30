@@ -34,7 +34,6 @@ from tests.helpers import (
     unavailable_seed_aggregate,
 )
 
-
 # ---------------------------------------------------------------------------
 # helpers
 # ---------------------------------------------------------------------------
@@ -45,9 +44,7 @@ def _with_seeds(named_results, statuses=None):
     declared = statuses or {}
     triples = []
     for seed, (filename, data) in enumerate(named_results):
-        data.update(
-            seed_result_contract(seed, status=declared.get(seed, "success"))
-        )
+        data.update(seed_result_contract(seed, status=declared.get(seed, "success")))
         triples.append((seed, filename, data))
     return triples
 
@@ -136,7 +133,9 @@ class TestAggregateAcrossSeeds:
             ),
         ]
         agg = _aggregate(seed_results)
-        assert agg["gene_split"]["esm2"]["macro_f1_seed_aggregate"]["state"] == "available"
+        assert (
+            agg["gene_split"]["esm2"]["macro_f1_seed_aggregate"]["state"] == "available"
+        )
         esm3 = agg["gene_split"]["esm3"]["macro_f1_seed_aggregate"]
         assert esm3["contributing_seeds"] == [1]
         assert esm3["mean"] is None
@@ -244,9 +243,7 @@ class TestAggregateAcrossSeeds:
         successful = seed_result(0.6)
         failed = seed_result(None)
         failed["gene_split"]["esm2"]["status"] = "unscorable"
-        aggregate = _aggregate(
-            [("seed0.json", successful), ("seed1.json", failed)]
-        )
+        aggregate = _aggregate([("seed0.json", successful), ("seed1.json", failed)])
         feature = aggregate["gene_split"]["esm2"]
         metric = feature["macro_f1_seed_aggregate"]
         assert metric["state"] == "unavailable"
@@ -289,14 +286,24 @@ class TestAggregateAcrossSeeds:
 
 class TestPrintTable:
 
-    def test_does_not_crash_on_full_aggregate(self, capsys):
+    def test_two_seeds_print_the_estimate_without_a_spread(self, capsys):
+        """Too few seeds for a spread is not the same as an unscorable metric.
+
+        The estimate satisfies its own contract, so it is printed and labelled as
+        carrying no spread rather than hidden.
+        """
         seed_results = [
             ("seed0.json", seed_result(0.4)),
             ("seed1.json", seed_result(0.6)),
         ]
         agg = _aggregate(seed_results)
         print_table(agg)
-        assert "macro_f1 across seeds" in capsys.readouterr().out
+        out = capsys.readouterr().out
+        assert "mean ± SD across model seeds" in out
+        # The gene-split estimate is shown; the family column is genuinely absent
+        # from this fixture, so it alone reads as unavailable.
+        esm2_row = next(line for line in out.splitlines() if line.startswith("esm2"))
+        assert "0.500 (no spread)" in esm2_row
 
     def test_does_not_crash_when_feature_missing_from_one_split(self, capsys):
         # esm2 only present in gene_split, esm3 only in family_split.
@@ -346,9 +353,7 @@ def _aggregate_file(tmp_path, seed_aggregate, **root):
 def test_read_across_seed_metric_preserves_unavailable_value(tmp_path):
     path = _aggregate_file(tmp_path, unavailable_seed_aggregate())
 
-    assert (
-        read_across_seed_metric(str(path), "family_split", "delta_mean") is None
-    )
+    assert read_across_seed_metric(str(path), "family_split", "delta_mean") is None
 
 
 def test_read_across_seed_metric_reads_the_stored_aggregate(tmp_path):

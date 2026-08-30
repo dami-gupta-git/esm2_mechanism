@@ -278,6 +278,11 @@ CHANCE_AUROC = 0.5
 # kept: skipping at n_classes silently averages arms over different fold sets.
 MIN_TRAIN_CLASSES = 2
 
+# Residues substituted in at every scanned position, mapped to the short name used
+# in result keys. One mapping rather than two parallel lists, so a residue can
+# never be paired with the wrong name.
+PROBE_RESIDUE_NAMES = {"A": "ala", "D": "asp", "W": "trp"}
+
 # ── External API roots ────────────────────────────────────────────────────────
 UNIPROT_REST = "https://rest.uniprot.org/uniprotkb"
 # Sent on every outbound HTTP request; some endpoints reject the default urllib UA.

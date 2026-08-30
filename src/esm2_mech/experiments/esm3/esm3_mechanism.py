@@ -28,8 +28,11 @@ from esm2_mech.utils.paths import (
 from esm2_mech.utils.seed_aggregation import (
     SeedMetricRead,
     SeedUnavailableReason,
+    aggregate_paired_seed_difference,
     aggregate_result_contract,
     aggregate_seed_results,
+    block_seed_status,
+    make_seed_record,
     read_seed_point_estimate,
     seed_count,
     seed_result_contract,
@@ -37,8 +40,16 @@ from esm2_mech.utils.seed_aggregation import (
 )
 from esm2_mech.utils.constants import (
     BOOTSTRAP_N_RESAMPLES,
-    DELTA_MEAN_FEATURE, DN, GOF, HTTP_USER_AGENT, LOF, MECHANISM_CLASSES,
-    N_FOLDS, N_SEEDS, SPLIT_FAMILY, nonlinear_key,
+    DELTA_MEAN_FEATURE,
+    DN,
+    GOF,
+    HTTP_USER_AGENT,
+    LOF,
+    MECHANISM_CLASSES,
+    N_FOLDS,
+    N_SEEDS,
+    SPLIT_FAMILY,
+    nonlinear_key,
 )
 from esm2_mech.fetch_data.uniprot_fetch import TransientFetchError, fetch_with_retries
 from esm2_mech.utils.bootstrap import (
@@ -204,7 +215,9 @@ def _load_variants(variants_path: Path) -> tuple[list[dict], np.ndarray, dict]:
         variant["wt_seq"] = seq
         kept.append(variant)
     if skipped:
-        print(f"  {variants_path.name}: {skipped} variants skipped (no sequence in cache)")
+        print(
+            f"  {variants_path.name}: {skipped} variants skipped (no sequence in cache)"
+        )
     genes = np.array([variant["gene"] for variant in kept])
     return kept, genes, pfam_map
 
@@ -582,6 +595,7 @@ def _run_logreg_folds(
     # Separate from run_logreg_cv because this arm uses C=LOGREG_C (stronger regularisation).
     from sklearn.linear_model import LogisticRegression
     from sklearn.preprocessing import StandardScaler
+
     if split_contract["status"] != "valid":
         return None
     fold_metrics = []
@@ -603,11 +617,11 @@ def _run_logreg_folds(
             allow_missing_classes=False,
         )
         fold_metrics.append(
-            compute_metrics(
-                y[te], clf.predict(X_te), probabilities, MECHANISM_CLASSES
-            )
+            compute_metrics(y[te], clf.predict(X_te), probabilities, MECHANISM_CLASSES)
         )
-    result = aggregate_folds(fold_metrics, MECHANISM_CLASSES, split_contract["requested_folds"])
+    result = aggregate_folds(
+        fold_metrics, MECHANISM_CLASSES, split_contract["requested_folds"]
+    )
     result["status"] = "success"
     return result
 
@@ -663,7 +677,9 @@ def phase3_probes(
     # paired differences rather than two independently-scored point estimates.
     if DATASET == "merged":
         cond_arrays[ESM2_COND] = esm2_matched_delta(len(y_all), valid_idx)
-        print(f"  {ESM2_COND}: {cond_arrays[ESM2_COND].shape[0]} variants (matched ESM-2)")
+        print(
+            f"  {ESM2_COND}: {cond_arrays[ESM2_COND].shape[0]} variants (matched ESM-2)"
+        )
     else:
         print(
             f"  SKIP {ESM2_COND}: --dataset {DATASET} is not row-aligned to the ESM-2 "
@@ -810,7 +826,8 @@ def phase3_probes(
                     # under its own key. The seed aggregates above keep the
                     # across-seed mean and the seed spread separately.
                     clusters = family_or_gene_clusters(
-                        combined_oof["genes"], pfam_map,
+                        combined_oof["genes"],
+                        pfam_map,
                         is_family_split=(cv_name == "family_split"),
                     )
                     attach_mechanism_ci(
@@ -822,9 +839,13 @@ def phase3_probes(
                         seed=0,
                     )
             cond_results[cv_name] = r
-            if not metric_reads["mlp_f1"].available or not metric_reads["lr_f1"].available:
+            if (
+                not metric_reads["mlp_f1"].available
+                or not metric_reads["lr_f1"].available
+            ):
                 print(f"  {cv_name}: Unscorable")
             else:
+
                 def _metric_text(value):
                     return "Unavailable" if value is None else f"{value:.3f}"
 
@@ -887,7 +908,11 @@ def phase3_probes(
 
     gated = ss_f1 is not None and m1_threshold is not None
     m1 = ss_f1 > m1_threshold if gated else None
-    m2 = seq_f1 > m1_threshold if seq_f1 is not None and m1_threshold is not None else None
+    m2 = (
+        seq_f1 > m1_threshold
+        if seq_f1 is not None and m1_threshold is not None
+        else None
+    )
     m3 = (
         (ss_f1 - seq_f1) > M3_THRESHOLD
         if ss_f1 is not None and seq_f1 is not None
@@ -928,31 +953,23 @@ def phase3_probes(
             result["seed"]: result
             for result in f1_records_by_arm.get((arm_b, "family_split"), [])
         }
-        paired_seed_results = []
-        for seed in seeds:
-            result_a = arm_a_by_seed.get(seed)
-            result_b = arm_b_by_seed.get(seed)
-            if result_a is None or result_b is None:
-                continue
-            paired_seed_results.append(
-                {
-                    **seed_result_contract(seed),
-                    "arm_a": result_a["mlp"],
-                    "arm_b": result_b["mlp"],
-                }
-            )
-        aggregate = aggregate_seed_results(
-            seeds,
-            paired_seed_results,
-            lambda result: (
-                result["arm_a"]["macro_f1_mean"]
-                - result["arm_b"]["macro_f1_mean"]
-            ),
-            status=lambda result: (
-                result["arm_a"]["status"]
-                if result["arm_a"]["status"] != "success"
-                else result["arm_b"]["status"]
-            ),
+
+        # The shared paired reducer owns seed alignment, status combination, and
+        # the within-seed difference. A seed missing from either arm is simply
+        # absent from its records and is refused there as a missing seed.
+        def _arm_records(results_by_seed):
+            return [
+                make_seed_record(
+                    seed,
+                    results_by_seed[seed]["mlp"].get("macro_f1_mean"),
+                    status=block_seed_status(results_by_seed[seed]["mlp"]),
+                )
+                for seed in seeds
+                if seed in results_by_seed
+            ]
+
+        aggregate = aggregate_paired_seed_difference(
+            seeds, _arm_records(arm_a_by_seed), _arm_records(arm_b_by_seed)
         )
         diffs[gate] = aggregate.to_dict()
         metric = read_seed_point_estimate(aggregate)
@@ -1095,10 +1112,15 @@ def main() -> None:
         default="geras",
         help="geras=Gerasimavicius only (948 genes); merged=Gerasimavicius+G2P (matches ESM-2 classifier)",
     )
-    ap.add_argument("--seeds", type=seed_count, default=N_SEEDS,
-                    help="number of probe seeds for phase 3; runs 0..seeds-1 (>=1)")
-    ap.add_argument("--no_ci", action="store_true",
-                    help="phase 3 only: skip cluster-bootstrap CIs")
+    ap.add_argument(
+        "--seeds",
+        type=seed_count,
+        default=N_SEEDS,
+        help="number of probe seeds for phase 3; runs 0..seeds-1 (>=1)",
+    )
+    ap.add_argument(
+        "--no_ci", action="store_true", help="phase 3 only: skip cluster-bootstrap CIs"
+    )
     ap.add_argument("--n_boot", type=int, default=BOOTSTRAP_N_RESAMPLES)
     args = ap.parse_args()
 
@@ -1115,7 +1137,8 @@ def main() -> None:
         print("=== Phase 3: probes + decision rules ===")
         phase3_probes(
             seeds=list(range(args.seeds)),
-            compute_ci=not args.no_ci, n_boot=args.n_boot,
+            compute_ci=not args.no_ci,
+            n_boot=args.n_boot,
         )
 
 

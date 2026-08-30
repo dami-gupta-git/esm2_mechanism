@@ -26,6 +26,50 @@ def pathogenicity_label(label: str) -> int:
     )
 
 
+def mechanism_label(variant: dict) -> str:
+    """The variant's three-class mechanism label, derived from its mechanism.
+
+    Matches the derivation fetch_variants applies when the canonical variant file
+    is built. A variant with no mechanism raises: the mechanism is the observation
+    this label reports, so substituting a class would invent a result.
+    """
+    if "label_3class" in variant:
+        return variant["label_3class"]
+    mechanism = variant.get("mechanism")
+    if not mechanism:
+        raise ValueError(
+            f"variant {variant.get('gene')!r} has no mechanism and no label_3class "
+            "— a mechanism label cannot be derived"
+        )
+    return "LOF" if mechanism in ("HI", "AR") else mechanism
+
+
+def gene_mechanism_labels(variants: list[dict]) -> tuple[np.ndarray, np.ndarray]:
+    """Gene symbols and one mechanism label per gene, by majority over its variants.
+
+    Genes are returned sorted, row-aligned to the labels. A gene whose variants
+    have no single most common label raises rather than resolving the tie by
+    dictionary order, matching how the majority baseline treats a tied class.
+    """
+    by_gene: dict[str, list[str]] = {}
+    for variant in variants:
+        by_gene.setdefault(variant["gene"].upper(), []).append(mechanism_label(variant))
+
+    genes = sorted(by_gene)
+    labels = []
+    for gene in genes:
+        counts = Counter(by_gene[gene])
+        largest = max(counts.values())
+        tied = sorted(name for name, count in counts.items() if count == largest)
+        if len(tied) != 1:
+            raise ValueError(
+                f"gene {gene} has no majority mechanism label: {tied!r} "
+                f"each appear {largest} time(s)"
+            )
+        labels.append(tied[0])
+    return np.array(genes), np.array(labels)
+
+
 def protein_substitution_key(variant: dict) -> tuple[str, int, str, str]:
     """Protein-level identity used to deduplicate ClinVar records."""
     return (
