@@ -1254,10 +1254,10 @@ def figure6_folding_stability() -> None:
     _panel_label(transfer_axis, "A")
 
     gap_axis = figure.add_subplot(grid[0, 1])
-    gap = read_seed_point_estimate(stability["3B_random_minus_family_spearman"])
+    gap = read_seed_point_estimate(stability["random_minus_family_spearman_gap_seed_aggregate"])
     gap_point = _finite(gap.value, "random-minus-family stability gap")
     gap_axis.scatter([gap_point], [0], color=RED, s=55)
-    family_dependence_boundary = stability["gates"]["3B"]["threshold"]
+    family_dependence_boundary = stability["gates"]["random_minus_family_spearman_gap"]["threshold"]
     gap_axis.axvline(
         family_dependence_boundary, color=RED, linestyle=":", linewidth=1.5
     )
@@ -1266,7 +1266,7 @@ def figure6_folding_stability() -> None:
         gap_point,
         0.12,
         f"{gap_point:.3f}\n" + _interval_note(
-            stability.get("3B_gap_ci"), point_key="point_diff"
+            stability.get("random_minus_family_spearman_gap_ci"), point_key="point_diff"
         ),
         ha="center",
         va="bottom",

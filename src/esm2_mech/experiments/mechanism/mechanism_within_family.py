@@ -150,6 +150,9 @@ def _probe_one_family(
     oof_by_view_probe = {
         view: {p: {} for p in probes} for view in features_by_view
     }
+    status_by_view_probe = {
+        view: {p: {} for p in probes} for view in features_by_view
+    }
 
     for seed in range(n_seeds):
         splits = gene_split_cv(genes_rows, n_folds=n_folds, seed=seed)
@@ -174,6 +177,7 @@ def _probe_one_family(
                     **extra_kwargs[probe_name],
                 )
                 oof_by_view_probe[view][probe_name][seed] = oof
+                status_by_view_probe[view][probe_name][seed] = res["status"]
                 f1_seed = res.get("macro_f1_mean")
                 per_seed_f1[view][probe_name].append(
                     float("nan") if f1_seed is None else f1_seed
@@ -203,6 +207,7 @@ def _probe_one_family(
             combined_result = aggregate_oof_dicts(
                 range(n_seeds),
                 oof_by_view_probe[view][probe_name],
+                status_by_view_probe[view][probe_name],
                 declared_row_ids=np.arange(len(y)),
                 declared_labels=y,
                 declared_clusters=genes_rows,
@@ -346,6 +351,7 @@ def _run_delta_gof_auroc_for_labels(
         if GOF not in present or len(present) < MIN_CLASSES:
             continue
         seed_oofs = []
+        seed_statuses = []
         for seed in range(n_seeds):
             splits = gene_split_cv(inp["genes"], n_folds=n_folds, seed=seed)
             split_contract = validate_classification_splits(
@@ -361,11 +367,12 @@ def _run_delta_gof_auroc_for_labels(
                 groups=inp["genes"],
                 held_out_unit="gene",
             )
-            _, oof = run_mlp_cv(
+            res, oof = run_mlp_cv(
                 inp["X"], labels_fam, splits, present, split_contract, seed=seed,
                 genes=inp["genes"], return_oof=True, label="perm",
                 hidden=mlp_hidden, max_iter=mlp_max_iter,
             )
+            seed_statuses.append(res["status"])
             if oof is not None:
                 oof["proba"] = align_proba(
                     oof["proba"],

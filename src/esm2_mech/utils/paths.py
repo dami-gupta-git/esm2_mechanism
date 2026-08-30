@@ -89,7 +89,7 @@ NONLINEAR_RESULTS_SEED_JSON = str(RESULTS_DIR / "nonlinear_results_seed{seed}.js
 CONTRASTIVE_RESULTS_DIR = RESULTS_DIR
 CONTRASTIVE_AGGREGATE_JSON = RESULTS_DIR / "contrastive_aggregate.json"
 
-# ── Homology-partition robustness panel (Task 2b) ─────────────────────────────
+# ── Homology-partition robustness panel ──────────────────────────────────────
 # Consolidates leave-one-clan-out and MMseqs2-cluster-holdout as first-class
 # run_biorxiv deliverables alongside the default Pfam-family split. Lives in its
 # own subdir so the panel JSON never clobbers the per-module seed files.
@@ -264,7 +264,7 @@ SCAN_CKPT_MUT = EMB_DIR / "scan_ckpt_mut.npy"
 # ── Downloads (manually-placed prerequisite files) ───────────────────────────
 DOWNLOADS_DIR = DATA_DIR / "downloads"
 
-# Pfam clan map (homology-partition robustness panel, Task 2b) — fetched from
+# Pfam clan map (homology-partition robustness panel) — fetched from
 # https://ftp.ebi.ac.uk/pub/databases/Pfam/current_release/Pfam-A.clans.tsv.gz,
 # not committed (too large; matches the existing DOWNLOADS_DIR convention below).
 PFAM_CLANS_TSV_GZ = DOWNLOADS_DIR / "Pfam-A.clans.tsv.gz"

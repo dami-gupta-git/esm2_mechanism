@@ -8,6 +8,7 @@ from esm2_mech.experiments.stability.megascale_stability import (
     paired_spearman_gap_ci,
     run_stability_projection_3c,
 )
+from esm2_mech.utils import bootstrap as bootstrap_module
 from esm2_mech.utils.constants import BOOTSTRAP_MAX_DISCARD_FRAC
 
 N_FOLDS = 5
@@ -24,13 +25,13 @@ def test_each_gate_reads_the_point_the_interval_beside_it_was_built_around():
     )
 
     gates = adjudication["gates"]
-    assert gates["3A"]["point_estimate"] == 0.60
-    assert gates["3A"]["ci"]["ci_low"] == 0.55
-    assert gates["3B"]["point_estimate"] == 0.05
-    assert gates["3D"]["point_estimate"] == 0.07
+    assert gates["random_split_spearman"]["point_estimate"] == 0.60
+    assert gates["random_split_spearman"]["ci"]["ci_low"] == 0.55
+    assert gates["random_minus_family_spearman_gap"]["point_estimate"] == 0.05
+    assert gates["per_protein_spearman_spread"]["point_estimate"] == 0.07
     # 3C was not supplied, so it alone stays unadjudicated.
-    assert gates["3C"]["point_estimate"] is None
-    assert gates["3C"]["ci"] is None
+    assert gates["projected_minus_baseline_mechanism_f1"]["point_estimate"] is None
+    assert gates["projected_minus_baseline_mechanism_f1"]["ci"] is None
 
 
 def test_a_gate_without_its_interval_is_not_adjudicated():
@@ -40,7 +41,7 @@ def test_a_gate_without_its_interval_is_not_adjudicated():
     assert all(gate["ci"] is None for gate in adjudication["gates"].values())
 
 
-def test_3b_gap_point_is_mean_of_within_fold_spearman_scores():
+def test_random_minus_family_gap_is_the_mean_of_within_fold_spearman_scores():
     y_true = np.array([0, 1, 2, 0, 1, 2], dtype=float)
     folds = np.array([0, 0, 0, 1, 1, 1])
     indices = np.arange(len(y_true))
@@ -89,7 +90,7 @@ def _merged_set(rng, n_features):
     return delta, labels, genes, pfam_map
 
 
-def test_3c_returns_a_paired_seed_point_with_its_interval():
+def test_projected_minus_baseline_returns_a_paired_seed_point():
     rng = np.random.RandomState(3)
     n_features = 6
     stability_delta = rng.normal(size=(60, n_features))
@@ -118,7 +119,13 @@ def test_3c_returns_a_paired_seed_point_with_its_interval():
         assert interval["ci_low"] <= interval["point_diff"] <= interval["ci_high"]
 
 
-def test_3c_interval_does_not_discard_a_material_share_of_its_draws():
+def test_projected_minus_baseline_interval_keeps_most_of_its_draws(monkeypatch):
+    # Runs against the resampling machinery itself, which audit item 1.4 gates
+    # off. The machinery must stay healthy for when that gate is lifted, and a
+    # high discard rate would mean folds are losing whole classes.
+    monkeypatch.setattr(
+        bootstrap_module, "CLASSIFICATION_INTERVALS_BLOCKED", False
+    )
     # A high discard rate means folds are losing whole classes, which makes the
     # surviving draws a different statistic from the point estimate. With ten
     # families per fold it should be near zero, so a regression that empties or

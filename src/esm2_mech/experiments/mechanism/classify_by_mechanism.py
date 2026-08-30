@@ -102,11 +102,11 @@ def summarize_split_gap(
 
 
 def mechanism_null_assessment(family_chance_floor: float) -> dict:
-    """Report the claim 2A chance floor and threshold with no interval verdict.
+    """Report the family-held-out chance floor and threshold with no verdict.
 
     The only interval available here is one seed's family-resampled bootstrap. It
-    describes that seed, not the across-seed macro-F1 this claim reports, so it is
-    neither attached to the claim nor used to adjudicate it. The floor and
+    describes that seed, not the across-seed macro-F1 reported here, so it is
+    neither attached to that estimate nor used to adjudicate it. The floor and
     threshold stay reportable because each satisfies its own contract.
     """
     return {
@@ -129,7 +129,7 @@ def aggregate_permutation_results(
     """Collect the permutation distribution across seeds.
 
     The ordinary across-seed metric aggregator only reads flat ``*_mean`` values,
-    so nested permutation results need an explicit path. A three-of-five decision
+    so nested permutation results need an explicit path. A seed-vote decision
     is emitted only when all five seeds have a finite p-value; incomplete results
     remain visible and the decision is ``None`` rather than being treated as a
     negative result.

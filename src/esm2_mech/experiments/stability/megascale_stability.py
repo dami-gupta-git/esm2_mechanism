@@ -1,6 +1,6 @@
 """Linear (Ridge) stability probe on Tsuboyama 2023 point-mutant ΔΔG.
 
-Evaluates the stability control gates 3A-3D.
+Evaluates the the stability control gates.
 Companion nonlinear probe: megascale_mlp.py.
 """
 
@@ -522,8 +522,8 @@ def run_stability_projection_3c(
         "inferential_seed": INFERENTIAL_SEED,
         "inferential_point_estimate": inferential_point,
         "difference_ci": difference_ci,
-        "3C_passes": control_3c_verdict == "affirmed",
-        "3C_verdict": control_3c_verdict,
+        "projected_minus_baseline_mechanism_f1_passes": control_3c_verdict == "affirmed",
+        "projected_minus_baseline_mechanism_f1_verdict": control_3c_verdict,
     }
 
 
@@ -544,28 +544,28 @@ def apply_decision_rule(control_3a_ci, control_3b_gap_ci, control_3c, control_3d
     point_3d = None if control_3d_ci is None else control_3d_ci.get("point")
 
     gates = {
-        "3A": {
+        "random_split_spearman": {
             "criterion": "random_split_spearman_at_least_0.5",
             "threshold": 0.5,
             "point_estimate": point_3a,
             "ci": control_3a_ci,
             "verdict": _adjudicate_lower_bound(point_3a, control_3a_ci, 0.5),
         },
-        "3B": {
+        "random_minus_family_spearman_gap": {
             "criterion": "random_minus_family_spearman_at_most_0.10",
             "threshold": 0.10,
             "point_estimate": point_3b,
             "ci": control_3b_gap_ci,
             "verdict": _adjudicate_upper_bound(point_3b, control_3b_gap_ci, 0.10),
         },
-        "3C": {
+        "projected_minus_baseline_mechanism_f1": {
             "criterion": "projected_minus_baseline_mechanism_f1_at_most_0.01",
             "threshold": 0.01,
             "point_estimate": point_3c,
             "ci": ci_3c,
             "verdict": _adjudicate_upper_bound(point_3c, ci_3c, 0.01),
         },
-        "3D": {
+        "per_protein_spearman_spread": {
             "criterion": "per_protein_spearman_std_at_most_0.10",
             "threshold": 0.10,
             "point_estimate": point_3d,
@@ -574,13 +574,13 @@ def apply_decision_rule(control_3a_ci, control_3b_gap_ci, control_3c, control_3d
         },
     }
 
-    if gates["3A"]["verdict"] == "failed":
-        overall = "3A FAILED"
-    elif gates["3B"]["verdict"] == "failed":
+    if gates["random_split_spearman"]["verdict"] == "failed":
+        overall = "random_split_spearman FAILED"
+    elif gates["random_minus_family_spearman_gap"]["verdict"] == "failed":
         overall = "LEAKY"
-    elif gates["3C"]["verdict"] == "failed":
-        overall = "3C FAILED"
-    elif gates["3D"]["verdict"] == "failed":
+    elif gates["projected_minus_baseline_mechanism_f1"]["verdict"] == "failed":
+        overall = "projected_minus_baseline_mechanism_f1 FAILED"
+    elif gates["per_protein_spearman_spread"]["verdict"] == "failed":
         overall = "HETEROGENEOUS"
     elif all(gate["verdict"] == "affirmed" for gate in gates.values()):
         overall = "ROBUST"
@@ -813,7 +813,7 @@ def main(n_jobs=1, n_seeds=N_SEEDS, compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLE
         f"projected F1={_show_seed_value(projected_3c)}  "
         f"paired mean Δ={_show_seed_value(difference_3c, signed=True)}  "
         f"seed-0 inferential Δ={_show_seed_value(inferential_3c, signed=True)}  "
-        f"verdict={control_3c_result['3C_verdict']}"
+        f"verdict={control_3c_result['projected_minus_baseline_mechanism_f1_verdict']}"
     )
     write_result_json(
         os.path.join(OUT, "stability_projection_3c.json"),
@@ -847,7 +847,7 @@ def main(n_jobs=1, n_seeds=N_SEEDS, compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLE
             for result in results_by_seed
         ],
     )
-    summary["3B_random_minus_family_spearman"] = control_3b_gap.to_dict()
+    summary["random_minus_family_spearman_gap_seed_aggregate"] = control_3b_gap.to_dict()
 
     control_3b_gap_ci = None
     oof_random = seed0_oofs.get("delta_mean_random")
@@ -862,7 +862,7 @@ def main(n_jobs=1, n_seeds=N_SEEDS, compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLE
             n_resamples=n_boot,
             seed=0,
         )
-        summary["3B_gap_ci"] = control_3b_gap_ci
+        summary["random_minus_family_spearman_gap_ci"] = control_3b_gap_ci
         print(
             f"  3B gap: {control_3b_gap_ci['point_diff']:.3f} "
             f"[{control_3b_gap_ci.get('ci_low', '?')}, "
@@ -893,7 +893,7 @@ def main(n_jobs=1, n_seeds=N_SEEDS, compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLE
     summary["n_proteins"] = len(set(proteins))
     summary["n_families"] = n_families
     summary["n_seeds"] = n_seeds
-    summary["3C"] = control_3c_result
+    summary["projected_minus_baseline_mechanism_f1"] = control_3c_result
     summary["input_fingerprints"] = {
         "stability": stability_fingerprints,
         "mechanism_projection": mechanism_projection_fingerprints,

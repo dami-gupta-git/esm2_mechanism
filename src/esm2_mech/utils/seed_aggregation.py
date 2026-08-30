@@ -809,6 +809,7 @@ def aggregate_seed_oof(
 def aggregate_oof_dicts(
     requested_seeds: Iterable[int],
     oof_by_seed: Mapping[int, dict | None],
+    statuses_by_seed: Mapping[int, str],
     *,
     declared_row_ids: Iterable[int],
     declared_labels: Iterable,
@@ -816,12 +817,24 @@ def aggregate_oof_dicts(
     class_order: Iterable,
     declared_fold_ids: Iterable[int],
 ) -> SeedPayloadAggregate:
-    """Adapt probe OOF dictionaries to the strict shared OOF reducer."""
+    """Adapt probe OOF dictionaries to the strict shared OOF reducer.
+
+    The caller declares each seed's status. A seed whose probe crashed and a seed
+    whose data could not support the metric both arrive with no predictions, and
+    only the producer knows which happened, so reading the status off the missing
+    predictions would record every crash as a property of the data.
+    """
     requested = tuple(requested_seeds)
-    records = []
-    for seed, oof in oof_by_seed.items():
-        status = SEED_STATUS_SUCCESS if oof is not None else SEED_STATUS_UNSCORABLE
-        records.append(make_seed_payload_record(seed, oof, status=status))
+    if set(statuses_by_seed) != set(oof_by_seed):
+        raise ValueError(
+            "every seed of out-of-fold predictions must declare a status: "
+            f"predictions for {sorted(oof_by_seed)}, "
+            f"statuses for {sorted(statuses_by_seed)}"
+        )
+    records = [
+        make_seed_payload_record(seed, oof, status=statuses_by_seed[seed])
+        for seed, oof in oof_by_seed.items()
+    ]
     return aggregate_seed_oof(
         requested,
         declared_row_ids,

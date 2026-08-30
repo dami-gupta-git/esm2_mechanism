@@ -1,5 +1,5 @@
 """
-Tests for esm2_mech.experiments.mechanism.homology_partition_panel (Task 2b).
+Tests for esm2_mech.experiments.mechanism.homology_partition_panel.
 
 Covers:
 - leakage_fraction_ci_for_partition: the LF ratio formula matches a hand-computed
@@ -297,7 +297,7 @@ class TestLiveMlpPyFamilyReference:
 
 
 class TestClanHoldoutLiveFamilySplitRefs:
-    """clan_holdout.py's stale-literal fix (Task 2b item 3): the old
+    """clan_holdout.py's stale-literal fix: the old
     family_split_mlp_f1_result7=0.352 / family_split_contrastive_f1_result9=0.387
     hardcoded numbers are replaced by a live read from the result files the rest
     of the project cites."""

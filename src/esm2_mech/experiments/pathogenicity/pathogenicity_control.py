@@ -418,7 +418,7 @@ def _aggregate_metric(seed_results, requested_seeds, cell_key, metric):
 
 
 def _build_pathogenicity_auroc_assessment(single_seed_inference, across_seed_point_estimate):
-    """Report the claim 2C threshold and estimates without an interval verdict.
+    """Report the pathogenicity AUROC threshold and estimates without a verdict.
 
     The only interval available here is a bootstrap over one seed's out-of-fold
     predictions. It describes that seed, not the across-seed AUROC reported in
@@ -746,7 +746,10 @@ def _print_headline(results):
     across_seed = claim["across_seed_point_estimate"]
     single_seed = claim["point_estimate"]
     if across_seed is not None:
-        print(f"  Claim 2C: across-seed family-split AUROC = {across_seed:.3f}")
+        print(
+            f"  Pathogenicity control: across-seed family-held-out AUROC = "
+            f"{across_seed:.3f}"
+        )
     if single_seed is not None:
         print(
             f"    seed {claim['seed']} alone = {single_seed:.3f} "

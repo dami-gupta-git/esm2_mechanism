@@ -44,17 +44,18 @@ SEED_AGGREGATION_SCHEMA_VERSION = 1
 # hardcode 5 inline.
 N_FOLDS = 5
 
-# Claim 2B is supported only when the paired split-gap interval excludes zero
+# The gene-minus-family split gap is supported only when its paired interval
+# excludes zero
 # in at least three of the five requested seeds.
 SPLIT_GAP_MIN_SUPPORTING_SEEDS = 3
 
-# Claim 2A's equivalence margin above the measured family-split chance floor.
+# Equivalence margin above the measured family-split chance floor.
 MECHANISM_NULL_FLOOR_MARGIN = 0.05
-# Claim 2A is affirmed only when this many of the five seed-specific intervals
+# Mechanism-above-chance is affirmed only when this many seed-specific intervals
 # have an upper bound below the measured floor plus the equivalence margin.
 MECHANISM_NULL_MIN_AFFIRMING_SEEDS = 3
 
-# Claim 2G's minimum material enzyme-minus-mechanism macro-F1 difference.
+# Minimum material enzyme-minus-mechanism macro-F1 difference.
 ENZYME_MECHANISM_MIN_F1_GAP = 0.05
 
 # ── Numerical floors ──────────────────────────────────────────────────────────
@@ -252,7 +253,7 @@ MEGASCALE_DDG_MISSING = "-"
 BOOTSTRAP_N_RESAMPLES = 1000
 BOOTSTRAP_CI_LEVEL = 0.95
 PERMUTATION_N_RESAMPLES = 1000
-# Claim 2A's across-seed permutation rule. A result is evaluable
+# The across-seed permutation rule. A result is evaluable
 # only when all N_SEEDS requested seed runs produced a finite p-value.
 PERMUTATION_SIGNIFICANCE_THRESHOLD = 0.05
 PERMUTATION_MIN_SIGNIFICANT_SEEDS = 3

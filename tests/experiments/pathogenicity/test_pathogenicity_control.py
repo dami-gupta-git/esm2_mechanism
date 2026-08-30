@@ -238,7 +238,7 @@ class TestEmbeddingCacheValidation:
             )
 
 
-class TestClaim2C:
+class TestPathogenicityAurocAssessment:
     def test_both_point_estimates_are_reported_and_kept_distinct(self):
         single_seed = {
             "seed": 0,

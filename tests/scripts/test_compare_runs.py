@@ -40,9 +40,9 @@ def run_dir(tmp_path):
 
 class TestLoadRun:
     def test_flattens_nested_structures_to_dotted_paths(self, run_dir):
-        _write(run_dir, "a.json", {"gates": {"2D": {"value": 0.891}}, "seeds": [1, 2]})
+        _write(run_dir, "a.json", {"gates": {"some_gate": {"value": 0.891}}, "seeds": [1, 2]})
         leaves = load_run(run_dir)
-        assert leaves["a.json.gates.2D.value"] == 0.891
+        assert leaves["a.json.gates.some_gate.value"] == 0.891
         assert leaves["a.json.seeds[0]"] == 1
         assert leaves["a.json.seeds[1]"] == 2
 
@@ -154,8 +154,8 @@ class TestCompare:
         assert result["moved"] == []
 
     def test_boolean_change_is_categorical_not_numeric(self):
-        old = {"f.json.gates.2E.passed": True}
-        new = {"f.json.gates.2E.passed": False}
+        old = {"f.json.gates.some_gate.passed": True}
+        new = {"f.json.gates.some_gate.passed": False}
         result = compare(old, new, abs_threshold=0.005)
         assert len(result["changed"]) == 1
         assert result["moved"] == []

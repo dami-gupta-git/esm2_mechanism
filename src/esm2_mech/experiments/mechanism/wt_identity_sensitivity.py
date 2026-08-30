@@ -215,12 +215,12 @@ def main() -> None:
     )
     if split_gap.available:
         print(
-            f"\nClaim 2B sensitivity: gene-minus-family macro-F1 = "
+            f"\nSplit-gap sensitivity: gene-minus-family macro-F1 = "
             f"{split_gap.value:.3f} (seed mean of the row-aligned paired gap); "
             "each seed's own interval is in per_seed_interval."
         )
     else:
-        print(f"\nClaim 2B sensitivity is unavailable ({split_gap.message}).")
+        print(f"\nSplit-gap sensitivity is unavailable ({split_gap.message}).")
     print(f"Wrote {WT_IDENTITY_SENSITIVITY_AGGREGATE_JSON}")
 
 

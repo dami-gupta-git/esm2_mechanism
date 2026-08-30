@@ -10,7 +10,7 @@ Invariants:
 - embedding rows are rejected when their identity sidecar has the same row count
   but a different variant order
 - the five-seed permutation distribution is preserved in the aggregate output
-- the three-of-five rule is not evaluated from incomplete results
+- the permutation seed-vote rule is not evaluated from incomplete results
 """
 
 import json
@@ -139,7 +139,7 @@ def _permutation_seed_result(seed, wt_p, delta_p, *, include_wt=True):
 
 class TestAggregatePermutationResults:
 
-    def test_preserves_distribution_and_evaluates_three_of_five(self):
+    def test_preserves_distribution_and_evaluates_the_seed_vote(self):
         wt_p_values = [0.01, 0.02, 0.03, 0.20, 0.40]
         delta_p_values = [0.001, 0.10, 0.20, 0.30, 0.40]
         seed_results = [

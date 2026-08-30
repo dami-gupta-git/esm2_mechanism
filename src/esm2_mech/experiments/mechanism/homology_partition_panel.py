@@ -1,5 +1,5 @@
 """
-Homology-partition robustness panel (Task 2b, biorxiv/FOLLOWUP_biorxiv.md).
+Homology-partition robustness panel.
 
 Promotes `clan_holdout.py` (leave-one-Pfam-clan-out) and
 `mmseqs_cluster_holdout.py` (MMseqs2 20% sequence-identity cluster-holdout)
@@ -101,7 +101,8 @@ def _measured_chance_floors():
     leakage_fraction.py's convention: the ratio's numerator is always the
     gene-split score, so its chance term is the gene-split floor). `family` is
     the single "measured floor" every row's mechanism-null is compared
-    against, matching the floor the rest of the project cites for 2A — not
+    against, matching the floor the rest of the project cites for the
+    mechanism-above-chance assessment — not
     recomputed per partition, so it cannot silently diverge.
     """
     with open(NAIVE_BASELINE_JSON) as f:
@@ -456,7 +457,7 @@ def main():
     rows = [row for row in (family_row, clan_row, mmseqs_row) if row is not None]
     results = {
         "description": (
-            "Homology-partition robustness panel (Task 2b): the mechanism null "
+            "Homology-partition robustness panel: the mechanism null "
             "(delta_mean MLP macro-F1 vs. the measured family-split chance floor) "
             "and the leakage fraction, under three partition definitions of "
             "increasing strictness — Pfam family, Pfam clan, MMseqs2 20% "
