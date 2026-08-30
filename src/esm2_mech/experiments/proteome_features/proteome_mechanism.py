@@ -1,7 +1,7 @@
 """Phase 3 modelling: V1-V4 model variants under family-split CV.
 
 V1 ESM-2 delta MLP, V2 proteome LightGBM, V3 concat NaN-native,
-V4 contrastive head + kNN. Pre-registered decision gates between stages.
+V4 contrastive head + kNN. Decision gates between stages.
 """
 
 from __future__ import annotations
@@ -26,7 +26,6 @@ from esm2_mech.utils.data import build_gene_to_row, observed_rows_mask, load_pfa
 from esm2_mech.utils.seed_aggregation import (
     SEED_STATUS_SKIPPED,
     aggregate_seed_results,
-    block_seed_status,
     read_seed_inference,
     seed_result_contract,
 )
@@ -850,7 +849,19 @@ def run_seed(
     results["gate_1"] = {"passed": gate1_pass, "v2_f1": v2_f1, "threshold": 0.35}
 
     if not gate1_pass:
-        print("  Stopping after Gate 1 failure (V3/V4 not run for this seed).")
+        gate1_stop = "unavailable" if gate1_pass is None else "failed"
+        print(f"  Stopping after Gate 1 {gate1_stop} (V3/V4 not run for this seed).")
+        skipped_block = {
+            "status": SEED_STATUS_SKIPPED,
+            "skipped": True,
+            "reason": (
+                "Gate 1 unavailable" if gate1_pass is None else "Gate 1 failed"
+            ),
+        }
+        results["V3_family_split"] = skipped_block
+        results["V3_gene_split"] = dict(skipped_block)
+        results["V4_family_split"] = dict(skipped_block)
+        results["V3_family_split_matched_to_V4"] = dict(skipped_block)
         return results
 
     # NaN-native: restricting to complete cases would discard ~65% of genes with good embeddings.
@@ -937,7 +948,9 @@ def run_seed(
         skipped_block = {
             "status": SEED_STATUS_SKIPPED,
             "skipped": True,
-            "reason": "Gate 2 failed",
+            "reason": (
+                "Gate 2 unavailable" if gate2_pass is None else "Gate 2 failed"
+            ),
         }
         # V3's matched re-run exists only to compare with V4 on V4's rows, so it
         # is skipped for the same reason and says so rather than going missing.
@@ -1081,12 +1094,12 @@ def aggregate_seeds(
     def metric_status(result, metric_path):
         first = metric_path.split(".", 1)[0]
         if first == "V2_best_macro_f1_mean":
-            block = result.get("V2_lgbm_family_split", {})
+            block = result["V2_lgbm_family_split"]
         elif first == "V3_leakage_delta":
-            block = result.get("V3_family_split", {})
+            block = result["V3_family_split"]
         else:
-            block = result.get(first, {})
-        return block_seed_status(block)
+            block = result[first]
+        return block["status"]
 
     for output_name, path in scalar_paths.items():
         summary[f"{output_name}_seed_aggregate"] = aggregate_seed_results(

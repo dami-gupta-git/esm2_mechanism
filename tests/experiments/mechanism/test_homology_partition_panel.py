@@ -46,11 +46,18 @@ def _one_hot_proba(labels, classes=MECHANISM_CLASSES):
 class TestLeakageFractionCiForPartition:
 
     def test_ratio_matches_hand_computed_value(self):
-        # 10 shared rows. Gene arm predicts perfectly (gene_f1 = 1.0). Partition
-        # arm gets the last 4 rows wrong (predicts LOF for a GOF/DN true label).
-        y_true = np.array([LOF] * 6 + [GOF, GOF, DN, DN])
-        row_ids = np.arange(10)
-        folds = np.zeros(len(y_true), dtype=int)
+        # Two identical folds of six rows, so each fold's training side is the
+        # other fold. Gene arm predicts perfectly; the partition arm misses every
+        # GOF row. Worked by hand, per fold, then averaged:
+        #   gene macro-F1      = 1.0 in each fold
+        #   partition macro-F1 = (0.75 + 0 + 1.0) / 3 = 7/12 in each fold
+        #   training majority  = LOF, scored out of fold:
+        #                        (2/3 + 0 + 0) / 3 = 2/9 in each fold
+        #   leakage fraction   = (1 - 7/12) / (1 - 2/9) = 15/28
+        block = [LOF, LOF, LOF, GOF, GOF, DN]
+        y_true = np.array(block + block)
+        row_ids = np.arange(len(y_true))
+        folds = np.repeat([0, 1], len(block))
         oof_gene = {
             "y_true": y_true,
             "proba": _one_hot_proba(y_true),
@@ -59,31 +66,25 @@ class TestLeakageFractionCiForPartition:
         }
 
         part_pred_labels = y_true.copy()
-        part_pred_labels[6:] = LOF  # last 4 rows wrong
+        part_pred_labels[y_true == GOF] = LOF
         oof_partition = {
             "y_true": y_true,
             "proba": _one_hot_proba(part_pred_labels),
             "row_ids": row_ids,
             "folds": folds,
         }
-        partition_clusters = np.array(["clanA"] * 5 + ["clanB"] * 5)
+        partition_clusters = np.array([f"clan{row // 2}" for row in row_ids])
 
-        chance, _ = majority_baseline_f1(y_true, y_true, MECHANISM_CLASSES)
         ci = panel.leakage_fraction_ci_for_partition(
             oof_gene,
             oof_partition,
             partition_clusters,
-            gene_chance=chance,
             n_boot=30,
             seed=0,
         )
 
-        gene_f1 = f1_score(y_true, y_true, average="macro", zero_division=0)  # 1.0
-        part_f1 = f1_score(y_true, part_pred_labels, average="macro", zero_division=0)
-        expected = (gene_f1 - part_f1) / (gene_f1 - chance)
-
         assert ci is not None
-        assert ci["point"] == pytest.approx(expected)
+        assert ci["point"] == pytest.approx(15 / 28)
 
     def test_chance_floor_is_selected_from_each_training_fold(self):
         fold_labels = [
@@ -153,7 +154,6 @@ class TestLeakageFractionCiForPartition:
             oof_gene,
             oof_partition,
             partition_clusters,
-            gene_chance=global_chance,
             n_boot=20,
             seed=0,
         )
@@ -164,37 +164,44 @@ class TestLeakageFractionCiForPartition:
     def test_resamples_partition_cluster_not_row_count(self):
         # 12 rows collapsed into exactly 3 partition clusters (4 rows each) —
         # n_clusters in the returned CI must be 3, not 12 (rows) and not
-        # whatever a gene id count would have been.
-        y_true = np.array([LOF, GOF, DN] * 4)
+        # whatever a gene id count would have been. Two folds, each leaving the
+        # other as training rows with LOF the clear majority, so the floor is
+        # defined and the ratio is actually computed rather than skipped.
+        y_true = np.array([LOF] * 6 + [GOF] * 3 + [DN] * 3)
         row_ids = np.arange(12)
-        folds = np.zeros(len(y_true), dtype=int)
+        folds = np.array([0, 1] * 6)
         oof_gene = {"y_true": y_true, "proba": _one_hot_proba(y_true), "row_ids": row_ids, "folds": folds}
         oof_partition = {"y_true": y_true, "proba": _one_hot_proba(y_true), "row_ids": row_ids, "folds": folds}
         partition_clusters = np.array(["c0", "c1", "c2"] * 4)
 
         ci = panel.leakage_fraction_ci_for_partition(
             oof_gene, oof_partition, partition_clusters,
-            gene_chance=0.30, n_boot=20, seed=0
+            n_boot=20, seed=0
         )
-        # gene_f1 == part_f1 == 1.0 here so LF is 0 everywhere but n_clusters
-        # must still reflect the distinct partition ids, not the row count.
+        # Both arms predict perfectly, so the numerator is zero and the leakage
+        # fraction is 0.0, but n_clusters must still reflect the distinct
+        # partition ids rather than the row count.
+        assert ci["point"] == pytest.approx(0.0)
         assert ci["n_clusters"] == 3
 
     def test_undefined_when_gene_arm_not_above_chance(self):
+        # Two folds, so each fold has training rows and the floor is defined —
+        # the ratio must be refused because the gene arm has no lift over that
+        # floor, not because the floor could not be selected at all.
         y_true = np.array([LOF] * 8 + [GOF] * 2)
         row_ids = np.arange(10)
-        # Gene arm predicts everything as LOF -> low macro-F1, at/near chance.
         gene_pred = np.full(10, LOF)
-        folds = np.zeros(len(y_true), dtype=int)
+        folds = np.array([0, 1] * 5)
         oof_gene = {"y_true": y_true, "proba": _one_hot_proba(gene_pred), "row_ids": row_ids, "folds": folds}
         oof_partition = {"y_true": y_true, "proba": _one_hot_proba(y_true), "row_ids": row_ids, "folds": folds}
         partition_clusters = np.array(["c0"] * 5 + ["c1"] * 5)
 
-        # Gene arm predicts everything as LOF. The majority class IS LOF (8/10),
-        # so gene_f1 equals the chance floor and denom <= MIN_ABOVE_CHANCE.
+        # Gene arm predicts everything as LOF and LOF is also the training-side
+        # majority in both folds, so gene_f1 equals the chance floor fold for
+        # fold and denom <= MIN_ABOVE_CHANCE.
         ci = panel.leakage_fraction_ci_for_partition(
             oof_gene, oof_partition, partition_clusters,
-            gene_chance=0.2962962962962963, n_boot=20, seed=0
+            n_boot=20, seed=0
         )
         assert ci["ci_suppressed"] is True
 
@@ -204,7 +211,7 @@ class TestLeakageFractionCiForPartition:
         oof_partition = {"y_true": y_true, "proba": _one_hot_proba(y_true), "row_ids": np.array([10, 11, 12])}
         result = panel.leakage_fraction_ci_for_partition(
             oof_gene, oof_partition, np.array(["c0"] * 3),
-            gene_chance=0.2, n_boot=10, seed=0
+            n_boot=10, seed=0
         )
         assert result is None
 
@@ -225,7 +232,7 @@ class TestPartitionRow:
 
         row = panel._partition_row(
             "pfam_clan", oof_gene, oof_partition, clan_ids,
-            gene_chance=0.3, family_chance=0.288, n_boot=20, seed=0,
+            family_chance=0.288, n_boot=20, seed=0,
         )
         assert row["partition"] == "pfam_clan"
         assert row["n_clusters"] == 4
@@ -458,11 +465,11 @@ class TestPanelEndToEnd:
         )
         clan_row = panel.run_clan_row(
             labels, genes, delta, gene_clan, clan_names, oof_gene,
-            gene_chance, family_chance, seed, n_boot,
+            family_chance, seed, n_boot,
         )
         mmseqs_row = panel.run_mmseqs_row(
             labels, genes, delta, gene_to_cluster, oof_gene,
-            gene_chance, family_chance, seed, n_boot, n_folds=n_folds,
+            family_chance, seed, n_boot, n_folds=n_folds,
         )
 
         rows = {row["partition"]: row for row in (family_row, clan_row, mmseqs_row) if row is not None}

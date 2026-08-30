@@ -155,7 +155,7 @@ def _oof_macro_f1(oof):
 
 
 def leakage_fraction_ci_for_partition(
-    oof_gene, oof_partition, partition_clusters, gene_chance, n_boot, seed
+    oof_gene, oof_partition, partition_clusters, n_boot, seed
 ):
     """Return the shared-cohort leakage-fraction point with its interval gated.
 
@@ -164,6 +164,12 @@ def leakage_fraction_ci_for_partition(
     gene_split_cv and the partition's own split). `partition_clusters` is a
     row-aligned array of partition-unit ids (family/clan/cluster), indexed the
     same way as oof_partition's rows.
+
+    The ratio's chance floor is refitted from each fold's training labels on the
+    rows in hand, so no externally measured floor is accepted here: a floor
+    computed on a different cohort would not match the numerator's rows. Each
+    arm therefore needs at least two folds, since a single fold leaves no
+    training rows to select a majority class from.
     """
     gene_pos = {int(row): pos for pos, row in enumerate(oof_gene["row_ids"])}
     part_pos = {int(row): pos for pos, row in enumerate(oof_partition["row_ids"])}
@@ -265,7 +271,7 @@ def leakage_fraction_ci_for_partition(
 
 
 def _partition_row(
-    name, oof_gene, oof_partition, partition_clusters, gene_chance, family_chance, n_boot, seed
+    name, oof_gene, oof_partition, partition_clusters, family_chance, n_boot, seed
 ):
     """One robustness-table row: mechanism-null CI + leakage-fraction CI, both
     resampled at `partition_clusters` (the row's own held-out unit)."""
@@ -280,7 +286,7 @@ def _partition_row(
     )
     null_ci = ci_container["ci"]
     lf_ci = leakage_fraction_ci_for_partition(
-        oof_gene, oof_partition, partition_clusters, gene_chance, n_boot, seed
+        oof_gene, oof_partition, partition_clusters, n_boot, seed
     )
     return {
         "partition": name,
@@ -350,14 +356,14 @@ def run_family_row(labels, genes, delta, pfam_map, seed, n_boot, n_folds=5):
         raise RuntimeError("family/gene-split MLP produced no scorable fold")
 
     family_clusters = family_or_gene_clusters(oof_family["genes"], pfam_map, is_family_split=True)
-    gene_chance, family_chance = _measured_chance_floors()
+    _gene_chance, family_chance = _measured_chance_floors()
     return oof_gene, _partition_row(
         PARTITION_FAMILY, oof_gene, oof_family, family_clusters,
-        gene_chance, family_chance, n_boot, seed,
+        family_chance, n_boot, seed,
     )
 
 
-def run_clan_row(labels, genes, delta, gene_clan, clan_names, oof_gene, gene_chance, family_chance, seed, n_boot):
+def run_clan_row(labels, genes, delta, gene_clan, clan_names, oof_gene, family_chance, seed, n_boot):
     le = LabelEncoder()
     le.fit(MECHANISM_CLASSES)
     _clan_results, _qualifying, _ci, oof_clan, _split_contract = run_clan_holdout(
@@ -367,11 +373,11 @@ def run_clan_row(labels, genes, delta, gene_clan, clan_names, oof_gene, gene_cha
         return None
     return _partition_row(
         PARTITION_CLAN, oof_gene, oof_clan, oof_clan["clan"],
-        gene_chance, family_chance, n_boot, seed,
+        family_chance, n_boot, seed,
     )
 
 
-def run_mmseqs_row(labels, genes, delta, gene_to_cluster, oof_gene, gene_chance, family_chance, seed, n_boot, n_folds=5):
+def run_mmseqs_row(labels, genes, delta, gene_to_cluster, oof_gene, family_chance, seed, n_boot, n_folds=5):
     cluster_of = np.array([gene_to_cluster.get(g) for g in genes])
     has_cluster = np.array([c is not None for c in cluster_of])
     idx = np.where(has_cluster)[0]
@@ -399,7 +405,7 @@ def run_mmseqs_row(labels, genes, delta, gene_to_cluster, oof_gene, gene_chance,
     partition_clusters = groups[oof_local["row_ids"]]
     return _partition_row(
         PARTITION_MMSEQS, oof_gene, oof_global, partition_clusters,
-        gene_chance, family_chance, n_boot, seed,
+        family_chance, n_boot, seed,
     )
 
 
@@ -429,7 +435,7 @@ def main():
 
     print("\n=== Clan row (Pfam clan, stricter) ===")
     clan_row = run_clan_row(
-        labels, genes, delta, gene_clan, clan_names, oof_gene, gene_chance, family_chance,
+        labels, genes, delta, gene_clan, clan_names, oof_gene, family_chance,
         args.seed, args.n_boot,
     )
     if clan_row is not None:
@@ -439,7 +445,7 @@ def main():
 
     print("\n=== MMseqs2 row (20% identity cluster, strictest) ===")
     mmseqs_row = run_mmseqs_row(
-        labels, genes, delta, gene_to_cluster, oof_gene, gene_chance, family_chance,
+        labels, genes, delta, gene_to_cluster, oof_gene, family_chance,
         args.seed, args.n_boot,
     )
     if mmseqs_row is not None:

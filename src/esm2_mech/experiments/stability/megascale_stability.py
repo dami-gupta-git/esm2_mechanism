@@ -1,6 +1,6 @@
 """Linear (Ridge) stability probe on Tsuboyama 2023 point-mutant ΔΔG.
 
-Pre-registered stability controls 3A-3D; see biorxiv/PREREGISTRATION_run_biorxiv.md.
+Stability controls 3A-3D; see docs/improve/ANALYSIS_PLAN.md.
 Companion nonlinear probe: megascale_mlp.py.
 """
 

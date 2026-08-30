@@ -36,7 +36,7 @@ SEED_AGGREGATION_SCHEMA_VERSION = 1
 N_FOLDS = 5
 
 # Claim 2B is supported only when the paired split-gap interval excludes zero
-# in at least three of the five preregistered seeds.
+# in at least three of the five requested seeds.
 SPLIT_GAP_MIN_SUPPORTING_SEEDS = 3
 
 # Claim 2A's equivalence margin above the measured family-split chance floor.
@@ -243,7 +243,7 @@ MEGASCALE_DDG_MISSING = "-"
 BOOTSTRAP_N_RESAMPLES = 1000
 BOOTSTRAP_CI_LEVEL = 0.95
 PERMUTATION_N_RESAMPLES = 1000
-# Claim 2A's preregistered across-seed permutation rule. A result is evaluable
+# Claim 2A's across-seed permutation rule. A result is evaluable
 # only when all N_SEEDS requested seed runs produced a finite p-value.
 PERMUTATION_SIGNIFICANCE_THRESHOLD = 0.05
 PERMUTATION_MIN_SIGNIFICANT_SEEDS = 3

@@ -1,6 +1,6 @@
 """Nonlinear stability probe (MLP, RF) companion to megascale_stability.py.
 
-RF is EXPLORATORY / post-hoc — only Ridge and MLP are pre-registered.
+RF is EXPLORATORY / post-hoc — only Ridge and MLP are primary.
 Uses cuML GPU random forest when available, falls back to sklearn on CPU.
 """
 
@@ -482,7 +482,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--no_ci",
         action="store_true",
-        help="Skip seed-0 dependency-aware CIs for the pre-registered MLP.",
+        help="Skip seed-0 dependency-aware CIs for the primary MLP.",
     )
     parser.add_argument("--n_boot", type=int, default=BOOTSTRAP_N_RESAMPLES)
     args = parser.parse_args()

@@ -164,7 +164,7 @@ def extract_ll_scores(covered_genes, gene_positions, seqs, batch_size=32):
 
 
 def compute_ll_features(covered_genes, all_scores):
-    """Build 5 pre-registered scalar features per gene from LL scores."""
+    """Build the 5 scalar features per gene from LL scores."""
     feature_names = [
         "ll_wt_mean",
         "ll_delta_mean",

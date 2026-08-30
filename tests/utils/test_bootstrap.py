@@ -79,6 +79,7 @@ from esm2_mech.utils.bootstrap import (
 )
 from esm2_mech.utils.constants import (
     BOOTSTRAP_MAX_DISCARD_FRAC,
+    BOOTSTRAP_MIN_VALID_FRAC,
     MECHANISM_CLASSES,
     GOF,
     DN,
@@ -176,7 +177,7 @@ class TestClusterBootstrapCI:
             return 0.7 if set(rows.tolist()) & sentinel_rows else None
 
         out = cluster_bootstrap_ci(clusters, metric, n_resamples=200, seed=0)
-        assert out["valid_frac"] < 0.8
+        assert out["valid_frac"] < BOOTSTRAP_MIN_VALID_FRAC
         assert out["ci_suppressed"] is True
         assert out["ci_low"] is None and out["ci_high"] is None
         # The point estimate (over all rows, where the sentinel gene IS present)
@@ -639,7 +640,7 @@ class TestPairedClusterBootstrapDiffSameFold:
         # does not reliably track a global call count across replicates.
         clusters, _ = self._genes_with_rows()
         # Undefined only when NEITHER of two sentinel genes' rows are drawn —
-        # empirically ~12% of resamples, comfortably above the 0.8 valid threshold.
+        # empirically ~12% of resamples.
         sentinel_rows = set(
             np.where((clusters == "G0") | (clusters == "G1"))[0].tolist()
         )
@@ -653,13 +654,17 @@ class TestPairedClusterBootstrapDiffSameFold:
         out = paired_cluster_bootstrap_diff(
             clusters, metric_a, metric_b, n_resamples=200, seed=0
         )
+        # A draw on which either arm is undefined contributes no difference.
         assert out["n_resamples"] < 200
-        assert out["valid_frac"] >= 0.8
-        assert out["ci_suppressed"] is False
+        # An interval built from the draws that survived describes those draws
+        # rather than the estimand, so this discard rate leaves no interval.
+        assert out["discard_frac"] > BOOTSTRAP_MAX_DISCARD_FRAC
+        assert out["ci_suppressed"] is True
+        assert out["ci_low"] is None and out["ci_high"] is None
 
     def test_ci_suppressed_when_too_many_undefined(self):
         # Same rows-content-based approach as above, but with a single sentinel
-        # gene: undefined on ~36% of resamples, below the 0.8 valid threshold.
+        # gene: undefined on ~36% of resamples.
         clusters, _ = self._genes_with_rows()
         sentinel_rows = set(np.where(clusters == "G0")[0].tolist())
 
@@ -672,7 +677,7 @@ class TestPairedClusterBootstrapDiffSameFold:
         out = paired_cluster_bootstrap_diff(
             clusters, metric_a, metric_b, n_resamples=200, seed=0
         )
-        assert out["valid_frac"] < 0.8
+        assert out["valid_frac"] < BOOTSTRAP_MIN_VALID_FRAC
         assert out["ci_suppressed"] is True
         assert out["ci_low"] is None and out["ci_high"] is None
         # The point diff (over all rows, where the sentinel gene IS present) is

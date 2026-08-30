@@ -237,7 +237,7 @@ def select_stability_subspace(
             megascale_subspace, deltas, foldx_ddg
         )
         print(f"  Megascale→Gerasimavicius transfer Spearman ρ = {transfer_rho:.3f}")
-        print(f"  Pre-registered threshold: ρ > {STABILITY_TRANSFER_RHO_THRESHOLD}")
+        print(f"  Transfer threshold: ρ > {STABILITY_TRANSFER_RHO_THRESHOLD}")
 
         if transfer_rho >= STABILITY_TRANSFER_RHO_THRESHOLD:
             print("  Path A: Megascale transfer PASSES — using Megascale subspace")
@@ -323,7 +323,7 @@ def assert_subspace_removed(deltas_proj, subspace, name, tol=1e-8):
 def variance_explained_per_class(deltas, labels_3class, subspace):
     """
     Report fraction of variance explained by stability subspace per mechanism class.
-    Pre-registered prediction: GOF has ≥ 30% less variance explained than HI+AR (LOF).
+    The prediction under test: GOF has ≥ 30% less variance explained than HI+AR (LOF).
     """
     if subspace is None:
         return {}

@@ -26,11 +26,8 @@ from esm2_mech.utils.paths import (
     VALID_VARIANTS_JSON,
 )
 from esm2_mech.utils.seed_aggregation import (
-    aggregate_paired_seed_difference,
     aggregate_result_contract,
     aggregate_seed_results,
-    block_seed_status,
-    make_seed_record,
     read_seed_point_estimate,
     seed_result_contract,
 )
@@ -146,6 +143,7 @@ def esm2_family_floor(seeds: list[int] = SEEDS) -> tuple[float, str]:
         seeds,
         results,
         lambda result: result[MLP_DELTA_MEAN_FAMILY].get("macro_f1_mean"),
+        status=lambda result: result[MLP_DELTA_MEAN_FAMILY]["status"],
     )
     metric = read_seed_point_estimate(aggregate)
     if not metric.available:
@@ -743,7 +741,7 @@ def phase3_probes(
                     seeds,
                     seed_runs,
                     lambda result: result[arm].get(metric),
-                    status=lambda result: block_seed_status(result[arm]),
+                    status=lambda result: result[arm]["status"],
                 )
 
             seed_aggregates = {
@@ -757,14 +755,7 @@ def phase3_probes(
                 name: read_seed_point_estimate(aggregate)
                 for name, aggregate in seed_aggregates.items()
             }
-            f1_records_by_arm[(cond, cv_name)] = [
-                make_seed_record(
-                    result["seed"],
-                    result["mlp"].get("macro_f1_mean"),
-                    status=block_seed_status(result["mlp"]),
-                )
-                for result in seed_runs
-            ]
+            f1_records_by_arm[(cond, cv_name)] = seed_runs
             r = {
                 **{
                     f"{name}_seed_aggregate": aggregate.to_dict()
@@ -899,10 +890,39 @@ def phase3_probes(
         ("M2", "seq", ESM2_COND),
         ("M3", "seq_struct", "seq"),
     ):
-        aggregate = aggregate_paired_seed_difference(
+        arm_a_by_seed = {
+            result["seed"]: result
+            for result in f1_records_by_arm.get((arm_a, "family_split"), [])
+        }
+        arm_b_by_seed = {
+            result["seed"]: result
+            for result in f1_records_by_arm.get((arm_b, "family_split"), [])
+        }
+        paired_seed_results = []
+        for seed in seeds:
+            result_a = arm_a_by_seed.get(seed)
+            result_b = arm_b_by_seed.get(seed)
+            if result_a is None or result_b is None:
+                continue
+            paired_seed_results.append(
+                {
+                    **seed_result_contract(seed),
+                    "arm_a": result_a["mlp"],
+                    "arm_b": result_b["mlp"],
+                }
+            )
+        aggregate = aggregate_seed_results(
             seeds,
-            f1_records_by_arm.get((arm_a, "family_split"), []),
-            f1_records_by_arm.get((arm_b, "family_split"), []),
+            paired_seed_results,
+            lambda result: (
+                result["arm_a"]["macro_f1_mean"]
+                - result["arm_b"]["macro_f1_mean"]
+            ),
+            status=lambda result: (
+                result["arm_a"]["status"]
+                if result["arm_a"]["status"] != "success"
+                else result["arm_b"]["status"]
+            ),
         )
         diffs[gate] = aggregate.to_dict()
         metric = read_seed_point_estimate(aggregate)

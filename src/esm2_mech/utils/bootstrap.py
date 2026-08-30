@@ -1282,7 +1282,7 @@ def paired_oof_diff(
 
 
 def adjudicate_diff(passed: bool | None, diff_ci: dict | None, threshold: float) -> str:
-    """Pre-registration §1.1 verdict for a difference."""
+    """Verdict for a difference claim: does the arm beat its comparator?"""
     if passed is None:
         return "not adjudicated (no point estimate)"
     if diff_ci is not None and diff_ci.get("reason") == INTERVAL_GATE_REASON:
@@ -1295,8 +1295,8 @@ def adjudicate_diff(passed: bool | None, diff_ci: dict | None, threshold: float)
             return "pass, established (CI excludes zero)"
         return "pass on point estimate, not distinguishable (CI spans zero)"
     if ci_high >= threshold:
-        return "fail, underpowered (CI spans the pre-registered threshold)"
-    return "fail, established (CI excludes the pre-registered threshold)"
+        return "fail, underpowered (CI spans the threshold)"
+    return "fail, established (CI excludes the threshold)"
 
 
 def adjudicate_equivalence(
@@ -1328,7 +1328,7 @@ def adjudicate_equivalence(
 
 
 def adjudicate_level(value: float | None, ci: dict | None, threshold: float) -> str:
-    """Pre-registration §1.1 verdict for a level claim."""
+    """Verdict for a level claim: does the value clear the threshold?"""
     if value is None or not np.isfinite(value):
         return "not adjudicated (no point estimate)"
     if ci is not None and ci.get("reason") == INTERVAL_GATE_REASON:
@@ -1487,7 +1487,7 @@ def count_immovable_clusters(
 
     These clusters keep their real labels in every draw of `_permute_labels_by_cluster`
     (there is nothing same-size to swap with), so this count is identical for every
-    permutation and must be reported alongside the p-value per the preregistration.
+    permutation and must be reported alongside the p-value.
     """
     _, by_fold_size = _cluster_partition(groups, clusters, folds)
     return sum(1 for cluster_ids in by_fold_size.values() if len(cluster_ids) == 1)

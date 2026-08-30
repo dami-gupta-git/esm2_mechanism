@@ -156,7 +156,7 @@ def compute_scan_features(probes, wt_emb, mut_emb, covered_genes, ablation=False
 
         mags = np.linalg.norm(gene_deltas, axis=1)
 
-        # --- Pre-registered features ---
+        # --- Per-gene scan features ---
         mag_mean = float(np.mean(mags))
         mag_std = float(np.std(mags))
         mag_cv = mag_std / (mag_mean + 1e-8)

@@ -25,7 +25,7 @@ The project uses a set of controlled comparisons to separate mutation informatio
 | Mechanism versus stability and enzyme type | Whether ESM-2 supports other biochemical and protein-level tasks under comparable family-aware evaluation. |
 | Magnitude, direction, and conservation analyses | What biological property the pathogenicity-associated change in embedding space corresponds to. |
 
-The bioRxiv run separates confirmatory claims from exploratory analyses. Confirmatory thresholds, resampling units, paired comparisons, and verdict rules are defined in the preregistration before their results are interpreted.
+The planned comparisons, outcome metrics, resampling units, and reporting rules are defined in [`ANALYSIS_PLAN.md`](docs/improve/ANALYSIS_PLAN.md). Comparisons named there are primary; any other comparison is labelled exploratory when reported. Pre-registration has been withdrawn as the governing framework, and results are presented as effect estimates with confidence intervals rather than as pass-or-fail verdicts against pre-set thresholds.
 
 ## Pipeline
 
@@ -86,7 +86,8 @@ The package is organized by pipeline stage and scientific experiment.
 | `src/esm2_mech/experiments/stability/` | Tsuboyama stability probes and controls. |
 | `src/esm2_mech/experiments/proteome_features/` | Enzyme classification and gene-level feature analyses. |
 | `src/esm2_mech/utils/` | Shared paths, constants, data validation, splits, probes, metrics, and inference. |
-| `biorxiv/` | Current study definition, preregistration, ordered runbook, progress records, and follow-up scope. |
+| `docs/improve/` | The analysis plan that defines the run, the revision plan, and the code audit. |
+| `biorxiv/` | Ordered runbook, progress records, follow-up scope, manuscript, and supplementary material. |
 | `results/<run>/` | Machine-readable outputs for one named run. |
 | `reports/<run>/` | Standalone reports and figures derived from that run's result files. |
 | `tests/` | Unit and regression tests for shared contracts and experiment behavior. |
@@ -95,20 +96,21 @@ All project paths come from `src/esm2_mech/utils/paths.py`. A single run name se
 
 ## Read next
 
-The current bioRxiv documents divide scientific rules, execution, and deferred work.
+The current documents divide the scientific plan, the repairs it depends on, execution, and deferred work.
 
-1. Read [`PREREGISTRATION_run_biorxiv.md`](../biorxiv/PREREGISTRATION_run_biorxiv.md) for the confirmatory claims, statistical rules, and interpretation criteria.
-2. Read [`RUNBOOK_biorxiv.md`](../biorxiv/RUNBOOK_biorxiv.md) for the ordered data and experiment pipeline.
-3. Read the newest progress record in `biorxiv/` for live execution state.
-4. Read [`reports/run_biorxiv/`](../reports/run_biorxiv/) for experiment-level methods, results, interpretation, and provenance.
-5. Read [`FOLLOWUP_biorxiv.md`](../biorxiv/FOLLOWUP_biorxiv.md) for work outside the current confirmatory run.
+1. Read [`ANALYSIS_PLAN.md`](docs/improve/ANALYSIS_PLAN.md) for the questions, cohorts, models, outcome metrics, planned comparisons, and reporting rules.
+2. Read [`REVISION_PLAN.md`](docs/improve/REVISION_PLAN.md) and [`audit.md`](docs/improve/audit.md) for the code repairs that must land before the run starts.
+3. Read [`RUNBOOK_biorxiv.md`](biorxiv/RUNBOOK_biorxiv.md) for the ordered data and experiment pipeline.
+4. Read [`PROGRESS.md`](biorxiv/PROGRESS.md) for live execution state.
+5. Read [`reports/run_biorxiv/`](reports/run_biorxiv/) for experiment-level methods, results, interpretation, and provenance.
+6. Read [`FOLLOWUP_biorxiv.md`](biorxiv/FOLLOWUP_biorxiv.md) for work outside the current run.
 
-The material under `docs/` describes the earlier exploratory phase. It remains useful for historical context, but the bioRxiv preregistration, runbook, current results, and current reports govern the present study.
+The material under `docs/` outside `docs/improve/` describes the earlier exploratory phase and is retained for historical context only. [`PREREGISTRATION_run_biorxiv.md`](biorxiv/PREREGISTRATION_run_biorxiv.md) is superseded by the analysis plan and does not govern any part of the present study.
 
 
 ## Detailed results history
 
-> **Historical and stale.** The text below predates the current `run_biorxiv` analysis and is retained only as a record of earlier project work. Do not use its numbers, verdicts, or conclusions in the bioRxiv manuscript. Manuscript evidence must come from the preregistration, verified files under `results/run_biorxiv/`, and regenerated reports under `reports/run_biorxiv/`.
+> **Historical and stale.** The text below predates the current `run_biorxiv` analysis and is retained only as a record of earlier project work. Do not use its numbers, verdicts, or conclusions in the bioRxiv manuscript. Manuscript evidence must come from the analysis plan, verified files under `results/run_biorxiv/`, and regenerated reports under `reports/run_biorxiv/`.
 
 The following text is reproduced from [`reports/summaries/report_summary.md`](../reports/summaries/report_summary.md). It summarizes results from runs 0, 1, and 6.
 

@@ -16,6 +16,7 @@ from sklearn.preprocessing import LabelEncoder
 from esm2_mech.utils.constants import (
     BOOTSTRAP_CI_LEVEL,
     BOOTSTRAP_N_RESAMPLES,
+    N_FOLDS,
     N_SEEDS,
     ENZYME_MECHANISM_MIN_F1_GAP,
     MECHANISM_CLASSES,
@@ -52,11 +53,8 @@ from esm2_mech.utils.seed_aggregation import (
     SEED_STATUS_SUCCESS,
     SEED_STATUS_UNSCORABLE,
     aggregate_oof_dicts,
-    aggregate_paired_seed_difference,
     aggregate_result_contract,
     aggregate_seed_results,
-    block_seed_status,
-    make_seed_record,
     read_seed_point_estimate,
     read_seed_result_contract,
     seed_result_contract,
@@ -106,7 +104,7 @@ def _load_mechanism_reference_f1() -> float | None:
 
 
 def _load_mechanism_seed_records(seeds: list[int]) -> list:
-    """Load the mechanism family-split value for each available requested seed."""
+    """Load current-schema mechanism family-split results by seed."""
     records = []
     for seed in seeds:
         result_path = RESULTS_DIR / seed_result_filename(seed)
@@ -120,11 +118,12 @@ def _load_mechanism_seed_records(seeds: list[int]) -> list:
             result = json.load(handle)
         root_status = read_seed_result_contract(seed, str(result_path), result)
         block = result.get("family_split", {}).get("delta_mean", {})
-        status = root_status
-        if root_status == SEED_STATUS_SUCCESS:
-            status = block_seed_status(block)
-        value = block.get("macro_f1_mean") if status == SEED_STATUS_SUCCESS else None
-        records.append(make_seed_record(seed, value, status=status))
+        records.append(
+            {
+                **seed_result_contract(seed, status=root_status),
+                "mechanism": block,
+            }
+        )
     return records
 
 
@@ -191,37 +190,51 @@ def load_mechanism_family_oof_arms(seeds: list[int]) -> tuple | None:
     per_seed = {}
     for seed in seeds:
         oof = _load_mechanism_family_oof_for_seed(seed)
-        if oof is None:
-            return None
-        per_seed[seed] = oof
+        if oof is not None:
+            predictions = np.asarray(oof["pred"], dtype=object)
+            if not set(predictions).issubset(MECHANISM_CLASSES):
+                raise ValueError(
+                    f"mechanism seed {seed} OOF contains an undeclared class"
+                )
+            probabilities = np.zeros(
+                (len(predictions), len(MECHANISM_CLASSES)), dtype=float
+            )
+            for class_index, class_name in enumerate(MECHANISM_CLASSES):
+                probabilities[predictions == class_name, class_index] = 1.0
+            per_seed[seed] = {
+                **oof,
+                "classes": list(MECHANISM_CLASSES),
+                "proba": probabilities,
+            }
 
-    first = per_seed[seeds[0]]
-    row_order = [int(row) for row in first["row_ids"]]
-    observed = np.asarray(first["y_true"], dtype=object)
-    genes = np.asarray(first["genes"], dtype=object)
-    arms = []
-    for seed in seeds:
-        oof = per_seed[seed]
-        position = {int(row): index for index, row in enumerate(oof["row_ids"])}
-        if set(position) != set(row_order):
-            raise ValueError(
-                f"mechanism seed {seed} OOF covers different rows than seed "
-                f"{seeds[0]}"
-            )
-        order = np.array([position[row] for row in row_order], dtype=int)
-        if not np.array_equal(
-            np.asarray(oof["y_true"], dtype=object)[order], observed
-        ) or not np.array_equal(
-            np.asarray(oof["genes"], dtype=object)[order], genes
-        ):
-            raise ValueError(
-                f"mechanism seed {seed} OOF disagrees with seed {seeds[0]} on "
-                "labels or genes for the same rows"
-            )
-        folds = np.asarray(oof["folds"], dtype=int)[order]
-        arms.append(
-            (np.asarray(oof["pred"], dtype=object)[order], folds, np.unique(folds))
+    if not per_seed:
+        return None
+    first = next(iter(per_seed.values()))
+    combined = aggregate_oof_dicts(
+        seeds,
+        per_seed,
+        declared_row_ids=first["row_ids"],
+        declared_labels=first["y_true"],
+        declared_clusters=first["genes"],
+        class_order=MECHANISM_CLASSES,
+        declared_fold_ids=range(N_FOLDS),
+    )
+    if not combined.available:
+        print(f"  WARNING: mechanism OOF unavailable — {combined.message}")
+        return None
+    payload = combined.payload
+    observed = np.asarray(payload["y_true"], dtype=object)
+    genes = np.asarray(payload["genes"], dtype=object)
+    arms = [
+        (
+            np.asarray(MECHANISM_CLASSES, dtype=object)[proba.argmax(axis=1)],
+            folds,
+            fold_ids,
         )
+        for proba, folds, fold_ids in oof_score_arms(
+            payload, "mechanism family-split"
+        )
+    ]
     return observed, genes, arms
 
 
@@ -530,7 +543,7 @@ def run_multiseed(
             seeds,
             seed_runs,
             lambda result: result[arm].get(metric),
-            status=lambda result: block_seed_status(result[arm]),
+            status=lambda result: result[arm]["status"],
         )
 
     def reference_aggregate(key):
@@ -589,25 +602,50 @@ def run_multiseed(
         print(f"    Leakage fraction:        {leakage_pct:.1f}%")
 
     permutation_result = None
-    def arm_records(arm):
-        return [
-            make_seed_record(
-                result["seed"],
-                result[arm].get("macro_f1_mean"),
-                status=block_seed_status(result[arm]),
-            )
-            for result in seed_runs
-        ]
-
-    paired_mlp_vs_logreg = aggregate_paired_seed_difference(
+    paired_mlp_vs_logreg = aggregate_seed_results(
         seeds,
-        arm_records("mlp_family"),
-        arm_records("logreg_family"),
+        seed_runs,
+        lambda result: (
+            result["mlp_family"]["macro_f1_mean"]
+            - result["logreg_family"]["macro_f1_mean"]
+        ),
+        status=lambda result: (
+            result["mlp_family"]["status"]
+            if result["mlp_family"]["status"] != SEED_STATUS_SUCCESS
+            else result["logreg_family"]["status"]
+        ),
     )
-    paired_logreg_vs_mechanism = aggregate_paired_seed_difference(
+
+    mechanism_by_seed = {
+        result["seed"]: result for result in (mechanism_seed_records or [])
+    }
+    paired_logreg_mechanism_results = []
+    for enzyme_result in seed_runs:
+        seed = enzyme_result["seed"]
+        mechanism_result = mechanism_by_seed.get(seed)
+        if mechanism_result is None:
+            continue
+        paired_logreg_mechanism_results.append(
+            {
+                **seed_result_contract(
+                    seed, status=mechanism_result["seed_status"]
+                ),
+                "enzyme": enzyme_result["logreg_family"],
+                "mechanism": mechanism_result["mechanism"],
+            }
+        )
+    paired_logreg_vs_mechanism = aggregate_seed_results(
         seeds,
-        arm_records("logreg_family"),
-        mechanism_seed_records or [],
+        paired_logreg_mechanism_results,
+        lambda result: (
+            result["enzyme"]["macro_f1_mean"]
+            - result["mechanism"]["macro_f1_mean"]
+        ),
+        status=lambda result: (
+            result["enzyme"]["status"]
+            if result["enzyme"]["status"] != SEED_STATUS_SUCCESS
+            else result["mechanism"]["status"]
+        ),
     )
 
     # Interval block. Each bootstrap draw selects families once, both arms and

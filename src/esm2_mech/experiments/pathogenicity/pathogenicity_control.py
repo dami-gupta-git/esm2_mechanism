@@ -57,7 +57,6 @@ from esm2_mech.utils.splits import family_split_cv, gene_split_cv
 from esm2_mech.utils.seed_aggregation import (
     aggregate_result_contract,
     aggregate_seed_results,
-    block_seed_status,
     read_seed_point_estimate,
     read_seed_result_contract,
     seed_result_contract,
@@ -409,7 +408,7 @@ def _aggregate_metric(seed_results, requested_seeds, cell_key, metric):
         requested_seeds,
         seed_results,
         lambda result: result["cells"][cell_key]["metrics"][metric]["fold_mean"],
-        status=lambda result: block_seed_status(result["cells"][cell_key]),
+        status=lambda result: result["cells"][cell_key]["status"],
     )
 
 

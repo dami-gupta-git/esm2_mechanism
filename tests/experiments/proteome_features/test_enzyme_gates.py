@@ -70,8 +70,8 @@ def test_enzyme_reader_accepts_current_seed_result(tmp_path, monkeypatch):
 
     records = enzyme_classification._load_mechanism_seed_records([0])
 
-    assert records[0].seed == 0
-    assert records[0].value == pytest.approx(0.4)
+    assert records[0]["seed"] == 0
+    assert records[0]["mechanism"]["macro_f1_mean"] == pytest.approx(0.4)
 
 
 def test_enzyme_reader_reports_missing_seed_file(tmp_path, monkeypatch, capsys):
@@ -91,6 +91,42 @@ def test_enzyme_reader_rejects_wrong_seed_identity(tmp_path, monkeypatch):
 
     with pytest.raises(ValueError, match="declares seed 1"):
         enzyme_classification._load_mechanism_seed_records([0])
+
+
+def test_mechanism_oof_reader_aligns_by_seed_and_row(monkeypatch):
+    row_ids = np.arange(10)
+    labels = np.resize(np.array(["LOF", "GOF", "DN"], dtype=object), 10)
+    genes = np.array([f"G{row}" for row in row_ids], dtype=object)
+    predictions = np.roll(labels, 1)
+    folds = np.tile(np.arange(5), 2)
+
+    def load_seed(seed):
+        order = row_ids if seed == 0 else row_ids[::-1]
+        return {
+            "row_ids": row_ids[order],
+            "y_true": labels[order],
+            "pred": predictions[order],
+            "genes": genes[order],
+            "folds": folds[order],
+        }
+
+    monkeypatch.setattr(
+        enzyme_classification,
+        "_load_mechanism_family_oof_for_seed",
+        load_seed,
+    )
+
+    observed, observed_genes, arms = (
+        enzyme_classification.load_mechanism_family_oof_arms([0, 1])
+    )
+
+    assert np.array_equal(observed, labels)
+    assert np.array_equal(observed_genes, genes)
+    assert len(arms) == 2
+    assert all(
+        np.array_equal(predicted, predictions)
+        for predicted, _folds, _ids in arms
+    )
 
 
 def _fingerprint_inputs():
@@ -218,7 +254,15 @@ class TestIntervals:
 
     def test_enzyme_mechanism_interval_uses_shared_families(self):
         X, y, genes, pfam_map, le = _synthetic_data(n_genes=120, dim=8)
-        mechanism_genes = np.array(genes[20:100])
+        # The mechanism cohort deliberately half-overlaps the enzyme cohort: 20
+        # genes whose families the enzyme side also has, plus 20 genes carrying
+        # families it does not. The shared count must therefore be smaller than
+        # either cohort's own family count, which it would not be if the code
+        # took one side's families wholesale.
+        overlapping_genes = genes[:20]
+        disjoint_genes = [f"XGENE{i}" for i in range(20)]
+        pfam_map.update({gene: f"PFX{i:04d}" for i, gene in enumerate(disjoint_genes)})
+        mechanism_genes = np.array(overlapping_genes + disjoint_genes, dtype=object)
         mechanism_labels = np.resize(
             np.array(["LOF", "GOF", "DN"], dtype=object),
             len(mechanism_genes),
@@ -257,9 +301,12 @@ class TestIntervals:
         interval = result["paired_ci_logreg_minus_mechanism"]
         enzyme_families = {pfam_map[gene] for gene in genes}
         mechanism_families = {pfam_map[gene] for gene in mechanism_genes}
-        assert interval["n_clusters_shared"] == len(
-            enzyme_families & mechanism_families
-        )
+        shared_families = enzyme_families & mechanism_families
+        # Guard the guard: if either side were a subset of the other this
+        # assertion would pass for a wholesale implementation too.
+        assert 0 < len(shared_families) < len(enzyme_families)
+        assert len(shared_families) < len(mechanism_families)
+        assert interval["n_clusters_shared"] == len(shared_families)
 
     def test_no_interval_is_produced_when_intervals_are_switched_off(self):
         X, y, genes, pfam_map, le = _synthetic_data()

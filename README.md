@@ -3,13 +3,15 @@
 Does ESM-2 encode disease mechanism?
 
 This project tests whether frozen ESM-2 650M representations predict loss-of-function,
-gain-of-function, or dominant-negative disease mechanism under gene and Pfam-family holdout. The
-preregistered linear probe on the mutation delta matched the majority-class reference under family
-holdout, while ranking tests and exploratory probes retained weak signal. The shared framework also
-recovered pathogenicity, folding stability, and enzyme type, showing that the mechanism result was
-specific to the target and probe rather than a general failure of the representations.
+gain-of-function, or dominant-negative disease mechanism when homologous genes are held out, and
+whether they add anything beyond gene-level predictors and published mechanism propensities.
+Pathogenicity, folding stability, and enzyme type serve as positive controls on the same pipeline.
 
-`docs/README.md` indexes the earlier exploratory phase and is stale; `biorxiv/README.md` governs.
+The study is being re-run from source data under `docs/improve/ANALYSIS_PLAN.md`. Nothing from an
+earlier run carries into it, so no results are quoted in this README. Pre-registration has been
+withdrawn as the governing framework.
+
+`docs/README.md` indexes the earlier exploratory phase and is stale.
 
 ---
 
@@ -38,7 +40,9 @@ src/esm2_mech/
   figures/         — the manuscript figure generator
   utils/           — paths, constants, splits, metrics, bootstrap, shared probe code
 
-biorxiv/           — the current run: pre-registration, runbook, progress, manuscript
+biorxiv/           — the run's runbook, progress record, manuscript and supplementary
+docs/improve/      — the analysis plan, the revision plan and the code audit that
+                     govern the fresh run
 docs/              — how figures, reports, the Zenodo package, the tests and the ESM-3
                      embeddings are produced, plus the statistics-machinery notes, the
                      RunPod reference, and the stale exploratory-phase index
@@ -78,6 +82,10 @@ pytest, which is in the `dev` dependency group.
 ---
 
 ## RUN
+
+`docs/improve/ANALYSIS_PLAN.md` defines what the run measures, the outcomes, the planned
+comparisons, and the reporting rules. `docs/improve/REVISION_PLAN.md` and `docs/improve/audit.md`
+list the repairs that have to land before the run starts.
 
 `biorxiv/RUNBOOK_biorxiv.md` has the full ordered command list for the experiments, including the
 GPU embedding steps, and `biorxiv/PROGRESS.md` records what has been executed. For RunPod setup and
@@ -136,34 +144,6 @@ The Badonyi feature builder joins on gene symbol and uses `pDN`, `pGOF`, `pLOF` 
 
 ## Results summary
 
-Current run (`run_biorxiv`), five seeds, cluster-bootstrap confidence intervals.
-
-| Experiment | Metric | Gene split | Family split |
-|---|---|---|---|
-| Mechanism, linear probe on delta | macro-F1 | 0.288 | 0.290 |
-| Mechanism, linear probe on wildtype-only | macro-F1 | 0.552 | 0.450 |
-| Mechanism, exploratory MLP on delta | macro-F1 | 0.395 | 0.375 |
-| Majority-class reference | macro-F1 | 0.288 | 0.290 |
-| Pathogenicity control, MLP on delta | AUROC | 0.887 | 0.885 |
-| Enzyme type control, linear on wildtype | macro-F1 | 0.832 | 0.779 |
-
-| Pathogenicity feature, family split | AUROC |
-|---|---:|
-| Direction only, MLP | 0.893 |
-| Magnitude only, MLP | 0.610 |
-| Masked-marginal conservation score | 0.888 |
-
-| Stability probe on mean delta | Random split Spearman | Domain split Spearman | Family split Spearman |
-|---|---:|---:|---:|
-| Ridge | 0.693 | 0.601 | 0.554 |
-| MLP | 0.868 | 0.703 | 0.627 |
-| XGBoost | 0.767 | 0.676 | 0.630 |
-
-The descriptive leakage fraction for the wildtype-only mechanism probe is 0.389 (95% CI 0.239 to
-0.543). The analysis does not establish family recognition as the cause of the gene-to-family
-decrease.
-
-The gene-level proteome and Badonyi structural-prior arcs have not been re-measured in the current
-run, so no numbers are quoted for them here. The run0-era figures are in `docs/README.md`.
-
-Read `biorxiv/README.md` for the current run and `biorxiv/PROGRESS.md` for what has been executed.
+The fresh run has not produced results yet, so no numbers are quoted here. Results from earlier runs
+are superseded and must not be cited. `biorxiv/PROGRESS.md` records what has been executed, and each
+completed section's report lives in `reports/run_biorxiv/`.

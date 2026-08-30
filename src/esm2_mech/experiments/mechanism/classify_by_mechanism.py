@@ -125,7 +125,7 @@ def mechanism_null_assessment(family_chance_floor: float) -> dict:
 def aggregate_permutation_results(
     seed_results: list[tuple[int, str, dict]],
 ) -> dict[str, dict]:
-    """Collect the preregistered permutation distribution across seeds.
+    """Collect the permutation distribution across seeds.
 
     The ordinary across-seed metric aggregator only reads flat ``*_mean`` values,
     so nested permutation results need an explicit path. A three-of-five decision

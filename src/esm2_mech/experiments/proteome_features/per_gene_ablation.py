@@ -49,7 +49,6 @@ from esm2_mech.utils.io import write_result_json
 from esm2_mech.utils.seed_aggregation import (
     aggregate_result_contract,
     aggregate_seed_results,
-    block_seed_status,
     read_seed_point_estimate,
     seed_result_contract,
 )
@@ -539,7 +538,7 @@ def main():
                     seeds,
                     t2_seed_results,
                     lambda result, arm=v, metric=metric_name: result[arm].get(metric),
-                    status=lambda result, arm=v: block_seed_status(result[arm]),
+                    status=lambda result, arm=v: result[arm]["status"],
                 )
                 t2_summary[v][f"{metric_name.removesuffix('_mean')}_seed_aggregate"] = (
                     aggregate.to_dict()
@@ -576,7 +575,7 @@ def main():
             seeds,
             t4_seed_results,
             lambda result: result["FULL"].get("macro_f1_mean"),
-            status=lambda result: block_seed_status(result["FULL"]),
+            status=lambda result: result["FULL"]["status"],
         )
         t4_summary["FULL"]["macro_f1_seed_aggregate"] = full_aggregate.to_dict()
 
@@ -587,9 +586,7 @@ def main():
                     seeds,
                     t4_seed_results,
                     lambda result, arm=cls_name, metric=metric_name: result[arm].get(metric),
-                    status=lambda result, arm=cls_name: block_seed_status(
-                        result[arm]
-                    ),
+                    status=lambda result, arm=cls_name: result[arm]["status"],
                 )
                 stem = metric_name.removesuffix("_mean")
                 t4_summary[cls_name][f"{stem}_seed_aggregate"] = aggregate.to_dict()

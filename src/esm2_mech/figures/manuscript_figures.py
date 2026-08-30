@@ -621,7 +621,7 @@ def figure2_mechanism_delta() -> None:
     _panel_label(interval_axis, "A")
 
     probe_labels = (
-        "Preregistered\nPCA + logistic",
+        "Primary\nPCA + logistic",
         "Exploratory\nlogistic",
         "Exploratory\nMLP",
     )
@@ -1196,7 +1196,7 @@ def figure6_folding_stability() -> None:
 
     model_series = (
         (
-            "Ridge (preregistered)",
+            "Ridge (primary)",
             BLUE,
             "o",
             "-",
