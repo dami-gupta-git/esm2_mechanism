@@ -194,8 +194,12 @@ def within_between_ratio(emb, families, n_shuffles=20, seed=42):
 
 
 def family_probe(
-    gene_emb, gene_families, seed=42, min_family_size=MIN_FAMILY_SIZE_PROBE,
-    n_folds=3, return_oof=False,
+    gene_emb,
+    gene_families,
+    seed=42,
+    min_family_size=MIN_FAMILY_SIZE_PROBE,
+    n_folds=3,
+    return_oof=False,
 ):
     """Linear probe predicting Pfam family from gene-level embedding.
 
@@ -260,9 +264,7 @@ def family_probe(
             allow_missing_classes=False,
         )
         try:
-            _, fold_majority = majority_baseline_f1(
-                y[train_idx], y[test_idx], classes
-            )
+            _, fold_majority = majority_baseline_f1(y[train_idx], y[test_idx], classes)
             baseline_pred = np.full_like(y[test_idx], fold_majority)
             baseline_accs.append(float(accuracy_score(y[test_idx], baseline_pred)))
         except ValueError:
@@ -350,7 +352,9 @@ def _family_probe_bootstrap_ci(oof, n_resamples, seed):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--seeds", type=seed_count, default=N_SEEDS,
+        "--seeds",
+        type=seed_count,
+        default=N_SEEDS,
         help="number of seeds for the k-NN purity / within-between / family-probe "
         "null-shuffles and CV folds; runs 0..seeds-1 (>=1)",
     )
@@ -405,7 +409,9 @@ def main():
     for g in gene_names:
         gene_labels = set(labels_arr[genes_arr == g])
         if len(gene_labels) != 1:
-            raise ValueError(f"gene {g} has multiple label_3class values: {gene_labels}")
+            raise ValueError(
+                f"gene {g} has multiple label_3class values: {gene_labels}"
+            )
         gene_mechs.append(gene_labels.pop())
     gene_mechs = np.array(gene_mechs)
 
@@ -468,7 +474,9 @@ def main():
             # Silhouette is unreliable here (high-dim, many singletons, uneven
             # cluster sizes); kNN purity / within-between ratio are the primary
             # signals. Reported for completeness only.
-            print(f"  silhouette by family (cosine): {sil:.3f}  (unreliable here — see kNN purity)")
+            print(
+                f"  silhouette by family (cosine): {sil:.3f}  (unreliable here — see kNN purity)"
+            )
 
         # 2. kNN purity — multi-seed (the null-shuffle is seeded), plus a
         # subsample CI (resampled at the gene level within the fixed family set)
@@ -478,28 +486,21 @@ def main():
         # uncertainty, not a spread across model seeds.
         for k in (5, 10):
             if len(ge) > k:
-                per_seed_p, per_seed_null, per_seed_z = [], [], []
+                purity_records, null_records, z_records = [], [], []
                 for seed in range(args.seeds):
-                    p, null, z = knn_family_purity(ge, gf, k=k, seed=seed)
-                    per_seed_p.append(p)
-                    per_seed_null.append(null)
-                    per_seed_z.append(z)
-                purity = aggregate_seed_values(
-                    range(args.seeds),
-                    [make_seed_record(seed, value) for seed, value in enumerate(per_seed_p)],
-                )
-                null = aggregate_seed_values(
-                    range(args.seeds),
-                    [make_seed_record(seed, value) for seed, value in enumerate(per_seed_null)],
-                )
-                z_score = aggregate_seed_values(
-                    range(args.seeds),
-                    [make_seed_record(seed, value) for seed, value in enumerate(per_seed_z)],
-                )
+                    p, null_value, z = knn_family_purity(ge, gf, k=k, seed=seed)
+                    purity_records.append(make_seed_record(seed, p))
+                    null_records.append(make_seed_record(seed, null_value))
+                    z_records.append(make_seed_record(seed, z))
+                purity = aggregate_seed_values(range(args.seeds), purity_records)
+                null = aggregate_seed_values(range(args.seeds), null_records)
+                z_score = aggregate_seed_values(range(args.seeds), z_records)
                 view_res[f"knn{k}_purity_seed_aggregate"] = purity.to_dict()
                 view_res[f"knn{k}_purity_null_seed_aggregate"] = null.to_dict()
                 view_res[f"knn{k}_purity_z_seed_aggregate"] = z_score.to_dict()
-                purity_spread = "N/A" if purity.spread is None else f"{purity.spread:.3f}"
+                purity_spread = (
+                    "N/A" if purity.spread is None else f"{purity.spread:.3f}"
+                )
                 print(
                     f"  k={k} family purity: {_show_metric(purity.mean)}±{purity_spread}  "
                     f"null {_show_metric(null.mean)}  z={_show_z(z_score.mean)}"
@@ -509,29 +510,22 @@ def main():
                     # with-replacement bootstrap would duplicate points and
                     # inflate purity (see cluster_subsample_ci's docstring).
                     view_res[f"knn{k}_purity_ci"] = cluster_subsample_ci(
-                        gf, _knn_purity_bootstrap_metric(ge, gf, k),
-                        n_resamples=args.n_boot, seed=0,
+                        gf,
+                        _knn_purity_bootstrap_metric(ge, gf, k),
+                        n_resamples=args.n_boot,
+                        seed=0,
                     )
 
         # 3. Within/between — multi-seed null-shuffle + cluster-bootstrap CI.
-        per_seed_ratio, per_seed_null, per_seed_z = [], [], []
+        ratio_records, null_records, z_records = [], [], []
         for seed in range(args.seeds):
-            ratio, null, z = within_between_ratio(ge, gf, seed=seed)
-            per_seed_ratio.append(ratio)
-            per_seed_null.append(null)
-            per_seed_z.append(z)
-        ratio = aggregate_seed_values(
-            range(args.seeds),
-            [make_seed_record(seed, value) for seed, value in enumerate(per_seed_ratio)],
-        )
-        null = aggregate_seed_values(
-            range(args.seeds),
-            [make_seed_record(seed, value) for seed, value in enumerate(per_seed_null)],
-        )
-        z_score = aggregate_seed_values(
-            range(args.seeds),
-            [make_seed_record(seed, value) for seed, value in enumerate(per_seed_z)],
-        )
+            ratio_value, null_value, z = within_between_ratio(ge, gf, seed=seed)
+            ratio_records.append(make_seed_record(seed, ratio_value))
+            null_records.append(make_seed_record(seed, null_value))
+            z_records.append(make_seed_record(seed, z))
+        ratio = aggregate_seed_values(range(args.seeds), ratio_records)
+        null = aggregate_seed_values(range(args.seeds), null_records)
+        z_score = aggregate_seed_values(range(args.seeds), z_records)
         view_res["within_between_ratio_seed_aggregate"] = ratio.to_dict()
         view_res["within_between_ratio_null_seed_aggregate"] = null.to_dict()
         view_res["within_between_ratio_z_seed_aggregate"] = z_score.to_dict()
@@ -545,12 +539,16 @@ def main():
             # Pairwise-distance statistic — same duplicate-point problem as the
             # purity CI above, same fix.
             view_res["within_between_ratio_ci"] = cluster_subsample_ci(
-                gf, _within_between_bootstrap_metric(ge, gf),
-                n_resamples=args.n_boot, seed=0,
+                gf,
+                _within_between_bootstrap_metric(ge, gf),
+                n_resamples=args.n_boot,
+                seed=0,
             )
 
         # 4. Family probe (gene-level) — multi-seed accuracy and macro-F1, plus a
         # within-family bootstrap CI from seed 0's OOF.
+        # Each probe records the seed that produced it, so nothing downstream has
+        # to recover a seed's identity from its position in this list.
         per_seed_probes = []
         probe_oof = None
         for seed in range(args.seeds):
@@ -562,34 +560,35 @@ def main():
             )
             if seed == 0:
                 probe_oof = seed_oof
-            per_seed_probes.append(seed_probe)
+            per_seed_probes.append({"seed": seed, **seed_probe})
         unavailable_seeds = [
-            seed
-            for seed, seed_probe in enumerate(per_seed_probes)
+            seed_probe["seed"]
+            for seed_probe in per_seed_probes
             if seed_probe.get("status") != "success"
         ]
         if not unavailable_seeds:
             accuracy = aggregate_seed_values(
                 range(args.seeds),
                 [
-                    make_seed_record(seed, seed_probe["accuracy"])
-                    for seed, seed_probe in enumerate(per_seed_probes)
+                    make_seed_record(seed_probe["seed"], seed_probe["accuracy"])
+                    for seed_probe in per_seed_probes
                 ],
             )
             macro_f1 = aggregate_seed_values(
                 range(args.seeds),
                 [
-                    make_seed_record(seed, seed_probe["macro_f1"])
-                    for seed, seed_probe in enumerate(per_seed_probes)
+                    make_seed_record(seed_probe["seed"], seed_probe["macro_f1"])
+                    for seed_probe in per_seed_probes
                 ],
             )
             majority_baseline = aggregate_seed_values(
                 range(args.seeds),
                 [
                     make_seed_record(
-                        seed, seed_probe.get("majority_baseline_acc")
+                        seed_probe["seed"],
+                        seed_probe.get("majority_baseline_acc"),
                     )
-                    for seed, seed_probe in enumerate(per_seed_probes)
+                    for seed_probe in per_seed_probes
                 ],
             )
             probe = {
@@ -607,9 +606,14 @@ def main():
                 # multi-seed mean in the seed aggregates above. Seed 0's points
                 # are stored beside it so the two are never read as an interval
                 # on the across-seed mean or as a seed spread.
+                seed0_probe = next(
+                    seed_probe
+                    for seed_probe in per_seed_probes
+                    if seed_probe["seed"] == 0
+                )
                 probe["ci_seed0_point"] = {
-                    "accuracy": per_seed_probes[0]["accuracy"],
-                    "macro_f1": per_seed_probes[0]["macro_f1"],
+                    "accuracy": seed0_probe["accuracy"],
+                    "macro_f1": seed0_probe["macro_f1"],
                 }
                 probe["ci_seed0"] = _family_probe_bootstrap_ci(
                     probe_oof, args.n_boot, seed=0
@@ -621,12 +625,8 @@ def main():
                 "per_seed": per_seed_probes,
             }
         view_res["family_probe"] = probe
-        accuracy_metric = _read_inference_metric(
-            probe, "accuracy_seed_aggregate"
-        )
-        f1_metric = _read_inference_metric(
-            probe, "macro_f1_seed_aggregate"
-        )
+        accuracy_metric = _read_inference_metric(probe, "accuracy_seed_aggregate")
+        f1_metric = _read_inference_metric(probe, "macro_f1_seed_aggregate")
         if accuracy_metric.available and f1_metric.available:
             print(
                 f"  family probe accuracy: {accuracy_metric.value:.3f}±"
@@ -691,8 +691,11 @@ def main():
 
     FAMILY_CLUSTERING_JSON.parent.mkdir(parents=True, exist_ok=True)
     write_result_json(
-        FAMILY_CLUSTERING_JSON, results, seeds=list(range(args.seeds)),
-        indent=2, default=str,
+        FAMILY_CLUSTERING_JSON,
+        results,
+        seeds=list(range(args.seeds)),
+        indent=2,
+        default=str,
     )
     print(f"\nResults written to {FAMILY_CLUSTERING_JSON}")
 
@@ -702,24 +705,24 @@ def main():
     wt_view = results["by_view"]["wt_mean"]
     delta_view = results["by_view"]["delta_mean"]
     wt_knn5 = _read_inference_metric(wt_view, "knn5_purity_seed_aggregate")
-    wt_knn5_null = _read_inference_metric(
-        wt_view, "knn5_purity_null_seed_aggregate"
-    )
-    wt_knn5_z = _read_inference_metric(
-        wt_view, "knn5_purity_z_seed_aggregate"
-    )
-    delta_knn5 = _read_inference_metric(
-        delta_view, "knn5_purity_seed_aggregate"
-    )
+    wt_knn5_null = _read_inference_metric(wt_view, "knn5_purity_null_seed_aggregate")
+    wt_knn5_z = _read_inference_metric(wt_view, "knn5_purity_z_seed_aggregate")
+    delta_knn5 = _read_inference_metric(delta_view, "knn5_purity_seed_aggregate")
     wt_probe_acc = _read_inference_metric(
         wt_view["family_probe"], "accuracy_seed_aggregate"
     )
     wt_probe_base = _read_inference_metric(
         wt_view["family_probe"], "majority_baseline_accuracy_seed_aggregate"
     )
-    wt_probe_acc_text = "unavailable" if not wt_probe_acc.available else f"{wt_probe_acc.value:.3f}"
-    wt_probe_base_text = "unavailable" if not wt_probe_base.available else f"{wt_probe_base.value:.3f}"
-    if not all(metric.available for metric in (wt_knn5, wt_knn5_null, wt_knn5_z, delta_knn5)):
+    wt_probe_acc_text = (
+        "unavailable" if not wt_probe_acc.available else f"{wt_probe_acc.value:.3f}"
+    )
+    wt_probe_base_text = (
+        "unavailable" if not wt_probe_base.available else f"{wt_probe_base.value:.3f}"
+    )
+    if not all(
+        metric.available for metric in (wt_knn5, wt_knn5_null, wt_knn5_z, delta_knn5)
+    ):
         print("Family-clustering headline is unavailable")
         return
     print(

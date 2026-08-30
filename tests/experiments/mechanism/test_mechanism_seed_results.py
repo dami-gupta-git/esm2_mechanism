@@ -27,55 +27,17 @@ from esm2_mech.experiments.mechanism.seed_results import (
     print_table,
     read_across_seed_metric,
 )
-from esm2_mech.utils.constants import SEED_AGGREGATION_SCHEMA_VERSION
 from esm2_mech.utils.seed_aggregation import SEED_SCHEMA_KEY, seed_result_contract
+from tests.helpers import (
+    available_seed_aggregate,
+    seed_result,
+    unavailable_seed_aggregate,
+)
 
-
-def _available_seed_aggregate(mean, seeds=(0, 1, 2, 3, 4)):
-    return {
-        "schema_version": SEED_AGGREGATION_SCHEMA_VERSION,
-        "state": "available",
-        "reason": None,
-        "requested_seeds": list(seeds),
-        "contributing_seeds": list(seeds),
-        "affected_seeds": [],
-        "mean": mean,
-        "seed_std": 0.01,
-        "sampling_unit": "model_seed",
-        "message": None,
-    }
-
-
-def _unavailable_seed_aggregate(seeds=(0, 1, 2, 3, 4), affected=(4,)):
-    return {
-        "schema_version": SEED_AGGREGATION_SCHEMA_VERSION,
-        "state": "unavailable",
-        "reason": "failed_seed",
-        "requested_seeds": list(seeds),
-        "contributing_seeds": [seed for seed in seeds if seed not in affected],
-        "affected_seeds": list(affected),
-        "mean": None,
-        "seed_std": None,
-        "sampling_unit": "model_seed",
-        "message": "a requested seed failed",
-    }
 
 # ---------------------------------------------------------------------------
 # helpers
 # ---------------------------------------------------------------------------
-
-
-def _seed_result(macro_f1_mean, *, split="gene_split", feature="esm2"):
-    """Build a minimal per-seed result dict for one split/feature."""
-    return {
-        split: {
-            feature: {
-                "status": "success",
-                "macro_f1_mean": macro_f1_mean,
-                "macro_f1_std": 0.01,
-            }
-        }
-    }
 
 
 def _with_seeds(named_results, statuses=None):
@@ -107,9 +69,9 @@ class TestAggregateAcrossSeeds:
 
     def test_mean_and_std_across_seeds(self):
         seed_results = [
-            ("seed0.json", _seed_result(0.4)),
-            ("seed1.json", _seed_result(0.5)),
-            ("seed2.json", _seed_result(0.6)),
+            ("seed0.json", seed_result(0.4)),
+            ("seed1.json", seed_result(0.5)),
+            ("seed2.json", seed_result(0.6)),
         ]
         agg = _aggregate(seed_results)
         feature = agg["gene_split"]["esm2"]
@@ -121,15 +83,15 @@ class TestAggregateAcrossSeeds:
 
     def test_only_mean_keys_aggregated(self):
         # macro_f1_std is present per seed but must NOT be aggregated as a metric.
-        seed_results = [("seed0.json", _seed_result(0.5))]
+        seed_results = [("seed0.json", seed_result(0.5))]
         agg = _aggregate(seed_results)
         feature = agg["gene_split"]["esm2"]
         assert set(feature) == {"macro_f1_seed_aggregate"}
 
     def test_none_value_makes_metric_unavailable(self):
         seed_results = [
-            ("seed0.json", _seed_result(0.6)),
-            ("seed1.json", _seed_result(None)),
+            ("seed0.json", seed_result(0.6)),
+            ("seed1.json", seed_result(None)),
         ]
         agg = _aggregate(seed_results)
         feature = agg["gene_split"]["esm2"]
@@ -140,8 +102,8 @@ class TestAggregateAcrossSeeds:
 
     def test_nan_value_makes_metric_unavailable(self):
         seed_results = [
-            ("seed0.json", _seed_result(0.6)),
-            ("seed1.json", _seed_result(float("nan"))),
+            ("seed0.json", seed_result(0.6)),
+            ("seed1.json", seed_result(float("nan"))),
         ]
         agg = _aggregate(seed_results)
         feature = agg["gene_split"]["esm2"]
@@ -151,9 +113,9 @@ class TestAggregateAcrossSeeds:
 
     def test_n_seeds_counts_contributors_only(self):
         seed_results = [
-            ("seed0.json", _seed_result(0.5)),
-            ("seed1.json", _seed_result(0.5)),
-            ("seed2.json", _seed_result(None)),
+            ("seed0.json", seed_result(0.5)),
+            ("seed1.json", seed_result(0.5)),
+            ("seed2.json", seed_result(None)),
         ]
         agg = _aggregate(seed_results)
         metric = agg["gene_split"]["esm2"]["macro_f1_seed_aggregate"]
@@ -162,7 +124,7 @@ class TestAggregateAcrossSeeds:
     def test_feature_present_in_some_seeds_is_unavailable(self):
         # esm2 in both seeds, esm3 only in seed1.
         seed_results = [
-            ("seed0.json", _seed_result(0.5, feature="esm2")),
+            ("seed0.json", seed_result(0.5, feature="esm2")),
             (
                 "seed1.json",
                 {
@@ -181,19 +143,19 @@ class TestAggregateAcrossSeeds:
         assert esm3["state"] == "unavailable"
 
     def test_unknown_seed_status_is_not_relabelled_as_failed(self):
-        result = _seed_result(0.5)
+        result = seed_result(0.5)
         result["gene_split"]["esm2"]["status"] = "unknown"
         with pytest.raises(ValueError, match="unsupported seed status"):
             _aggregate([("seed0.json", result)])
 
     def test_missing_seed_status_is_not_filled_in(self):
-        result = _seed_result(0.5)
+        result = seed_result(0.5)
         del result["gene_split"]["esm2"]["status"]
         with pytest.raises(ValueError, match="has no status"):
             _aggregate([("seed0.json", result)])
 
     def test_result_without_the_root_contract_raises(self):
-        result = _seed_result(0.5)
+        result = seed_result(0.5)
         triples = _with_seeds([("seed0.json", result)])
         del triples[0][2][SEED_SCHEMA_KEY]
         with pytest.raises(ValueError, match="seed schema version"):
@@ -201,8 +163,8 @@ class TestAggregateAcrossSeeds:
 
     def test_root_status_overrides_a_successful_block(self):
         seed_results = [
-            ("seed0.json", _seed_result(0.5)),
-            ("seed1.json", _seed_result(0.6)),
+            ("seed0.json", seed_result(0.5)),
+            ("seed1.json", seed_result(0.6)),
         ]
         agg = _aggregate(seed_results, statuses={1: "failed"})
         feature = agg["gene_split"]["esm2"]
@@ -213,8 +175,8 @@ class TestAggregateAcrossSeeds:
 
     def test_a_requested_seed_with_no_result_is_unavailable(self):
         seed_results = [
-            ("seed0.json", _seed_result(0.4)),
-            ("seed1.json", _seed_result(0.6)),
+            ("seed0.json", seed_result(0.4)),
+            ("seed1.json", seed_result(0.6)),
         ]
         agg = _aggregate(seed_results, requested=range(3))
         feature = agg["gene_split"]["esm2"]
@@ -226,8 +188,8 @@ class TestAggregateAcrossSeeds:
 
     def test_a_result_for_an_unrequested_seed_is_unavailable(self):
         seed_results = [
-            ("seed0.json", _seed_result(0.4)),
-            ("seed1.json", _seed_result(0.6)),
+            ("seed0.json", seed_result(0.4)),
+            ("seed1.json", seed_result(0.6)),
         ]
         agg = _aggregate(seed_results, requested=[0])
         feature = agg["gene_split"]["esm2"]
@@ -236,7 +198,7 @@ class TestAggregateAcrossSeeds:
         assert metric["reason"] == "unexpected_seed"
 
     def test_both_splits_in_output(self):
-        seed_results = [("seed0.json", _seed_result(0.5))]
+        seed_results = [("seed0.json", seed_result(0.5))]
         agg = _aggregate(seed_results)
         for split in SPLITS:
             assert split in agg
@@ -279,8 +241,8 @@ class TestAggregateAcrossSeeds:
         assert feature["auroc_GOF_seed_aggregate"]["mean"] == pytest.approx(0.85)
 
     def test_failed_seed_prevents_reduced_seed_aggregate(self):
-        successful = _seed_result(0.6)
-        failed = _seed_result(None)
+        successful = seed_result(0.6)
+        failed = seed_result(None)
         failed["gene_split"]["esm2"]["status"] = "unscorable"
         aggregate = _aggregate(
             [("seed0.json", successful), ("seed1.json", failed)]
@@ -292,8 +254,8 @@ class TestAggregateAcrossSeeds:
         assert metric["affected_seeds"] == [1]
 
     def test_confusion_matrix_is_normalized_per_seed_before_average(self):
-        first = _seed_result(0.5)
-        second = _seed_result(0.5)
+        first = seed_result(0.5)
+        second = seed_result(0.5)
         first_block = first["gene_split"]["esm2"]
         second_block = second["gene_split"]["esm2"]
         first_block.update(
@@ -329,8 +291,8 @@ class TestPrintTable:
 
     def test_does_not_crash_on_full_aggregate(self, capsys):
         seed_results = [
-            ("seed0.json", _seed_result(0.4)),
-            ("seed1.json", _seed_result(0.6)),
+            ("seed0.json", seed_result(0.4)),
+            ("seed1.json", seed_result(0.6)),
         ]
         agg = _aggregate(seed_results)
         print_table(agg)
@@ -341,14 +303,14 @@ class TestPrintTable:
         agg = {
             "gene_split": {
                 "esm2": {
-                    "macro_f1_seed_aggregate": _available_seed_aggregate(
+                    "macro_f1_seed_aggregate": available_seed_aggregate(
                         0.5, seeds=(0, 1, 2)
                     ),
                 }
             },
             "family_split": {
                 "esm3": {
-                    "macro_f1_seed_aggregate": _available_seed_aggregate(
+                    "macro_f1_seed_aggregate": available_seed_aggregate(
                         0.4, seeds=(0, 1, 2)
                     ),
                 }
@@ -382,7 +344,7 @@ def _aggregate_file(tmp_path, seed_aggregate, **root):
 
 
 def test_read_across_seed_metric_preserves_unavailable_value(tmp_path):
-    path = _aggregate_file(tmp_path, _unavailable_seed_aggregate())
+    path = _aggregate_file(tmp_path, unavailable_seed_aggregate())
 
     assert (
         read_across_seed_metric(str(path), "family_split", "delta_mean") is None
@@ -390,7 +352,7 @@ def test_read_across_seed_metric_preserves_unavailable_value(tmp_path):
 
 
 def test_read_across_seed_metric_reads_the_stored_aggregate(tmp_path):
-    stored = _available_seed_aggregate(0.36)
+    stored = available_seed_aggregate(0.36)
     path = _aggregate_file(tmp_path, stored)
 
     assert read_across_seed_metric(
@@ -399,7 +361,7 @@ def test_read_across_seed_metric_reads_the_stored_aggregate(tmp_path):
 
 
 def test_read_across_seed_metric_rejects_a_file_without_the_schema_version(tmp_path):
-    path = _aggregate_file(tmp_path, _available_seed_aggregate(0.36))
+    path = _aggregate_file(tmp_path, available_seed_aggregate(0.36))
     content = json.loads(path.read_text())
     del content[SEED_SCHEMA_KEY]
     path.write_text(json.dumps(content))

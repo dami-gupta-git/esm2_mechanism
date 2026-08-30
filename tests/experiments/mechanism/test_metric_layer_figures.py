@@ -12,6 +12,7 @@ from esm2_mech.utils.seed_aggregation import (
     aggregate_seed_values,
     make_seed_record,
 )
+from tests.helpers import available_seed_aggregate, unavailable_seed_aggregate
 
 
 def _unavailable_family_clustering_views():
@@ -182,39 +183,11 @@ def test_manuscript_enzyme_figure_uses_family_split_reference(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def _seed_aggregate(mean, spread, seeds=(0, 1, 2, 3, 4)):
-    return {
-        "schema_version": SEED_AGGREGATION_SCHEMA_VERSION,
-        "state": "available",
-        "reason": None,
-        "requested_seeds": list(seeds),
-        "contributing_seeds": list(seeds),
-        "affected_seeds": [],
-        "mean": mean,
-        "seed_std": spread,
-        "sampling_unit": "model_seed",
-        "message": None,
-    }
-
-
-def _unavailable_seed_aggregate(seeds=(0, 1, 2, 3, 4), affected=(4,)):
-    return {
-        "schema_version": SEED_AGGREGATION_SCHEMA_VERSION,
-        "state": "unavailable",
-        "reason": "failed_seed",
-        "requested_seeds": list(seeds),
-        "contributing_seeds": [seed for seed in seeds if seed not in affected],
-        "affected_seeds": list(affected),
-        "mean": None,
-        "seed_std": None,
-        "sampling_unit": "model_seed",
-        "message": "a requested seed failed",
-    }
-
-
 def _mechanism_feature(mean, spread, *, available=True):
     aggregate = (
-        _seed_aggregate(mean, spread) if available else _unavailable_seed_aggregate()
+        available_seed_aggregate(mean, spread)
+        if available
+        else unavailable_seed_aggregate()
     )
     block = {"macro_f1_seed_aggregate": aggregate}
     for class_name in make_figures.MECHANISM_CLASSES:
@@ -243,7 +216,9 @@ def _patch_mechanism_figure_inputs(monkeypatch, aggregate):
                 "by_strategy": {
                     "most_frequent": {
                         "gene": {
-                            "macro_f1_seed_aggregate": _seed_aggregate(0.29, 0.01)
+                            "macro_f1_seed_aggregate": available_seed_aggregate(
+                                0.29, 0.01
+                            )
                         }
                     }
                 }
@@ -284,7 +259,7 @@ def test_auroc_split_bars_drops_only_the_unavailable_class(monkeypatch):
     for split in aggregate["across_seed"].values():
         split["delta_mean"][
             f"auroc_{dropped}_seed_aggregate"
-        ] = _unavailable_seed_aggregate()
+        ] = unavailable_seed_aggregate()
     saved = _patch_mechanism_figure_inputs(monkeypatch, aggregate)
 
     make_figures.fig_auroc_split_bars()

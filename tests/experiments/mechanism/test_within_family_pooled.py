@@ -32,10 +32,10 @@ import pytest
 from esm2_mech.experiments.mechanism import mechanism_within_family as wf
 from esm2_mech.utils.constants import MECHANISM_CLASSES, GOF, DN, LOF
 
-
 # ---------------------------------------------------------------------------
 # helpers — hand-built OOF (no probe fitting)
 # ---------------------------------------------------------------------------
+
 
 def _oof(row_ids, y, genes, proba, folds=None):
     row_ids = np.asarray(row_ids)
@@ -105,6 +105,7 @@ def _family_input(name, n_genes, vars_per_gene=11, dim=12, rng=None):
 # _stack_oof
 # ---------------------------------------------------------------------------
 
+
 class TestStackOof:
     def test_concatenates_valid(self):
         a = _oof([0, 1], [GOF, LOF], ["A0", "A1"], [[0.6, 0.2, 0.2], [0.2, 0.2, 0.6]])
@@ -126,6 +127,7 @@ class TestStackOof:
 # ---------------------------------------------------------------------------
 # _gof_auroc_from_oof
 # ---------------------------------------------------------------------------
+
 
 class TestGofAurocFromOof:
     def test_perfect_separation(self):
@@ -152,15 +154,22 @@ class TestGofAurocFromOof:
 # pooled_gof_test — on synthetic OOF (no probe fitting)
 # ---------------------------------------------------------------------------
 
+
 class TestPooledGofTest:
     def test_no_gof_family_returns_zero(self):
         # A family OOF that carries only DN/LOF (no GOF) -> nothing to pool.
         genes = np.repeat([f"X_g{i}" for i in range(8)], 10)
-        y = np.array([DN if g.endswith(tuple("0123")) else LOF for g in
-                      [f"X_g{i}" for i in range(8) for _ in range(10)]])
+        y = np.array(
+            [
+                DN if g.endswith(tuple("0123")) else LOF
+                for g in [f"X_g{i}" for i in range(8) for _ in range(10)]
+            ]
+        )
         proba = np.full((len(y), 3), 1 / 3)
-        no_gof = {"logreg": _oof(np.arange(len(y)), y, genes, proba),
-                  "mlp": _oof(np.arange(len(y)), y, genes, proba)}
+        no_gof = {
+            "logreg": _oof(np.arange(len(y)), y, genes, proba),
+            "mlp": _oof(np.arange(len(y)), y, genes, proba),
+        }
         out = wf.pooled_gof_test({"X": no_gof}, {}, n_seeds=3, n_folds=5)
         assert out == {"n_families": 0}
 
@@ -208,6 +217,7 @@ class TestPooledGofTest:
 # permutation — needs the real probe (refits per shuffle), so it is slow
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.slow
 class TestPooledPermutation:
     def test_permutation_null_centers_on_chance(self):
@@ -221,8 +231,13 @@ class TestPooledPermutation:
         for fam, inp in family_inputs.items():
             present = [c for c in MECHANISM_CLASSES if (inp["y"] == c).sum() > 0]
             _, oof_out = wf._probe_one_family(
-                {wf.VIEW_DELTA: inp["X"]}, inp["y"], inp["genes"], present,
-                n_seeds=2, n_folds=5, compute_ci=False,
+                {wf.VIEW_DELTA: inp["X"]},
+                inp["y"],
+                inp["genes"],
+                present,
+                n_seeds=2,
+                n_folds=5,
+                compute_ci=False,
                 mlp_kwargs={"hidden": (16,), "max_iter": 50},
             )
             delta_oof[fam] = oof_out[wf.VIEW_DELTA]
@@ -231,9 +246,14 @@ class TestPooledPermutation:
         # (256,64)/500) to make those refits cheap; the test only checks that the
         # permutation null centers on chance, which does not need the full-size probe.
         out = wf.pooled_gof_test(
-            delta_oof, family_inputs, n_seeds=2, n_folds=5,
-            compute_ci=False, n_permutations=15,
-            mlp_hidden=(16,), mlp_max_iter=50,
+            delta_oof,
+            family_inputs,
+            n_seeds=2,
+            n_folds=5,
+            compute_ci=False,
+            n_permutations=15,
+            mlp_hidden=(16,),
+            mlp_max_iter=50,
         )
         perm = out["permutation_mlp"]
         assert perm["observed"] is None
@@ -245,6 +265,7 @@ class TestPooledPermutation:
 # _probe_one_family — one real-probe end-to-end check (slow)
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.slow
 class TestProbeOneFamilyRealProbes:
     def test_returns_results_oof_and_ci(self):
@@ -252,8 +273,13 @@ class TestProbeOneFamilyRealProbes:
         inp = _family_input("F", 12, rng=rng)
         present = [c for c in MECHANISM_CLASSES if (inp["y"] == c).sum() > 0]
         results, oof_out = wf._probe_one_family(
-            {wf.VIEW_DELTA: inp["X"]}, inp["y"], inp["genes"], present,
-            n_seeds=2, n_folds=5, compute_ci=True,
+            {wf.VIEW_DELTA: inp["X"]},
+            inp["y"],
+            inp["genes"],
+            present,
+            n_seeds=2,
+            n_folds=5,
+            compute_ci=True,
             mlp_kwargs={"hidden": (16,), "max_iter": 50},
         )
         entry = results[wf.VIEW_DELTA]["logreg"]
@@ -269,9 +295,37 @@ class TestProbeOneFamilyRealProbes:
         inp = _family_input("F", 12, rng=rng)
         present = [c for c in MECHANISM_CLASSES if (inp["y"] == c).sum() > 0]
         results, _ = wf._probe_one_family(
-            {wf.VIEW_DELTA: inp["X"]}, inp["y"], inp["genes"], present,
-            n_seeds=2, n_folds=5, compute_ci=False,
+            {wf.VIEW_DELTA: inp["X"]},
+            inp["y"],
+            inp["genes"],
+            present,
+            n_seeds=2,
+            n_folds=5,
+            compute_ci=False,
             mlp_kwargs={"hidden": (16,), "max_iter": 50},
         )
         assert "ci" not in results[wf.VIEW_DELTA]["logreg"]
         assert "ci" not in results[wf.VIEW_DELTA]["mlp"]
+
+    def test_each_per_seed_value_carries_its_own_seed(self):
+        """Seed identity travels with the value, never with its list position.
+
+        A later skip would otherwise shift every following value onto the wrong
+        seed while the completeness check still saw a full set.
+        """
+        rng = np.random.RandomState(2)
+        inp = _family_input("F", 12, rng=rng)
+        present = [c for c in MECHANISM_CLASSES if (inp["y"] == c).sum() > 0]
+        results, _ = wf._probe_one_family(
+            {wf.VIEW_DELTA: inp["X"]},
+            inp["y"],
+            inp["genes"],
+            present,
+            n_seeds=3,
+            n_folds=5,
+            compute_ci=False,
+            mlp_kwargs={"hidden": (16,), "max_iter": 50},
+        )
+        per_seed = results[wf.VIEW_DELTA]["logreg"]["macro_f1"]["per_seed"]
+        assert [entry["seed"] for entry in per_seed] == [0, 1, 2]
+        assert all("value" in entry for entry in per_seed)

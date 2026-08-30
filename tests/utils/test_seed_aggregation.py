@@ -25,23 +25,11 @@ from esm2_mech.utils.seed_aggregation import (
     read_seed_result_contract,
     seed_result_contract,
 )
+from tests.helpers import seed_result
 
 # ---------------------------------------------------------------------------
 # helpers
 # ---------------------------------------------------------------------------
-
-
-def _seed_result(macro_f1_mean, *, split="gene_split", feature="esm2"):
-    """Build a minimal per-seed result dict for one split/feature."""
-    return {
-        split: {
-            feature: {
-                "status": "success",
-                "macro_f1_mean": macro_f1_mean,
-                "macro_f1_std": 0.01,
-            }
-        }
-    }
 
 
 def _write_seed_file(path, data):
@@ -59,8 +47,8 @@ def _write_seed_file(path, data):
 class TestLoadSeedFiles:
 
     def test_loads_matching_files(self, tmp_path):
-        _write_seed_file(tmp_path / "res_seed0.json", _seed_result(0.5))
-        _write_seed_file(tmp_path / "res_seed1.json", _seed_result(0.6))
+        _write_seed_file(tmp_path / "res_seed0.json", seed_result(0.5))
+        _write_seed_file(tmp_path / "res_seed1.json", seed_result(0.6))
         loaded = load_seed_files(str(tmp_path), "res_seed*.json", expected_seeds=(0, 1))
         assert len(loaded) == 2
         names = [name for _seed, name, _data in loaded]
@@ -68,7 +56,7 @@ class TestLoadSeedFiles:
         assert "res_seed1.json" in names
 
     def test_returns_seed_basename_and_parsed_dict(self, tmp_path):
-        _write_seed_file(tmp_path / "res_seed0.json", _seed_result(0.5))
+        _write_seed_file(tmp_path / "res_seed0.json", seed_result(0.5))
         loaded = load_seed_files(str(tmp_path), "res_seed*.json", expected_seeds=(0,))
         seed, name, data = loaded[0]
         assert seed == 0
@@ -76,19 +64,19 @@ class TestLoadSeedFiles:
         assert data["gene_split"]["esm2"]["macro_f1_mean"] == 0.5
 
     def test_corrupt_file_raises(self, tmp_path):
-        _write_seed_file(tmp_path / "res_seed0.json", _seed_result(0.5))
+        _write_seed_file(tmp_path / "res_seed0.json", seed_result(0.5))
         (tmp_path / "res_seed1.json").write_text("{not valid json")
         with pytest.raises(ValueError, match="invalid seed-result JSON"):
             load_seed_files(str(tmp_path), "res_seed*.json", expected_seeds=(0, 1))
 
     def test_no_match_returns_empty(self, tmp_path):
-        _write_seed_file(tmp_path / "res_seed0.json", _seed_result(0.5))
+        _write_seed_file(tmp_path / "res_seed0.json", seed_result(0.5))
         assert load_seed_files(str(tmp_path), "nomatch*.json", expected_seeds=()) == []
 
     def test_sorted_order(self, tmp_path):
-        _write_seed_file(tmp_path / "res_seed2.json", _seed_result(0.5))
-        _write_seed_file(tmp_path / "res_seed0.json", _seed_result(0.5))
-        _write_seed_file(tmp_path / "res_seed1.json", _seed_result(0.5))
+        _write_seed_file(tmp_path / "res_seed2.json", seed_result(0.5))
+        _write_seed_file(tmp_path / "res_seed0.json", seed_result(0.5))
+        _write_seed_file(tmp_path / "res_seed1.json", seed_result(0.5))
         loaded = load_seed_files(
             str(tmp_path), "res_seed*.json", expected_seeds=(0, 1, 2)
         )
@@ -96,33 +84,33 @@ class TestLoadSeedFiles:
         assert names == sorted(names)
 
     def test_non_integer_seed_token_raises(self, tmp_path):
-        _write_seed_file(tmp_path / "res_seedfinal.json", _seed_result(0.5))
+        _write_seed_file(tmp_path / "res_seedfinal.json", seed_result(0.5))
         with pytest.raises(ValueError, match="does not encode an integer seed"):
             load_seed_files(str(tmp_path), "res_seed*.json", expected_seeds=(0,))
 
     def test_duplicate_seed_raises(self, tmp_path):
         # Two distinct filenames that both parse to seed 0 under this glob.
-        _write_seed_file(tmp_path / "res_seed0.json", _seed_result(0.5))
-        _write_seed_file(tmp_path / "res_seed00.json", _seed_result(0.6))
+        _write_seed_file(tmp_path / "res_seed0.json", seed_result(0.5))
+        _write_seed_file(tmp_path / "res_seed00.json", seed_result(0.6))
         with pytest.raises(ValueError, match="duplicate seed"):
             load_seed_files(str(tmp_path), "res_seed*.json", expected_seeds=(0,))
 
     def test_expected_seeds_satisfied_passes(self, tmp_path):
-        _write_seed_file(tmp_path / "res_seed0.json", _seed_result(0.5))
-        _write_seed_file(tmp_path / "res_seed1.json", _seed_result(0.6))
+        _write_seed_file(tmp_path / "res_seed0.json", seed_result(0.5))
+        _write_seed_file(tmp_path / "res_seed1.json", seed_result(0.6))
         loaded = load_seed_files(
             str(tmp_path), "res_seed*.json", expected_seeds=range(2)
         )
         assert len(loaded) == 2
 
     def test_expected_seeds_missing_raises(self, tmp_path):
-        _write_seed_file(tmp_path / "res_seed0.json", _seed_result(0.5))
+        _write_seed_file(tmp_path / "res_seed0.json", seed_result(0.5))
         with pytest.raises(ValueError, match="missing"):
             load_seed_files(str(tmp_path), "res_seed*.json", expected_seeds=range(2))
 
     def test_expected_seeds_unexpected_raises(self, tmp_path):
-        _write_seed_file(tmp_path / "res_seed0.json", _seed_result(0.5))
-        _write_seed_file(tmp_path / "res_seed5.json", _seed_result(0.6))
+        _write_seed_file(tmp_path / "res_seed0.json", seed_result(0.5))
+        _write_seed_file(tmp_path / "res_seed5.json", seed_result(0.6))
         with pytest.raises(ValueError, match="unexpected"):
             load_seed_files(str(tmp_path), "res_seed*.json", expected_seeds=range(2))
 

@@ -45,7 +45,8 @@ N_FEATURES = 64
 
 @pytest.fixture
 def dataset():
-    """Synthetic stability data where ddG is a noisy linear function of the embedding."""
+    """Synthetic stability data where ddG is a noisy linear function of the
+    embedding."""
     rng = np.random.RandomState(0)
     delta_mean = rng.normal(size=(N_ROWS, N_FEATURES))
     weights = rng.normal(size=N_FEATURES)
@@ -128,7 +129,8 @@ def test_delta_norm_baseline_scores_every_split(dataset):
 
 
 def test_delta_norm_baseline_recovers_a_norm_driven_signal(dataset):
-    """When ddG is the embedding norm, the one-feature baseline must correlate strongly."""
+    """When ddG is the embedding norm, the one-feature baseline must correlate
+    strongly."""
     delta_mean, _, proteins, family_map = dataset
     ddg = np.linalg.norm(delta_mean, axis=1)
     result = delta_norm_baseline(delta_mean, ddg, proteins, family_map, 1, (0,))

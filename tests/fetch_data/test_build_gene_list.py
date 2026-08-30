@@ -60,7 +60,8 @@ def _clinvar_wb(data_rows):
 
 
 def _clinvar_row(gene, uid, mech):
-    """A ClinVar row: gene in column 0, UniProt ID in column 1, mechanism in column 9."""
+    """A ClinVar row: gene in column 0, UniProt ID in column 1,
+    mechanism in column 9."""
     return (gene, uid, None, None, None, None, None, None, None, mech)
 
 
@@ -80,7 +81,8 @@ def test_functional_protein_class_skips_blank_gene_rows():
 
 
 def test_functional_protein_class_blank_mechanism_becomes_unknown_marker():
-    """A blank mechanism must stay distinguishable from a real label; main() drops it."""
+    """A blank mechanism must stay distinguishable from a real label;
+    main() drops it."""
     wb = _functional_wb([("BRCA1", "AD", None), ("KRAS", "AD", "")])
     assert _load_functional_protein_class(wb) == {"BRCA1": "Unknown", "KRAS": "Unknown"}
 
@@ -98,7 +100,8 @@ def test_clinvar_reads_uniprot_and_mechanism():
 
 
 def test_clinvar_skips_short_rows():
-    """A row without the mechanism column must be skipped, not read at a shifted index."""
+    """A row without the mechanism column must be skipped, not read at a
+    shifted index."""
     wb = _clinvar_wb([("BRCA1", "P38398", "HI"), _clinvar_row("KRAS", "P01116", "GOF")])
     uid_map, mech_map = _load_clinvar_gene_level(wb)
     assert "BRCA1" not in uid_map

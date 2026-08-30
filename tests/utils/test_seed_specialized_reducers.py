@@ -53,17 +53,29 @@ def _complete_oof_by_seed():
     }
 
 
+def _aggregate(oof_by_seed, statuses=None, **overrides):
+    """Aggregate the given per-seed OOF against the shared declared context.
+
+    Every test in TestAggregateSeedOof declares the same rows, labels, clusters,
+    classes and folds; only the seed payloads vary. Overrides let a test change
+    one declared value without restating the rest.
+    """
+    declared = {
+        "declared_row_ids": ROW_IDS,
+        "declared_labels": LABELS,
+        "declared_clusters": CLUSTERS,
+        "class_order": CLASSES,
+        "declared_fold_ids": range(3),
+    }
+    declared.update(overrides)
+    return aggregate_seed_oof(
+        REQUESTED_SEEDS, _records(oof_by_seed, statuses), **declared
+    )
+
+
 class TestAggregateSeedOof:
     def test_preserves_actual_seed_identity_and_declared_row_order(self):
-        result = aggregate_seed_oof(
-            REQUESTED_SEEDS,
-            _records(_complete_oof_by_seed()),
-            declared_row_ids=ROW_IDS,
-            declared_labels=LABELS,
-            declared_clusters=CLUSTERS,
-            class_order=CLASSES,
-            declared_fold_ids=range(3),
-        )
+        result = _aggregate(_complete_oof_by_seed())
         assert result.available
         assert list(result.payload["oof_by_seed"]) == list(REQUESTED_SEEDS)
         assert np.array_equal(result.payload["row_ids"], ROW_IDS)
@@ -76,15 +88,7 @@ class TestAggregateSeedOof:
     def test_missing_seed_is_unavailable_not_dropped(self):
         oof_by_seed = _complete_oof_by_seed()
         del oof_by_seed[23]
-        result = aggregate_seed_oof(
-            REQUESTED_SEEDS,
-            _records(oof_by_seed),
-            declared_row_ids=ROW_IDS,
-            declared_labels=LABELS,
-            declared_clusters=CLUSTERS,
-            class_order=CLASSES,
-            declared_fold_ids=range(3),
-        )
+        result = _aggregate(oof_by_seed)
         assert not result.available
         assert result.reason is SeedUnavailableReason.MISSING_SEED
         assert result.affected_seeds == (23,)
@@ -92,15 +96,7 @@ class TestAggregateSeedOof:
     def test_unexpected_shifted_seed_is_unavailable(self):
         oof_by_seed = _complete_oof_by_seed()
         oof_by_seed[24] = oof_by_seed.pop(23)
-        result = aggregate_seed_oof(
-            REQUESTED_SEEDS,
-            _records(oof_by_seed),
-            declared_row_ids=ROW_IDS,
-            declared_labels=LABELS,
-            declared_clusters=CLUSTERS,
-            class_order=CLASSES,
-            declared_fold_ids=range(3),
-        )
+        result = _aggregate(oof_by_seed)
         assert not result.available
         assert result.reason is SeedUnavailableReason.UNEXPECTED_SEED
         assert result.affected_seeds == (23, 24)
@@ -111,15 +107,7 @@ class TestAggregateSeedOof:
             key: value[:-1] if isinstance(value, np.ndarray) else value
             for key, value in oof_by_seed[23].items()
         }
-        result = aggregate_seed_oof(
-            REQUESTED_SEEDS,
-            _records(oof_by_seed),
-            declared_row_ids=ROW_IDS,
-            declared_labels=LABELS,
-            declared_clusters=CLUSTERS,
-            class_order=CLASSES,
-            declared_fold_ids=range(3),
-        )
+        result = _aggregate(oof_by_seed)
         assert not result.available
         assert result.reason is SeedUnavailableReason.INVALID_ROW_SET
         assert result.affected_seeds == (23,)
@@ -130,60 +118,28 @@ class TestAggregateSeedOof:
         corrupted = np.array(oof_by_seed[23][field], copy=True)
         corrupted[0] = "wrong"
         oof_by_seed[23][field] = corrupted
-        result = aggregate_seed_oof(
-            REQUESTED_SEEDS,
-            _records(oof_by_seed),
-            declared_row_ids=ROW_IDS,
-            declared_labels=LABELS,
-            declared_clusters=CLUSTERS,
-            class_order=CLASSES,
-            declared_fold_ids=range(3),
-        )
+        result = _aggregate(oof_by_seed)
         assert not result.available
         assert result.reason is SeedUnavailableReason.METADATA_MISMATCH
 
     def test_class_order_mismatch_is_unavailable(self):
         oof_by_seed = _complete_oof_by_seed()
         oof_by_seed[23]["classes"] = ["B", "A"]
-        result = aggregate_seed_oof(
-            REQUESTED_SEEDS,
-            _records(oof_by_seed),
-            declared_row_ids=ROW_IDS,
-            declared_labels=LABELS,
-            declared_clusters=CLUSTERS,
-            class_order=CLASSES,
-            declared_fold_ids=range(3),
-        )
+        result = _aggregate(oof_by_seed)
         assert not result.available
         assert result.reason is SeedUnavailableReason.CLASS_ORDER_MISMATCH
 
     def test_invalid_fold_shape_is_unavailable(self):
         oof_by_seed = _complete_oof_by_seed()
         oof_by_seed[23]["folds"] = np.array([0, 1])
-        result = aggregate_seed_oof(
-            REQUESTED_SEEDS,
-            _records(oof_by_seed),
-            declared_row_ids=ROW_IDS,
-            declared_labels=LABELS,
-            declared_clusters=CLUSTERS,
-            class_order=CLASSES,
-            declared_fold_ids=range(3),
-        )
+        result = _aggregate(oof_by_seed)
         assert not result.available
         assert result.reason is SeedUnavailableReason.INVALID_SHAPE
 
     def test_wrong_fold_set_is_unavailable(self):
         oof_by_seed = _complete_oof_by_seed()
         oof_by_seed[23]["folds"] = np.array([0, 0, 1])
-        result = aggregate_seed_oof(
-            REQUESTED_SEEDS,
-            _records(oof_by_seed),
-            declared_row_ids=ROW_IDS,
-            declared_labels=LABELS,
-            declared_clusters=CLUSTERS,
-            class_order=CLASSES,
-            declared_fold_ids=range(3),
-        )
+        result = _aggregate(oof_by_seed)
         assert not result.available
         assert result.reason is SeedUnavailableReason.INVALID_SHAPE
         assert result.affected_seeds == (23,)
@@ -192,15 +148,7 @@ class TestAggregateSeedOof:
         oof_by_seed = _complete_oof_by_seed()
         oof_by_seed[23]["folds"] = np.array([0, 0, 1])
         oof_by_seed[47]["proba"][0, 0] = np.nan
-        result = aggregate_seed_oof(
-            REQUESTED_SEEDS,
-            _records(oof_by_seed),
-            declared_row_ids=ROW_IDS,
-            declared_labels=LABELS,
-            declared_clusters=CLUSTERS,
-            class_order=CLASSES,
-            declared_fold_ids=range(3),
-        )
+        result = _aggregate(oof_by_seed)
         assert not result.available
         assert result.affected_seeds == (23, 47)
         assert result.contributing_seeds == (11,)
@@ -222,18 +170,12 @@ class TestAggregateSeedOof:
         declared status is what refuses the aggregate."""
         oof_by_seed = _complete_oof_by_seed()
         oof_by_seed[23] = None
-        result = aggregate_seed_oof(
-            REQUESTED_SEEDS,
-            _records(oof_by_seed, {23: declared_status}),
-            declared_row_ids=ROW_IDS,
-            declared_labels=LABELS,
-            declared_clusters=CLUSTERS,
-            class_order=CLASSES,
-            declared_fold_ids=range(3),
-        )
+        result = _aggregate(oof_by_seed, {23: declared_status})
         assert not result.available
         assert result.reason is reason
         assert result.affected_seeds == (23,)
+
+
 class TestAggregateSeedVote:
     def test_true_and_false_are_available_decisions(self):
         true_vote = aggregate_seed_vote(
