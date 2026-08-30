@@ -2,13 +2,10 @@
 Tests for fetch_clinvar_variants.py.
 
 Covers:
-- _parse_hgvsp: 3-letter HGVSp formats
-- _parse_hgvsp: 1-letter HGVSp formats
-- _parse_hgvsp: synonymous variants are excluded
-- _parse_hgvsp: stop-gain variants are excluded
-- _parse_hgvsp: unparseable strings return None
-- validate_wt: correct WT amino acid passes
-- validate_wt: wrong WT amino acid fails
+- _parse_hgvsp: missense is parsed from 1-letter, 3-letter and full HGVS forms
+- _parse_hgvsp: synonymous, stop and frameshift variants return None
+- _parse_hgvsp: empty, cDNA-only and unparseable strings return None
+- validate_wt: the wild-type residue is checked against the sequence
 - validate_wt: out-of-bounds positions fail
 - fetch_clinvar_variants: cache hit returns cached data without HTTP
 - fetch_uniprot_id: prefilled value is written to cache and returned
@@ -34,55 +31,42 @@ from esm2_mech.fetch_data.fetch_variants import (
 
 class TestParseHgvsp:
 
-    def test_three_letter_missense(self):
-        result = _parse_hgvsp("NM_004333.6(BRAF):c.1799T>A (p.Val600Glu)")
-        assert result == ("V", 600, "E")
+    @pytest.mark.parametrize(
+        ("hgvsp", "expected"),
+        [
+            ("NM_004333.6(BRAF):c.1799T>A (p.Val600Glu)", ("V", 600, "E")),
+            ("p.V600E", ("V", 600, "E")),
+            ("p.Arg117His", ("R", 117, "H")),
+            ("p.Lys1000Arg", ("K", 1000, "R")),
+        ],
+        ids=["three_letter_in_full_hgvs", "one_letter", "three_letter_bare",
+             "four_digit_position"],
+    )
+    def test_missense_is_parsed(self, hgvsp, expected):
+        assert _parse_hgvsp(hgvsp) == expected
 
-    def test_one_letter_missense(self):
-        result = _parse_hgvsp("p.V600E")
-        assert result == ("V", 600, "E")
-
-    def test_three_letter_bare(self):
-        result = _parse_hgvsp("p.Arg117His")
-        assert result == ("R", 117, "H")
-
-    def test_three_letter_synonymous_returns_none(self):
-        # wt == mut after mapping should return None; construct a synthetic case
-        # p.Ala1Ala — same amino acid
-        result = _parse_hgvsp("p.Ala1Ala")
-        assert result is None
-
-    def test_stop_gain_returns_none(self):
-        result = _parse_hgvsp("p.Arg117Ter")
-        assert result is None
-
-    def test_wt_stop_returns_none(self):
-        # p.Ter → some AA — excluded
-        result = _parse_hgvsp("p.Ter500Val")
-        assert result is None
-
-    def test_frameshift_returns_none(self):
-        result = _parse_hgvsp("p.Arg117fs")
-        assert result is None
-
-    def test_empty_string_returns_none(self):
-        assert _parse_hgvsp("") is None
-
-    def test_cdna_only_no_protein_returns_none(self):
-        assert _parse_hgvsp("NM_004333.6:c.1799T>A") is None
-
-    def test_unknown_three_letter_code_returns_none(self):
-        # Xaa is mapped to "X" which is a valid code — use an invalid abbreviation
-        result = _parse_hgvsp("p.Zzz100Val")
-        assert result is None
-
-    def test_position_extracted_correctly(self):
-        wt, pos, mut = _parse_hgvsp("p.Lys1000Arg")
-        assert pos == 1000
-
-    def test_one_letter_synonymous_returns_none(self):
-        result = _parse_hgvsp("p.V600V")
-        assert result is None
+    @pytest.mark.parametrize(
+        "hgvsp",
+        [
+            # Same amino acid either side, in both notations.
+            "p.Ala1Ala",
+            "p.V600V",
+            # A stop codon on either side is not a missense substitution.
+            "p.Arg117Ter",
+            "p.Ter500Val",
+            "p.Arg117fs",
+            "",
+            # cDNA with no protein consequence.
+            "NM_004333.6:c.1799T>A",
+            # Zzz is not a real abbreviation. Xaa would map to the valid code "X".
+            "p.Zzz100Val",
+        ],
+        ids=["synonymous_three_letter", "synonymous_one_letter", "stop_gain",
+             "stop_as_wild_type", "frameshift", "empty_string", "cdna_only",
+             "unknown_three_letter_code"],
+    )
+    def test_non_missense_returns_none(self, hgvsp):
+        assert _parse_hgvsp(hgvsp) is None
 
 
 # ---------------------------------------------------------------------------
@@ -94,29 +78,21 @@ class TestValidateWt:
 
     SEQ = "MKTAYIAKQR"  # 10 AA, 1-indexed
 
-    def test_correct_wt_passes(self):
-        variant = {"pos": 1, "wt_aa": "M"}
-        assert validate_wt(variant, self.SEQ) is True
-
-    def test_wrong_wt_fails(self):
-        variant = {"pos": 1, "wt_aa": "A"}
-        assert validate_wt(variant, self.SEQ) is False
-
-    def test_position_zero_is_out_of_bounds(self):
-        variant = {"pos": 0, "wt_aa": "M"}
-        assert validate_wt(variant, self.SEQ) is False
-
-    def test_position_beyond_length_is_out_of_bounds(self):
-        variant = {"pos": 11, "wt_aa": "X"}
-        assert validate_wt(variant, self.SEQ) is False
-
-    def test_last_position_passes(self):
-        variant = {"pos": 10, "wt_aa": "R"}
-        assert validate_wt(variant, self.SEQ) is True
-
-    def test_mid_sequence_correct(self):
-        variant = {"pos": 5, "wt_aa": "Y"}  # SEQ[4] == "Y"
-        assert validate_wt(variant, self.SEQ) is True
+    @pytest.mark.parametrize(
+        ("pos", "wt_aa", "expected"),
+        [
+            (1, "M", True),
+            (10, "R", True),   # last position
+            (5, "Y", True),    # SEQ[4] == "Y"
+            (1, "A", False),   # wrong residue at a valid position
+            (0, "M", False),   # 1-indexed, so 0 is out of bounds
+            (11, "X", False),  # one past the end
+        ],
+        ids=["first_position", "last_position", "mid_sequence", "wrong_residue",
+             "position_zero", "position_beyond_length"],
+    )
+    def test_wt_residue_is_checked_against_the_sequence(self, pos, wt_aa, expected):
+        assert validate_wt({"pos": pos, "wt_aa": wt_aa}, self.SEQ) is expected
 
 
 # ---------------------------------------------------------------------------

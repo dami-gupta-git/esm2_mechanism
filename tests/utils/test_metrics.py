@@ -43,7 +43,7 @@ from esm2_mech.utils.constants import MECHANISM_CLASSES, GOF, DN, LOF
 
 
 def test_null_standard_score_uses_sample_spread():
-    result = null_standard_score(4.0, [1.0, 2.0, 3.0])
+    result = null_standard_score(4.0, [1.0, 2.0, 3.0], expected_draws=3)
 
     assert result["state"] == "available"
     assert result["null_draw_std"] == pytest.approx(1.0)
@@ -51,11 +51,27 @@ def test_null_standard_score_uses_sample_spread():
 
 
 def test_null_standard_score_refuses_zero_spread():
-    result = null_standard_score(2.0, [1.0, 1.0, 1.0])
+    result = null_standard_score(2.0, [1.0, 1.0, 1.0], expected_draws=3)
 
     assert result["state"] == "unavailable"
     assert result["reason"] == "zero_null_draw_spread"
     assert result["z_score"] is None
+
+
+def test_null_standard_score_refuses_a_short_draw_set():
+    """A draw the producer could not score makes the whole summary unavailable.
+
+    Standardizing against the draws that survived would compare the observation
+    with a null built from a different, smaller experiment.
+    """
+    result = null_standard_score(4.0, [1.0, 2.0, 3.0], expected_draws=20)
+
+    assert result["state"] == "unavailable"
+    assert result["reason"] == "incomplete_null_draws"
+    assert result["n_null_draws"] == 3
+    assert result["n_requested_draws"] == 20
+    assert result["z_score"] is None
+    assert result["null_mean"] is None
 
 
 def test_family_frequency_reference_uses_training_families_and_global_unseen_rule():
@@ -109,14 +125,13 @@ def test_prior_reference_still_requires_a_declared_tie_rule():
 
 def test_training_frequency_reference_rejects_a_majority_tie():
     with pytest.raises(ValueError, match="majority class is tied"):
-        training_frequency_reference(
-            np.array([GOF, DN]), n_test=2, classes=[GOF, DN]
-        )
+        training_frequency_reference(np.array([GOF, DN]), n_test=2, classes=[GOF, DN])
 
 
 # ---------------------------------------------------------------------------
 # compute_metrics
 # ---------------------------------------------------------------------------
+
 
 class TestComputeMetrics:
 
@@ -206,6 +221,7 @@ class TestComputeMetrics:
 # aggregate_folds
 # ---------------------------------------------------------------------------
 
+
 class TestAggregateFolds:
 
     def _fold(self, f1, auroc_val):
@@ -230,9 +246,9 @@ class TestAggregateFolds:
 
     def test_n_folds(self):
         folds = [self._fold(0.5, 0.8)] * 4
-        assert aggregate_folds(
-            folds, MECHANISM_CLASSES, requested_folds=4
-        )["n_folds"] == 4
+        assert (
+            aggregate_folds(folds, MECHANISM_CLASSES, requested_folds=4)["n_folds"] == 4
+        )
 
     def test_none_auroc_excluded(self):
         folds = [self._fold(0.5, 0.8), self._fold(0.6, 0.9)]
@@ -249,9 +265,10 @@ class TestAggregateFolds:
         result = aggregate_folds(folds, MECHANISM_CLASSES, requested_folds=2)
 
         assert result["balanced_accuracy_mean"] is None
-        assert result["metric_availability"]["balanced_accuracy"][
-            "contributing_folds"
-        ] == 1
+        assert (
+            result["metric_availability"]["balanced_accuracy"]["contributing_folds"]
+            == 1
+        )
         assert result["metric_availability"]["balanced_accuracy"][
             "unavailable_folds"
         ] == [0]
@@ -279,12 +296,15 @@ class TestAggregateFolds:
 # align_proba
 # ---------------------------------------------------------------------------
 
+
 class TestAlignProba:
 
     def test_identity(self):
         proba = np.array([[0.1, 0.5, 0.4], [0.3, 0.3, 0.4]])
         result = align_proba(
-            proba, np.array([GOF, DN, LOF]), MECHANISM_CLASSES,
+            proba,
+            np.array([GOF, DN, LOF]),
+            MECHANISM_CLASSES,
             allow_missing_classes=False,
         )
         np.testing.assert_array_almost_equal(result, proba)
@@ -293,7 +313,9 @@ class TestAlignProba:
         # clf saw [LOF, GOF], canonical order is [GOF, DN, LOF]
         proba = np.array([[0.6, 0.4]])
         result = align_proba(
-            proba, np.array([LOF, GOF]), MECHANISM_CLASSES,
+            proba,
+            np.array([LOF, GOF]),
+            MECHANISM_CLASSES,
             allow_missing_classes=True,
         )
         assert result[0, MECHANISM_CLASSES.index(LOF)] == pytest.approx(0.6)
@@ -303,7 +325,9 @@ class TestAlignProba:
     def test_output_shape(self):
         proba = np.random.rand(10, 2)
         result = align_proba(
-            proba, np.array([GOF, LOF]), MECHANISM_CLASSES,
+            proba,
+            np.array([GOF, LOF]),
+            MECHANISM_CLASSES,
             allow_missing_classes=True,
         )
         assert result.shape == (10, 3)
@@ -311,7 +335,9 @@ class TestAlignProba:
     def test_missing_class_filled_with_zero(self):
         proba = np.array([[1.0]])
         result = align_proba(
-            proba, np.array([DN]), MECHANISM_CLASSES,
+            proba,
+            np.array([DN]),
+            MECHANISM_CLASSES,
             allow_missing_classes=True,
         )
         assert result[0, MECHANISM_CLASSES.index(GOF)] == pytest.approx(0.0)
@@ -348,6 +374,7 @@ class TestAlignProba:
 # per_gene_f1
 # ---------------------------------------------------------------------------
 
+
 class TestPerGeneF1:
 
     def test_unanimous_gene_labels(self):
@@ -364,7 +391,7 @@ class TestPerGeneF1:
         genes = np.array(["A"] * 5 + ["B"] * 5)
         y_true = np.array([GOF] * 5 + [DN] * 5)
         proba = np.zeros((10, 3))
-        proba[:5, MECHANISM_CLASSES.index(DN)] = 1.0   # gene A predicted as DN (wrong)
+        proba[:5, MECHANISM_CLASSES.index(DN)] = 1.0  # gene A predicted as DN (wrong)
         proba[5:, MECHANISM_CLASSES.index(GOF)] = 1.0  # gene B predicted as GOF (wrong)
         score = per_gene_f1(y_true, proba, genes, MECHANISM_CLASSES)
         assert score == pytest.approx(0.0)
@@ -388,6 +415,7 @@ class TestPerGeneF1:
 # ---------------------------------------------------------------------------
 # auroc_at_median
 # ---------------------------------------------------------------------------
+
 
 class TestAurocAtMedian:
 

@@ -238,17 +238,27 @@ class TestEmbeddingCacheValidation:
             )
 
 
+USABLE_CI = {"ci_low": 0.88, "ci_high": 0.92, "ci_suppressed": False}
+SUPPRESSED_CI = {"ci_low": None, "ci_high": None, "ci_suppressed": True}
+
+
+def _inference(**overrides):
+    """One seed's AUROC inference block, with a usable interval by default."""
+    return {
+        "seed": 0,
+        "point_estimate": 0.90,
+        "ci": USABLE_CI,
+        "estimate_basis": "seed_0_mean_of_fold_aurocs",
+        "resampling_unit": "gene",
+        "n_scored": 100,
+        "n_excluded": 0,
+        **overrides,
+    }
+
+
 class TestPathogenicityAurocAssessment:
     def test_both_point_estimates_are_reported_and_kept_distinct(self):
-        single_seed = {
-            "seed": 0,
-            "point_estimate": 0.90,
-            "ci": {"ci_low": 0.88, "ci_high": 0.92, "ci_suppressed": False},
-            "estimate_basis": "seed_0_mean_of_fold_aurocs",
-            "resampling_unit": "gene",
-            "n_scored": 100,
-            "n_excluded": 0,
-        }
+        single_seed = _inference()
         claim = _build_pathogenicity_auroc_assessment(single_seed, across_seed_point_estimate=0.89)
 
         assert claim["split"] == "family"
@@ -261,16 +271,8 @@ class TestPathogenicityAurocAssessment:
         assert claim["across_seed_point_estimate"] == 0.89
 
     def test_no_verdict_is_produced_whether_or_not_an_interval_exists(self):
-        base = {
-            "seed": 0,
-            "point_estimate": 0.90,
-            "estimate_basis": "seed_0_mean_of_fold_aurocs",
-            "resampling_unit": "gene",
-            "n_scored": 100,
-            "n_excluded": 0,
-        }
-        usable = {**base, "ci": {"ci_low": 0.88, "ci_high": 0.92, "ci_suppressed": False}}
-        suppressed = {**base, "ci": {"ci_low": None, "ci_high": None, "ci_suppressed": True}}
+        usable = _inference(ci=USABLE_CI)
+        suppressed = _inference(ci=SUPPRESSED_CI)
 
         for inference in (usable, suppressed):
             claim = _build_pathogenicity_auroc_assessment(inference, across_seed_point_estimate=0.89)
@@ -282,15 +284,7 @@ class TestPathogenicityAurocAssessment:
         # reported in the same record, so supplying a usable one must still not
         # produce an adjudicated outcome. Interval-dependent conclusions stay
         # withheld until audit item 1.4 supplies a replacement method.
-        single_seed = {
-            "seed": 0,
-            "point_estimate": 0.90,
-            "ci": {"ci_low": 0.88, "ci_high": 0.92, "ci_suppressed": False},
-            "estimate_basis": "seed_0_mean_of_fold_aurocs",
-            "resampling_unit": "gene",
-            "n_scored": 100,
-            "n_excluded": 0,
-        }
+        single_seed = _inference()
         claim = _build_pathogenicity_auroc_assessment(single_seed, across_seed_point_estimate=0.89)
 
         verdict = claim.get("verdict")
@@ -301,15 +295,7 @@ class TestPathogenicityAurocAssessment:
         # The across-seed point estimate and a one-seed interval must not be
         # presented as one quantity: if the multi-seed estimate is reported, no
         # single-seed interval may be carried alongside it as the claim's own.
-        single_seed = {
-            "seed": 0,
-            "point_estimate": 0.90,
-            "ci": {"ci_low": 0.88, "ci_high": 0.92, "ci_suppressed": False},
-            "estimate_basis": "seed_0_mean_of_fold_aurocs",
-            "resampling_unit": "gene",
-            "n_scored": 100,
-            "n_excluded": 0,
-        }
+        single_seed = _inference()
         claim = _build_pathogenicity_auroc_assessment(single_seed, across_seed_point_estimate=0.89)
 
         assert claim["across_seed_point_estimate"] == 0.89
@@ -322,15 +308,9 @@ class TestPathogenicityAurocAssessment:
         # block that declares its own seed must be reported as that seed, so a
         # later change to which seed carries the bootstrap cannot silently keep
         # labelling the result as seed 0.
-        inference = {
-            "seed": 2,
-            "point_estimate": 0.90,
-            "ci": None,
-            "estimate_basis": "seed2_fold_mean_auroc",
-            "resampling_unit": "gene",
-            "n_scored": 100,
-            "n_excluded": 0,
-        }
+        inference = _inference(
+            seed=2, ci=None, estimate_basis="seed2_fold_mean_auroc"
+        )
         claim = _build_pathogenicity_auroc_assessment(inference, across_seed_point_estimate=0.89)
         assert claim["seed"] == 2
 

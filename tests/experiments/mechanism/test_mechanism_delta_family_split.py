@@ -53,6 +53,38 @@ def _make_data(n=120, dim=50, n_classes=3, n_genes=6, seed=42):
     return X, labels, genes
 
 
+def _mechanism_data(labels, genes, embedding):
+    """The row-aligned bundle `run` expects, built from one set of labels/genes.
+
+    The four embedding views are offset copies of one matrix so a probe fitted on
+    the wrong view produces different numbers. FoldX and AlphaMissense are all-NaN
+    because these tests exercise the embedding features only.
+    """
+    n_rows = len(labels)
+    return {
+        "valid_variants": [
+            {
+                "gene": genes[row],
+                "uniprot_id": f"P{row}",
+                "aa_pos": 1,
+                "aa_wt": "A",
+                "aa_mut": "V",
+            }
+            for row in range(n_rows)
+        ],
+        "emb_wt_mean": embedding,
+        "emb_mut_mean": embedding + 1,
+        "emb_wt_pos": embedding + 2,
+        "emb_mut_pos": embedding + 3,
+        "labels_3class": labels,
+        "genes_arr": genes,
+        "foldx_ddg": np.full(n_rows, np.nan),
+        "aa_wt_list": ["A"] * n_rows,
+        "aa_mut_list": ["V"] * n_rows,
+        "alphamissense_scores": np.full(n_rows, np.nan),
+    }
+
+
 def _count_pca_fits(call):
     """Run `call` and return the training-row counts PCA was fitted on."""
     from sklearn.decomposition import PCA as RealPCA
@@ -147,21 +179,7 @@ class TestOutOfFoldCarriesItsFold:
 
 
 def test_run_rejects_unknown_feature_before_fitting():
-    data = {
-        "valid_variants": [
-            {"gene": "G1", "uniprot_id": "P1", "aa_pos": 1, "aa_wt": "A", "aa_mut": "V"}
-        ],
-        "emb_wt_mean": np.ones((1, 2)),
-        "emb_mut_mean": np.ones((1, 2)),
-        "emb_wt_pos": np.ones((1, 2)),
-        "emb_mut_pos": np.ones((1, 2)),
-        "labels_3class": np.array(["GOF"]),
-        "genes_arr": np.array(["G1"]),
-        "foldx_ddg": np.array([np.nan]),
-        "aa_wt_list": ["A"],
-        "aa_mut_list": ["V"],
-        "alphamissense_scores": np.array([np.nan]),
-    }
+    data = _mechanism_data(np.array(["GOF"]), np.array(["G1"]), np.ones((1, 2)))
 
     with pytest.raises(ValueError, match="unknown mechanism feature"):
         run(data, out_dir="unused", feature_names=("not_a_feature",))
@@ -172,28 +190,7 @@ def test_run_fits_only_requested_feature(tmp_path, monkeypatch):
     labels = np.array(["GOF", "DN", "LOF", "GOF", "DN", "LOF"])
     genes = np.array([f"G{row}" for row in range(n_rows)])
     embedding = np.arange(n_rows * 2, dtype=float).reshape(n_rows, 2)
-    data = {
-        "valid_variants": [
-            {
-                "gene": genes[row],
-                "uniprot_id": f"P{row}",
-                "aa_pos": 1,
-                "aa_wt": "A",
-                "aa_mut": "V",
-            }
-            for row in range(n_rows)
-        ],
-        "emb_wt_mean": embedding,
-        "emb_mut_mean": embedding + 1,
-        "emb_wt_pos": embedding + 2,
-        "emb_mut_pos": embedding + 3,
-        "labels_3class": labels,
-        "genes_arr": genes,
-        "foldx_ddg": np.full(n_rows, np.nan),
-        "aa_wt_list": ["A"] * n_rows,
-        "aa_mut_list": ["V"] * n_rows,
-        "alphamissense_scores": np.full(n_rows, np.nan),
-    }
+    data = _mechanism_data(labels, genes, embedding)
     splits = [(np.array([0, 1, 2]), np.array([3, 4, 5]))]
     calls = []
     oof = {
@@ -251,25 +248,7 @@ def test_result_and_oof_cache_share_exact_execution_binding(tmp_path, monkeypatc
     labels = np.array(["GOF", "DN", "LOF", "GOF", "DN", "LOF"])
     genes = np.array([f"G{row}" for row in range(n_rows)])
     embedding = np.arange(n_rows * 2, dtype=float).reshape(n_rows, 2)
-    data = {
-        "valid_variants": [
-            {
-                "gene": genes[row], "uniprot_id": f"P{row}", "aa_pos": 1,
-                "aa_wt": "A", "aa_mut": "V",
-            }
-            for row in range(n_rows)
-        ],
-        "emb_wt_mean": embedding,
-        "emb_mut_mean": embedding + 1,
-        "emb_wt_pos": embedding + 2,
-        "emb_mut_pos": embedding + 3,
-        "labels_3class": labels,
-        "genes_arr": genes,
-        "foldx_ddg": np.full(n_rows, np.nan),
-        "aa_wt_list": ["A"] * n_rows,
-        "aa_mut_list": ["V"] * n_rows,
-        "alphamissense_scores": np.full(n_rows, np.nan),
-    }
+    data = _mechanism_data(labels, genes, embedding)
     splits = [(np.array([0, 1, 2]), np.array([3, 4, 5]))]
     oof = {
         "row_ids": np.array([3, 4, 5]),
@@ -325,25 +304,7 @@ def test_per_seed_file_declares_the_shared_seed_contract(tmp_path, monkeypatch):
     labels = np.array(["GOF", "DN", "LOF"] * (n_rows // 3))
     genes = np.array([f"G{row % 6}" for row in range(n_rows)])
     embedding = np.random.RandomState(0).randn(n_rows, 8)
-    data = {
-        "valid_variants": [
-            {
-                "gene": genes[row], "uniprot_id": f"P{row}", "aa_pos": 1,
-                "aa_wt": "A", "aa_mut": "V",
-            }
-            for row in range(n_rows)
-        ],
-        "emb_wt_mean": embedding,
-        "emb_mut_mean": embedding + 1,
-        "emb_wt_pos": embedding + 2,
-        "emb_mut_pos": embedding + 3,
-        "labels_3class": labels,
-        "genes_arr": genes,
-        "foldx_ddg": np.full(n_rows, np.nan),
-        "aa_wt_list": ["A"] * n_rows,
-        "aa_mut_list": ["V"] * n_rows,
-        "alphamissense_scores": np.full(n_rows, np.nan),
-    }
+    data = _mechanism_data(labels, genes, embedding)
     (tmp_path / "pfam.json").write_text("{}")
     monkeypatch.setattr(family_probe, "PFAM_JSON", tmp_path / "pfam.json")
     monkeypatch.setattr(
