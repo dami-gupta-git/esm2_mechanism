@@ -386,7 +386,7 @@ def print_table(summary):
         )
 
     print(
-        "\nΔ AUROC vs no-holdout baseline (pre-registered: ≥−0.03 robust, ≤−0.10 mostly leakage)"
+        "\nΔ AUROC vs no-holdout baseline (≥−0.03 robust, ≤−0.10 mostly leakage)"
     )
     print("-" * 100)
     for h_key, label in [

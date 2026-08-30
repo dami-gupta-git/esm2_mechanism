@@ -10,7 +10,7 @@ Invariants:
 - embedding rows are rejected when their identity sidecar has the same row count
   but a different variant order
 - the five-seed permutation distribution is preserved in the aggregate output
-- the preregistered three-of-five rule is not evaluated from incomplete results
+- the three-of-five rule is not evaluated from incomplete results
 """
 
 import json

@@ -5,7 +5,7 @@ esm2_mech.experiments.mechanism.mechanism_delta_probe.
 These two functions carry the highest silent-corruption risk in the module:
 - project_out_subspace removes a nuisance (stability) subspace from the delta
   embeddings; a bug leaves the removed signal in, invalidating the "projected" arm.
-- variance_explained_per_class feeds a pre-registered GOF/LOF asymmetry prediction.
+- variance_explained_per_class feeds the GOF/LOF asymmetry prediction.
 """
 
 import numpy as np

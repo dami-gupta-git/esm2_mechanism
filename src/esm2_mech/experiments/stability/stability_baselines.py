@@ -1,6 +1,6 @@
 """Controls and interpretation baselines for the Megascale stability probe.
 
-NOT pre-registered: delta-norm, nested-CV alpha, label-shuffle null, PLS sweep.
+All exploratory: delta-norm, nested-CV alpha, label-shuffle null, PLS sweep.
 """
 
 import functools

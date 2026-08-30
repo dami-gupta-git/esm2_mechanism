@@ -97,11 +97,11 @@ def configure_dataset(dataset: str) -> None:
 # Probe config (matches the ESM-2 mechanism classifier exactly)
 SEEDS = list(range(N_SEEDS))
 
-# Decision rule margins (pre-registered in plan_esm3_mechanism.md)
+# Decision rule margins (see bak/plans/plan_esm3_mechanism.md)
 M1_MARGIN = 0.05  # ESM-3 must beat the ESM-2 family-split floor by this much
 M3_THRESHOLD = 0.03  # seq_struct − seq gap that counts as "structure adds signal"
 
-# Matched ESM-2 arm on the ESM-3 variant subset; distinct from esm2_family_floor (the pre-registered full-set floor).
+# Matched ESM-2 arm on the ESM-3 variant subset; distinct from esm2_family_floor (the full-set floor).
 ESM2_COND = "esm2_delta_mean"
 
 
@@ -852,7 +852,7 @@ def phase3_probes(
         if matched_std is not None and abs(baseline_divergence) > matched_std:
             print(
                 "  WARNING: the matched-subset ESM-2 floor differs from the "
-                "pre-registered full-set floor by more than one seed of spread. The "
+                "full-set floor by more than one seed of spread. The "
                 "M1/M2 thresholds are pinned to the full set while the paired "
                 "comparison uses the subset."
             )

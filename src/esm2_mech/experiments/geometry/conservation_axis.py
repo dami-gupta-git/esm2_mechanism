@@ -79,7 +79,7 @@ SEQS = SEQUENCES_JSON
 CONS_CACHE = CONSERVATION_PATHOGENICITY_NPY
 CONS_META = CONSERVATION_PATHOGENICITY_META_JSON
 
-# Pre-registered thresholds
+# Claim thresholds
 CLAIM_2D_CONSERVATION_MIN = 0.85
 CLAIM_2E_DELTA_ADD_MIN = 0.02
 
@@ -608,7 +608,7 @@ def analyse(compute_ci=True, n_boot=BOOTSTRAP_N_RESAMPLES):
         "input_provenance": provenance,
         "calibration_note": (
             "The probes are uncalibrated and measure discrimination only; the "
-            "reported AUROCs are not risk estimates (pre-registration §1.4)."
+            "reported AUROCs are not risk estimates."
         ),
         "inference": {
             "estimate_basis": "mean of one held-out-fold summary per model seed",

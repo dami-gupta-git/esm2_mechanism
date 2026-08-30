@@ -1765,7 +1765,7 @@ class TestPairedOofDiff:
             cross_partition=True,
             n_resamples=50,
         )
-        # Pre-registration §1.2: the primary interval resamples the coarser unit (families); the
+        # The primary interval resamples the coarser unit (families); the
         # gene-resampled one rides alongside as a labelled sensitivity check.
         assert out["n_clusters"] == 5
         assert out["gene_resampled_sensitivity"]["n_clusters"] == 20
@@ -1789,7 +1789,7 @@ class TestPairedOofDiff:
 
 
 # ---------------------------------------------------------------------------
-# adjudicate_diff / adjudicate_level (pre-registration §1.1 verdicts)
+# adjudicate_diff / adjudicate_level verdicts
 # ---------------------------------------------------------------------------
 
 class TestAdjudicateDiff:
@@ -1804,7 +1804,7 @@ class TestAdjudicateDiff:
         )
 
     def test_fail_with_ci_spanning_threshold_is_underpowered(self):
-        # A failing gate whose CI still reaches the pre-registered effect size is
+        # A failing gate whose CI still reaches the target effect size is
         # underpowered, never evidence of no effect.
         ci = {"ci_low": -0.02, "ci_high": 0.04}
         assert "underpowered" in adjudicate_diff(False, ci, 0.03)
@@ -1816,7 +1816,7 @@ class TestAdjudicateDiff:
     def test_fail_with_ci_below_threshold_is_established(self):
         ci = {"ci_low": -0.02, "ci_high": 0.01}
         assert adjudicate_diff(False, ci, 0.03) == (
-            "fail, established (CI excludes the pre-registered threshold)"
+            "fail, established (CI excludes the threshold)"
         )
 
     def test_suppressed_or_absent_ci_reports_no_ci(self):

@@ -749,7 +749,7 @@ def _print_headline(results):
             "pipeline recover strong discrimination on pathogenicity."
         )
     else:
-        print("  The preregistered positive-control gate was not established.")
+        print("  The positive-control gate was not established.")
 
 
 def main():

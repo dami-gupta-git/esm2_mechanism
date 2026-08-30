@@ -1003,7 +1003,7 @@ def main():
     )
 
     print("\n" + "=" * 60)
-    print("DECISION RULES (PREREGISTRATION_run_biorxiv.md, 2F-2H)")
+    print("DECISION RULES (2F-2H)")
     print("=" * 60)
 
     fs_metric = read_seed_point_estimate(
